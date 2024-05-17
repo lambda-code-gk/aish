@@ -1,0 +1,43 @@
+#!/usr/bin/bash
+
+# OpenAI APIキーを設定
+API_KEY=$APIKEY
+
+# APIエンドポイント
+ENDPOINT="https://api.openai.com/v1/chat/completions"
+
+MODEL="gpt-4o"
+#MODEL="gpt-3.5-turbo"
+
+# クエリ作成
+CONSOLE_LOG=$GPTSH_SESSION"/script.log"
+gptsh_makequery $CONSOLE_LOG > $GPTSH_SESSION/query.txt
+echo -e "----\nuser message for assistant:\n$*" >> $GPTSH_SESSION/query.txt
+INPUT_FILE=$GPTSH_SESSION/query.txt
+SYSTEM_FILE=$HOME/.gptsh/system.txt
+
+# ファイルからテキストを読み込み、JSONエスケープする
+USER_INPUT=$(jq -Rs . < $INPUT_FILE)
+SYSTEM_INPUT=$(jq -Rs . < $SYSTEM_FILE)
+
+# リクエストの作成
+REQUEST_DATA=$(cat <<EOF
+{
+  "model": "$MODEL",
+  "messages": [{"role": "user", "content": $USER_INPUT},
+               {"role": "system", "content": $SYSTEM_INPUT}]
+}
+EOF
+)
+
+echo $REQUEST_DATA >> $GPTSH_SESSION/log.txt
+
+# curlコマンドを使ってリクエストを送信
+response=$(curl -s -X POST $ENDPOINT \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d "$REQUEST_DATA")
+
+# レスポンスの"content"部分を抽出して出力
+echo $response | jq -r '.choices[0].message.content'
+

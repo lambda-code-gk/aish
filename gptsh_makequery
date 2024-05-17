@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# 入力ファイル
+input_file="$1"
+
+# clearコマンドのエスケープシーケンス
+clear_sequence='\033\[H\033\[2J'
+
+# ファイル内容を読み込み、最後のclearシーケンス以降を抽出
+cleaned_content=$(perl -0777 -ne '
+  @parts = split(/'"$clear_sequence"'/, $_);
+  print $parts[-1];
+' "$input_file")
+
+# エスケープシーケンスと制御文字を削除
+echo "$cleaned_content" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/.\x08//g' | tr -d '\r'
+

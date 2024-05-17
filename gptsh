@@ -1,0 +1,10 @@
+#!/bin/bash
+
+session=$(mktemp)
+rm $session
+mkdir $session
+export GPTSH_SESSION="$session"
+export GPTSH_LOGFILE="$session/script.log"
+script -f -O $GPTSH_LOGFILE
+echo "end"
+#rm -rf $session
