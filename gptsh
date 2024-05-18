@@ -5,6 +5,7 @@ rm $session
 mkdir $session
 export GPTSH_SESSION="$session"
 export GPTSH_LOGFILE="$session/script.log"
-script -f -O $GPTSH_LOGFILE
+script -O $GPTSH_LOGFILE
+#script -f -c 'bash --rcfile <(echo ". $HOME/.gptsh/gptshrc; exec bash")' -O $GPTSH_LOGFILE
 echo "end"
 #rm -rf $session

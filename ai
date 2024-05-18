@@ -1,35 +1,41 @@
 #!/usr/bin/bash
 
+. $HOME/.gptsh/functions
+
 # OpenAI APIキーを設定
 API_KEY=$APIKEY
 
 # APIエンドポイント
 ENDPOINT="https://api.openai.com/v1/chat/completions"
 
-MODEL="gpt-4o"
-#MODEL="gpt-3.5-turbo"
+#MODEL="gpt-4o"
+MODEL="gpt-3.5-turbo"
 
-# クエリ作成
-CONSOLE_LOG=$GPTSH_SESSION"/script.log"
-gptsh_makequery $CONSOLE_LOG > $GPTSH_SESSION/query.txt
-echo -e "----\nuser message for assistant:\n$*" >> $GPTSH_SESSION/query.txt
-INPUT_FILE=$GPTSH_SESSION/query.txt
 SYSTEM_FILE=$HOME/.gptsh/system.txt
 
-# ファイルからテキストを読み込み、JSONエスケープする
-USER_INPUT=$(jq -Rs . < $INPUT_FILE)
-SYSTEM_INPUT=$(jq -Rs . < $SYSTEM_FILE)
+# メッセージ作成
+gptsh_flush_script_log
+gptsh_rollout
+messages=$GPTSH_SESSION/messages.txt
+echo '{"model": "'$MODEL'","messages": [' > $messages
 
-# リクエストの作成
-REQUEST_DATA=$(cat <<EOF
-{
-  "model": "$MODEL",
-  "messages": [{"role": "user", "content": $USER_INPUT},
-               {"role": "system", "content": $SYSTEM_INPUT}]
-}
-EOF
-)
+for f in $GPTSH_SESSION/part_*;
+do
+  input=$(col -b < $f | jq -Rs .)
+  if [[ $f =~ "_user.txt" ]]; then
+    echo '  {"role": "user", "content": '$input'},' >> $messages
+  else
+    echo '  {"role": "assistant", "content": '$input'},' >> $messages
+  fi
+done
+user_input=$(echo "----\nuser message for assistant:\n$*" | jq -Rs .)
+echo '  {"role": "user", "content": '$user_input'},' >> $messages
 
+system_input=$(jq -Rs . < $SYSTEM_FILE)
+echo '  {"role": "system", "content": '$system_input'}' >> $messages
+echo ']}' >> $messages
+
+REQUEST_DATA=$(cat $messages)
 echo $REQUEST_DATA >> $GPTSH_SESSION/log.txt
 
 # curlコマンドを使ってリクエストを送信
@@ -39,5 +45,7 @@ response=$(curl -s -X POST $ENDPOINT \
   -d "$REQUEST_DATA")
 
 # レスポンスの"content"部分を抽出して出力
-echo $response | jq -r '.choices[0].message.content'
+echo $response | jq -r '.choices[0].message.content' | tee $GPTSH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
 
+gptsh_flush_script_log
+gptsh_truncate_script_log

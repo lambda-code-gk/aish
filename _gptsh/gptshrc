@@ -1,0 +1,9 @@
+#!/bin/bash
+
+. $HOME/.gptsh/functions
+
+bind -x '"\C-l": gptsh_clear'
+
+export PS1="(gptsh)$PS1"
+export GPTSH_PID=$PPID
+
