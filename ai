@@ -2,8 +2,20 @@
 
 . $HOME/.gptsh/functions
 
+#set -x
+
+function puts_error
+{
+  echo "Error: $1" >&2
+}
+
 # OpenAI APIキーを設定
-API_KEY=$APIKEY
+if [ -z "$OPENAI_API_KEY" ];
+then
+  puts_error "The OPENAI_API_KEY is missing or empty. Please set the API key generated from the OpenAI website."
+  exit 1;
+fi
+API_KEY="$OPENAI_API_KEY"
 
 # APIエンドポイント
 ENDPOINT="https://api.openai.com/v1/chat/completions"
