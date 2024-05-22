@@ -11,7 +11,7 @@ function gptsh_truncate_script_log
 function gptsh_rollout
 {
   gptsh_flush_script_log
-  cp $GPTSH_LOGFILE $GPTSH_SESSION/part_$(date +%Y%m%d%H%M%S)_user.txt
+  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $GPTSH_LOGFILE | col -b > $GPTSH_SESSION/part_$(date +%Y%m%d%H%M%S)_user.txt
   gptsh_truncate_script_log
 }
 function gptsh_clear

@@ -33,7 +33,7 @@ echo '{"model": "'$MODEL'","messages": [' > $messages
 
 for f in $GPTSH_SESSION/part_*;
 do
-  input=$(col -b < $f | jq -Rs .)
+  input=$(jq -Rs . < $f)
   if [[ $f =~ "_user.txt" ]]; then
     echo '  {"role": "user", "content": '$input'},' >> $messages
   else
