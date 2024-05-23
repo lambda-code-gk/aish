@@ -21,3 +21,9 @@ function gptsh_clear
   gptsh_flush_script_log
   gptsh_truncate_script_log
 }
+function gptsh_calc_message_size
+{
+  gptsh_flush_script_log
+  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $GPTSH_LOGFILE | col -b > $GPTSH_SESSION/tmp_user.txt
+  env LANG=C du --apparent-size -ch $(find $GPTSH_SESSION -name 'part_*') $GPTSH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
+}

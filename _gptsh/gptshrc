@@ -4,6 +4,7 @@
 
 bind -x '"\C-l": gptsh_clear'
 
-export PS1="(gptsh)$PS1"
+export PS1_ORG=$PS1
+export PROMPT_COMMAND='PS1="(gptsh:$(gptsh_calc_message_size))$PS1_ORG"'
 export GPTSH_PID=$PPID
 
