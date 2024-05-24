@@ -20,10 +20,22 @@ API_KEY="$OPENAI_API_KEY"
 # APIエンドポイント
 ENDPOINT="https://api.openai.com/v1/chat/completions"
 
-#MODEL="gpt-4o"
-MODEL="gpt-3.5-turbo"
+MODEL="gpt-4o"
+#MODEL="gpt-3.5-turbo"
 
-SYSTEM_FILE=$HOME/.gptsh/system.txt
+SYSTEM_FILE=$HOME/.gptsh/system/default.txt
+if [ "$1" = "-c" ];
+then
+  shift
+  if [ -e "$HOME/.gptsh/system/$1.txt" ];
+  then
+    SYSTEM_FILE=$HOME/.gptsh/system/$1.txt
+  fi
+elif [ "$1" = "--op" ];
+then
+  shift
+  SYSTEM_FILE=$HOME/.gptsh/system/operate.txt
+fi
 
 # メッセージ作成
 gptsh_flush_script_log
@@ -33,31 +45,31 @@ echo '{"model": "'$MODEL'","messages": [' > $messages
 
 for f in $GPTSH_SESSION/part_*;
 do
-  input=$(jq -Rs . < $f)
+  input=$(jq -Rs '.' < $f)
   if [[ $f =~ "_user.txt" ]]; then
-    echo '  {"role": "user", "content": '$input'},' >> $messages
+    echo '  {"role": "user", "content": '"$input"'},' >> $messages
   else
-    echo '  {"role": "assistant", "content": '$input'},' >> $messages
+    echo '  {"role": "assistant", "content": '"$input"'},' >> $messages
   fi
 done
-user_input=$(echo "----\nuser message for assistant:\n$*" | jq -Rs .)
-echo '  {"role": "user", "content": '$user_input'},' >> $messages
+user_input=$(echo -e "----\nuser message for assistant:\n$*" | jq -Rs '.')
+echo '  {"role": "user", "content": '"$user_input"'},' >> $messages
 
-system_input=$(jq -Rs . < $SYSTEM_FILE)
-echo '  {"role": "system", "content": '$system_input'}' >> $messages
+system_input=$(jq -Rs '.' < $SYSTEM_FILE)
+echo '  {"role": "system", "content": '"$system_input"'}' >> $messages
 echo ']}' >> $messages
 
-REQUEST_DATA=$(cat $messages)
-echo $REQUEST_DATA >> $GPTSH_SESSION/log.txt
+request_data=$(cat $messages)
+echo "$request_data" >> $GPTSH_SESSION/log.txt
 
 # curlコマンドを使ってリクエストを送信
 response=$(curl -s -X POST $ENDPOINT \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
-  -d "$REQUEST_DATA")
+  -d "$request_data")
 
 # レスポンスの"content"部分を抽出して出力
-echo $response | jq -r '.choices[0].message.content' | tee $GPTSH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
+echo "$response" | jq -r '.choices[0].message.content' | tee $GPTSH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
 
 gptsh_flush_script_log
 gptsh_truncate_script_log
