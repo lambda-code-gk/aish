@@ -23,25 +23,33 @@ ENDPOINT="https://api.openai.com/v1/chat/completions"
 MODEL="gpt-4o"
 #MODEL="gpt-3.5-turbo"
 
+TEMPERATURE=0.7
+
 SYSTEM_FILE=$HOME/.gptsh/system/default.txt
-if [ "$1" = "-c" ];
-then
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c)
+      shift
+      if [ -e "$HOME/.gptsh/system/$1.txt" ]; then
+        SYSTEM_FILE=$HOME/.gptsh/system/$1.txt
+      fi
+      ;;
+    --op)
+      SYSTEM_FILE=$HOME/.gptsh/system/operate.txt
+      TEMPERATURE=0.0
+      ;;
+    *)
+      break
+      ;;
+  esac
   shift
-  if [ -e "$HOME/.gptsh/system/$1.txt" ];
-  then
-    SYSTEM_FILE=$HOME/.gptsh/system/$1.txt
-  fi
-elif [ "$1" = "--op" ];
-then
-  shift
-  SYSTEM_FILE=$HOME/.gptsh/system/operate.txt
-fi
+done
 
 # メッセージ作成
 gptsh_flush_script_log
 gptsh_rollout
 messages=$GPTSH_SESSION/messages.txt
-echo '{"model": "'$MODEL'","messages": [' > $messages
+echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": [' > $messages
 
 for f in $GPTSH_SESSION/part_*;
 do
