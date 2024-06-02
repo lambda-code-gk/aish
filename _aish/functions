@@ -1,0 +1,29 @@
+#!/bin/bash
+
+function aish_flush_script_log
+{
+  kill -USR1 $AISH_PID
+}
+function aish_truncate_script_log
+{
+  truncate -s 0 $AISH_LOGFILE
+}
+function aish_rollout
+{
+  aish_flush_script_log
+  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d%H%M%S)_user.txt
+  aish_truncate_script_log
+}
+function aish_clear
+{
+  clear
+  rm -f $AISH_SESSION/part_*
+  aish_flush_script_log
+  aish_truncate_script_log
+}
+function aish_calc_message_size
+{
+  aish_flush_script_log
+  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/tmp_user.txt
+  env LANG=C du --apparent-size -ch $(find $AISH_SESSION -name 'part_*') $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-. $HOME/.gptsh/functions
+. $HOME/.aish/functions
 
 #set -x
 
@@ -25,17 +25,17 @@ MODEL="gpt-4o"
 
 TEMPERATURE=0.7
 
-SYSTEM_FILE=$HOME/.gptsh/system/default.txt
+SYSTEM_FILE=$HOME/.aish/system/default.txt
 while [ $# -gt 0 ]; do
   case "$1" in
     -c)
       shift
-      if [ -e "$HOME/.gptsh/system/$1.txt" ]; then
-        SYSTEM_FILE=$HOME/.gptsh/system/$1.txt
+      if [ -e "$HOME/.aish/system/$1.txt" ]; then
+        SYSTEM_FILE=$HOME/.aish/system/$1.txt
       fi
       ;;
     --op)
-      SYSTEM_FILE=$HOME/.gptsh/system/operate.txt
+      SYSTEM_FILE=$HOME/.aish/system/operate.txt
       TEMPERATURE=0.0
       ;;
     *)
@@ -46,12 +46,12 @@ while [ $# -gt 0 ]; do
 done
 
 # メッセージ作成
-gptsh_flush_script_log
-gptsh_rollout
-messages=$GPTSH_SESSION/messages.txt
+aish_flush_script_log
+aish_rollout
+messages=$AISH_SESSION/messages.txt
 echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": [' > $messages
 
-for f in $GPTSH_SESSION/part_*;
+for f in $AISH_SESSION/part_*;
 do
   input=$(jq -Rs '.' < $f)
   if [[ $f =~ "_user.txt" ]]; then
@@ -68,7 +68,7 @@ echo '  {"role": "system", "content": '"$system_input"'}' >> $messages
 echo ']}' >> $messages
 
 request_data=$(cat $messages)
-echo "$request_data" >> $GPTSH_SESSION/log.txt
+echo "$request_data" >> $AISH_SESSION/log.txt
 
 # curlコマンドを使ってリクエストを送信
 response=$(curl -s -X POST $ENDPOINT \
@@ -77,7 +77,7 @@ response=$(curl -s -X POST $ENDPOINT \
   -d "$request_data")
 
 # レスポンスの"content"部分を抽出して出力
-echo "$response" | jq -r '.choices[0].message.content' | tee $GPTSH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
+echo "$response" | jq -r '.choices[0].message.content' | tee $AISH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
 
-gptsh_flush_script_log
-gptsh_truncate_script_log
+aish_flush_script_log
+aish_truncate_script_log
