@@ -16,10 +16,10 @@ function aish_rollout
 }
 function aish_clear
 {
-  clear
   rm -f $AISH_SESSION/part_*
   aish_flush_script_log
   aish_truncate_script_log
+  clear
 }
 function aish_calc_message_size
 {

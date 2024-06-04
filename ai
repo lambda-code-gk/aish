@@ -1,5 +1,6 @@
 #!/usr/bin/bash
 
+
 . $HOME/.aish/functions
 
 #set -x
@@ -9,75 +10,19 @@ function puts_error
   echo "Error: $1" >&2
 }
 
-# OpenAI APIキーを設定
-if [ -z "$OPENAI_API_KEY" ];
+APP_DIR=$(dirname "$(readlink -f "$0")")
+
+task="$HOME/.aish/task.d/default"
+if [ -e "$HOME/.aish/task.d/$1" ];
 then
-  puts_error "The OPENAI_API_KEY is missing or empty. Please set the API key generated from the OpenAI website."
-  exit 1;
-fi
-API_KEY="$OPENAI_API_KEY"
-
-# APIエンドポイント
-ENDPOINT="https://api.openai.com/v1/chat/completions"
-
-MODEL="gpt-4o"
-#MODEL="gpt-3.5-turbo"
-
-TEMPERATURE=0.7
-
-SYSTEM_FILE=$HOME/.aish/system/default.txt
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -c)
-      shift
-      if [ -e "$HOME/.aish/system/$1.txt" ]; then
-        SYSTEM_FILE=$HOME/.aish/system/$1.txt
-      fi
-      ;;
-    --op)
-      SYSTEM_FILE=$HOME/.aish/system/operate.txt
-      TEMPERATURE=0.0
-      ;;
-    *)
-      break
-      ;;
-  esac
+  task="$HOME/.aish/task.d/$1"
   shift
-done
+fi
 
-# メッセージ作成
-aish_flush_script_log
-aish_rollout
-messages=$AISH_SESSION/messages.txt
-echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": [' > $messages
+. $task/conf
 
-for f in $AISH_SESSION/part_*;
-do
-  input=$(jq -Rs '.' < $f)
-  if [[ $f =~ "_user.txt" ]]; then
-    echo '  {"role": "user", "content": '"$input"'},' >> $messages
-  else
-    echo '  {"role": "assistant", "content": '"$input"'},' >> $messages
-  fi
-done
-user_input=$(echo -e "----\nuser message for assistant:\n$*" | jq -Rs '.')
-echo '  {"role": "user", "content": '"$user_input"'},' >> $messages
+message_file=$AISH_SESSION/messages.txt
 
-system_input=$(jq -Rs '.' < $SYSTEM_FILE)
-echo '  {"role": "system", "content": '"$system_input"'}' >> $messages
-echo ']}' >> $messages
+make_message $message_file "$*"
+send_request $message_file
 
-request_data=$(cat $messages)
-echo "$request_data" >> $AISH_SESSION/log.txt
-
-# curlコマンドを使ってリクエストを送信
-response=$(curl -s -X POST $ENDPOINT \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $API_KEY" \
-  -d "$request_data")
-
-# レスポンスの"content"部分を抽出して出力
-echo "$response" | jq -r '.choices[0].message.content' | tee $AISH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
-
-aish_flush_script_log
-aish_truncate_script_log
