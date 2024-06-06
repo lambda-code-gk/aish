@@ -1,0 +1,57 @@
+#!/bin/bash
+
+#MODEL="gemini-1.5-flash"
+#SYSTEM_FILE=$HOME/.aish/system/operate.txt
+MODEL="gemini-1.5-pro"
+SYSTEM_FILE=$HOME/.aish/system/default.txt
+
+function make_message
+{
+  aish_flush_script_log
+  aish_rollout
+  messages=$1
+  query=$2
+  echo '{"contents":[' > $messages
+
+  system_input=$(jq -Rs '.' < $SYSTEM_FILE)
+  echo '  {"role": "user", "parts":[{"text": '"$system_input"'}]},' >> $messages
+
+  for f in $AISH_SESSION/part_*;
+  do
+    input=$(jq -Rs '.' < $f)
+    if [[ $f =~ "_user.txt" ]]; then
+      echo '  {"role": "user", "parts":[{"text": '"$input"'}]},' >> $messages
+    else
+      echo '  {"role": "model", "parts":[{"text": '"$input"'}]},' >> $messages
+    fi
+  done
+
+  user_input=$(echo -e "----\n# user message:\n$query" | jq -Rs '.')
+  echo '  {"role": "user", "parts":[{"text": '"$user_input"'}]}' >> $messages
+
+  echo ']}' >> $messages
+}
+
+function send_request
+{
+  request_data=$(cat $1)
+  echo "$request_data" >> $AISH_SESSION/log.txt
+
+  response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$GOOGLE_API_KEY \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d "$request_data")
+
+  text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
+
+  if [ "$text" == "null" -o -z "$text" ];
+  then
+    echo "$response"
+    exit 1
+  fi
+
+  echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
+
+  aish_flush_script_log
+  aish_truncate_script_log
+}
