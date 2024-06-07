@@ -6,6 +6,11 @@ This command sends console input and output directly as requests to each API, so
 
 # Installation
 
+## Prerequired
+
+- jq
+- curl
+
 ```bash
 git clone https://github.com/lambda-code-gk/aish.git
 cd aish
