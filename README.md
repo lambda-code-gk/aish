@@ -2,6 +2,8 @@
 
 The AISH is an assistant operator for Linux.
 
+This command sends console input and output directly as requests to each API, so please be very careful not to inadvertently send requests of enormous size or sensitive information. Use it at your own risk.
+
 # Installation
 
 ```bash
