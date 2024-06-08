@@ -27,3 +27,28 @@ function aish_calc_message_size
   sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/tmp_user.txt
   env LANG=C du --apparent-size -ch $(find $AISH_SESSION -name 'part_*') $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
 }
+function aish_pickup_codeblock
+{
+  start_marker='```'
+  end_marker='```'
+
+  file_num=1
+
+  rm -f $AISH_SESSION/code_block_*
+
+  while IFS= read -r line; do
+    if [[ "$line" == "$start_marker"* ]]; then
+      file_name="$AISH_SESSION/code_block_$file_num.txt"
+      #exec >> "$file_name"
+
+      while IFS= read -r code_line; do
+        if [[ "$code_line" == "$end_marker" ]]; then
+          break
+        fi
+        echo "$code_line" >> "$file_name"
+      done
+
+      file_num=$((file_num + 1))
+    fi
+  done
+}

@@ -1,0 +1,8 @@
+#!/usr/bin/bash
+
+message_file=$AISH_SESSION/messages.txt
+
+make_message $message_file "$*"
+send_request $message_file | tee $AISH_SESSION/response.txt | aish_pickup_codeblock
+cat $AISH_SESSION/response.txt
+

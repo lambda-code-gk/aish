@@ -20,9 +20,4 @@ then
 fi
 
 . $task/conf
-
-message_file=$AISH_SESSION/messages.txt
-
-make_message $message_file "$*"
-send_request $message_file
-
+. $task/execute
