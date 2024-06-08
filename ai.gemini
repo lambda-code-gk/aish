@@ -3,7 +3,6 @@
 #MODEL="gemini-1.5-flash"
 #SYSTEM_FILE=$HOME/.aish/system/operate.txt
 MODEL="gemini-1.5-pro"
-SYSTEM_FILE=$HOME/.aish/system/default.txt
 
 function make_message
 {
@@ -12,9 +11,6 @@ function make_message
   messages=$1
   query=$2
   echo '{"contents":[' > $messages
-
-  system_input=$(jq -Rs '.' < $SYSTEM_FILE)
-  echo '  {"role": "user", "parts":[{"text": '"$system_input"'}]},' >> $messages
 
   for f in $AISH_SESSION/part_*;
   do
