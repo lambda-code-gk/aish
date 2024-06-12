@@ -25,8 +25,26 @@ function aish_calc_message_size
 {
   aish_flush_script_log
   sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/tmp_user.txt
-  env LANG=C du --apparent-size -ch $(find $AISH_SESSION -name 'part_*') $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
+  env LANG=C du --apparent-size -ch $(aish_list_parts) $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
 }
+function aish_list_parts
+{
+  if [[ -z "$1" ]]; then
+    max_send=$AISH_MAX_SEND_MESSAGE
+  else
+    max_send=$1
+  fi
+  if [[ -z "$max_send" ]]; then
+    echo $AISH_SESSION/part_*
+    return
+  fi
+  files=$(find $AISH_SESSION -name 'part_*')
+  if [[ -z "$files" ]]; then
+    return
+  fi
+  ls $files | tail -n $max_send
+}
+
 function aish_pickup_codeblock
 {
   start_marker='```'

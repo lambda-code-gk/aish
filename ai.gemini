@@ -10,9 +10,11 @@ function make_message
   aish_rollout
   messages=$1
   query=$2
+  parts=$(aish_list_parts $3)
+
   echo '{"contents":[' > $messages
 
-  for f in $AISH_SESSION/part_*;
+  for f in $parts;
   do
     input=$(jq -Rs '.' < $f)
     if [[ $f =~ "_user.txt" ]]; then
