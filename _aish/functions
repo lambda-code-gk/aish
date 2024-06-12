@@ -37,12 +37,12 @@ function aish_pickup_codeblock
   rm -f $AISH_SESSION/code_block_*
 
   while IFS= read -r line; do
-    if [[ "$line" == "$start_marker"* ]]; then
+    if [[ "$line" =~ ^\ *"$start_marker"* ]]; then
       file_name="$AISH_SESSION/code_block_$file_num.txt"
       #exec >> "$file_name"
 
       while IFS= read -r code_line; do
-        if [[ "$code_line" == "$end_marker" ]]; then
+        if [[ "$code_line" =~ ^\ *"$end_marker" ]]; then
           break
         fi
         echo "$code_line" >> "$file_name"
