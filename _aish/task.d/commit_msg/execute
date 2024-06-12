@@ -2,11 +2,13 @@
 
 message_file=$AISH_SESSION/messages.txt
 
-make_message $message_file "これから提供するファイルを読んで下さい"
+make_message $message_file "これから提供するログと変更点を読んで下さい"
 send_request $message_file
 echo ---
+echo "# log"
 git --no-pager log -n 5
 echo ---
+echo "# diff"
 git --no-pager diff --cached
 echo ---
 make_message $message_file "上記のdiffから意図を抽出しコミットメッセージを書いて下さい"
