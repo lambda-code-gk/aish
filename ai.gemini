@@ -48,7 +48,7 @@ function send_request
     exit 1
   fi
 
-  echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d%H%M%S)_assistant.txt
+  echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
   echo "$text" | aish_pickup_codeblock
 
   aish_flush_script_log

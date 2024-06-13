@@ -11,7 +11,7 @@ function aish_truncate_script_log
 function aish_rollout
 {
   aish_flush_script_log
-  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d%H%M%S)_user.txt
+  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
   aish_truncate_script_log
 }
 function aish_clear
@@ -20,6 +20,23 @@ function aish_clear
   aish_flush_script_log
   aish_truncate_script_log
   clear
+}
+function aish_ls
+{
+  cd $AISH_SESSION
+  ls * | grep 'part_*' | nl
+  cd - > /dev/null
+}
+function aish_rm_last
+{
+  cd $AISH_SESSION
+  files="$(ls | grep 'part_*')"
+  if [[ -z "$files" ]]; then
+    return
+  fi
+  last="$(echo "$files" | tail -n 1)"
+  rm -v $last
+  cd - > /dev/null
 }
 function aish_calc_message_size
 {
