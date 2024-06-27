@@ -38,7 +38,7 @@ function send_request
   response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$GOOGLE_API_KEY \
     -H 'Content-Type: application/json' \
     -X POST \
-    -d "$request_data")
+    --data-binary @${1})
 
   text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
 
