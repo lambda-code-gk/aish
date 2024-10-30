@@ -1,10 +1,59 @@
 #!/bin/bash
 
-session=$(mktemp)
-rm $session
-mkdir $session
+# Function to display usage
+usage() {
+    echo "Usage: $0 [-h] [-d directory] <command> [args...]"
+    echo "  -h            Display this help message."
+    echo "  -d directory  Specify a directory for the session."
+    echo "  <command>     Command to execute (e.g., ls, start, stop)."
+    echo "  [args...]     Arguments for the command."
+    exit 1
+}
+
+# Parse command-line options
+while getopts ":hd:" opt; do
+    case ${opt} in
+        h )
+            usage
+            ;;
+        d )
+            session=$OPTARG
+            ;;
+        \? )
+            echo "Invalid option: -$OPTARG" 1>&2
+            usage
+            ;;
+        : )
+            echo "Invalid option: -$OPTARG requires an argument" 1>&2
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND -1))
+
+# Handle the command
+command=$1
+shift
+
+if [ ! -z "$command" ]; then
+    . $HOME/.aish/functions
+    func_name="aish_${command}"
+    $func_name $@
+    exit $?
+fi
+
+# If no directory is specified, use mktemp
+if [ -z "$session" ]; then
+    session=$(mktemp -d)
+else
+    mkdir -p $session
+fi
+
 export AISH_SESSION="$session"
 export AISH_LOGFILE="$session/script.log"
+
+
+# No command specified, start a new session
 script -O $AISH_LOGFILE
 #script -f -c 'bash --rcfile <(echo ". $HOME/.aish/aishrc; exec bash")' -O $AISH_LOGFILE
 echo "end"
