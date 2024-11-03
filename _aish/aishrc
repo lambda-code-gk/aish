@@ -1,11 +1,13 @@
 #!/bin/bash
 
+#set -x
+
 . $HOME/.aish/functions
 
 bind -x '"\C-l": aish_clear'
 
 export PS1_ORG=$PS1
-export PROMPT_COMMAND='PS1="(aish:$(aish_calc_message_size))$PS1_ORG"'
+export PROMPT_COMMAND='PS1="(aish:$(detail.aish_calc_message_size))$PS1_ORG"'
 export AISH_PID=$PPID
 export AISH_MAX_SEND_MESSAGE=5
 

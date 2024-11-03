@@ -6,11 +6,11 @@ MODEL="gemini-1.5-pro"
 
 function make_message
 {
-  aish_flush_script_log
+  detail.aish_flush_script_log
   aish_rollout
   messages=$1
   query=$2
-  parts=$(aish_list_parts $3)
+  parts=$(detail.aish_list_parts $3)
 
   echo '{"contents":[' > $messages
 
@@ -49,8 +49,8 @@ function send_request
   fi
 
   echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
-  echo "$text" | aish_pickup_codeblock
+  echo "$text" | detail.aish_pickup_codeblock
 
-  aish_flush_script_log
-  aish_truncate_script_log
+  detail.aish_flush_script_log
+  detail.aish_truncate_script_log
 }

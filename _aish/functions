@@ -1,32 +1,38 @@
 #!/bin/bash
 
-function aish_flush_script_log
+# flush terminal log to the file
+function detail.aish_flush_script_log
 {
   kill -USR1 $AISH_PID
 }
-function aish_truncate_script_log
+# truncate the terminal log
+function detail.aish_truncate_script_log
 {
   truncate -s 0 $AISH_LOGFILE
 }
+# write the terminal log to the part file
 function aish_rollout
 {
-  aish_flush_script_log
+  detail.aish_flush_script_log
   sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
-  aish_truncate_script_log
+  detail.aish_truncate_script_log
 }
+# clear the part files
 function aish_clear
 {
   rm -f $AISH_SESSION/part_*
-  aish_flush_script_log
-  aish_truncate_script_log
+  detail.aish_flush_script_log
+  detail.aish_truncate_script_log
   clear
 }
+# list the part files
 function aish_ls
 {
   cd $AISH_SESSION
   ls * | grep 'part_*' | nl
   cd - > /dev/null
 }
+# remove the last part file
 function aish_rm_last
 {
   cd $AISH_SESSION
@@ -38,13 +44,15 @@ function aish_rm_last
   rm -v $last
   cd - > /dev/null
 }
-function aish_calc_message_size
+# calculate the message size
+function detail.aish_calc_message_size
 {
-  aish_flush_script_log
+  detail.aish_flush_script_log
   sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/tmp_user.txt
-  env LANG=C du --apparent-size -ch $(aish_list_parts) $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
+  env LANG=C du --apparent-size -ch $(detail.aish_list_parts) $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
 }
-function aish_list_parts
+# list the part files for the message that is sent
+function detail.aish_list_parts
 {
   if [[ -z "$1" ]]; then
     max_send=$AISH_MAX_SEND_MESSAGE
@@ -61,8 +69,8 @@ function aish_list_parts
   fi
   ls $files | tail -n $max_send
 }
-
-function aish_pickup_codeblock
+# write the code block to individual files
+function detail.aish_pickup_codeblock
 {
   start_marker='```'
   end_marker='```'

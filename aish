@@ -7,6 +7,12 @@ usage() {
     echo "  -d directory  Specify a directory for the session."
     echo "  <command>     Command to execute (e.g., ls, start, stop)."
     echo "  [args...]     Arguments for the command."
+    echo ""
+    echo "Available commands:"
+    echo "  rollout                Write the terminal log to the part file."
+    echo "  clear                  Clear the console and part files."
+    echo "  ls                     List the part files."
+    echo "  rm_last                Remove the last part file."
     exit 1
 }
 
