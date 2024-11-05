@@ -1,4 +1,4 @@
 #!/bin/bash
 
-. $APP_DIR/ai.gpt
+. $AISH_HOME/ai.gpt
 

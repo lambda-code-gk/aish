@@ -1,6 +1,6 @@
 #!/bin/bash
 
-. $APP_DIR/ai.gpt
+. $AISH_HOME/ai.gpt
 
 TEMPERATURE=0.0
 SYSTEM_FILE=$AISH_HOME/system/operate.txt

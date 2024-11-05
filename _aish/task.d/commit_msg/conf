@@ -1,4 +1,4 @@
 #!/bin/bash
 
-. $APP_DIR/ai.gemini
+. $AISH_HOME/ai.gemini
 
