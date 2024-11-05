@@ -42,7 +42,7 @@ command=$1
 shift
 
 if [ ! -z "$command" ]; then
-    . $HOME/.aish/functions
+    . $AISH_HOME/functions
     func_name="aish_${command}"
     $func_name $@
     exit $?
@@ -61,6 +61,6 @@ export AISH_LOGFILE="$session/script.log"
 
 # No command specified, start a new session
 script -O $AISH_LOGFILE
-#script -f -c 'bash --rcfile <(echo ". $HOME/.aish/aishrc; exec bash")' -O $AISH_LOGFILE
+#script -f -c 'bash --rcfile <(echo ". $AISH_HOME/aishrc; exec bash")' -O $AISH_LOGFILE
 echo "end"
 #rm -rf $session

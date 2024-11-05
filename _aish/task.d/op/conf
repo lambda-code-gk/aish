@@ -3,4 +3,4 @@
 . $APP_DIR/ai.gpt
 
 TEMPERATURE=0.0
-SYSTEM_FILE=$HOME/.aish/system/operate.txt
+SYSTEM_FILE=$AISH_HOME/system/operate.txt

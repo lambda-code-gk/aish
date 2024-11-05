@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 
-. $HOME/.aish/functions
+. $AISH_HOME/functions
 
 #set -x
 
@@ -12,10 +12,10 @@ function puts_error
 
 APP_DIR=$(dirname "$(readlink -f "$0")")
 
-task="$HOME/.aish/task.d/default"
-if [ -e "$HOME/.aish/task.d/$1" ];
+task="$AISH_HOME/task.d/default"
+if [ -e "$AISH_HOME/task.d/$1" ];
 then
-  task="$HOME/.aish/task.d/$1"
+  task="$AISH_HOME/task.d/$1"
   shift
 fi
 

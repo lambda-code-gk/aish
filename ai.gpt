@@ -11,7 +11,7 @@ ENDPOINT="https://api.openai.com/v1/chat/completions"
 MODEL="gpt-4o"
 #MODEL="gpt-3.5-turbo"
 TEMPERATURE=0.7
-SYSTEM_FILE=$HOME/.aish/system/default.txt
+SYSTEM_FILE=$AISH_HOME/system/default.txt
 
 # メッセージ作成
 function make_message

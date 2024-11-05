@@ -2,7 +2,16 @@
 
 #set -x
 
-. $HOME/.aish/functions
+
+if [ -z "$AISH_HOME" ]; then
+  export AISH_HOME="$HOME/.aish"
+fi
+
+if [ -e "$HOME/.apikey" ]; then
+  . $HOME/.apikey
+fi
+
+. $AISH_HOME/functions
 
 bind -x '"\C-l": aish_clear'
 
