@@ -6,7 +6,6 @@ MODEL="gemini-1.5-pro"
 
 function make_message
 {
-  detail.aish_flush_script_log
   aish_rollout
   messages=$1
   query=$2

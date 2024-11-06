@@ -16,7 +16,6 @@ SYSTEM_FILE=$AISH_HOME/system/default.txt
 # メッセージ作成
 function make_message
 {
-  detail.aish_flush_script_log
   aish_rollout
   messages=$1
   query=$2
