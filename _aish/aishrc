@@ -20,3 +20,38 @@ export PROMPT_COMMAND='PS1="(aish:$(detail.aish_calc_message_size))$PS1_ORG"'
 export AISH_PID=$PPID
 export AISH_MAX_SEND_MESSAGE=5
 
+
+# completion for ai subcommands
+function _ai_subcommand_completions
+{
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        opts=$(ls $AISH_HOME/task.d)
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        return 0
+    fi
+}
+
+complete -F _ai_subcommand_completions ai
+
+# completion for aish subcommands
+function _aish_subcommand_completions
+{
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        opts=$(declare -f | grep -oP '^aish_\K\w+')
+        opts+=" $(compgen -c | grep -oP '^aish_\K\w+')"
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        return 0
+    fi
+}
+
+complete -F _aish_subcommand_completions aish
