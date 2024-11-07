@@ -11,7 +11,6 @@ ENDPOINT="https://api.openai.com/v1/chat/completions"
 MODEL="gpt-4o"
 #MODEL="gpt-3.5-turbo"
 TEMPERATURE=0.7
-SYSTEM_FILE=$AISH_HOME/system/default.txt
 
 # メッセージ作成
 function make_message
@@ -19,7 +18,9 @@ function make_message
   aish_rollout
   messages=$1
   query=$2
-  parts=$(detail.aish_list_parts $3)
+  system=$3
+  parts=$(detail.aish_list_parts)
+
   echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": [' > $messages
 
   for f in $parts;
@@ -32,10 +33,12 @@ function make_message
     fi
   done
   user_input=$(echo -e "----\nuser message for assistant:\n$query" | jq -Rs '.')
-  echo '  {"role": "user", "content": '"$user_input"'},' >> $messages
+  echo '  {"role": "user", "content": '"$user_input"'}' >> $messages
 
-  system_input=$(jq -Rs '.' < $SYSTEM_FILE)
-  echo '  {"role": "system", "content": '"$system_input"'}' >> $messages
+  if [ ! -z "$system" ];
+  then
+    echo '  ,{"role": "system", "content": "'"$system"'"}' >> $messages
+  fi
   echo ']}' >> $messages
 }
 

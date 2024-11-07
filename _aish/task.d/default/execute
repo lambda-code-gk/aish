@@ -1,7 +1,9 @@
 #!/usr/bin/bash
 
 message_file=$AISH_SESSION/messages.txt
+system_instruction="Act as an AI assistant to help with console operations. \
+Since the output is for the console, keep your responses simple and concise."
 
-make_message $message_file "$*"
+make_message $message_file "$*" "$system_instruction"
 send_request $message_file
 
