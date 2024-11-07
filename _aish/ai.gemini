@@ -1,7 +1,6 @@
 #!/bin/bash
 
 #MODEL="gemini-1.5-flash"
-#SYSTEM_FILE=$AISH_HOME/system/operate.txt
 MODEL="gemini-1.5-pro"
 
 function make_message
@@ -9,9 +8,17 @@ function make_message
   aish_rollout
   messages=$1
   query=$2
-  parts=$(detail.aish_list_parts $3)
+  system=$3
+  parts=$(detail.aish_list_parts)
 
-  echo '{"contents":[' > $messages
+  echo '{' > $messages
+
+  if [ ! -z "$system" ];
+  then
+    echo '"system_instruction": {"parts": {"text": "'$system'"}},' >> $messages
+  fi
+
+  echo '"contents":[' >> $messages
 
   for f in $parts;
   do
