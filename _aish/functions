@@ -78,6 +78,7 @@ function detail.aish_pickup_codeblock
   while IFS= read -r line; do
     if [[ "$line" =~ ^\ *"$start_marker"* ]]; then
       file_name="$AISH_SESSION/codeblock_$(date +%Y%m%d_%H%M%S)_$(printf '%02d' $file_num).txt"
+      file_num=$((file_num + 1))
       while IFS= read -r code_line; do
         if [[ "$code_line" =~ ^\ *"$end_marker" ]]; then
           break
