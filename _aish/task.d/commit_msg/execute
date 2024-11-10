@@ -11,12 +11,20 @@ echo ----
 echo "# diff"
 git --no-pager diff --cached
 echo ----
-codeblock_count=$(wc -l $AISH_SESSION/codeblock_* | awk '{print $1}')
-make_message $message_file "上記のdiffから意図を抽出しコミットメッセージを書いて下さい"
+prev_codeblock_count=$(ls $AISH_SESSION/codeblock_* | wc -l)
+make_message $message_file "上記のdiffから意図を抽出しコミットメッセージを書いて下さい。"
 send_request $message_file
-if [ $codeblock_count -gt 0 ];
+codeblock_count=$(ls $AISH_SESSION/codeblock_* | wc -l)
+if [ $codeblock_count -gt $prev_codeblock_count ];
+  ai_generated_message=$(ls $AISH_SESSION/part_*_assistant.txt | tail -n 1)
+  commit_message_file=$AISH_SESSION/commit_message.txt
 then
-  commit_message_file=$(ls -t $AISH_SESSION/codeblock_* | tail -n 1)
-  echo "commit message: $commit_message_file"
-  git commit --template=$commit_message_file
+  ai_generated_message=$(ls $AISH_SESSION/codeblock_* | tail -n 1)
+  commit_message_file=$AISH_SESSION/commit_message.txt
 fi
+echo "This is an auto-generated commit message" > $commit_message_file
+echo "If you want to commit, please delete this comment" >> $commit_message_file
+echo "####" >> $commit_message_file
+cat $ai_generated_message >> $commit_message_file
+echo "commit message: $commit_message_file"
+git commit --template=$commit_message_file
