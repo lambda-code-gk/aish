@@ -53,6 +53,8 @@ function send_request
     -H "Authorization: Bearer $API_KEY" \
     -d "$request_data")
 
+  echo "$response" >> $AISH_SESSION/log.txt
+
   # レスポンスの"content"部分を抽出して出力
   echo "$response" | jq -r '.choices[0].message.content' | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
   echo "$response" | detail.aish_pickup_codeblock

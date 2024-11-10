@@ -46,6 +46,8 @@ function send_request
     -X POST \
     --data-binary @${1})
 
+  echo "$response" >> $AISH_SESSION/log.txt
+
   text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
 
   if [ "$text" == "null" -o -z "$text" ];
