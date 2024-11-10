@@ -14,7 +14,8 @@ function detail.aish_truncate_script_log
 function aish_rollout
 {
   detail.aish_flush_script_log
-  sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
+  #sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
+  cat $AISH_LOGFILE | python3 $AISH_HOME/clean_terminal_log.py > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
   detail.aish_truncate_script_log
 }
 # clear the part files
