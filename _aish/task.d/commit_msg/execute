@@ -2,6 +2,14 @@
 
 message_file=$AISH_SESSION/messages.txt
 
+function count_file_if_exists() {
+  if [ -e $1 ]; then
+    echo $(ls $1 | wc -l)
+  else
+    echo 0
+  fi
+}
+
 make_message $message_file "これから提供するログと変更点を読んで下さい"
 #send_request $message_file
 echo ----
@@ -11,17 +19,15 @@ echo ----
 echo "# diff"
 git --no-pager diff --cached
 echo ----
-prev_codeblock_count=$(ls $AISH_SESSION/codeblock_* | wc -l)
+prev_codeblock_count=$(count_file_if_exists $AISH_SESSION/codeblock_*)
 make_message $message_file "上記のdiffから意図を抽出しコミットメッセージを書いて下さい。"
 send_request $message_file
-codeblock_count=$(ls $AISH_SESSION/codeblock_* | wc -l)
-if [ $codeblock_count -gt $prev_codeblock_count ];
-  ai_generated_message=$(ls $AISH_SESSION/part_*_assistant.txt | tail -n 1)
-  commit_message_file=$AISH_SESSION/commit_message.txt
-then
+codeblock_count=$(count_file_if_exists $AISH_SESSION/codeblock_*)
+ai_generated_message=$(ls $AISH_SESSION/part_*_assistant.txt | tail -n 1)
+if [ $codeblock_count -gt $prev_codeblock_count ]; then
   ai_generated_message=$(ls $AISH_SESSION/codeblock_* | tail -n 1)
-  commit_message_file=$AISH_SESSION/commit_message.txt
 fi
+commit_message_file=$AISH_SESSION/commit_message.txt
 echo "This is an auto-generated commit message" > $commit_message_file
 echo "If you want to commit, please delete this comment" >> $commit_message_file
 echo "####" >> $commit_message_file
