@@ -37,7 +37,7 @@ function make_message
 
   if [ ! -z "$system" ];
   then
-    echo '  ,{"role": "system", "content": "'"$system"'"}' >> $messages
+    echo '  ,{"role": "system", "content": '"$system"'}' >> $messages
   fi
   echo ']}' >> $messages
 }

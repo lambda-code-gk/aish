@@ -15,7 +15,7 @@ function make_message
 
   if [ ! -z "$system" ];
   then
-    echo '"system_instruction": {"parts": {"text": "'$system'"}},' >> $messages
+    echo '"system_instruction": {"parts": {"text": '$system'}},' >> $messages
   fi
 
   echo '"contents":[' >> $messages
