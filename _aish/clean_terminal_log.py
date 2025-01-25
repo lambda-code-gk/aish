@@ -86,6 +86,17 @@ class Buffer:
         self.lines = ['']
         self.cursor.set_position(0, 0)
 
+    def process_backspace(self):
+        line = self.get_line(self.cursor.row)
+        if self.cursor.col > 0:
+            self.set_line(self.cursor.row, line[:self.cursor.col - 1] + line[self.cursor.col:])
+            self.cursor.move_left()
+
+    def insert_text(self, char):
+        line = self.get_line(self.cursor.row)
+        self.set_line(self.cursor.row, line[:self.cursor.col] + char + line[self.cursor.col:])
+        self.cursor.move_right()
+
     # カーソル操作の移譲関数
     def move_cursor_left(self, steps=1):
         self.cursor.move_left(steps)
@@ -181,7 +192,7 @@ def clean_script_log(input_stream=sys.stdin, output_stream=sys.stdout):
                                     buffer.delete_from_start_of_screen()
                                 elif seq == '\x1B[2J':  # 画面全体を消去
                                     buffer.delete_screen()
-                            elif 'H' in seq:  # カーソル位置の設定
+                            elif seq.endswith('H'):  # カーソル位置の設定
                                 parts = seq[2:-1].split(';')
                                 if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                                     buffer.set_cursor_position(int(parts[0]) - 1, int(parts[1]) - 1)
@@ -189,13 +200,11 @@ def clean_script_log(input_stream=sys.stdin, output_stream=sys.stdout):
                         else:
                             i += 1
                 elif line[i] == '\x08':  # バックスペースの処理
-                    if buffer.cursor.col > 0:
-                        buffer.move_cursor_left()
-                        line_content = buffer.get_line(buffer.cursor.row)
-                        buffer.set_line(buffer.cursor.row, line_content[:buffer.cursor.col] + line_content[buffer.cursor.col + 1:])
+                    buffer.process_backspace()
                     i += 1
                 elif line[i] == '\r':  # キャリッジリターンの処理
-                    i += 1  # 無視して次の文字へ
+                    buffer.set_cursor_position(buffer.cursor.row, 0)
+                    i += 1
                 elif line[i] == '\n':  # ラインフィードの処理
                     buffer.set_cursor_position(buffer.cursor.row + 1, 0)
                     if buffer.cursor.row >= len(buffer.lines):
@@ -206,12 +215,7 @@ def clean_script_log(input_stream=sys.stdin, output_stream=sys.stdout):
                 elif line[i] == '\x00':  # ヌル文字の処理
                     i += 1  # 無視して次の文字へ
                 else:
-                    line_content = buffer.get_line(buffer.cursor.row)
-                    if buffer.cursor.col < len(line_content):
-                        buffer.set_line(buffer.cursor.row, line_content[:buffer.cursor.col] + line[i] + line_content[buffer.cursor.col + 1:])
-                    else:
-                        buffer.set_line(buffer.cursor.row, line_content + line[i])
-                    buffer.move_cursor_right()
+                    buffer.insert_text(line[i])
                     i += 1
         
         # 出力バッファをまとめて出力
