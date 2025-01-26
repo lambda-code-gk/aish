@@ -2,6 +2,7 @@
 
 #MODEL="gemini-1.5-flash"
 MODEL="gemini-1.5-pro"
+LOG=$AISH_SESSION/log.json
 
 function make_message
 {
@@ -39,14 +40,16 @@ function make_message
 function send_request
 {
   request_data=$(cat $1)
-  echo "$request_data" >> $AISH_SESSION/log.txt
+  #echo '{"type"="request","timesamp"="$(date +%s%3N)",' "$request_data" >> $LOG
+  detail.aish_log_request "$request_data"
 
   response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent?key=$GOOGLE_API_KEY \
     -H 'Content-Type: application/json' \
     -X POST \
     --data-binary @${1})
 
-  echo "$response" >> $AISH_SESSION/log.txt
+  #echo "$response" >> $LOG
+  detail.aish_log_response "$response"
 
   text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
 

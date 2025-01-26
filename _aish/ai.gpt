@@ -11,6 +11,7 @@ ENDPOINT="https://api.openai.com/v1/chat/completions"
 MODEL="gpt-4o"
 #MODEL="gpt-3.5-turbo"
 TEMPERATURE=0.7
+LOG=$AISH_SESSION/log.json
 
 # メッセージ作成
 function make_message
@@ -45,7 +46,8 @@ function make_message
 function send_request
 {
   request_data=$(cat $1)
-  echo "$request_data" >> $AISH_SESSION/log.txt
+  #echo "$request_data" >> $AISH_SESSION/log.txt
+  detail.aish_log_request "$request_data"
 
   # curlコマンドを使ってリクエストを送信
   response=$(curl -s -X POST $ENDPOINT \
@@ -53,7 +55,8 @@ function send_request
     -H "Authorization: Bearer $API_KEY" \
     -d "$request_data")
 
-  echo "$response" >> $AISH_SESSION/log.txt
+  #echo "$response" >> $AISH_SESSION/log.txt
+  detail.aish_log_response "$response"
 
   # レスポンスの"content"部分を抽出して出力
   echo "$response" | jq -r '.choices[0].message.content' | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt

@@ -89,3 +89,15 @@ function detail.aish_pickup_codeblock
     fi
   done
 }
+
+function detail.aish_log_request
+{
+  echo '{"type":"request","timestamp":"'$(date +%Y-%m-%dT%H:%M:%S.%NZ)'", "payload":' >> $LOG
+  echo "$1"'}' >> $LOG
+}
+function detail.aish_log_response
+{
+  echo '{"type":"response","timestamp":"'$(date +%Y-%m-%dT%H:%M:%S.%NZ)'", "payload":' >> $LOG
+  echo "$1"'}' >> $LOG
+}
+

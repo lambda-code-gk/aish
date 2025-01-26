@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 message_file=$AISH_SESSION/messages.txt
-
-make_message $message_file "$*"
+system_instruction=$(cat $AISH_HOME/task.d/op/system_instruction.txt | jq -Rs '.')
+make_message $message_file "$*" "$system_instruction"
 send_request $message_file
 
