@@ -86,6 +86,10 @@ function detail.aish_pickup_codeblock
         fi
         echo "$code_line" >> "$file_name"
       done
+    else
+      if [[ "$line" =~ \`.+\` ]]; then
+        echo "$line" >> "$AISH_SESSION/codeblock_$(date +%Y%m%d_%H%M%S)_$(printf '%02d' $file_num).txt"
+      fi
     fi
   done
 }

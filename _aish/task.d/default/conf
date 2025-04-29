@@ -1,4 +1,4 @@
 #!/bin/bash
 
-. $AISH_HOME/ai.gpt
+. $AISH_HOME/ai.gemini
 
