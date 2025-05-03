@@ -35,6 +35,18 @@ function aish_ls
   ls * | grep 'part_*' | nl
   cd - > /dev/null
 }
+function aish_last
+{
+  if [[ "$1" == "-f" ]]; then
+    files="$(ls $AISH_SESSION/* | grep 'part_*')"
+  else
+    files="$(ls $AISH_SESSION | grep 'part_*')"
+  fi
+  if [[ -z "$files" ]]; then
+    return
+  fi
+  echo "$(echo "$files" | tail -n 1)"
+}
 # remove the last part file
 function aish_rm_last
 {
