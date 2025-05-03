@@ -1,0 +1,4 @@
+#!/bin/bash
+
+. $AISH_HOME/ai.gemini
+
