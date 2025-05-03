@@ -22,6 +22,8 @@ function aish_rollout
 function aish_clear
 {
   rm -f $AISH_SESSION/part_*
+  rm -f $AISH_SESSION/codeblock_*
+  rm -f $AISH_SESSION/approved_lines
   detail.aish_flush_script_log
   detail.aish_truncate_script_log
   clear
@@ -105,3 +107,49 @@ function detail.aish_log_response
   echo "$1"'}' >> $LOG
 }
 
+function detail.aish_filter_command
+{
+  local quiet_mode=""
+  if [[ "$1" == "-q" ]]; then
+    quiet_mode="-q"
+  fi
+  local display_mode=""
+  if [[ "$1" == "-d" ]]; then
+    display_mode="--color=always"
+  fi
+  if [ ! -e $AISH_SESSION/approved_lines ]; then
+    touch $AISH_SESSION/approved_lines
+  fi
+  grep -i $display_mode -E -f $AISH_HOME/default_blocklist_patterns | grep -v $quiet_mode -F -f $AISH_SESSION/approved_lines
+}
+
+function detail.aish_filter_sensitive_info
+{
+  local session_text="$1"
+  local matched=false
+
+  if echo "\"$session_text\"" | detail.aish_filter_command -q; then
+    matched=true
+    echo "⚠️  セキュリティ警告: 以下のパターンにマッチしました"
+    echo "パターン: $pattern"
+    echo "該当箇所:"
+    echo "----------------------------------------"
+    echo "\"$session_text\"" | detail.aish_filter_command -d
+    echo "----------------------------------------"
+    echo
+  fi
+
+  if [ "$matched" = true ]; then
+    echo -n "このまま送信しますか？ ([y]es / [n]o / [a]lways arrow this line): "
+    read -r confirm
+    if [[ "$confirm" == "a" ]]; then
+      echo "\"$session_text\"" | detail.aish_filter_command >> $AISH_SESSION/approved_lines
+      echo "⚠️  セキュリティ警告: 以降このテキストは確認しません"
+    elif [[ "$confirm" != "y" ]]; then
+      echo "❌  送信を中止しました。"
+      return 1
+    fi
+  fi
+
+  return 0
+}

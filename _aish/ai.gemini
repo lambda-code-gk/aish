@@ -27,6 +27,9 @@ function make_message
 
   for f in $parts;
   do
+    if ! detail.aish_filter_sensitive_info "`cat $f`"; then
+      exit 1
+    fi
     input=$(jq -Rs '.' < $f)
     if [[ $f =~ "_user.txt" ]]; then
       echo '  {"role": "user", "parts":[{"text": '"$input"'}]},' >> $messages
