@@ -52,7 +52,7 @@ Script started, output log file is '/tmp/tmp.hbzjvInYGu/script.log'.
 ```
 If you successfully start aish, you will see a prompt like (aish:109)$, where 109 represents the size of the history (not a token).
 
-You can use a `ai` command to interact with the GPT-4o or Gemini 1.5 Pro.
+You can use a `ai` command to interact with the GPT or Gemini.
 ```bash
 (aish:109)$ ai "What is the meaning of life?"
 ```
