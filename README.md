@@ -67,8 +67,8 @@ You can clear the user message by using the Ctrl+l key combination.
 
 You can specify a task name as the first argument to the `ai` command. The following tasks are available:
 
-- `ai default message`: Queries GPT-4. 
-- `ai gemini message`: Queries Gemini 1.5 Pro.
+- `ai default message`: Queries GPT. 
+- `ai gemini message`: Queries Gemini.
 - `ai op message`:  Generates shell scripts.
 - `ai commit_msg`: Generates a commit message from the diff of files staged in git. 
 
