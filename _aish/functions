@@ -28,6 +28,17 @@ function aish_clear
   detail.aish_truncate_script_log
   clear
 }
+function aish_mute
+{
+  aish_rollout
+  touch $AISH_SESSION/mute
+}
+function aish_unmute
+{
+  detail.aish_flush_script_log
+  detail.aish_truncate_script_log
+  rm -f $AISH_SESSION/mute
+}
 # list the part files
 function aish_ls
 {
@@ -64,6 +75,10 @@ function detail.aish_calc_message_size
 {
   detail.aish_flush_script_log
   sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/tmp_user.txt
+  if [[ -f "$AISH_SESSION"/mute ]]; then
+    echo -n "---"
+    return
+  fi
   env LANG=C du --apparent-size -ch $(detail.aish_list_parts) $AISH_SESSION/tmp_user.txt | grep 'total$' | sed -e 's/[ \t]\+total$//'
 }
 # list the part files for the message that is sent
