@@ -144,8 +144,8 @@ function detail.aish_filter_command
   if [[ "$1" == "-d" ]]; then
     display_mode="--color=always"
   fi
-  if [ ! -e $AISH_SESSION/approved_lines ]; then
-    touch $AISH_SESSION/approved_lines
+  if [ ! -e "$AISH_SESSION"/approved_lines ]; then
+    touch "$AISH_SESSION"/approved_lines
   fi
   grep -i $display_mode -E -f $AISH_HOME/default_blocklist_patterns | grep -v $quiet_mode -F -f $AISH_SESSION/approved_lines
 }
