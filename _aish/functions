@@ -70,6 +70,18 @@ function aish_rm_last
   rm -v $last
   cd - > /dev/null
 }
+function detail.aish_find_dot_aish
+{
+  current_dir=$(pwd)
+  while [ "$current_dir" != "/" ]; do
+    if [ -d "$current_dir/.aish" ]; then
+      echo "$current_dir/.aish"
+      return 0
+    fi
+    current_dir=$(dirname "$current_dir")
+  done
+  return 1
+}
 # calculate the message size
 function detail.aish_calc_message_size
 {
