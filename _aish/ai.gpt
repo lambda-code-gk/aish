@@ -61,7 +61,4 @@ function send_request
   # レスポンスの"content"部分を抽出して出力
   echo "$response" | jq -r '.choices[0].message.content' | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
   echo "$response" | detail.aish_pickup_codeblock
-
-  detail.aish_flush_script_log
-  detail.aish_truncate_script_log
 }

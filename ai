@@ -10,6 +10,16 @@ function puts_error
   echo "Error: $1" >&2
 }
 
+function cleanup_on_exit()
+{
+  # skip recording if the script is interrupted
+  detail.aish_flush_script_log
+  detail.aish_truncate_script_log
+  echo
+  exit $?
+}
+trap cleanup_on_exit EXIT INT TERM
+
 APP_DIR=$(dirname "$(readlink -f "$0")")
 
 task="$AISH_HOME/task.d/default"
