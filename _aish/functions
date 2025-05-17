@@ -192,3 +192,30 @@ function detail.aish_filter_sensitive_info
 
   return 0
 }
+
+function detail.aish_puts_as_markdown
+{
+  local header_level=1
+  if [[ "$1" == "-h" ]]; then
+    header_level="$2"
+    shift 2
+  fi
+
+  local filenames="$@"
+
+  for f in $filenames; do
+    if [[ -f "$f" ]]; then
+      echo
+      echo
+      printf '#%.0s' $(seq 1 $header_level)
+      echo " $f"
+      #echo -n "$(printf '%*s' $header_level | tr ' ' '#') $f"
+      echo '```'
+      cat "$f"
+      echo
+      echo '```'
+      echo
+      echo
+    fi
+  done
+}
