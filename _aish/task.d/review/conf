@@ -2,3 +2,4 @@
 
 . $AISH_HOME/ai.gemini
 
+description="Review the code and give feedback on the files staged for Git."

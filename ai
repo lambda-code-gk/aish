@@ -22,11 +22,35 @@ trap cleanup_on_exit EXIT INT TERM
 
 APP_DIR=$(dirname "$(readlink -f "$0")")
 
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  help="true"
+  shift
+fi
+
 task="$AISH_HOME/task.d/default"
 if [ -e "$AISH_HOME/task.d/$1" ];
 then
   task="$AISH_HOME/task.d/$1"
   shift
+fi
+
+if [[ "$help" == "true" ]];
+then
+  echo "Usage: `basename $0` [options] [task] [message]"
+  echo "Options:"
+  printf "  %s\t%s\n" "-h, --help" "Show this help message"
+  echo
+  echo "Tasks:"
+  while read -r task_dir;
+  do
+    task_name=$(basename "$task_dir")
+    if [ -e "$task_dir/conf" ]; then
+      . $task_dir/conf
+      echo -e "  $task_name\t$description"
+      description=""
+    fi
+  done < <(find "$AISH_HOME/task.d" -mindepth 1 -maxdepth 1 -type d)| column -t -s $'\t'
+  exit 0
 fi
 
 . $task/conf
