@@ -1,0 +1,26 @@
+#!/usr/bin/bash
+
+message_file=$AISH_SESSION/messages.txt
+
+dot_aish=$(detail.aish_find_dot_aish)
+sources=$(cat "$dot_aish/task.d/review/sources" 2> /dev/null)
+
+while getopts "s" opt; do
+    case $opt in
+        s) with_sources="true" ;;
+        *)  ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+system_instruction=$(detail.aish_puts_as_markdown $AISH_HOME/task.d/review/???_*.md | jq -Rs '.')
+
+# Check if sources should be included
+if [ "$with_sources" == "true" ]; then
+    detail.aish_puts_as_markdown $sources
+fi
+git --no-pager diff --cached
+
+make_message $message_file "$*" "$system_instruction"
+send_request $message_file
+
