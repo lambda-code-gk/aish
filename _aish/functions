@@ -48,15 +48,42 @@ function aish_ls
 }
 function aish_last
 {
-  if [[ "$1" == "-f" ]]; then
-    files="$(ls $AISH_SESSION/* | grep 'part_*')"
+  # show the last part file
+  # usage: aish_last [-f] [-n <number>]
+  # -f: full path
+  # -n: skip <number> of files from the end
+  # example: aish_last -f -n 2
+
+  local full_path=false
+  local skip=1
+
+  while getopts "fn:" opt; do
+    case $opt in
+      f)
+        full_path=true
+        ;;
+      n)
+        if ! [[ "$OPTARG" =~ ^[0-9]+$ ]] || [[ "$OPTARG" -lt 1 ]]; then
+          echo "Invalid argument for -n: $OPTARG" >&2
+          return 1
+        fi
+        skip="$OPTARG"
+        ;;
+      *) echo "Invalid option: -$OPTARG" >&2; return 1 ;;
+    esac
+  done
+  shift $((OPTIND - 1))
+ 
+  if [[ "$full_path" == true ]]; then
+    files="$(ls -1 "$AISH_SESSION"/part_*)"
   else
-    files="$(ls $AISH_SESSION | grep 'part_*')"
+    files="$(ls -1 "$AISH_SESSION" | grep 'part_*')"
   fi
+
   if [[ -z "$files" ]]; then
-    return
+    return 0
   fi
-  echo "$(echo "$files" | tail -n 1)"
+  echo "$files" | tail -n "$skip" | head -n 1
 }
 # remove the last part file
 function aish_rm_last
