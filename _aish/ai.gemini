@@ -1,72 +1,88 @@
 #!/bin/bash
 
+set -eo pipefail
+
 #MODEL="gemini-1.5-flash"
 #MODEL="gemini-1.5-pro"
 #MODEL="gemini-2.0-flash-exp"
 #MODEL="gemini-2.0-flash"
 #MODEL="gemini-2.5-pro-preview-03-25"
-MODEL="gemini-2.5-flash-preview-04-17"
+#MODEL="gemini-2.5-flash-preview-04-17"
+#MODEL="gemini-2.5-pro-preview-05-06"
+MODEL="gemini-2.5-flash-preview-05-20"
 
 LOG="$AISH_SESSION"/log.json
 
-function make_message
+function query
 {
-  aish_rollout
-  messages=$1
-  query=$2
-  system=$3
-  parts=$(detail.aish_list_parts)
+    system_instruction=""
+    while getopts "s:" opt; do
+        case $opt in
+            s) system_instruction=$OPTARG ;;
+            *)  ;;
+        esac
+    done
+    shift $((OPTIND - 1))
 
-  echo '{' > $messages
+    aish_rollout
 
-  if [ ! -z "$system" ];
-  then
-    echo '"system_instruction": {"parts": {"text": '$system'}},' >> $messages
-  fi
-
-  echo '"contents":[' >> $messages
-
-  for f in $parts;
-  do
-    if ! detail.aish_filter_sensitive_info "`cat $f`"; then
-      exit 1
+    files=$(detail.aish_list_parts | detail.aish_security_check)
+    if [ $? -ne 0 ]; then
+        exit 1
     fi
-    input=$(jq -Rs '.' < $f)
-    if [[ $f =~ "_user.txt" ]]; then
-      echo '  {"role": "user", "parts":[{"text": '"$input"'}]},' >> $messages
-    else
-      echo '  {"role": "model", "parts":[{"text": '"$input"'}]},' >> $messages
-    fi
-  done
-
-  user_input=$(echo -e "----\n# user message:\n$query" | jq -Rs '.')
-  echo '  {"role": "user", "parts":[{"text": '"$user_input"'}]}' >> $messages
-
-  echo ']}' >> $messages
+    echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
 }
 
-function send_request
+function make_request
 {
-  request_data=$(cat "$1")
-  #echo '{"type"="request","timesamp"="$(date +%s%3N)",' "$request_data" >> $LOG
-  detail.aish_log_request "$request_data"
+    query=$1
+    system=$2
 
-  response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/"$MODEL":generateContent?key="$GEMINI_API_KEY" \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    --data-binary @${1})
+    echo '{'
 
-  #echo "$response" >> $LOG
-  detail.aish_log_response "$response"
+    if [ ! -z "$system" ];
+    then
+      echo '"system_instruction": {"parts": {"text": '$(echo "$system" | json_string)'}},'
+    fi
 
-  text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
+    echo '"contents":['
 
-  if [ "$text" == "null" -o -z "$text" ];
-  then
-    echo "$response"
-    exit 1
-  fi
+    while IFS= read -r file; do
+        if [[ "$file" =~ "_user.txt" ]]; then
+            echo '  {"role": "user", "parts":[{"text": '$(cat $file | json_string)'}]},'
+        else
+            echo '  {"role": "model", "parts":[{"text": '$(cat $file | json_string)'}]},'
+        fi
+    done
+    user_input=$(echo -e "----\n# user message:\n$query" | json_string)
+    echo '  {"role": "user", "parts":[{"text": '"$user_input"'}]}'
+    echo ']'
+    echo '}'
+}
 
-  echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
-  echo "$text" | detail.aish_pickup_codeblock
+function send_to_llm
+{
+    REQUEST_FILE="$AISH_SESSION/request.txt"
+    cat > $REQUEST_FILE
+    request_data=$(cat "$REQUEST_FILE")
+
+    detail.aish_log_request "$request_data"
+
+    response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/"$MODEL":generateContent?key="$GEMINI_API_KEY" \
+      -H 'Content-Type: application/json' \
+      -X POST \
+      --data-binary @${REQUEST_FILE})
+
+    detail.aish_log_response "$response"
+
+    text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
+
+    if [ "$text" == "null" -o -z "$text" ];
+    then
+      echo "$response"
+      exit 1
+    fi
+
+    echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
+    echo "$text" | detail.aish_pickup_codeblock
 }

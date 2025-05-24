@@ -196,28 +196,45 @@ function detail.aish_filter_sensitive_info
 
   if echo "\"$session_text\"" | detail.aish_filter_command -q; then
     matched=true
-    echo "⚠️  セキュリティ警告: 以下のパターンにマッチしました"
-    echo "パターン: $pattern"
-    echo "該当箇所:"
-    echo "----------------------------------------"
-    echo "\"$session_text\"" | detail.aish_filter_command -d
-    echo "----------------------------------------"
-    echo
+    echo "⚠️  セキュリティ警告: 以下のパターンにマッチしました" >&2
+    echo "パターン: $pattern" >&2
+    echo "該当箇所:" >&2
+    echo "----------------------------------------" >&2
+    echo "\"$session_text\"" | detail.aish_filter_command -d >&2
+    echo "----------------------------------------" >&2
+    echo >&2
   fi
 
   if [ "$matched" = true ]; then
-    echo -n "このまま送信しますか？ ([y]es / [n]o / [a]lways arrow this line): "
-    read -r confirm
+    echo -n "このまま送信しますか？ ([y]es / [n]o / [a]lways arrow this line): " >&2
+    read -r confirm < /dev/tty
     if [[ "$confirm" == "a" ]]; then
       echo "\"$session_text\"" | detail.aish_filter_command >> $AISH_SESSION/approved_lines
-      echo "⚠️  セキュリティ警告: 以降このテキストは確認しません"
+      echo "⚠️  セキュリティ警告: 以降このテキストは確認しません" >&2
     elif [[ "$confirm" != "y" ]]; then
-      echo "❌  送信を中止しました。"
+      echo "❌  送信を中止しました。" >&2
       return 1
     fi
   fi
 
   return 0
+}
+
+function detail.aish_security_check
+{
+    # Security check for the files in the session
+    # This function reads all files in the session directory and checks for sensitive information.
+    # If any sensitive information is found, it prompts the user for confirmation to proceed.
+    # If the user not confirm, the script exits with a non-zero status.
+
+    files=""
+    while IFS= read -r file; do
+        if ! detail.aish_filter_sensitive_info "`cat $file`"; then
+          exit 1
+        fi
+        echo "$file"
+    done
+    return 0
 }
 
 function detail.aish_puts_as_markdown
@@ -245,4 +262,13 @@ function detail.aish_puts_as_markdown
       echo
     fi
   done
+}
+
+function json_escape
+{
+  jq -Rs '.' | sed 's/^"//;s/"$//'
+}
+function json_string
+{
+  jq -Rs '.'
 }
