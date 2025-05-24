@@ -1,8 +1,6 @@
 #!/usr/bin/bash
 
 message_file=$AISH_SESSION/messages.txt
-system_instruction=$(cat $AISH_HOME/task.d/fixit/system_instruction.md | jq -Rs '.')
+system_instruction=$(cat $AISH_HOME/task.d/fixit/system_instruction.md)
 
-make_message $message_file "$*" "$system_instruction"
-send_request $message_file
-
+query -s "$system_instruction" "$@"

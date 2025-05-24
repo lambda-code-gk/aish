@@ -1,8 +1,10 @@
 #!/usr/bin/bash
 
 message_file=$AISH_SESSION/messages.txt
-system_instruction=""
+system_instruction=<<EOF
+You are an excellent AI assistant that operates on the console. Your role is to answer user questions and provide information.
+Normally, your responses are very concise, typically one or two lines.
+However, if the user requests more detail, you should provide a detailed response.
+EOF
 
-make_message $message_file "$*" "\"$system_instruction\""
-send_request $message_file
-
+query -s "$system_instruction" "$@"

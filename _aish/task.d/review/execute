@@ -1,9 +1,6 @@
 #!/usr/bin/bash
 
-message_file=$AISH_SESSION/messages.txt
-
 dot_aish=$(detail.aish_find_dot_aish)
-sources=$(cat "$dot_aish/task.d/review/sources" 2> /dev/null)
 
 while getopts "s" opt; do
     case $opt in
@@ -13,14 +10,15 @@ while getopts "s" opt; do
 done
 shift $((OPTIND - 1))
 
-system_instruction=$(detail.aish_puts_as_markdown $AISH_HOME/task.d/review/???_*.md | jq -Rs '.')
+system_instruction=$(detail.aish_puts_as_markdown $AISH_HOME/task.d/review/???_*.md)
 
 # Check if sources should be included
 if [ "$with_sources" == "true" ]; then
-    detail.aish_puts_as_markdown $sources
+    if [ -f "$dot_aish/task.d/review/sources" ]; then
+        sources=$(cat "$dot_aish/task.d/review/sources" 2> /dev/null)
+        detail.aish_puts_as_markdown $sources
+    fi
 fi
 git --no-pager diff --cached
 
-make_message $message_file "$*" "$system_instruction"
-send_request $message_file
-
+query -s "$system_instruction" "$@"
