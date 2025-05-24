@@ -14,8 +14,9 @@ function detail.aish_truncate_script_log
 function aish_rollout
 {
   detail.aish_flush_script_log
-  #sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' $AISH_LOGFILE | col -b > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
-  cat $AISH_LOGFILE | python3 $AISH_HOME/clean_terminal_log.py > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
+  if [[ ! -f "$AISH_SESSION"/mute ]]; then
+    cat $AISH_LOGFILE | python3 $AISH_HOME/clean_terminal_log.py > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
+  fi
   detail.aish_truncate_script_log
 }
 # clear the part files
@@ -186,7 +187,7 @@ function detail.aish_filter_command
   if [ ! -e "$AISH_SESSION"/approved_lines ]; then
     touch "$AISH_SESSION"/approved_lines
   fi
-  grep -i $display_mode -E -f $AISH_HOME/default_blocklist_patterns | grep -v $quiet_mode -F -f $AISH_SESSION/approved_lines
+  python3 "$AISH_HOME"/bad_patterns.py --skip-heuristics "$AISH_HOME"/blocklist | grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines
 }
 
 function detail.aish_filter_sensitive_info

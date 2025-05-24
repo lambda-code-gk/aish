@@ -1,5 +1,0 @@
-AKIA[0-9A-Z]{16}
-[A-Za-z0-9_-]{20,}
--BEGIN .+ PRIVATE KEY-
-ssh-rsa AAAA[0-9A-Za-z+/=]{100,}
-(password|passwd|pwd)[^=]{0,5}=[^;,\n]+

@@ -1,0 +1,7 @@
+AKIA[0-9A-Z]{16}
+gh[pousr]_[A-Za-z0-9]{36,}
+[A-Za-z0-9+/]{40,}={0,2}
+-BEGIN .+ PRIVATE KEY-
+ssh-rsa AAAA[0-9A-Za-z+/=]{100,}
+(password|passwd|pwd)[^=]{0,5}=[^;,\n]+
+.*:.*:.*:.*:.*:.*:.*$
