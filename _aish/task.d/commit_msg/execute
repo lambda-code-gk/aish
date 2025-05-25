@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 message_file=$AISH_SESSION/messages.txt
 

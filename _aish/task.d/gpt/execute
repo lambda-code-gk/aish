@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 system_instruction=<<EOF
 You are an excellent AI assistant that operates on the console. Your role is to answer user questions and provide information.

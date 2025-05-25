@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 dot_aish=$(detail.aish_find_dot_aish)
 

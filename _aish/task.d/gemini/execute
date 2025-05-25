@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 system_instruction="You are an AI assistant optimized for a Command-Line Interface (CUI). \
 Keep your responses concise, to-the-point, and in plain text.\
