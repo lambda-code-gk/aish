@@ -1,0 +1,5 @@
+#!/bin/bash
+
+. "$AISH_HOME"/ai.gpt
+
+description="Send a simple message to the LLM ChatGPT."

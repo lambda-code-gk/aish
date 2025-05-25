@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -eo pipefail
+
 # OpenAI APIキーを設定
 if [ -z "$OPENAI_API_KEY" ];
 then
@@ -11,54 +13,79 @@ ENDPOINT="https://api.openai.com/v1/chat/completions"
 MODEL="gpt-4o"
 #MODEL="gpt-3.5-turbo"
 TEMPERATURE=0.7
-LOG=$AISH_SESSION/log.json
+LOG="$AISH_SESSION"/log.json
 
-# メッセージ作成
-function make_message
+function query
 {
-  aish_rollout
-  messages=$1
-  query=$2
-  system=$3
-  parts=$(detail.aish_list_parts)
+    system_instruction=""
+    while getopts "s:" opt; do
+        case $opt in
+            s) system_instruction=$OPTARG ;;
+            *)  ;;
+        esac
+    done
+    shift $((OPTIND - 1))
 
-  echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": [' > $messages
+    aish_rollout
 
-  for f in $parts;
-  do
-    input=$(jq -Rs '.' < $f)
-    if [[ $f =~ "_user.txt" ]]; then
-      echo '  {"role": "user", "content": '"$input"'},' >> $messages
-    else
-      echo '  {"role": "assistant", "content": '"$input"'},' >> $messages
+    files=$(detail.aish_list_parts | detail.aish_security_check)
+    if [ $? -ne 0 ]; then
+        exit 1
     fi
-  done
-  user_input=$(echo -e "----\nuser message for assistant:\n$query" | jq -Rs '.')
-  echo '  {"role": "user", "content": '"$user_input"'}' >> $messages
-
-  if [ ! -z "$system" ];
-  then
-    echo '  ,{"role": "system", "content": '"$system"'}' >> $messages
-  fi
-  echo ']}' >> $messages
+    echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
 }
 
-function send_request
+function make_request
 {
-  request_data=$(cat $1)
-  #echo "$request_data" >> $AISH_SESSION/log.txt
-  detail.aish_log_request "$request_data"
+    query=$1
+    system=$2
 
-  # curlコマンドを使ってリクエストを送信
-  response=$(curl -s -X POST $ENDPOINT \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_KEY" \
-    -d "$request_data")
+    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": ['
 
-  #echo "$response" >> $AISH_SESSION/log.txt
-  detail.aish_log_response "$response"
+    if [ ! -z "$system" ]; then
+      echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'}'
+    fi
 
-  # レスポンスの"content"部分を抽出して出力
-  echo "$response" | jq -r '.choices[0].message.content' | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
-  echo "$response" | detail.aish_pickup_codeblock
+    local line_count=0
+    while IFS= read -r file; do
+        if [[ $line_count -gt 0 ]]; then
+            echo -n ','
+        fi
+        line_count=$((line_count + 1))
+        if [[ "$file" =~ "_user.txt" ]]; then
+            echo '  {"role": "user", "content": '$(cat "$file" | json_string)'}'
+        else
+            echo '  {"role": "assistant", "content": '$(cat "$file" | json_string)'}'
+        fi
+    done
+
+    user_input=$(echo -e "----\n# user message:\n$query" | json_string)
+    echo '  ,{"role": "user", "content": '"$user_input"'}'
+    echo ']'
+    echo '}'
+}
+
+function send_to_llm
+{
+    REQUEST_FILE="$AISH_SESSION/request.txt"
+    cat > "$REQUEST_FILE"
+    request_data=$(cat "$REQUEST_FILE")
+
+    detail.aish_log_request "$request_data"
+
+    response=$(curl -s -X POST $ENDPOINT \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $API_KEY" \
+      -d "$request_data")
+
+    detail.aish_log_response "$response"
+
+    text="$(echo "$response" | jq -r '.choices[0].message.content')"
+    if [ "$text" == "null" -o -z "$text" ]; then
+        echo "$response"
+        exit 1
+    fi
+
+    echo "$text" | tee "$AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
+    echo "$text" | detail.aish_pickup_codeblock
 }
