@@ -7,6 +7,8 @@ It lets you interact with your terminal using natural language — generate shel
 
 🚧 Development Status: AISH is under active development. Some features are experimental or incomplete. Feedback and contributions are welcome!
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lambda-code-gk/aish)
+
 ## ✨ Features
 
 * **LLM-embedded environment for command-line workflows**<br>
