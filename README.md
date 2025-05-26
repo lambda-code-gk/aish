@@ -1,12 +1,33 @@
 # AISH
 
-The AISH is an assistant operator for Linux.
+AISH is a CUI automation framework powered by LLMs, designed to supercharge your Linux command-line experience.
+It lets you interact with your terminal using natural language — generate shell commands, review code, write commit messages, and fix bugs, all without switching context.
 
-This command sends console input and output directly as requests to each API, so please be very careful not to inadvertently send requests of enormous size or sensitive information. Use it at your own risk.
+⚠️ Important: AISH sends terminal input and output to external APIs (e.g., OpenAI, Google). Avoid transmitting large or sensitive data. Use at your own risk.
 
-This tool is still under development. Each function is incomplete.
+🚧 Development Status: AISH is under active development. Some features are experimental or incomplete. Feedback and contributions are welcome!
 
-# Installation
+## ✨ Features
+
+* **LLM-embedded environment for command-line workflows**<br>
+  AISH integrates large language models directly into your terminal session, making AI a first-class part of your CUI experience.
+
+* **Natural language interface for the terminal**<br>
+  AISH allows you to interact with GPT or Gemini directly from your shell using the `aish` and `ai` command. It captures standard output and sends it to the model, providing contextual awareness of your terminal session.
+
+* **Task-oriented commands**<br>
+  AISH provides specialized commands for common tasks like code review, commit message generation, and bug fixing. Just type `ai <task>` to get started.
+
+
+## 🚀 Quick Start
+
+### Requirements
+
+- jq
+- curl
+- Python 3.8 or later
+
+### Installation
 
 ```bash
 git clone https://github.com/lambda-code-gk/aish.git
@@ -27,55 +48,57 @@ fi
 EOF
 ```
 
-And set up the API key
-```bash
-export OPENAI_API_KEY=sk-...
+Then set your API key:
+
+~/.apikey
 ```
-or
-```bash
+export OPENAI_API_KEY=sk-...
 export GOOGLE_API_KEY=...
 ```
 
-## Prerequired
+### Launching AISH
 
-- jq
-- curl
-
-
-# Usage
-
-Start the shell
+To start the shell, run the following command:
 ```bash
 $ aish
-Script started, output log file is '/tmp/tmp.hbzjvInYGu/script.log'.
+Script started, output log file is '/tmp/tmp.xxxxxxxxxx/script.log'.
 (aish:109)$ 
 ```
-If you successfully start aish, you will see a prompt like (aish:109)$, where 109 represents the size of the history (not a token).
 
-You can use a `ai` command to interact with the GPT or Gemini.
+You can use the `ai` command to interact with the LLM.
 ```bash
-(aish:109)$ ai "What is the meaning of life?"
-```
-or
-```bash
-(aish:109)$ ai gemini "What is the meaning of life?"
+(aish:0)$ cat README.md
+....
+(aish:109)$ ai "TL;DR"
 ```
 
-You can clear the user message by using the Ctrl+l key combination.
+You can clear the user message by using the Ctrl+L key combination.
 
-## Task
+## 🛠 Available Tasks
 
 You can specify a task name as the first argument to the `ai` command. The following tasks are available:
 
 - `ai default`:     Send a simple message to the LLM.
 - `ai gemini`:      Send a message to the LLM directly through Gemini.
-- `ai op`:          Show commands in the system shell.
 - `ai review`:      Review the code and give feedback on the files staged for Git.
 - `ai commit_msg`:  Create a commit message for the staged files in Git.
 - `ai fixit`:       Show the advice from the LLM on how to fix the code.
 
 
+You can also append additional arguments to the `ai` command to provide more context or specify options for the task. For example:
+```bash
+(aish:0)$ ai review "Feedback only architecture and design, no code style"
+```
 
-# License
+
+## 🧭 Roadmap & Future Plans
+
+* Session management and history context
+* Improve shell script generation and execution
+* Pro features
+
+We aim to keep the core open-source. Advanced features may become part of a Pro tier in the future.
+
+## 📄 License
 This project is licensed under the MIT License. See the LICENSE file for details.
 
