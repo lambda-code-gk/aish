@@ -192,28 +192,36 @@ function detail.aish_filter_command
 
 function detail.aish_filter_sensitive_info
 {
-  local session_text="$1"
   local matched=false
+  local tmp_filtered=$(mktemp "$AISH_SESSION"/tmp_filtered.XXXXXX)
+  if [[ ! -f "$tmp_filtered" ]]; then
+    echo "Failed to create temporary file for filtering." >&2
+    return 1
+  fi
 
-  if echo "\"$session_text\"" | detail.aish_filter_command -q; then
+  trap 'rm -f "$tmp_filtered"' EXIT
+
+  cat | detail.aish_filter_command > "$tmp_filtered"
+
+
+  if [[ -s "$tmp_filtered" ]]; then
     matched=true
-    echo "⚠️  セキュリティ警告: 以下のパターンにマッチしました" >&2
-    echo "パターン: $pattern" >&2
-    echo "該当箇所:" >&2
+    echo "⚠️  SECURITY WARNING: Bad patterns matched" >&2
+    echo "" >&2
     echo "----------------------------------------" >&2
-    echo "\"$session_text\"" | detail.aish_filter_command -d >&2
+    cat "$tmp_filtered" >&2
     echo "----------------------------------------" >&2
     echo >&2
   fi
 
   if [ "$matched" = true ]; then
-    echo -n "このまま送信しますか？ ([y]es / [n]o / [a]lways arrow this line): " >&2
+    echo -n "Send request? ([y]es / [n]o / [a]lways allow this line): " >&2
     read -r confirm < /dev/tty
     if [[ "$confirm" == "a" ]]; then
-      echo "\"$session_text\"" | detail.aish_filter_command >> $AISH_SESSION/approved_lines
-      echo "⚠️  セキュリティ警告: 以降このテキストは確認しません" >&2
+      cat "$tmp_filtered" >> $AISH_SESSION/approved_lines
+      echo "⚠️  SECURITY WARNING: Bad patterns matched, but the line is approved for future use." >&2
     elif [[ "$confirm" != "y" ]]; then
-      echo "❌  送信を中止しました。" >&2
+      echo "❌  Request has been aborted." >&2
       return 1
     fi
   fi
@@ -228,10 +236,15 @@ function detail.aish_security_check
     # If any sensitive information is found, it prompts the user for confirmation to proceed.
     # If the user not confirm, the script exits with a non-zero status.
 
-    files=""
+    if [[ "$skip_security_check" == "true" ]]; then
+      echo "⚠️  SKIP SECURITY FILTER!!" >&2
+    fi
+
     while IFS= read -r file; do
-        if ! detail.aish_filter_sensitive_info "`cat $file`"; then
-          exit 1
+        if [[ "$skip_security_check" != "true" ]]; then
+            if ! detail.aish_filter_sensitive_info < "$file"; then
+              exit 1
+            fi
         fi
         echo "$file"
     done
