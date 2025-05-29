@@ -44,7 +44,7 @@ function aish_unmute
 function aish_ls
 {
   cd $AISH_SESSION
-  ls * | grep 'part_*' | nl
+  ls part_* | sort -r | nl
   cd - > /dev/null
 }
 function aish_last
