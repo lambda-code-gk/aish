@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 dot_aish=$(detail.aish_find_dot_aish)
+dot_aish_task="$dot_aish/task.d/review"
 
 while getopts "s" opt; do
     case $opt in
@@ -10,15 +11,28 @@ while getopts "s" opt; do
 done
 shift $((OPTIND - 1))
 
-system_instruction=$(detail.aish_puts_as_markdown $AISH_HOME/task.d/review/???_*.md)
-
 # Check if sources should be included
-if [ "$with_sources" == "true" ]; then
-    if [ -f "$dot_aish/task.d/review/sources" ]; then
-        sources=$(cat "$dot_aish/task.d/review/sources" 2> /dev/null)
+if [[ "$with_sources" == "true" ]]; then
+    if [[ -f "$dot_aish_task/sources" ]]; then
+        # $dot_aish/task.d/review/sourcesファイルに書かれたファイルパターンを読みフルパスを取得
+        sources=$(cat "$dot_aish_task/sources" | xargs -I {} find {} -type f -print)
         detail.aish_puts_as_markdown $sources
     fi
 fi
+
+# List the system instruction files.
+# Find all files in the task directory and dot_aish/task.d/review
+# and sort them by filename, keeping only the latest version of each file.
+system_instruction_files=$(
+    find "$AISH_HOME/task.d/review" "$dot_aish_task" -maxdepth 1 -type f -name '???_*.md' | tac | \
+    awk -F'/' '{ print $NF, $0 }' | sort -k1,1 -u | cut -d' ' -f2
+)
+
+system_instruction=$(detail.aish_puts_as_markdown $system_instruction_files)
+
+
+echo '```diff'
 git --no-pager diff --cached
+echo '```'
 
 query -s "$system_instruction" "$@"
