@@ -25,6 +25,7 @@ It lets you interact with your terminal using natural language — generate shel
 
 ### Requirements
 
+- script (used for logging terminal sessions)
 - jq
 - curl
 - Python 3.8 or later
