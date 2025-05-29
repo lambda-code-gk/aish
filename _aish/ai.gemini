@@ -15,74 +15,78 @@ LOG="$AISH_SESSION"/log.json
 
 function query
 {
-    system_instruction=""
-    while getopts "s:" opt; do
-        case $opt in
-            s) system_instruction=$OPTARG ;;
-            *)  ;;
-        esac
-    done
-    shift $((OPTIND - 1))
+  system_instruction=""
+  while getopts "s:" opt; do
+    case $opt in
+      s) system_instruction=$OPTARG ;;
+      *)  ;;
+    esac
+  done
+  shift $((OPTIND - 1))
 
-    aish_rollout
+  aish_rollout
 
-    files=$(detail.aish_list_parts | detail.aish_security_check)
-    if [ $? -ne 0 ]; then
-        exit 1
-    fi
-    echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
+  files=$(detail.aish_list_parts | detail.aish_security_check)
+  if [ $? -ne 0 ]; then
+      exit 1
+  fi
+  echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
 }
 
 function make_request
 {
-    query=$1
-    system=$2
+  query=$1
+  system=$2
 
-    echo '{'
+  echo '{'
 
-    if [ ! -z "$system" ];
-    then
-      echo '"system_instruction": {"parts": {"text": '$(echo "$system" | json_string)'}},'
+  if [ ! -z "$system" ];
+  then
+    echo '"system_instruction": {"parts": {"text": '$(echo "$system" | json_string)'}},'
+  fi
+
+
+  echo '"contents":['
+
+  while IFS= read -r file; do
+    if [[ "$file" =~ "_user.txt" ]]; then
+      role="user"
+    else
+      role="model"
     fi
-
-    echo '"contents":['
-
-    while IFS= read -r file; do
-        if [[ "$file" =~ "_user.txt" ]]; then
-            echo '  {"role": "user", "parts":[{"text": '$(cat $file | json_string)'}]},'
-        else
-            echo '  {"role": "model", "parts":[{"text": '$(cat $file | json_string)'}]},'
-        fi
-    done
-    user_input=$(echo -e "----\n# user message:\n$query" | json_string)
-    echo '  {"role": "user", "parts":[{"text": '"$user_input"'}]}'
-    echo ']'
-    echo '}'
+    echo -n '  {"role": "'$role'", "parts":[{"text": '
+    cat "$file" | json_string
+    echo '}]},'
+  done
+  user_input=$(echo -e "----\n# user message:\n$query" | json_string)
+  echo '  {"role": "user", "parts":[{"text": '"$user_input"'}]}'
+  echo ']'
+  echo '}'
 }
 
 function send_to_llm
 {
-    REQUEST_FILE="$AISH_SESSION/request.txt"
-    cat > $REQUEST_FILE
-    request_data=$(cat "$REQUEST_FILE")
+  REQUEST_FILE="$AISH_SESSION/request.txt"
+  cat > $REQUEST_FILE
+  request_data=$(cat "$REQUEST_FILE")
 
-    detail.aish_log_request "$request_data"
+  detail.aish_log_request "$request_data"
 
-    response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/"$MODEL":generateContent?key="$GEMINI_API_KEY" \
-      -H 'Content-Type: application/json' \
-      -X POST \
-      --data-binary @${REQUEST_FILE})
+  response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/"$MODEL":generateContent?key="$GEMINI_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    --data-binary @${REQUEST_FILE})
 
-    detail.aish_log_response "$response"
+  detail.aish_log_response "$response"
 
-    text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
+  text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
 
-    if [ "$text" == "null" -o -z "$text" ];
-    then
-      echo "$response"
-      exit 1
-    fi
+  if [ "$text" == "null" -o -z "$text" ];
+  then
+    echo "$response"
+    exit 1
+  fi
 
-    echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
-    echo "$text" | detail.aish_pickup_codeblock
+  echo "$text" | tee $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt
+  echo "$text" | detail.aish_pickup_codeblock
 }
