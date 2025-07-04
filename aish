@@ -56,8 +56,12 @@ else
 fi
 
 export AISH_SESSION="$session"
+export AISH_PART="$AISH_SESSION/part"
 export AISH_LOGFILE="$session/script.log"
 
+if [ ! -d "$AISH_PART" ]; then
+  mkdir -p "$AISH_PART"
+fi
 
 # No command specified, start a new session
 script -O $AISH_LOGFILE

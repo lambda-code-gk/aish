@@ -86,6 +86,6 @@ function send_to_llm
         exit 1
     fi
 
-    echo "$text" | tee "$AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
+    echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
     echo "$text" | detail.aish_pickup_codeblock
 }

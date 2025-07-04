@@ -15,14 +15,14 @@ function aish_rollout
 {
   detail.aish_flush_script_log
   if [[ ! -f "$AISH_SESSION"/mute ]]; then
-    cat $AISH_LOGFILE | python3 $AISH_HOME/clean_terminal_log.py > $AISH_SESSION/part_$(date +%Y%m%d_%H%M%S)_user.txt
+    cat $AISH_LOGFILE | python3 $AISH_HOME/clean_terminal_log.py > $AISH_PART/part_$(date +%Y%m%d_%H%M%S)_user.txt
   fi
   detail.aish_truncate_script_log
 }
 # clear the part files
 function aish_clear
 {
-  rm -f $AISH_SESSION/part_*
+  rm -f $AISH_PART/part_*
   rm -f $AISH_SESSION/codeblock_*
   rm -f $AISH_SESSION/approved_lines
   detail.aish_flush_script_log
@@ -43,7 +43,7 @@ function aish_unmute
 # list the part files
 function aish_ls
 {
-  cd $AISH_SESSION
+  cd $AISH_PART
   ls part_* | sort -r | nl
   cd - > /dev/null
 }
@@ -76,9 +76,9 @@ function aish_last
   shift $((OPTIND - 1))
  
   if [[ "$full_path" == true ]]; then
-    files="$(ls -1 "$AISH_SESSION"/part_*)"
+    files="$(ls -1 "$AISH_PART"/part_*)"
   else
-    files="$(ls -1 "$AISH_SESSION" | grep 'part_*')"
+    files="$(ls -1 "$AISH_PART" | grep 'part_*')"
   fi
 
   if [[ -z "$files" ]]; then
@@ -130,10 +130,10 @@ function detail.aish_list_parts
     max_send=$1
   fi
   if [[ -z "$max_send" ]]; then
-    echo $AISH_SESSION/part_*
+    echo $AISH_PART/part_*
     return
   fi
-  files=$(find $AISH_SESSION -name 'part_*')
+  files=$(find $AISH_PART -name 'part_*')
   if [[ -z "$files" ]]; then
     return
   fi

@@ -21,7 +21,7 @@ prev_codeblock_count=$(count_file_if_exists $AISH_SESSION/codeblock_*)
 query "上記のdiffから意図を抽出しコミットメッセージを書いて下さい。"
 
 codeblock_count=$(count_file_if_exists $AISH_SESSION/codeblock_*)
-ai_generated_message=$(ls $AISH_SESSION/part_*_assistant.txt | tail -n 1)
+ai_generated_message=$(ls $AISH_PART/part_*_assistant.txt | tail -n 1)
 if [ $codeblock_count -gt $prev_codeblock_count ]; then
     ai_generated_message=$(ls $AISH_SESSION/codeblock_* | tail -n 1)
 fi
