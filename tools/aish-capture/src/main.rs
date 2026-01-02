@@ -150,6 +150,9 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
     // Setup SIGWINCH handler
     setup_sigwinch().map_err(|e| (format!("Failed to setup SIGWINCH: {}", e), 1))?;
     
+    // Setup SIGUSR1 handler
+    setup_sigusr1().map_err(|e| (format!("Failed to setup SIGUSR1: {}", e), 1))?;
+    
     // Create PTY
     let pty = Pty::new(
         cmd.as_ref().map(|v| v.as_slice()),
@@ -203,6 +206,11 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
                 let _ = pty.set_winsize(ws);
                 let _ = write_resize(&mut log_file, ws.ws_col, ws.ws_row);
             }
+        }
+        
+        // Check for SIGUSR1 (flush log file)
+        if check_sigusr1() {
+            let _ = log_file.flush();
         }
         
         // Check if child process has exited
