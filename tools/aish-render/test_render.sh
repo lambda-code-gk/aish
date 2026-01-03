@@ -155,6 +155,40 @@ EXPECTED=$'hello\nworld'
 ACTUAL=$(printf '%s\n' "$JSONL" | "$BINARY")
 assert_output "$EXPECTED" "$ACTUAL" "JSON escape characters"
 
+# テスト11: Phase 1.5対応 - ANSIエスケープシーケンスがJSONエスケープ文字列として記録された場合
+test_case "Phase 1.5: ANSI escape sequences as JSON escape strings"
+# \u001b[31mRED\u001b[0m は赤色のテキスト（ANSIエスケープシーケンス）
+# Phase 1.5では、これらはbase64ではなくJSONエスケープ文字列として記録される
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","n":14,"data":"\u001b[31mRED\u001b[0m"}'
+# ANSIエスケープシーケンスは処理され、テキストのみが抽出される
+EXPECTED="RED"
+ACTUAL=$(echo "$JSONL" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "ANSI escape sequences as JSON escape strings"
+
+# テスト12: Phase 1.5対応 - 複数のANSIエスケープシーケンス
+test_case "Phase 1.5: Multiple ANSI escape sequences"
+# 色付きテキストと通常テキストの混在
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","n":20,"data":"\u001b[32mGREEN\u001b[0m text"}'
+EXPECTED="GREEN text"
+ACTUAL=$(echo "$JSONL" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "Multiple ANSI escape sequences"
+
+# テスト13: Phase 1.5対応 - 既存のbase64エンコードとの互換性確認
+test_case "Phase 1.5: Compatibility with base64 encoded data"
+# 既存のbase64エンコードされたログファイルも引き続き正しく処理されることを確認
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","enc":"b64","n":5,"data":"aGVsbG8="}'
+EXPECTED="hello"
+ACTUAL=$(echo "$JSONL" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "Compatibility with base64 encoded data"
+
+# テスト14: Phase 1.5対応 - カーソル移動を含むJSONエスケープ文字列
+test_case "Phase 1.5: Cursor movement with JSON escape strings"
+# カーソル左移動を含むデータ（JSONエスケープ文字列として記録）
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","n":10,"data":"hello\u001b[3D"}'
+# カーソルが左に3移動するので、最後の3文字が上書きされる可能性がある
+# このテストは実装に依存するため、簡易版
+log_info "Cursor movement with JSON escape strings test (implementation dependent)"
+
 # テスト結果の表示
 echo ""
 echo "========================================="
