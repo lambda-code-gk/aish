@@ -52,6 +52,20 @@ export AISH_HOME="$PROJECT_ROOT/_aish"
 
 詳細な実装方針、ビルド方法、テスト実行方法などは上記のドキュメントを参照してください。
 
+### aish-script
+
+expect機能を提供するスクリプト実行ツール（Rust実装）
+
+- **ディレクトリ**: `tools/aish-script/`
+- **目的**: JSONLログファイルを監視し、パターンマッチングに基づいてFIFO経由で入力を送信する
+- **機能**:
+  - DSLパーサー（文字列マッチング、複数ルール対応）
+  - JSONLログファイル読み取り（ANSIエスケープシーケンス対応）
+  - FIFOへの入力送信
+  - スクリプトファイル読み込み
+- **ビルド方法**: `cd tools/aish-script && cargo build --release`
+- **テスト実行**: `cd tools/aish-script && ./test.sh`
+
 ## プロジェクト全体のドキュメント
 
 - **プロジェクトREADME**: [`README.md`](README.md)
@@ -62,3 +76,5 @@ export AISH_HOME="$PROJECT_ROOT/_aish"
 - **2025年1月1日**: AGENTS.mdを多段構造に再編成
   - ルートAGENTS.mdは概要と参照のみに変更
   - aish-captureの詳細は`tools/aish-capture/AGENTS.md`に移動
+- **2025年1月3日**: aish-scriptサブプロジェクトの情報を追加
+  - Phase 2の基本実装完了を反映
