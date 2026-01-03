@@ -290,6 +290,72 @@ EOF
     fi
 }
 
+# テスト5: リアルタイム監視（--followオプション）
+test_realtime_follow() {
+    test_case "Real-time file monitoring (--follow option)"
+    
+    local log_file="$TEST_DIR/test5.jsonl"
+    local fifo_path="$TEST_DIR/test5.fifo"
+    
+    # 初期ログファイルを作成
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":11,"data":"Username: "}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test5.fifo_output"
+    timeout 3s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptをバックグラウンドで実行（--followオプション付き）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path --follow -e 'match \"Password:\" then send \"mypass\\n\"'"
+    
+    timeout 3s $BINARY -f "$log_file" --input-fifo "$fifo_path" --follow -e 'match "Password:" then send "mypass\n"' > "$TEST_DIR/test5.stdout" 2> "$TEST_DIR/test5.stderr" &
+    local script_pid=$!
+    
+    # 少し待ってから新しい行を追加
+    sleep 0.5
+    echo '{"v":1,"t_ms":1002,"type":"stdout","n":13,"data":"Password: "}' >> "$log_file"
+    
+    # 少し待つ
+    sleep 0.5
+    
+    # プロセスを終了
+    kill "$script_pid" 2>/dev/null || true
+    wait "$script_pid" 2>/dev/null || true
+    kill "$fifo_reader_pid" 2>/dev/null || true
+    wait "$fifo_reader_pid" 2>/dev/null || true
+    
+    # FIFOに正しいデータが送信されたか確認
+    if [ -f "$fifo_output" ]; then
+        local fifo_content=$(cat "$fifo_output")
+        if echo "$fifo_content" | grep -q "mypass"; then
+            log_info "✓ FIFO received data from real-time monitoring"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ FIFO received incorrect data: '$fifo_content'"
+            log_error "stderr:"
+            cat "$TEST_DIR/test5.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "✗ FIFO output file not created"
+        log_error "stderr:"
+        cat "$TEST_DIR/test5.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
 # メイン実行
 main() {
     echo "========================================="
@@ -312,6 +378,7 @@ main() {
         "test_multiple_rules"
         "test_script_file"
         "test_ansi_escape_sequence"
+        "test_realtime_follow"
     )
     
     for test_func in "${tests[@]}"; do

@@ -1,8 +1,12 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::process;
+use std::thread;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
+
+mod platform;
+use platform::FileWatcher;
 
 // JSONL行をパースしてtype, data, encフィールドを抽出
 fn parse_jsonl_line(line: &str) -> Option<(String, Option<String>, Option<String>)> {
@@ -227,18 +231,9 @@ fn run() -> Result<i32, (String, i32)> {
     let mut fifo = File::create(input_fifo)
         .map_err(|e| (format!("Failed to open FIFO: {}", e), 74))?;
     
-    // ログファイルを開く
-    let file = File::open(log_file)
-        .map_err(|e| (format!("Failed to open log file: {}", e), 74))?;
-    let reader = BufReader::new(file);
-    
-    // JSONLを読み取ってパターンマッチング
-    let mut accumulated_output = String::new();
-    
-    for line in reader.lines() {
-        let line = line.map_err(|e| (format!("Failed to read line: {}", e), 74))?;
-        
-        if let Some((event_type, data_opt, enc_opt)) = parse_jsonl_line(&line) {
+    // ファイルの行を処理する関数
+    let process_line = |line: &str, accumulated_output: &mut String, fifo: &mut File, rules: &[Rule], debug: bool, verbose: bool| -> Result<bool, (String, i32)> {
+        if let Some((event_type, data_opt, enc_opt)) = parse_jsonl_line(line) {
             if event_type == "stdout" {
                 if let Some(data_str) = data_opt {
                     let data = if enc_opt.as_ref().map(|e| e == "b64").unwrap_or(false) {
@@ -252,9 +247,9 @@ fn run() -> Result<i32, (String, i32)> {
                     accumulated_output.push_str(&text);
                     
                     // 各ルールに対してマッチングを試行
-                    for rule in &rules {
+                    for rule in rules {
                         if accumulated_output.contains(&rule.pattern) {
-                            if config.debug || config.verbose {
+                            if debug || verbose {
                                 eprintln!("Matched pattern: {}", rule.pattern);
                             }
                             
@@ -264,19 +259,77 @@ fn run() -> Result<i32, (String, i32)> {
                             fifo.flush()
                                 .map_err(|e| (format!("Failed to flush FIFO: {}", e), 74))?;
                             
-                            if config.debug || config.verbose {
+                            if debug || verbose {
                                 eprintln!("Sent to FIFO: {:?}", rule.send_text);
                             }
                             
                             // マッチした部分を削除（簡易版：最初のマッチのみ処理）
                             if let Some(pos) = accumulated_output.find(&rule.pattern) {
-                                accumulated_output = accumulated_output[pos + rule.pattern.len()..].to_string();
+                                *accumulated_output = accumulated_output[pos + rule.pattern.len()..].to_string();
                             }
-                            break; // 最初にマッチしたルールのみ処理
+                            return Ok(true); // マッチした
                         }
                     }
                 }
             }
+        }
+        Ok(false) // マッチしなかった
+    };
+    
+    let mut accumulated_output = String::new();
+    
+    if config.follow {
+        // リアルタイム監視モード
+        let mut watcher = FileWatcher::new(log_file, config.poll_interval)
+            .map_err(|e| (format!("Failed to create file watcher: {}", e), 74))?;
+        
+        if !config.from_beginning {
+            // ファイルの末尾から読み取りを開始
+            watcher.seek_to_end()
+                .map_err(|e| (format!("Failed to seek to end: {}", e), 74))?;
+        }
+        
+        // 最初に既存の内容を読み取る（from_beginningが指定されている場合）
+        if config.from_beginning {
+            let file = File::open(log_file)
+                .map_err(|e| (format!("Failed to open log file: {}", e), 74))?;
+            let reader = BufReader::new(file);
+            
+            for line in reader.lines() {
+                let line = line.map_err(|e| (format!("Failed to read line: {}", e), 74))?;
+                process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose)?;
+            }
+        }
+        
+        // ポーリングループ
+        loop {
+            match watcher.read_new_lines() {
+                Ok(lines) => {
+                    for line in lines {
+                        let line = line.trim_end_matches('\n').trim_end_matches('\r');
+                        if !line.is_empty() {
+                            process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose)?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    if config.debug {
+                        eprintln!("Error reading new lines: {}", e);
+                    }
+                }
+            }
+            
+            thread::sleep(watcher.poll_interval());
+        }
+    } else {
+        // 通常モード（ファイルを最初から最後まで読み取る）
+        let file = File::open(log_file)
+            .map_err(|e| (format!("Failed to open log file: {}", e), 74))?;
+        let reader = BufReader::new(file);
+        
+        for line in reader.lines() {
+            let line = line.map_err(|e| (format!("Failed to read line: {}", e), 74))?;
+            process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose)?;
         }
     }
     
