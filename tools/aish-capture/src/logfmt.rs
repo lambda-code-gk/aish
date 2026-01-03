@@ -1,21 +1,32 @@
-use crate::util::base64;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 fn json_escape(s: &str) -> String {
-    let mut result = String::new();
-    for ch in s.chars() {
-        match ch {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            c if c.is_control() => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
+    // serde_jsonを使用してJSONエスケープを行う
+    // to_stringは完全なJSON文字列（ダブルクォート付き）を返すので、最初と最後のダブルクォートを削除
+    let json_str = serde_json::to_string(s).unwrap_or_else(|_| {
+        // フォールバック: エラー時は手動エスケープ
+        let mut result = String::new();
+        for ch in s.chars() {
+            match ch {
+                '"' => result.push_str("\\\""),
+                '\\' => result.push_str("\\\\"),
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                c if c.is_control() => {
+                    result.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                c => result.push(c),
             }
-            c => result.push(c),
         }
+        format!("\"{}\"", result)
+    });
+    // 最初と最後のダブルクォートを削除
+    if json_str.len() >= 2 && json_str.starts_with('"') && json_str.ends_with('"') {
+        json_str[1..json_str.len() - 1].to_string()
+    } else {
+        json_str
     }
-    result
 }
 
 // ANSIエスケープシーケンスを含むかどうかを判定
@@ -135,7 +146,7 @@ pub fn write_stdin(out: &mut dyn std::io::Write, data: &[u8]) -> std::io::Result
         )
     } else {
         // バイナリデータや制御文字を含む場合：base64エンコード
-        let encoded = base64::encode(data);
+        let encoded = STANDARD.encode(data);
         writeln!(
             out,
             r#"{{"v":1,"t_ms":{},"type":"stdin","enc":"b64","n":{},"data":"{}"}}"#,
@@ -159,7 +170,7 @@ pub fn write_stdout(out: &mut dyn std::io::Write, data: &[u8]) -> std::io::Resul
         )
     } else {
         // バイナリデータや制御文字を含む場合：base64エンコード
-        let encoded = base64::encode(data);
+        let encoded = STANDARD.encode(data);
         writeln!(
             out,
             r#"{{"v":1,"t_ms":{},"type":"stdout","enc":"b64","n":{},"data":"{}"}}"#,

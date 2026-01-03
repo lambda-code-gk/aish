@@ -3,3 +3,7 @@ name = "aish-render"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+base64 = "0.22"
+serde_json = "1.0"
+
