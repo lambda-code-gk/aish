@@ -543,6 +543,228 @@ EOF
     fi
 }
 
+# テスト9: タイムアウト機能（Phase 5）
+test_timeout() {
+    test_case "Timeout functionality (Phase 5)"
+    
+    local log_file="$TEST_DIR/test9.jsonl"
+    local fifo_path="$TEST_DIR/test9.fifo"
+    
+    # テスト用のJSONLログファイルを作成（パターンが含まれない）
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":10,"data":"Hello\n"}
+{"v":1,"t_ms":1002,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行（ハング防止のため）
+    cat "$fifo_path" > /dev/null 2>&1 &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（タイムアウト付き、パターンが見つからない）
+    # 通常モードでは、ファイルを読み終わった後にタイムアウトをチェックする
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path -e 'match \"Password:\" timeout 1 then send \"mypass\\n\"'"
+    
+    # タイムアウトでエラー終了することを期待（exit code != 0）
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" -e 'match "Password:" timeout 1 then send "mypass\n"' > "$TEST_DIR/test9.stdout" 2> "$TEST_DIR/test9.stderr"; then
+        # 成功した場合は失敗（タイムアウトでエラー終了すべき）
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "✗ Command succeeded but should have timed out"
+        cat "$TEST_DIR/test9.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        # タイムアウトエラーが表示されているか確認
+        if grep -q -i "timeout" "$TEST_DIR/test9.stderr" && [ $exit_code -eq 1 ]; then
+            log_info "✓ Timeout handled correctly (exit code: $exit_code)"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Timeout not handled correctly (exit code: $exit_code)"
+            cat "$TEST_DIR/test9.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    fi
+}
+
+# テスト10: 不正なJSONL行の処理（Phase 5）
+test_invalid_jsonl() {
+    test_case "Invalid JSONL line handling (Phase 5)"
+    
+    local log_file="$TEST_DIR/test10.jsonl"
+    local fifo_path="$TEST_DIR/test10.fifo"
+    
+    # テスト用のJSONLログファイルを作成（不正な行を含む）
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+invalid json line
+{"v":1,"t_ms":1001,"type":"stdout","n":13,"data":"Password: "}
+{"v":1,"t_ms":1002,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test10.fifo_output"
+    timeout 2s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（不正な行を無視して継続することを期待）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path -e 'match \"Password:\" then send \"mypass\\n\"'"
+    
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" -e 'match "Password:" then send "mypass\n"' > "$TEST_DIR/test10.stdout" 2> "$TEST_DIR/test10.stderr"; then
+        # FIFO読み取りを終了
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        wait "$fifo_reader_pid" 2>/dev/null || true
+        
+        # FIFOに正しいデータが送信されたか確認（不正な行を無視して処理が継続された）
+        if [ -f "$fifo_output" ]; then
+            local fifo_content=$(cat "$fifo_output")
+            if [ "$fifo_content" = "mypass" ] || [ "$fifo_content" = $'mypass\n' ]; then
+                log_info "✓ FIFO received correct data (invalid JSONL line ignored)"
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                return 0
+            else
+                log_error "✗ FIFO received incorrect data: '$fifo_content'"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                return 1
+            fi
+        else
+            log_error "✗ FIFO output file not created"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test10.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト11: デバッグモードの動作確認（Phase 5）
+test_debug_mode() {
+    test_case "Debug mode functionality (Phase 5)"
+    
+    local log_file="$TEST_DIR/test11.jsonl"
+    local fifo_path="$TEST_DIR/test11.fifo"
+    
+    # テスト用のJSONLログファイルを作成
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":13,"data":"Password: "}
+{"v":1,"t_ms":1002,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test11.fifo_output"
+    timeout 2s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（--debugオプション付き）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path --debug -e 'match \"Password:\" then send \"mypass\\n\"'"
+    
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" --debug -e 'match "Password:" then send "mypass\n"' > "$TEST_DIR/test11.stdout" 2> "$TEST_DIR/test11.stderr"; then
+        # FIFO読み取りを終了
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        wait "$fifo_reader_pid" 2>/dev/null || true
+        
+        # デバッグ情報が出力されているか確認
+        if grep -q -i "Parsed rules\|Matched pattern\|Sent to FIFO" "$TEST_DIR/test11.stderr"; then
+            log_info "✓ Debug information was output"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Debug information not found in stderr"
+            cat "$TEST_DIR/test11.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test11.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト12: verboseモードの動作確認（Phase 5）
+test_verbose_mode() {
+    test_case "Verbose mode functionality (Phase 5)"
+    
+    local log_file="$TEST_DIR/test12.jsonl"
+    local fifo_path="$TEST_DIR/test12.fifo"
+    
+    # テスト用のJSONLログファイルを作成
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":13,"data":"Password: "}
+{"v":1,"t_ms":1002,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test12.fifo_output"
+    timeout 2s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（--verboseオプション付き）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path --verbose -e 'match \"Password:\" then send \"mypass\\n\"'"
+    
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" --verbose -e 'match "Password:" then send "mypass\n"' > "$TEST_DIR/test12.stdout" 2> "$TEST_DIR/test12.stderr"; then
+        # FIFO読み取りを終了
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        wait "$fifo_reader_pid" 2>/dev/null || true
+        
+        # verbose情報が出力されているか確認（マッチング情報など）
+        if grep -q -i "Matched pattern\|Sent to FIFO" "$TEST_DIR/test12.stderr"; then
+            log_info "✓ Verbose information was output"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Verbose information not found in stderr"
+            cat "$TEST_DIR/test12.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test12.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
 # メイン実行
 main() {
     echo "========================================="
@@ -569,6 +791,10 @@ main() {
         "test_regex_pattern"
         "test_regex_flag_i"
         "test_mixed_string_and_regex"
+        "test_timeout"
+        "test_invalid_jsonl"
+        "test_debug_mode"
+        "test_verbose_mode"
     )
     
     for test_func in "${tests[@]}"; do

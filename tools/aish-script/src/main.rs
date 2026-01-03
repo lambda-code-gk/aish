@@ -2,135 +2,15 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::process;
 use std::thread;
+use std::time::{Duration, Instant};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde_json::Value;
-use regex::Regex;
 
 mod platform;
+mod dsl;
+mod jsonl;
+
 use platform::FileWatcher;
-
-// JSONL行をパースしてtype, data, encフィールドを抽出
-fn parse_jsonl_line(line: &str) -> Option<(String, Option<String>, Option<String>)> {
-    let json: Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(_) => return None,
-    };
-    
-    let event_type = json.get("type")?.as_str()?.to_string();
-    let data = json.get("data").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let enc = json.get("enc").and_then(|v| v.as_str()).map(|s| s.to_string());
-    
-    Some((event_type, data, enc))
-}
-
-// DSLパーサー（簡易版）
-#[derive(Debug, Clone)]
-enum PatternType {
-    String(String),
-    Regex(Regex, String), // (Regex, original pattern string for debug)
-}
-
-#[derive(Debug, Clone)]
-struct Rule {
-    pattern: PatternType,
-    send_text: String,
-}
-
-fn parse_dsl(script: &str) -> Result<Vec<Rule>, String> {
-    let mut rules = Vec::new();
-    let parts: Vec<&str> = script.split(';').collect();
-    
-    for part in parts {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        
-        // match "pattern" then send "text" または match /pattern/flags then send "text" の形式をパース
-        if !part.starts_with("match ") {
-            return Err(format!("Expected 'match' at start of rule: {}", part));
-        }
-        
-        let part = &part[6..]; // "match " を削除
-        let part = part.trim();
-        
-        // 正規表現パターンか文字列パターンかを判定
-        let (pattern_type, remaining): (PatternType, &str) = if part.starts_with('/') {
-            // 正規表現パターン: /pattern/flags
-            let pattern_end = part[1..].find('/');
-            if pattern_end.is_none() {
-                return Err(format!("Expected closing '/' for regex pattern: {}", part));
-            }
-            let pattern_end = pattern_end.unwrap() + 1;
-            let pattern_str = part[1..pattern_end - 1].to_string();
-            
-            // フラグを取得（/ の後）
-            let flags_part = &part[pattern_end..];
-            let flags_end = flags_part.find(' ').unwrap_or(flags_part.len());
-            let flags = &flags_part[..flags_end];
-            
-            // フラグをパターン文字列に埋め込む形式に変換
-            let mut final_pattern = String::new();
-            if flags.contains('i') {
-                final_pattern.push_str("(?i)");
-            }
-            if flags.contains('m') {
-                final_pattern.push_str("(?m)");
-            }
-            final_pattern.push_str(&pattern_str);
-            
-            // Regexを構築
-            let regex = Regex::new(&final_pattern)
-                .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern_str, e))?;
-            
-            let remaining = flags_part[flags_end..].trim();
-            (PatternType::Regex(regex, pattern_str), remaining)
-        } else {
-            // 文字列パターン: "pattern"
-            let pattern_start = part.find('"');
-            if pattern_start.is_none() {
-                return Err(format!("Expected quoted pattern: {}", part));
-            }
-            let pattern_start = pattern_start.unwrap() + 1;
-            let pattern_end = part[pattern_start..].find('"');
-            if pattern_end.is_none() {
-                return Err(format!("Expected closing quote for pattern: {}", part));
-            }
-            let pattern_end = pattern_start + pattern_end.unwrap();
-            let pattern = part[pattern_start..pattern_end].to_string();
-            
-            let remaining = part[pattern_end + 1..].trim();
-            (PatternType::String(pattern), remaining)
-        };
-        
-        if !remaining.starts_with("then send ") {
-            return Err(format!("Expected 'then send' after pattern: {}", remaining));
-        }
-        
-        let send_part = &remaining[10..]; // "then send " を削除
-        let send_start = send_part.find('"');
-        if send_start.is_none() {
-            return Err(format!("Expected quoted send text: {}", send_part));
-        }
-        let send_start = send_start.unwrap() + 1;
-        let send_end = send_part[send_start..].find('"');
-        if send_end.is_none() {
-            return Err(format!("Expected closing quote for send text: {}", send_part));
-        }
-        let send_end = send_start + send_end.unwrap();
-        let send_text = send_part[send_start..send_end].to_string();
-        
-        // \nなどのエスケープシーケンスを処理
-        let send_text = send_text.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
-        
-        rules.push(Rule {
-            pattern: pattern_type,
-            send_text,
-        });
-    }
-    
-    Ok(rules)
-}
+use dsl::{Rule, parse_script};
 
 struct Config {
     log_file: Option<String>,
@@ -265,83 +145,127 @@ fn run() -> Result<i32, (String, i32)> {
     };
     
     // DSLパーサーでルールを取得
-    let rules = parse_dsl(&script)
+    let rules = parse_script(&script)
         .map_err(|e| (format!("Failed to parse DSL: {}", e), 64))?;
     
     if config.debug {
-        eprintln!("Parsed rules: {:?}", rules);
+        eprintln!("Parsed {} rules", rules.len());
+        for (i, rule) in rules.iter().enumerate() {
+            let pattern_display = match &rule.pattern {
+                dsl::Pattern::String(s) => format!("\"{}\"", s),
+                dsl::Pattern::Regex(_) => "regex".to_string(),
+            };
+            eprintln!("  Rule {}: match {} then send {:?} (timeout: {:?})", 
+                     i + 1, pattern_display, rule.response, rule.timeout);
+        }
     }
     
     // FIFOを開く
     let mut fifo = File::create(input_fifo)
         .map_err(|e| (format!("Failed to open FIFO: {}", e), 74))?;
     
+    // タイムアウト管理用の構造体
+    struct RuleTimeout {
+        rule_index: usize,
+        timeout_sec: u64,
+        start_time: Instant,
+    }
+    
+    let mut rule_timeouts: Vec<RuleTimeout> = rules.iter()
+        .enumerate()
+        .filter_map(|(i, rule)| {
+            rule.timeout.map(|timeout_sec| RuleTimeout {
+                rule_index: i,
+                timeout_sec,
+                start_time: Instant::now(),
+            })
+        })
+        .collect();
+    
     // ファイルの行を処理する関数
-    let process_line = |line: &str, accumulated_output: &mut String, fifo: &mut File, rules: &[Rule], debug: bool, verbose: bool| -> Result<bool, (String, i32)> {
-        if let Some((event_type, data_opt, enc_opt)) = parse_jsonl_line(line) {
-            if event_type == "stdout" {
-                if let Some(data_str) = data_opt {
-                    let data = if enc_opt.as_ref().map(|e| e == "b64").unwrap_or(false) {
-                        STANDARD.decode(&data_str)
-                            .map_err(|e| (format!("Failed to decode base64: {}", e), 74))?
-                    } else {
-                        data_str.as_bytes().to_vec()
-                    };
-                    
-                    let text = String::from_utf8_lossy(&data);
-                    accumulated_output.push_str(&text);
-                    
-                    // 各ルールに対してマッチングを試行
-                    for rule in rules {
-                        let matched = match &rule.pattern {
-                            PatternType::String(pattern) => {
-                                accumulated_output.contains(pattern)
+    let process_line = |line: &str, accumulated_output: &mut String, fifo: &mut File, rules: &[Rule], debug: bool, verbose: bool| -> Result<Option<usize>, (String, i32)> {
+        // 不正なJSONL行を無視（エラーログは出力するが処理は継続）
+        let (event_type, data_opt, enc_opt) = match jsonl::parse_line(line) {
+            Some(result) => result,
+            None => {
+                if debug {
+                    eprintln!("Warning: Failed to parse JSONL line (ignoring): {}", line.chars().take(100).collect::<String>());
+                }
+                return Ok(None);
+            }
+        };
+        
+        if event_type == "stdout" {
+            if let Some(data_str) = data_opt {
+                let data = if enc_opt.as_ref().map(|e| e == "b64").unwrap_or(false) {
+                    match STANDARD.decode(&data_str) {
+                        Ok(decoded) => decoded,
+                        Err(e) => {
+                            if debug {
+                                eprintln!("Warning: Failed to decode base64 (ignoring): {}", e);
                             }
-                            PatternType::Regex(regex, _pattern_str) => {
-                                regex.is_match(accumulated_output)
-                            }
+                            return Ok(None);
+                        }
+                    }
+                } else {
+                    data_str.as_bytes().to_vec()
+                };
+                
+                let text = String::from_utf8_lossy(&data);
+                accumulated_output.push_str(&text);
+                
+                if debug {
+                    eprintln!("Accumulated output length: {} bytes", accumulated_output.len());
+                }
+                
+                // 各ルールに対してマッチングを試行
+                for (rule_index, rule) in rules.iter().enumerate() {
+                    if rule.matches(accumulated_output) {
+                        let pattern_display = match &rule.pattern {
+                            dsl::Pattern::String(s) => format!("\"{}\"", s),
+                            dsl::Pattern::Regex(_) => "regex".to_string(),
                         };
                         
-                        if matched {
-                            let pattern_display = match &rule.pattern {
-                                PatternType::String(p) => p.clone(),
-                                PatternType::Regex(_, p) => format!("/{}/", p),
-                            };
-                            
-                            if debug || verbose {
-                                eprintln!("Matched pattern: {}", pattern_display);
-                            }
-                            
-                            // FIFOに送信
-                            fifo.write_all(rule.send_text.as_bytes())
-                                .map_err(|e| (format!("Failed to write to FIFO: {}", e), 74))?;
-                            fifo.flush()
-                                .map_err(|e| (format!("Failed to flush FIFO: {}", e), 74))?;
-                            
-                            if debug || verbose {
-                                eprintln!("Sent to FIFO: {:?}", rule.send_text);
-                            }
-                            
-                            // マッチした部分を削除（簡易版：最初のマッチのみ処理）
-                            match &rule.pattern {
-                                PatternType::String(pattern) => {
-                                    if let Some(pos) = accumulated_output.find(pattern) {
-                                        *accumulated_output = accumulated_output[pos + pattern.len()..].to_string();
-                                    }
-                                }
-                                PatternType::Regex(regex, _) => {
-                                    if let Some(m) = regex.find(accumulated_output) {
-                                        *accumulated_output = accumulated_output[m.end()..].to_string();
-                                    }
-                                }
-                            }
-                            return Ok(true); // マッチした
+                        if debug || verbose {
+                            eprintln!("Matched pattern: {}", pattern_display);
                         }
+                        
+                        // FIFOに送信
+                        match fifo.write_all(rule.response.as_bytes()) {
+                            Ok(_) => {
+                                if let Err(e) = fifo.flush() {
+                                    return Err((format!("Failed to flush FIFO: {}", e), 74));
+                                }
+                            }
+                            Err(e) => {
+                                return Err((format!("Failed to write to FIFO: {}", e), 74));
+                            }
+                        }
+                        
+                        if debug || verbose {
+                            eprintln!("Sent to FIFO: {:?}", rule.response);
+                        }
+                        
+                        // マッチした部分を削除（簡易版：最初のマッチのみ処理）
+                        match &rule.pattern {
+                            dsl::Pattern::String(pattern) => {
+                                if let Some(pos) = accumulated_output.find(pattern) {
+                                    *accumulated_output = accumulated_output[pos + pattern.len()..].to_string();
+                                }
+                            }
+                            dsl::Pattern::Regex(regex) => {
+                                if let Some(m) = regex.find(accumulated_output) {
+                                    *accumulated_output = accumulated_output[m.end()..].to_string();
+                                }
+                            }
+                        }
+                        
+                        return Ok(Some(rule_index)); // マッチしたルールのインデックスを返す
                     }
                 }
             }
         }
-        Ok(false) // マッチしなかった
+        Ok(None) // マッチしなかった
     };
     
     let mut accumulated_output = String::new();
@@ -364,19 +288,55 @@ fn run() -> Result<i32, (String, i32)> {
             let reader = BufReader::new(file);
             
             for line in reader.lines() {
-                let line = line.map_err(|e| (format!("Failed to read line: {}", e), 74))?;
-                process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose)?;
+                let line = match line {
+                    Ok(l) => l,
+                    Err(e) => {
+                        if config.debug {
+                            eprintln!("Warning: Failed to read line (ignoring): {}", e);
+                        }
+                        continue;
+                    }
+                };
+                match process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose) {
+                    Ok(Some(matched_rule_index)) => {
+                        // マッチしたルールのタイムアウトをクリア
+                        rule_timeouts.retain(|rt| rt.rule_index != matched_rule_index);
+                    }
+                    Ok(None) => {}
+                    Err(e) => return Err(e),
+                }
             }
         }
         
         // ポーリングループ
         loop {
+            // タイムアウトチェック
+            let now = Instant::now();
+            for timeout_info in &rule_timeouts {
+                let elapsed = now.duration_since(timeout_info.start_time);
+                if elapsed >= Duration::from_secs(timeout_info.timeout_sec) {
+                    let rule = &rules[timeout_info.rule_index];
+                    let pattern_display = match &rule.pattern {
+                        dsl::Pattern::String(s) => format!("\"{}\"", s),
+                        dsl::Pattern::Regex(_) => "regex".to_string(),
+                    };
+                    return Err((format!("Timeout: Pattern {} not found within {} seconds", pattern_display, timeout_info.timeout_sec), 1));
+                }
+            }
+            
             match watcher.read_new_lines() {
                 Ok(lines) => {
                     for line in lines {
                         let line = line.trim_end_matches('\n').trim_end_matches('\r');
                         if !line.is_empty() {
-                            process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose)?;
+                            match process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose) {
+                                Ok(Some(matched_rule_index)) => {
+                                    // マッチしたルールのタイムアウトをクリア
+                                    rule_timeouts.retain(|rt| rt.rule_index != matched_rule_index);
+                                }
+                                Ok(None) => {}
+                                Err(e) => return Err(e),
+                            }
                         }
                     }
                 }
@@ -396,8 +356,48 @@ fn run() -> Result<i32, (String, i32)> {
         let reader = BufReader::new(file);
         
         for line in reader.lines() {
-            let line = line.map_err(|e| (format!("Failed to read line: {}", e), 74))?;
-            process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose)?;
+            // タイムアウトチェック
+            let now = Instant::now();
+            for timeout_info in &rule_timeouts {
+                let elapsed = now.duration_since(timeout_info.start_time);
+                if elapsed >= Duration::from_secs(timeout_info.timeout_sec) {
+                    let rule = &rules[timeout_info.rule_index];
+                    let pattern_display = match &rule.pattern {
+                        dsl::Pattern::String(s) => format!("\"{}\"", s),
+                        dsl::Pattern::Regex(_) => "regex".to_string(),
+                    };
+                    return Err((format!("Timeout: Pattern {} not found within {} seconds", pattern_display, timeout_info.timeout_sec), 1));
+                }
+            }
+            
+            let line = match line {
+                Ok(l) => l,
+                Err(e) => {
+                    if config.debug {
+                        eprintln!("Warning: Failed to read line (ignoring): {}", e);
+                    }
+                    continue;
+                }
+            };
+            
+            match process_line(&line, &mut accumulated_output, &mut fifo, &rules, config.debug, config.verbose) {
+                Ok(Some(matched_rule_index)) => {
+                    // マッチしたルールのタイムアウトをクリア
+                    rule_timeouts.retain(|rt| rt.rule_index != matched_rule_index);
+                }
+                Ok(None) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        
+        // ファイル読み取り完了後、タイムアウトが設定されているルールがマッチしなかった場合
+        for timeout_info in &rule_timeouts {
+            let rule = &rules[timeout_info.rule_index];
+            let pattern_display = match &rule.pattern {
+                dsl::Pattern::String(s) => format!("\"{}\"", s),
+                dsl::Pattern::Regex(_) => "regex".to_string(),
+            };
+            return Err((format!("Timeout: Pattern {} not found within {} seconds", pattern_display, timeout_info.timeout_sec), 1));
         }
     }
     

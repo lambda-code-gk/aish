@@ -77,4 +77,4 @@ expect機能を提供するスクリプト実行ツール（Rust実装）
   - ルートAGENTS.mdは概要と参照のみに変更
   - aish-captureの詳細は`tools/aish-capture/AGENTS.md`に移動
 - **2025年1月3日**: aish-scriptサブプロジェクトの情報を追加
-  - Phase 2の基本実装完了を反映
+  - Phase 2〜5（基本実装、リアルタイム監視、正規表現、タイムアウト・エラーハンドリング）の全機能実装完了を反映
