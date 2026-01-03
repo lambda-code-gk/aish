@@ -4,6 +4,7 @@ use std::process;
 use std::thread;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
+use regex::Regex;
 
 mod platform;
 use platform::FileWatcher;
@@ -24,8 +25,14 @@ fn parse_jsonl_line(line: &str) -> Option<(String, Option<String>, Option<String
 
 // DSLパーサー（簡易版）
 #[derive(Debug, Clone)]
+enum PatternType {
+    String(String),
+    Regex(Regex, String), // (Regex, original pattern string for debug)
+}
+
+#[derive(Debug, Clone)]
 struct Rule {
-    pattern: String,
+    pattern: PatternType,
     send_text: String,
 }
 
@@ -39,25 +46,63 @@ fn parse_dsl(script: &str) -> Result<Vec<Rule>, String> {
             continue;
         }
         
-        // match "pattern" then send "text" の形式をパース
+        // match "pattern" then send "text" または match /pattern/flags then send "text" の形式をパース
         if !part.starts_with("match ") {
             return Err(format!("Expected 'match' at start of rule: {}", part));
         }
         
         let part = &part[6..]; // "match " を削除
-        let pattern_start = part.find('"');
-        if pattern_start.is_none() {
-            return Err(format!("Expected quoted pattern: {}", part));
-        }
-        let pattern_start = pattern_start.unwrap() + 1;
-        let pattern_end = part[pattern_start..].find('"');
-        if pattern_end.is_none() {
-            return Err(format!("Expected closing quote for pattern: {}", part));
-        }
-        let pattern_end = pattern_start + pattern_end.unwrap();
-        let pattern = part[pattern_start..pattern_end].to_string();
+        let part = part.trim();
         
-        let remaining = part[pattern_end + 1..].trim();
+        // 正規表現パターンか文字列パターンかを判定
+        let (pattern_type, remaining): (PatternType, &str) = if part.starts_with('/') {
+            // 正規表現パターン: /pattern/flags
+            let pattern_end = part[1..].find('/');
+            if pattern_end.is_none() {
+                return Err(format!("Expected closing '/' for regex pattern: {}", part));
+            }
+            let pattern_end = pattern_end.unwrap() + 1;
+            let pattern_str = part[1..pattern_end - 1].to_string();
+            
+            // フラグを取得（/ の後）
+            let flags_part = &part[pattern_end..];
+            let flags_end = flags_part.find(' ').unwrap_or(flags_part.len());
+            let flags = &flags_part[..flags_end];
+            
+            // フラグをパターン文字列に埋め込む形式に変換
+            let mut final_pattern = String::new();
+            if flags.contains('i') {
+                final_pattern.push_str("(?i)");
+            }
+            if flags.contains('m') {
+                final_pattern.push_str("(?m)");
+            }
+            final_pattern.push_str(&pattern_str);
+            
+            // Regexを構築
+            let regex = Regex::new(&final_pattern)
+                .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern_str, e))?;
+            
+            let remaining = flags_part[flags_end..].trim();
+            (PatternType::Regex(regex, pattern_str), remaining)
+        } else {
+            // 文字列パターン: "pattern"
+            let pattern_start = part.find('"');
+            if pattern_start.is_none() {
+                return Err(format!("Expected quoted pattern: {}", part));
+            }
+            let pattern_start = pattern_start.unwrap() + 1;
+            let pattern_end = part[pattern_start..].find('"');
+            if pattern_end.is_none() {
+                return Err(format!("Expected closing quote for pattern: {}", part));
+            }
+            let pattern_end = pattern_start + pattern_end.unwrap();
+            let pattern = part[pattern_start..pattern_end].to_string();
+            
+            let remaining = part[pattern_end + 1..].trim();
+            (PatternType::String(pattern), remaining)
+        };
+        
         if !remaining.starts_with("then send ") {
             return Err(format!("Expected 'then send' after pattern: {}", remaining));
         }
@@ -79,7 +124,7 @@ fn parse_dsl(script: &str) -> Result<Vec<Rule>, String> {
         let send_text = send_text.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
         
         rules.push(Rule {
-            pattern,
+            pattern: pattern_type,
             send_text,
         });
     }
@@ -248,9 +293,23 @@ fn run() -> Result<i32, (String, i32)> {
                     
                     // 各ルールに対してマッチングを試行
                     for rule in rules {
-                        if accumulated_output.contains(&rule.pattern) {
+                        let matched = match &rule.pattern {
+                            PatternType::String(pattern) => {
+                                accumulated_output.contains(pattern)
+                            }
+                            PatternType::Regex(regex, _pattern_str) => {
+                                regex.is_match(accumulated_output)
+                            }
+                        };
+                        
+                        if matched {
+                            let pattern_display = match &rule.pattern {
+                                PatternType::String(p) => p.clone(),
+                                PatternType::Regex(_, p) => format!("/{}/", p),
+                            };
+                            
                             if debug || verbose {
-                                eprintln!("Matched pattern: {}", rule.pattern);
+                                eprintln!("Matched pattern: {}", pattern_display);
                             }
                             
                             // FIFOに送信
@@ -264,8 +323,17 @@ fn run() -> Result<i32, (String, i32)> {
                             }
                             
                             // マッチした部分を削除（簡易版：最初のマッチのみ処理）
-                            if let Some(pos) = accumulated_output.find(&rule.pattern) {
-                                *accumulated_output = accumulated_output[pos + rule.pattern.len()..].to_string();
+                            match &rule.pattern {
+                                PatternType::String(pattern) => {
+                                    if let Some(pos) = accumulated_output.find(pattern) {
+                                        *accumulated_output = accumulated_output[pos + pattern.len()..].to_string();
+                                    }
+                                }
+                                PatternType::Regex(regex, _) => {
+                                    if let Some(m) = regex.find(accumulated_output) {
+                                        *accumulated_output = accumulated_output[m.end()..].to_string();
+                                    }
+                                }
                             }
                             return Ok(true); // マッチした
                         }

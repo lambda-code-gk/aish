@@ -356,6 +356,193 @@ EOF
     fi
 }
 
+# テスト6: 正規表現パターンのマッチング（Phase 4）
+test_regex_pattern() {
+    test_case "Regex pattern matching (Phase 4)"
+    
+    local log_file="$TEST_DIR/test6.jsonl"
+    local fifo_path="$TEST_DIR/test6.fifo"
+    
+    # テスト用のJSONLログファイルを作成
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":15,"data":"Enter password: "}
+{"v":1,"t_ms":1002,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test6.fifo_output"
+    timeout 2s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（正規表現パターン）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path -e 'match /password:\s*/i then send \"mypass\\n\"'"
+    
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" -e 'match /password:\s*/i then send "mypass\n"' > "$TEST_DIR/test6.stdout" 2> "$TEST_DIR/test6.stderr"; then
+        # FIFO読み取りを終了
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        wait "$fifo_reader_pid" 2>/dev/null || true
+        
+        # FIFOに正しいデータが送信されたか確認
+        if [ -f "$fifo_output" ]; then
+            local fifo_content=$(cat "$fifo_output")
+            if [ "$fifo_content" = "mypass" ] || [ "$fifo_content" = $'mypass\n' ]; then
+                log_info "✓ FIFO received correct data (regex pattern matched)"
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                return 0
+            else
+                log_error "✗ FIFO received incorrect data: '$fifo_content'"
+                cat "$TEST_DIR/test6.stderr"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                return 1
+            fi
+        else
+            log_error "✗ FIFO output file not created"
+            cat "$TEST_DIR/test6.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test6.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト7: 正規表現フラグ `i` (大文字小文字無視) の動作確認（Phase 4）
+test_regex_flag_i() {
+    test_case "Regex flag 'i' (case-insensitive) test (Phase 4)"
+    
+    local log_file="$TEST_DIR/test7.jsonl"
+    local fifo_path="$TEST_DIR/test7.fifo"
+    
+    # テスト用のJSONLログファイルを作成（大文字小文字が混在）
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":15,"data":"PASSWORD: "}
+{"v":1,"t_ms":1002,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test7.fifo_output"
+    timeout 2s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（正規表現パターン、iフラグ付き）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path -e 'match /password:/i then send \"mypass\\n\"'"
+    
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" -e 'match /password:/i then send "mypass\n"' > "$TEST_DIR/test7.stdout" 2> "$TEST_DIR/test7.stderr"; then
+        # FIFO読み取りを終了
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        wait "$fifo_reader_pid" 2>/dev/null || true
+        
+        # FIFOに正しいデータが送信されたか確認
+        if [ -f "$fifo_output" ]; then
+            local fifo_content=$(cat "$fifo_output")
+            if [ "$fifo_content" = "mypass" ] || [ "$fifo_content" = $'mypass\n' ]; then
+                log_info "✓ FIFO received correct data (case-insensitive regex matched)"
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                return 0
+            else
+                log_error "✗ FIFO received incorrect data: '$fifo_content'"
+                cat "$TEST_DIR/test7.stderr"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                return 1
+            fi
+        else
+            log_error "✗ FIFO output file not created"
+            cat "$TEST_DIR/test7.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test7.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト8: 文字列マッチと正規表現マッチの混合（Phase 4）
+test_mixed_string_and_regex() {
+    test_case "Mixed string and regex matching (Phase 4)"
+    
+    local log_file="$TEST_DIR/test8.jsonl"
+    local fifo_path="$TEST_DIR/test8.fifo"
+    
+    # テスト用のJSONLログファイルを作成
+    cat > "$log_file" << 'EOF'
+{"v":1,"t_ms":1000,"type":"start","cols":80,"rows":24,"argv":["/bin/bash"],"cwd":"/tmp","pid":12345}
+{"v":1,"t_ms":1001,"type":"stdout","n":11,"data":"Username: "}
+{"v":1,"t_ms":1002,"type":"stdout","n":15,"data":"Enter pass: "}
+{"v":1,"t_ms":1003,"type":"exit","how":"code","code":0}
+EOF
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    # FIFOからの読み取りをバックグラウンドで実行
+    local fifo_output="$TEST_DIR/test8.fifo_output"
+    timeout 2s cat "$fifo_path" > "$fifo_output" 2>/dev/null || true &
+    local fifo_reader_pid=$!
+    
+    # aish-scriptを実行（文字列マッチと正規表現マッチの混合）
+    log_info "Running: $BINARY -f $log_file --input-fifo $fifo_path -e 'match \"Username:\" then send \"user\\n\"; match /pass:/i then send \"mypass\\n\"'"
+    
+    if $BINARY -f "$log_file" --input-fifo "$fifo_path" -e 'match "Username:" then send "user\n"; match /pass:/i then send "mypass\n"' > "$TEST_DIR/test8.stdout" 2> "$TEST_DIR/test8.stderr"; then
+        # FIFO読み取りを終了
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        wait "$fifo_reader_pid" 2>/dev/null || true
+        
+        # FIFOに正しいデータが送信されたか確認（userとmypassの両方）
+        if [ -f "$fifo_output" ]; then
+            local fifo_content=$(cat "$fifo_output")
+            if echo "$fifo_content" | grep -q "user" && echo "$fifo_content" | grep -q "mypass"; then
+                log_info "✓ FIFO received both user and mypass (mixed string and regex)"
+                TESTS_PASSED=$((TESTS_PASSED + 1))
+                return 0
+            else
+                log_error "✗ FIFO received incorrect data: '$fifo_content'"
+                cat "$TEST_DIR/test8.stderr"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+                return 1
+            fi
+        else
+            log_error "✗ FIFO output file not created"
+            cat "$TEST_DIR/test8.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        local exit_code=$?
+        kill "$fifo_reader_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test8.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
 # メイン実行
 main() {
     echo "========================================="
@@ -379,6 +566,9 @@ main() {
         "test_script_file"
         "test_ansi_escape_sequence"
         "test_realtime_follow"
+        "test_regex_pattern"
+        "test_regex_flag_i"
+        "test_mixed_string_and_regex"
     )
     
     for test_func in "${tests[@]}"; do
