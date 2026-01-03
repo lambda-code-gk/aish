@@ -18,15 +18,71 @@ fn json_escape(s: &str) -> String {
     result
 }
 
+// ANSIエスケープシーケンスを含むかどうかを判定
+// ANSIエスケープシーケンスはJSONエスケープで表現可能なため、JSON-safeとして扱う
+fn contains_ansi_escape_sequences(data: &[u8]) -> bool {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0x1B {
+            i += 1;
+            if i >= data.len() {
+                return true; // ESCで終わる場合はANSIエスケープシーケンスの可能性がある
+            }
+            
+            // OSCシーケンス: \x1B]...\x07
+            if data[i] == b']' {
+                i += 1;
+                while i < data.len() && data[i] != 0x07 {
+                    i += 1;
+                }
+                if i < data.len() {
+                    i += 1; // \x07をスキップ
+                    continue; // OSCシーケンスを検出
+                }
+                return true; // \x07が見つからないが、OSCシーケンスの可能性がある
+            }
+            
+            // CSIシーケンス: \x1B[...]
+            if data[i] == b'[' {
+                i += 1;
+                // パラメータと終端文字をスキップ
+                while i < data.len() {
+                    let ch = data[i];
+                    // 終端文字（アルファベット、@、?など）
+                    if (ch >= b'@' && ch <= b'~') || ch == b'?' {
+                        return true; // CSIシーケンスを検出
+                    }
+                    i += 1;
+                }
+                return true; // [で始まるが終端が見つからない場合もCSIシーケンスの可能性がある
+            }
+            
+            // その他のエスケープシーケンス: \x1B...（2文字目がアルファベットなど）
+            if (data[i] >= b'@' && data[i] <= b'~') || data[i] < 0x20 {
+                return true; // エスケープシーケンスを検出
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 // データがJSON-safeなテキストかどうかを判定し、文字列として変換可能かも返す
 // JSON-safeとは、UTF-8として有効で、JSON文字列として安全に埋め込めること
+// ANSIエスケープシーケンスを含むデータもJSON-safeとして扱う（JSONエスケープで表現可能）
 // 返り値: (is_safe, Option<&str>)
 fn check_json_safe_text(data: &[u8]) -> (bool, Option<&str>) {
     // UTF-8として有効な文字列かチェック
     match std::str::from_utf8(data) {
         Ok(s) => {
+            // ANSIエスケープシーケンスを含む場合はJSON-safeとして扱う
+            if contains_ansi_escape_sequences(data) {
+                return (true, Some(s));
+            }
+            
             // 制御文字が含まれていないかチェック
             // JSONエスケープで処理可能な範囲（\n, \r, \t）以外の制御文字がある場合はbase64が必要
+            // 注意: ANSIエスケープシーケンス（\x1Bで始まる）は上で既にチェック済み
             let is_safe = s.chars().all(|c| {
                 !c.is_control() || c == '\n' || c == '\r' || c == '\t'
             });

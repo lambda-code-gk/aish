@@ -53,6 +53,17 @@ assert_jsonl_contains() {
     fi
 }
 
+assert_jsonl_not_contains() {
+    local file="$1"
+    local pattern="$2"
+    if grep -q "$pattern" "$file" 2>/dev/null; then
+        log_error "JSONL file should not contain: $pattern"
+        return 1
+    else
+        return 0
+    fi
+}
+
 assert_exit_code() {
     local expected="$1"
     local actual="$2"
@@ -446,8 +457,8 @@ test_binary_immediate_output() {
     
     local output_file="$TEST_DIR/test10.jsonl"
     
-    log_info "Running: $BINARY -o $output_file -- bash -c 'echo -e \"\\033[31mRED\\033[0m\"'"
-    if $BINARY -o "$output_file" -- bash -c 'echo -e "\033[31mRED\033[0m"' > "$TEST_DIR/test10.stdout" 2> "$TEST_DIR/test10.stderr"; then
+    log_info "Running: $BINARY -o $output_file -- bash -c 'echo -e \"\\x00\\x01\\x02\"'"
+    if $BINARY -o "$output_file" -- bash -c 'echo -ne "\x00\x01\x02"' > "$TEST_DIR/test10.stdout" 2> "$TEST_DIR/test10.stderr"; then
         # JSONLファイルを確認
         if check_jsonl_valid "$output_file"; then
             log_info "✓ JSONL file is valid"
@@ -470,6 +481,92 @@ test_binary_immediate_output() {
         local exit_code=$?
         log_error "Command failed with exit code: $exit_code"
         cat "$TEST_DIR/test10.stderr"
+        return 1
+    fi
+}
+
+# テスト10.5: ANSIエスケープシーケンスのJSONエスケープ処理
+test_ansi_escape_json_escape() {
+    test_case "ANSI Escape Sequence JSON Escape"
+    
+    local output_file="$TEST_DIR/test10_5.jsonl"
+    
+    # 色付きテキストを出力（ANSIエスケープシーケンス）
+    log_info "Running: $BINARY -o $output_file -- bash -c 'echo -e \"\\033[31mRED\\033[0m\"'"
+    if $BINARY -o "$output_file" -- bash -c 'echo -e "\033[31mRED\033[0m"' > "$TEST_DIR/test10_5.stdout" 2> "$TEST_DIR/test10_5.stderr"; then
+        # JSONLファイルを確認
+        if check_jsonl_valid "$output_file"; then
+            log_info "✓ JSONL file is valid"
+        else
+            return 1
+        fi
+        
+        # ANSIエスケープシーケンスはbase64エンコードされず、JSONエスケープ文字列として記録される
+        if assert_jsonl_not_contains "$output_file" '"enc":"b64"'; then
+            log_info "✓ ANSI escape sequences are not base64 encoded (no enc field)"
+        else
+            log_error "✗ ANSI escape sequences should not be base64 encoded"
+            return 1
+        fi
+        
+        # JSONエスケープ文字列として記録されていることを確認（\u001bが含まれる）
+        if assert_jsonl_contains "$output_file" '\\u001b'; then
+            log_info "✓ ANSI escape sequences are JSON-escaped (\\u001b found)"
+        else
+            log_error "✗ ANSI escape sequences should be JSON-escaped"
+            # デバッグ用にJSONLの内容を表示
+            grep '"type":"stdout"' "$output_file" | head -1 | cat
+            return 1
+        fi
+        
+        # "RED"というテキストが含まれていることを確認
+        if assert_jsonl_contains "$output_file" "RED"; then
+            log_info "✓ Text content is preserved"
+        else
+            log_error "✗ Text content missing"
+            return 1
+        fi
+        
+        log_info "Test 10.5 PASSED"
+        return 0
+    else
+        local exit_code=$?
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test10_5.stderr"
+        return 1
+    fi
+}
+
+# テスト10.6: 本当のバイナリデータはbase64エンコードされる
+test_real_binary_base64() {
+    test_case "Real Binary Data Base64 Encoding"
+    
+    local output_file="$TEST_DIR/test10_6.jsonl"
+    
+    # UTF-8として無効なバイナリデータを出力
+    log_info "Running: $BINARY -o $output_file -- bash -c 'echo -ne \"\\xFF\\xFE\\xFD\"'"
+    if $BINARY -o "$output_file" -- bash -c 'echo -ne "\xFF\xFE\xFD"' > "$TEST_DIR/test10_6.stdout" 2> "$TEST_DIR/test10_6.stderr"; then
+        # JSONLファイルを確認
+        if check_jsonl_valid "$output_file"; then
+            log_info "✓ JSONL file is valid"
+        else
+            return 1
+        fi
+        
+        # 本当のバイナリデータはbase64エンコードされる
+        if assert_jsonl_contains "$output_file" '"enc":"b64"'; then
+            log_info "✓ Real binary data is base64 encoded (enc field present)"
+        else
+            log_error "✗ Real binary data should be base64 encoded"
+            return 1
+        fi
+        
+        log_info "Test 10.6 PASSED"
+        return 0
+    else
+        local exit_code=$?
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test10_6.stderr"
         return 1
     fi
 }
@@ -725,6 +822,8 @@ main() {
         "test_append_option"
         "test_text_buffering"
         "test_binary_immediate_output"
+        "test_ansi_escape_json_escape"
+        "test_real_binary_base64"
         "test_fifo_input"
         "test_fifo_and_stdin"
         "test_fifo_with_no_stdin"
@@ -742,7 +841,7 @@ main() {
         # TTYが必要なテストをスキップ
         if [ "$skip_pty_tests" = true ]; then
             case "$test_func" in
-                test_command_execution|test_exit_code|test_no_stdin|test_cwd_option|test_env_option|test_jsonl_format|test_append_option|test_text_buffering|test_binary_immediate_output|test_fifo_input|test_fifo_and_stdin|test_fifo_with_no_stdin)
+                test_command_execution|test_exit_code|test_no_stdin|test_cwd_option|test_env_option|test_jsonl_format|test_append_option|test_text_buffering|test_binary_immediate_output|test_ansi_escape_json_escape|test_real_binary_base64|test_fifo_input|test_fifo_and_stdin|test_fifo_with_no_stdin)
                     log_warn "Skipping $test_func (requires TTY)"
                     continue
                     ;;
