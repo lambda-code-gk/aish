@@ -7,6 +7,14 @@
 - **メインプロジェクト**: AISH（AISH is a CUI automation framework powered by LLMs）
 - **プロジェクトルート**: `/home/honda/labo/aish_make_rust_dev`
 
+## デバッグ方法
+開発用のディレクトリで作業している際は以下の手順で実行すると開発環境のファイルを参照するようになります。
+
+```bash
+export AISH_HOME="$PROJECT_ROOT/_aish"
+./aish
+```
+
 ## サブプロジェクト
 
 ### aish-capture
