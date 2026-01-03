@@ -12,6 +12,7 @@ NC='\033[0m' # No Color
 # テスト用のディレクトリ
 TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
+# echo "Test directory: $TEST_DIR"
 
 # バイナリのパス
 BINARY="${BINARY:-./target/release/aish-capture}"
@@ -473,6 +474,220 @@ test_binary_immediate_output() {
     fi
 }
 
+# テスト11: FIFO入力機能
+test_fifo_input() {
+    test_case "FIFO Input Functionality"
+    
+    local output_file="$TEST_DIR/test11.jsonl"
+    local fifo_path="$TEST_DIR/test11.fifo"
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    log_info "Created FIFO: $fifo_path"
+    
+    # バックグラウンドでaish-captureを起動
+    log_info "Running: $BINARY -o $output_file --input-fifo $fifo_path -- bash -c 'read -r line; echo \"Received: \$line\"'"
+    
+    # バックグラウンドで実行（FIFOが開かれるのを待つ）
+    (
+        sleep 0.5  # FIFOが開かれるのを待つ
+        timeout 5s bash -c "echo 'test input from fifo' > '$fifo_path'" || true
+    ) &
+    local fifo_writer_pid=$!
+    
+    # aish-captureを実行
+    if $BINARY -o "$output_file" --input-fifo "$fifo_path" -- bash -c 'read -r line; echo "Received: $line"' > "$TEST_DIR/test11.stdout" 2> "$TEST_DIR/test11.stderr"; then
+        wait "$fifo_writer_pid" 2>/dev/null || true
+        
+        # JSONLファイルを確認
+        if check_jsonl_valid "$output_file"; then
+            log_info "✓ JSONL file is valid"
+        else
+            return 1
+        fi
+        
+        # stdinイベントがFIFOからの入力で記録されていることを確認
+        if assert_jsonl_contains "$output_file" '"type":"stdin"'; then
+            log_info "✓ Contains stdin event from FIFO"
+        else
+            log_error "✗ Missing stdin event from FIFO"
+            return 1
+        fi
+        
+        # FIFOからのデータが含まれていることを確認
+        if assert_jsonl_contains "$output_file" "test input from fifo"; then
+            log_info "✓ FIFO input data is logged"
+        else
+            log_error "✗ FIFO input data not found in log"
+            return 1
+        fi
+        
+        # stdoutにFIFOからの入力が反映されていることを確認
+        if grep -q "Received: test input from fifo" "$TEST_DIR/test11.stdout"; then
+            log_info "✓ FIFO input was sent to PTY"
+        else
+            log_error "✗ FIFO input was not sent to PTY"
+            cat "$TEST_DIR/test11.stdout"
+            return 1
+        fi
+        
+        log_info "Test 11 PASSED"
+        return 0
+    else
+        local exit_code=$?
+        wait "$fifo_writer_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test11.stderr"
+        return 1
+    fi
+}
+
+# テスト12: FIFO入力とstdinの同時動作
+test_fifo_and_stdin() {
+    test_case "FIFO Input and Stdin Simultaneous Operation"
+    
+    local output_file="$TEST_DIR/test12.jsonl"
+    local fifo_path="$TEST_DIR/test12.fifo"
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    log_info "Created FIFO: $fifo_path"
+    
+    # バックグラウンドでFIFOにデータを送信
+    (
+        sleep 0.5
+        timeout 5s bash -c "echo 'fifo input' > '$fifo_path'" || true
+    ) &
+    local fifo_writer_pid=$!
+    
+    # stdinとFIFOの両方から入力を受け取るコマンドを実行
+    log_info "Running: $BINARY -o $output_file --input-fifo $fifo_path -- bash -c 'read -r line1; read -r line2; echo \"line1: \$line1 line2: \$line2\"'"
+    
+    # stdinからもデータを送信（echo経由）
+    if echo "stdin input" | $BINARY -o "$output_file" --input-fifo "$fifo_path" -- bash -c 'read -r line1; read -r line2; echo "line1: $line1 line2: $line2"' > "$TEST_DIR/test12.stdout" 2> "$TEST_DIR/test12.stderr"; then
+        wait "$fifo_writer_pid" 2>/dev/null || true
+        
+        # JSONLファイルを確認
+        if check_jsonl_valid "$output_file"; then
+            log_info "✓ JSONL file is valid"
+        else
+            return 1
+        fi
+        
+        # 両方の入力が記録されていることを確認
+        local stdin_count=$(grep -c '"type":"stdin"' "$output_file" || echo "0")
+        if [ "$stdin_count" -ge 2 ]; then
+            log_info "✓ Multiple stdin events recorded (count: $stdin_count)"
+        else
+            log_error "✗ Expected at least 2 stdin events, got $stdin_count"
+            return 1
+        fi
+        
+        # FIFOとstdinの両方のデータが含まれていることを確認
+        if assert_jsonl_contains "$output_file" "fifo input"; then
+            log_info "✓ FIFO input is logged"
+        else
+            log_error "✗ FIFO input not found in log"
+            return 1
+        fi
+        
+        if assert_jsonl_contains "$output_file" "stdin input"; then
+            log_info "✓ Stdin input is logged"
+        else
+            log_error "✗ Stdin input not found in log"
+            return 1
+        fi
+        
+        log_info "Test 12 PASSED"
+        return 0
+    else
+        local exit_code=$?
+        wait "$fifo_writer_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test12.stderr"
+        return 1
+    fi
+}
+
+# テスト13: --no-stdinオプションとFIFO入力の組み合わせ
+test_fifo_with_no_stdin() {
+    test_case "FIFO Input with --no-stdin Option"
+    
+    local output_file="$TEST_DIR/test13.jsonl"
+    local fifo_path="$TEST_DIR/test13.fifo"
+    
+    # FIFOを作成
+    mkfifo "$fifo_path" || {
+        log_error "Failed to create FIFO: $fifo_path"
+        return 1
+    }
+    
+    log_info "Created FIFO: $fifo_path"
+    
+    # バックグラウンドでFIFOにデータを送信
+    (
+        sleep 0.5
+        timeout 5s bash -c "echo 'fifo only input' > '$fifo_path'" || true
+    ) &
+    local fifo_writer_pid=$!
+    
+    # --no-stdinオプションとFIFO入力の組み合わせ
+    log_info "Running: $BINARY -o $output_file --no-stdin --input-fifo $fifo_path -- bash -c 'read -r line; echo \"Received: \$line\"'"
+    
+    if $BINARY -o "$output_file" --no-stdin --input-fifo "$fifo_path" -- bash -c 'read -r line; echo "Received: $line"' > "$TEST_DIR/test13.stdout" 2> "$TEST_DIR/test13.stderr"; then
+        wait "$fifo_writer_pid" 2>/dev/null || true
+        
+        # JSONLファイルを確認
+        if check_jsonl_valid "$output_file"; then
+            log_info "✓ JSONL file is valid"
+        else
+            return 1
+        fi
+        
+        # FIFOからの入力は記録されていることを確認（--no-stdinの影響を受けない）
+        if assert_jsonl_contains "$output_file" '"type":"stdin"'; then
+            log_info "✓ FIFO input is logged (not affected by --no-stdin)"
+        else
+            log_error "✗ FIFO input should be logged even with --no-stdin"
+            return 1
+        fi
+        
+        # FIFOからのデータが含まれていることを確認
+        if assert_jsonl_contains "$output_file" "fifo only input"; then
+            log_info "✓ FIFO input data is logged"
+        else
+            log_error "✗ FIFO input data not found in log"
+            return 1
+        fi
+        
+        # stdoutにFIFOからの入力が反映されていることを確認
+        if grep -q "Received: fifo only input" "$TEST_DIR/test13.stdout"; then
+            log_info "✓ FIFO input was sent to PTY"
+        else
+            log_error "✗ FIFO input was not sent to PTY"
+            cat "$TEST_DIR/test13.stdout"
+            return 1
+        fi
+        
+        log_info "Test 13 PASSED"
+        return 0
+    else
+        local exit_code=$?
+        wait "$fifo_writer_pid" 2>/dev/null || true
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test13.stderr"
+        return 1
+    fi
+}
+
 # メイン実行
 main() {
     echo "========================================="
@@ -510,6 +725,9 @@ main() {
         "test_append_option"
         "test_text_buffering"
         "test_binary_immediate_output"
+        "test_fifo_input"
+        "test_fifo_and_stdin"
+        "test_fifo_with_no_stdin"
     )
     
     # TTYが必要なテストをスキップするかチェック
@@ -524,7 +742,7 @@ main() {
         # TTYが必要なテストをスキップ
         if [ "$skip_pty_tests" = true ]; then
             case "$test_func" in
-                test_command_execution|test_exit_code|test_no_stdin|test_cwd_option|test_env_option|test_jsonl_format|test_append_option|test_text_buffering|test_binary_immediate_output)
+                test_command_execution|test_exit_code|test_no_stdin|test_cwd_option|test_env_option|test_jsonl_format|test_append_option|test_text_buffering|test_binary_immediate_output|test_fifo_input|test_fifo_and_stdin|test_fifo_with_no_stdin)
                     log_warn "Skipping $test_func (requires TTY)"
                     continue
                     ;;

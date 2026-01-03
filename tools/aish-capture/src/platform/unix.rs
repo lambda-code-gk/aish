@@ -180,6 +180,7 @@ impl Drop for Pty {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ProcessStatus {
     Exited(i32),
     Signaled(i32),
@@ -189,20 +190,25 @@ pub fn get_winsize(fd: RawFd) -> io::Result<libc::winsize> {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
         if libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) < 0 {
-            return Err(io::Error::last_os_error());
+            // Not a TTY or other error - return default size
+            ws.ws_col = 80;
+            ws.ws_row = 24;
         }
         Ok(ws)
     }
 }
 
 pub struct TermMode {
-    saved_termios: libc::termios,
+    saved_termios: Option<libc::termios>,
     stdin_fd: RawFd,
 }
 
 impl TermMode {
     pub fn set_raw(stdin_fd: RawFd) -> io::Result<Self> {
         unsafe {
+            if libc::isatty(stdin_fd) == 0 {
+                return Ok(TermMode { saved_termios: None, stdin_fd });
+            }
             let mut termios: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(stdin_fd, &mut termios) < 0 {
                 return Err(io::Error::last_os_error());
@@ -216,7 +222,7 @@ impl TermMode {
             }
             
             Ok(TermMode {
-                saved_termios: saved,
+                saved_termios: Some(saved),
                 stdin_fd,
             })
         }
@@ -225,8 +231,10 @@ impl TermMode {
 
 impl Drop for TermMode {
     fn drop(&mut self) {
-        unsafe {
-            libc::tcsetattr(self.stdin_fd, libc::TCSANOW, &self.saved_termios);
+        if let Some(saved) = self.saved_termios {
+            unsafe {
+                libc::tcsetattr(self.stdin_fd, libc::TCSANOW, &saved);
+            }
         }
     }
 }
@@ -260,4 +268,3 @@ pub fn setup_sigusr1() -> io::Result<()> {
 pub fn check_sigusr1() -> bool {
     SIGUSR1_RECEIVED.swap(false, Ordering::Relaxed)
 }
-

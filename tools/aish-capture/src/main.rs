@@ -6,7 +6,7 @@ use libc;
 use logfmt::*;
 use platform::*;
 use std::io::{self, Write};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::process;
 
 fn main() {
@@ -77,6 +77,14 @@ fn run() -> Result<i32, (String, i32)> {
                 }
                 i += 1;
             }
+            "--input-fifo" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(("Option requires an argument".to_string(), 64));
+                }
+                config.input_fifo = Some(args[i].clone());
+                i += 1;
+            }
             "--" => {
                 i += 1;
                 cmd_start = Some(i);
@@ -122,6 +130,7 @@ struct Config {
     max_chunk: usize,
     cwd: Option<String>,
     env: Vec<(String, String)>,
+    input_fifo: Option<String>,
 }
 
 impl Default for Config {
@@ -133,6 +142,7 @@ impl Default for Config {
             max_chunk: 32768,
             cwd: None,
             env: Vec::new(),
+            input_fifo: None,
         }
     }
 }
@@ -163,6 +173,14 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
     let master_fd = pty.master_fd();
     let child_pid = pty.child_pid();
     
+    // Set master_fd to non-blocking
+    unsafe {
+        let flags = libc::fcntl(master_fd, libc::F_GETFL);
+        if flags >= 0 {
+            libc::fcntl(master_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
+    
     // Set terminal to raw mode
     let stdin_fd = io::stdin().as_raw_fd();
     let _term_mode = TermMode::set_raw(stdin_fd)
@@ -192,11 +210,34 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         child_pid,
     ).map_err(|e| (format!("Failed to write start event: {}", e), 74))?;
     
+    // Open FIFO if specified (non-blocking mode)
+    let fifo_file: Option<std::fs::File> = if let Some(ref fifo_path) = config.input_fifo {
+        unsafe {
+            use std::ffi::CString;
+            let path_cstr = CString::new(fifo_path.as_str())
+                .map_err(|e| (format!("Invalid FIFO path: {}", e), 74))?;
+            let fd = libc::open(
+                path_cstr.as_ptr(),
+                libc::O_RDWR | libc::O_NONBLOCK,
+            );
+            if fd < 0 {
+                return Err((format!("Failed to open FIFO: {}", io::Error::last_os_error()), 74));
+            }
+            Some(std::fs::File::from_raw_fd(fd))
+        }
+    } else {
+        None
+    };
+    let fifo_fd = fifo_file.as_ref().map(|f| f.as_raw_fd());
+    let mut fifo_eof = false;
+    
     // Main poll loop
     let mut stdin_buf = vec![0u8; config.max_chunk];
     let mut pty_buf = vec![0u8; config.max_chunk];
+    let mut fifo_buf = vec![0u8; config.max_chunk];
     let mut stdin_eof = false;
     let mut stdin_text_buffer = logfmt::TextBuffer::new();
+    let mut fifo_text_buffer = logfmt::TextBuffer::new();
     let mut stdout_text_buffer = logfmt::TextBuffer::new();
     
     loop {
@@ -216,39 +257,22 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         // Check if child process has exited
         match pty.wait_nonblocking() {
             Ok(Some(status)) => {
-                // Flush remaining buffered data
-                if let Some(data) = stdin_text_buffer.flush() {
-                    if !config.no_stdin {
-                        let _ = write_stdin(&mut log_file, &data);
-                    }
-                }
-                if let Some(data) = stdout_text_buffer.flush() {
-                    let _ = write_stdout(&mut log_file, &data);
-                }
-                
-                let exit_code = match status {
-                    ProcessStatus::Exited(code) => {
-                        write_exit_code(&mut log_file, code)
-                            .map_err(|e| (format!("Failed to write exit event: {}", e), 74))?;
-                        code
-                    }
-                    ProcessStatus::Signaled(sig) => {
-                        write_exit_signal(&mut log_file, sig)
-                            .map_err(|e| (format!("Failed to write exit event: {}", e), 74))?;
-                        128 + sig
-                    }
-                };
-                return Ok(exit_code);
+                return Ok(finalize_and_get_exit_code(
+                    status,
+                    &mut log_file,
+                    &mut stdin_text_buffer,
+                    &mut fifo_text_buffer,
+                    &mut stdout_text_buffer,
+                    &config,
+                ));
             }
-            Ok(None) => {
-                // Process still running, continue
-            }
+            Ok(None) => {}
             Err(e) => {
                 return Err((format!("waitpid failed: {}", e), 74));
             }
         }
         
-        // Poll stdin and pty
+        // Poll setup
         let mut pollfds = vec![
             libc::pollfd {
                 fd: master_fd,
@@ -257,12 +281,18 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
             },
         ];
         
+        let mut stdin_idx = None;
         if !stdin_eof {
-            pollfds.insert(0, libc::pollfd {
-                fd: stdin_fd,
-                events: libc::POLLIN,
-                revents: 0,
-            });
+            stdin_idx = Some(pollfds.len());
+            pollfds.push(libc::pollfd { fd: stdin_fd, events: libc::POLLIN, revents: 0 });
+        }
+        
+        let mut fifo_idx = None;
+        if let Some(fd) = fifo_fd {
+            if !fifo_eof {
+                fifo_idx = Some(pollfds.len());
+                pollfds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+            }
         }
         
         let timeout_ms = 50;
@@ -272,81 +302,117 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         
         if n < 0 {
             let err = io::Error::last_os_error();
-            if err.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
+            if err.kind() == io::ErrorKind::Interrupted { continue; }
             return Err((format!("poll failed: {}", err), 74));
         }
         
-        // Read from stdin and write to pty
-        if !stdin_eof {
-            let stdin_idx = 0;
-            if (pollfds[stdin_idx].revents & libc::POLLIN) != 0 {
-                unsafe {
-                    let n = libc::read(stdin_fd, stdin_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk);
+        if n == 0 { continue; }
+
+        // Read from stdin
+        if let Some(idx) = stdin_idx {
+            if (pollfds[idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
+                let n = unsafe { libc::read(stdin_fd, stdin_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk) };
+                if n > 0 {
+                    let chunk = &stdin_buf[..n as usize];
+                    let _ = unsafe { libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize) };
+                    if !config.no_stdin {
+                        for data in stdin_text_buffer.append(chunk) { let _ = write_stdin(&mut log_file, &data); }
+                    }
+                } else if n == 0 {
+                    if let Some(data) = stdin_text_buffer.flush() { if !config.no_stdin { let _ = write_stdin(&mut log_file, &data); } }
+                    stdin_eof = true;
+                }
+            }
+        }
+        
+        // Read from FIFO
+        if let Some(idx) = fifo_idx {
+            if let Some(fd) = fifo_fd {
+                if (pollfds[idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
+                    let n = unsafe { libc::read(fd, fifo_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk) };
                     if n > 0 {
-                        let chunk = &stdin_buf[..n as usize];
-                        // Write to pty
-                        let written = libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize);
-                        if written >= 0 {
-                            // Buffer and log stdin event (if enabled)
-                            if !config.no_stdin {
-                                let lines = stdin_text_buffer.append(chunk);
-                                for data in lines {
-                                    let _ = write_stdin(&mut log_file, &data);
-                                }
-                            }
-                        }
+                        let chunk = &fifo_buf[..n as usize];
+                        let _ = unsafe { libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize) };
+                        for data in fifo_text_buffer.append(chunk) { let _ = write_stdin(&mut log_file, &data); }
                     } else if n == 0 {
-                        // EOF on stdin - flush remaining buffered data
-                        if let Some(data) = stdin_text_buffer.flush() {
-                            if !config.no_stdin {
-                                let _ = write_stdin(&mut log_file, &data);
-                            }
-                        }
-                        stdin_eof = true;
-                    } else {
-                        let err = io::Error::last_os_error();
-                        if err.kind() == io::ErrorKind::Interrupted {
-                            // Continue on interrupt
-                        } else {
-                            // Other error, treat as EOF
-                            stdin_eof = true;
-                        }
+                        // EOF on FIFO (should not happen with O_RDWR usually, but handle it)
+                        if let Some(data) = fifo_text_buffer.flush() { let _ = write_stdin(&mut log_file, &data); }
+                        fifo_eof = true;
                     }
                 }
             }
         }
         
-        // Read from pty and write to stdout
-        let pty_idx = if stdin_eof { 0 } else { 1 };
-        if (pollfds[pty_idx].revents & libc::POLLIN) != 0 {
-            unsafe {
-                let n = libc::read(master_fd, pty_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk);
-                if n > 0 {
-                    let chunk = &pty_buf[..n as usize];
-                    // Write to stdout
-                    let _ = io::stdout().write_all(chunk);
-                    let _ = io::stdout().flush();
-                    // Buffer and log stdout event
-                    let lines = stdout_text_buffer.append(chunk);
-                    for data in lines {
-                        let _ = write_stdout(&mut log_file, &data);
+        // Read from PTY
+        if (pollfds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
+            let n = unsafe { libc::read(master_fd, pty_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk) };
+            if n > 0 {
+                let chunk = &pty_buf[..n as usize];
+                let _ = io::stdout().write_all(chunk);
+                let _ = io::stdout().flush();
+                for data in stdout_text_buffer.append(chunk) { let _ = write_stdout(&mut log_file, &data); }
+            } else if n <= 0 {
+                // EOF or error on PTY - check if child still alive
+                let err = if n < 0 { Some(io::Error::last_os_error()) } else { None };
+                let is_real_end = match err {
+                    Some(ref e) => {
+                        let errno = e.raw_os_error().unwrap_or(0);
+                        e.kind() != io::ErrorKind::Interrupted && errno != libc::EAGAIN && errno != libc::EWOULDBLOCK
                     }
-                } else if n == 0 {
-                    // EOF on pty - flush remaining buffered data
-                    if let Some(data) = stdout_text_buffer.flush() {
-                        let _ = write_stdout(&mut log_file, &data);
+                    None => true,
+                };
+                
+                if is_real_end {
+                    // Try to wait for child one last time
+                    let mut wait_count = 0;
+                    while wait_count < 20 {
+                        if let Ok(Some(status)) = pty.wait_nonblocking() {
+                            return Ok(finalize_and_get_exit_code(
+                                status,
+                                &mut log_file,
+                                &mut stdin_text_buffer,
+                                &mut fifo_text_buffer,
+                                &mut stdout_text_buffer,
+                                &config,
+                            ));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        wait_count += 1;
                     }
-                    // EOF on pty - child may have exited, will be caught by wait_nonblocking
-                } else {
-                    let err = io::Error::last_os_error();
-                    if err.kind() != io::ErrorKind::Interrupted {
-                        // Ignore other errors
-                    }
+                    // If we get here, the PTY is gone but we can't get the exit status.
+                    return Ok(0); 
                 }
             }
         }
     }
 }
 
+fn finalize_and_get_exit_code(
+    status: ProcessStatus,
+    log_file: &mut std::fs::File,
+    stdin_text_buffer: &mut TextBuffer,
+    fifo_text_buffer: &mut TextBuffer,
+    stdout_text_buffer: &mut TextBuffer,
+    config: &Config,
+) -> i32 {
+    if let Some(data) = stdin_text_buffer.flush() {
+        if !config.no_stdin { let _ = write_stdin(log_file, &data); }
+    }
+    if let Some(data) = fifo_text_buffer.flush() {
+        let _ = write_stdin(log_file, &data);
+    }
+    if let Some(data) = stdout_text_buffer.flush() {
+        let _ = write_stdout(log_file, &data);
+    }
+    
+    match status {
+        ProcessStatus::Exited(code) => {
+            let _ = write_exit_code(log_file, code);
+            code
+        }
+        ProcessStatus::Signaled(sig) => {
+            let _ = write_exit_signal(log_file, sig);
+            128 + sig
+        }
+    }
+}
