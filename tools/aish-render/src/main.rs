@@ -2,11 +2,19 @@ use std::io::{self, BufRead, Write};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
+#[cfg(debug_assertions)]
+mod debug_log;
+
 // JSONL行をパースしてtype, data, encフィールドを抽出
 fn parse_jsonl_line(line: &str) -> Option<(String, Option<String>, Option<String>)> {
     let json: Value = match serde_json::from_str(line) {
         Ok(v) => v,
-        Err(_) => return None,
+        Err(_e) => {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-render", &format!("WARNING: Failed to parse JSONL line: {} (error: {})", 
+                if line.len() > 100 { format!("{}...", &line[..100]) } else { line.to_string() }, _e));
+            return None;
+        }
     };
     
     let event_type = json.get("type")?.as_str()?.to_string();
@@ -103,14 +111,26 @@ impl TerminalBuffer {
         let col = self.cursor.col;
         let line = self.get_line(row);
         
-        // カーソル位置が行の長さを超えている場合は空白で埋める
-        while line.len() < col {
+        // カーソル位置が行の文字数を超えている場合は空白で埋める
+        let mut char_count = line.chars().count();
+        while char_count < col {
             line.push(' ');
+            char_count += 1;
         }
         
         // カーソル位置に文字を挿入（既存の文字を上書き）
-        if col < line.len() {
-            line.replace_range(col..col + 1, &ch.to_string());
+        if col < char_count {
+            // 文字位置をバイト位置に変換
+            let byte_pos = line.char_indices()
+                .nth(col)
+                .map(|(pos, _)| pos)
+                .unwrap_or(line.len());
+            // 次の文字のバイト位置を取得
+            let next_byte_pos = line.char_indices()
+                .nth(col + 1)
+                .map(|(pos, _)| pos)
+                .unwrap_or(line.len());
+            line.replace_range(byte_pos..next_byte_pos, &ch.to_string());
         } else {
             line.push(ch);
         }
@@ -200,7 +220,7 @@ impl TerminalBuffer {
                 // 行の長さに合わせて列位置を調整
                 let line_len = {
                     let line = self.get_line(self.cursor.row);
-                    line.len()
+                    line.chars().count()
                 };
                 if self.cursor.col > line_len {
                     self.cursor.col = line_len;
@@ -213,7 +233,7 @@ impl TerminalBuffer {
                 // 行の長さに合わせて列位置を調整
                 let line_len = {
                     let line = self.get_line(self.cursor.row);
-                    line.len()
+                    line.chars().count()
                 };
                 if self.cursor.col > line_len {
                     self.cursor.col = line_len;
@@ -235,16 +255,28 @@ impl TerminalBuffer {
                     0 => {
                         // カーソル位置から行末まで消去
                         let line = self.get_line(self.cursor.row);
-                        if cursor_col < line.len() {
-                            line.truncate(cursor_col);
+                        let char_count = line.chars().count();
+                        if cursor_col < char_count {
+                            // 文字位置をバイト位置に変換
+                            let byte_pos = line.char_indices()
+                                .nth(cursor_col)
+                                .map(|(pos, _)| pos)
+                                .unwrap_or(line.len());
+                            line.truncate(byte_pos);
                         }
                     }
                     1 => {
                         // 行の先頭からカーソル位置まで消去
                         let keep = {
                             let line = self.get_line(self.cursor.row);
-                            if cursor_col < line.len() {
-                                line[cursor_col..].to_string()
+                            let char_count = line.chars().count();
+                            if cursor_col < char_count {
+                                // 文字位置をバイト位置に変換
+                                let byte_pos = line.char_indices()
+                                    .nth(cursor_col)
+                                    .map(|(pos, _)| pos)
+                                    .unwrap_or(line.len());
+                                line[byte_pos..].to_string()
                             } else {
                                 String::new()
                             }
@@ -271,8 +303,14 @@ impl TerminalBuffer {
                     0 => {
                         // カーソル位置から画面末尾まで消去
                         let line = self.get_line(cursor_row);
-                        if cursor_col < line.len() {
-                            line.truncate(cursor_col);
+                        let char_count = line.chars().count();
+                        if cursor_col < char_count {
+                            // 文字位置をバイト位置に変換
+                            let byte_pos = line.char_indices()
+                                .nth(cursor_col)
+                                .map(|(pos, _)| pos)
+                                .unwrap_or(line.len());
+                            line.truncate(byte_pos);
                         }
                         self.lines.truncate(cursor_row + 1);
                     }
@@ -280,8 +318,14 @@ impl TerminalBuffer {
                         // 画面の先頭からカーソル位置まで消去
                         let keep = {
                             let line = self.get_line(cursor_row);
-                            if cursor_col < line.len() {
-                                line[cursor_col..].to_string()
+                            let char_count = line.chars().count();
+                            if cursor_col < char_count {
+                                // 文字位置をバイト位置に変換
+                                let byte_pos = line.char_indices()
+                                    .nth(cursor_col)
+                                    .map(|(pos, _)| pos)
+                                    .unwrap_or(line.len());
+                                line[byte_pos..].to_string()
                             } else {
                                 String::new()
                             }
@@ -350,8 +394,18 @@ impl TerminalBuffer {
                     let col_to_remove = self.cursor.col - 1;
                     {
                         let line = self.get_line(self.cursor.row);
-                        if col_to_remove < line.len() {
-                            line.remove(col_to_remove);
+                        let char_count = line.chars().count();
+                        if col_to_remove < char_count {
+                            // 文字位置をバイト位置に変換
+                            let byte_pos = line.char_indices()
+                                .nth(col_to_remove)
+                                .map(|(pos, _)| pos)
+                                .unwrap_or(line.len());
+                            // その位置の文字を削除（1文字分のバイト数を取得）
+                            if let Some((_, ch)) = line.char_indices().nth(col_to_remove) {
+                                let ch_len = ch.len_utf8();
+                                line.drain(byte_pos..byte_pos + ch_len);
+                            }
                         }
                     }
                     self.cursor.move_left(1);
@@ -389,25 +443,54 @@ impl TerminalBuffer {
 }
 
 fn main() {
+    #[cfg(debug_assertions)]
+    {
+        if let Some(log_file) = debug_log::init_debug_log() {
+            debug_log::debug_log("aish-render", &format!("Starting aish-render, debug log: {}", log_file));
+        }
+    }
+    
     let stdin = io::stdin();
     let mut buffer = TerminalBuffer::new();
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-render", "Reading JSONL lines from stdin");
     
     for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
-            Err(_) => continue,
+            Err(_e) => {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-render", &format!("ERROR: Failed to read line from stdin: {}", _e));
+                continue;
+            }
         };
         
         if let Some((event_type, data_opt, enc_opt)) = parse_jsonl_line(&line) {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-render", &format!("Parsed event type: {}", event_type));
+            
             if event_type == "stdout" {
                 if let Some(data_str) = data_opt {
                     let data = if enc_opt.as_ref().map(|e| e == "b64").unwrap_or(false) {
+                        #[cfg(debug_assertions)]
+                        debug_log::debug_log("aish-render", "Decoding base64 data");
                         // base64デコード
                         match STANDARD.decode(&data_str) {
-                            Ok(bytes) => bytes,
-                            Err(_) => continue,
+                            Ok(bytes) => {
+                                #[cfg(debug_assertions)]
+                                debug_log::debug_log("aish-render", &format!("Decoded {} bytes", bytes.len()));
+                                bytes
+                            }
+                            Err(_e) => {
+                                #[cfg(debug_assertions)]
+                                debug_log::debug_log("aish-render", &format!("ERROR: Failed to decode base64 data: {}", _e));
+                                continue;
+                            }
                         }
                     } else {
+                        #[cfg(debug_assertions)]
+                        debug_log::debug_log("aish-render", &format!("Processing text data: {} bytes", data_str.len()));
                         // JSONパーサーで既にエスケープを処理しているので、そのままバイト列に変換
                         data_str.as_bytes().to_vec()
                     };
@@ -418,8 +501,24 @@ fn main() {
         }
     }
     
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-render", "Finished processing, outputting result");
+    
     let output = buffer.output();
-    io::stdout().write_all(output.as_bytes()).unwrap();
-    io::stdout().write_all(b"\n").unwrap();
+    if let Err(e) = io::stdout().write_all(output.as_bytes()) {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-render", &format!("ERROR: Failed to write output to stdout: {}", e));
+        eprintln!("aish-render: Failed to write output: {}", e);
+        std::process::exit(74);
+    }
+    if let Err(e) = io::stdout().write_all(b"\n") {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-render", &format!("ERROR: Failed to write newline to stdout: {}", e));
+        eprintln!("aish-render: Failed to write newline: {}", e);
+        std::process::exit(74);
+    }
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-render", "Output complete");
 }
 

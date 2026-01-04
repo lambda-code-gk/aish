@@ -2,6 +2,9 @@ mod logfmt;
 mod platform;
 mod util;
 
+#[cfg(debug_assertions)]
+use util::debug_log;
+
 use libc;
 use logfmt::*;
 use platform::*;
@@ -13,6 +16,8 @@ fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err((msg, code)) => {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-capture", &format!("ERROR: {} (exit code: {})", msg, code));
             eprintln!("aish-capture: {}", msg);
             code
         }
@@ -21,6 +26,13 @@ fn main() {
 }
 
 fn run() -> Result<i32, (String, i32)> {
+    #[cfg(debug_assertions)]
+    {
+        if let Some(log_file) = debug_log::init_debug_log() {
+            debug_log::debug_log("aish-capture", &format!("Starting aish-capture, debug log: {}", log_file));
+        }
+    }
+    
     let args: Vec<String> = std::env::args().collect();
     let mut config = Config::default();
     let mut cmd_start = None;
@@ -32,6 +44,8 @@ fn run() -> Result<i32, (String, i32)> {
             "-o" | "--out" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", &format!("ERROR: Option {} requires an argument", args[i-1]));
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 config.output = args[i].clone();
@@ -48,15 +62,23 @@ fn run() -> Result<i32, (String, i32)> {
             "--max-chunk" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", "ERROR: Option --max-chunk requires an argument");
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 config.max_chunk = args[i].parse()
-                    .map_err(|_| ("Invalid max-chunk value".to_string(), 64))?;
+                    .map_err(|_e| {
+                        #[cfg(debug_assertions)]
+                        debug_log::debug_log("aish-capture", &format!("ERROR: Invalid max-chunk value: {} ({})", args[i], _e));
+                        ("Invalid max-chunk value".to_string(), 64)
+                    })?;
                 i += 1;
             }
             "--cwd" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", "ERROR: Option --cwd requires an argument");
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 config.cwd = Some(args[i].clone());
@@ -65,6 +87,8 @@ fn run() -> Result<i32, (String, i32)> {
             "--env" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", "ERROR: Option --env requires an argument");
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 let env_str = &args[i];
@@ -73,6 +97,8 @@ fn run() -> Result<i32, (String, i32)> {
                     let value = env_str[eq_pos + 1..].to_string();
                     config.env.push((key, value));
                 } else {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", &format!("ERROR: Invalid env format: {}", env_str));
                     return Err((format!("Invalid env format: {}", env_str), 64));
                 }
                 i += 1;
@@ -80,6 +106,8 @@ fn run() -> Result<i32, (String, i32)> {
             "--input-fifo" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", "ERROR: Option --input-fifo requires an argument");
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 config.input_fifo = Some(args[i].clone());
@@ -91,6 +119,8 @@ fn run() -> Result<i32, (String, i32)> {
                 break;
             }
             _ if args[i].starts_with('-') => {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-capture", &format!("ERROR: Unknown option: {}", args[i]));
                 return Err((format!("Unknown option: {}", args[i]), 64));
             }
             _ => {
@@ -119,6 +149,9 @@ fn run() -> Result<i32, (String, i32)> {
             .as_secs();
         config.output = format!("./aish-capture-{}.jsonl", timestamp);
     }
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-capture", &format!("Output file: {}", config.output));
     
     execute(config, cmd)
 }
@@ -159,6 +192,9 @@ fn ensure_log_file_position(log_file: &mut std::fs::File) {
 }
 
 fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32)> {
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-capture", "Opening output file");
+    
     // Open output file
     let mut log_file = std::fs::OpenOptions::new()
         .create(true)
@@ -166,20 +202,55 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         .append(config.append)
         .truncate(!config.append)
         .open(&config.output)
-        .map_err(|e| (format!("Failed to open output file: {}", e), 74))?;
+        .map_err(|e| {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-capture", &format!("ERROR: Failed to open output file: {} - {}", config.output, e));
+            (format!("Failed to open output file: {}", e), 74)
+        })?;
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-capture", "Setting up signal handlers");
     
     // Setup SIGWINCH handler
-    setup_sigwinch().map_err(|e| (format!("Failed to setup SIGWINCH: {}", e), 1))?;
+    setup_sigwinch().map_err(|e| {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-capture", &format!("ERROR: Failed to setup SIGWINCH: {}", e));
+        (format!("Failed to setup SIGWINCH: {}", e), 1)
+    })?;
     
     // Setup SIGUSR1 handler
-    setup_sigusr1().map_err(|e| (format!("Failed to setup SIGUSR1: {}", e), 1))?;
+    setup_sigusr1().map_err(|e| {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-capture", &format!("ERROR: Failed to setup SIGUSR1: {}", e));
+        (format!("Failed to setup SIGUSR1: {}", e), 1)
+    })?;
+    
+    #[cfg(debug_assertions)]
+    {
+        let cmd_str = cmd.as_ref()
+            .map(|v| v.join(" "))
+            .unwrap_or_else(|| "shell".to_string());
+        debug_log::debug_log("aish-capture", &format!("Creating PTY for command: {}", cmd_str));
+    }
     
     // Create PTY
     let pty = Pty::new(
         cmd.as_ref().map(|v| v.as_slice()),
         config.cwd.as_deref(),
         &config.env,
-    ).map_err(|e| (format!("Failed to create PTY: {}", e), 70))?;
+    ).map_err(|e| {
+        #[cfg(debug_assertions)]
+        {
+            let cmd_str = cmd.as_ref()
+                .map(|v| v.join(" "))
+                .unwrap_or_else(|| "shell".to_string());
+            debug_log::debug_log("aish-capture", &format!("ERROR: Failed to create PTY for command: {} - {}", cmd_str, e));
+        }
+        (format!("Failed to create PTY: {}", e), 70)
+    })?;
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-capture", "PTY created successfully");
     
     let master_fd = pty.master_fd();
     let child_pid = pty.child_pid();
@@ -195,11 +266,19 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
     // Set terminal to raw mode
     let stdin_fd = io::stdin().as_raw_fd();
     let _term_mode = TermMode::set_raw(stdin_fd)
-        .map_err(|e| (format!("Failed to set raw mode: {}", e), 74))?;
+        .map_err(|e| {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-capture", &format!("ERROR: Failed to set raw mode: {}", e));
+            (format!("Failed to set raw mode: {}", e), 74)
+        })?;
     
     // Get initial window size
     let initial_ws = get_winsize(stdin_fd)
-        .map_err(|e| (format!("Failed to get window size: {}", e), 74))?;
+        .map_err(|e| {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-capture", &format!("ERROR: Failed to get window size: {}", e));
+            (format!("Failed to get window size: {}", e), 74)
+        })?;
     
     // Write start event
     let cwd_string = config.cwd.clone().unwrap_or_else(|| {
@@ -220,20 +299,34 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         &cmd_argv,
         cwd_str,
         child_pid,
-    ).map_err(|e| (format!("Failed to write start event: {}", e), 74))?;
+    ).map_err(|e| {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-capture", &format!("ERROR: Failed to write start event: {}", e));
+        (format!("Failed to write start event: {}", e), 74)
+    })?;
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-capture", "Start event written, entering main loop");
     
     // Open FIFO if specified (non-blocking mode)
     let fifo_file: Option<std::fs::File> = if let Some(ref fifo_path) = config.input_fifo {
         unsafe {
             use std::ffi::CString;
             let path_cstr = CString::new(fifo_path.as_str())
-                .map_err(|e| (format!("Invalid FIFO path: {}", e), 74))?;
+                .map_err(|e| {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", &format!("ERROR: Invalid FIFO path: {} - {}", fifo_path, e));
+                    (format!("Invalid FIFO path: {}", e), 74)
+                })?;
             let fd = libc::open(
                 path_cstr.as_ptr(),
                 libc::O_RDWR | libc::O_NONBLOCK,
             );
             if fd < 0 {
-                return Err((format!("Failed to open FIFO: {}", io::Error::last_os_error()), 74));
+                let err = io::Error::last_os_error();
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-capture", &format!("ERROR: Failed to open FIFO: {} - {}", fifo_path, err));
+                return Err((format!("Failed to open FIFO: {}", err), 74));
             }
             Some(std::fs::File::from_raw_fd(fd))
         }
@@ -270,6 +363,14 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         // Check if child process has exited
         match pty.wait_nonblocking() {
             Ok(Some(status)) => {
+                #[cfg(debug_assertions)]
+                {
+                    let status_str = match status {
+                        ProcessStatus::Exited(code) => format!("exited with code {}", code),
+                        ProcessStatus::Signaled(sig) => format!("killed by signal {}", sig),
+                    };
+                    debug_log::debug_log("aish-capture", &format!("Child process exited: {}", status_str));
+                }
                 return Ok(finalize_and_get_exit_code(
                     status,
                     &mut log_file,
@@ -281,6 +382,8 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
             }
             Ok(None) => {}
             Err(e) => {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-capture", &format!("ERROR: waitpid failed: {}", e));
                 return Err((format!("waitpid failed: {}", e), 74));
             }
         }
@@ -316,6 +419,8 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         if n < 0 {
             let err = io::Error::last_os_error();
             if err.kind() == io::ErrorKind::Interrupted { continue; }
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-capture", &format!("ERROR: poll failed: {}", err));
             return Err((format!("poll failed: {}", err), 74));
         }
         
@@ -326,6 +431,8 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
             if (pollfds[idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
                 let n = unsafe { libc::read(stdin_fd, stdin_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk) };
                 if n > 0 {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", &format!("Read {} bytes from stdin", n));
                     let chunk = &stdin_buf[..n as usize];
                     let _ = unsafe { libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize) };
                     if !config.no_stdin {
@@ -335,6 +442,8 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
                         }
                     }
                 } else if n == 0 {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-capture", "Stdin EOF");
                     if let Some(data) = stdin_text_buffer.flush() {
                         if !config.no_stdin {
                             ensure_log_file_position(&mut log_file);
@@ -374,6 +483,8 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         if (pollfds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
             let n = unsafe { libc::read(master_fd, pty_buf.as_mut_ptr() as *mut libc::c_void, config.max_chunk) };
             if n > 0 {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-capture", &format!("Read {} bytes from PTY", n));
                 let chunk = &pty_buf[..n as usize];
                 let _ = io::stdout().write_all(chunk);
                 let _ = io::stdout().flush();

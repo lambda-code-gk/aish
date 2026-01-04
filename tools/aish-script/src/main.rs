@@ -6,6 +6,9 @@ mod dsl;
 
 use dsl::parse_script;
 
+#[cfg(debug_assertions)]
+mod debug_log;
+
 struct Config {
     execute_script: Option<String>,
     script_file: Option<String>,
@@ -28,6 +31,8 @@ fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err((msg, code)) => {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-script", &format!("ERROR: {} (exit code: {})", msg, code));
             eprintln!("aish-script: {}", msg);
             code
         }
@@ -36,6 +41,13 @@ fn main() {
 }
 
 fn run() -> Result<i32, (String, i32)> {
+    #[cfg(debug_assertions)]
+    {
+        if let Some(log_file) = debug_log::init_debug_log() {
+            debug_log::debug_log("aish-script", &format!("Starting aish-script, debug log: {}", log_file));
+        }
+    }
+    
     let args: Vec<String> = std::env::args().collect();
     let mut config = Config::default();
     
@@ -46,6 +58,8 @@ fn run() -> Result<i32, (String, i32)> {
             "-e" | "--execute" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-script", &format!("ERROR: Option {} requires an argument", args[i-1]));
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 config.execute_script = Some(args[i].clone());
@@ -54,6 +68,8 @@ fn run() -> Result<i32, (String, i32)> {
             "-s" | "--script" => {
                 i += 1;
                 if i >= args.len() {
+                    #[cfg(debug_assertions)]
+                    debug_log::debug_log("aish-script", &format!("ERROR: Option {} requires an argument", args[i-1]));
                     return Err(("Option requires an argument".to_string(), 64));
                 }
                 config.script_file = Some(args[i].clone());
@@ -68,9 +84,13 @@ fn run() -> Result<i32, (String, i32)> {
                 i += 1;
             }
             _ if args[i].starts_with('-') => {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", &format!("ERROR: Unknown option: {}", args[i]));
                 return Err((format!("Unknown option: {}", args[i]), 64));
             }
             _ => {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", &format!("ERROR: Unexpected argument: {}", args[i]));
                 return Err((format!("Unexpected argument: {}", args[i]), 64));
             }
         }
@@ -78,17 +98,37 @@ fn run() -> Result<i32, (String, i32)> {
     
     // スクリプトの取得
     let script = if let Some(ref script_file) = config.script_file {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-script", &format!("Reading script file: {}", script_file));
         std::fs::read_to_string(script_file)
-            .map_err(|e| (format!("Failed to read script file: {}", e), 74))?
+            .map_err(|e| {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", &format!("ERROR: Failed to read script file: {} - {}", script_file, e));
+                (format!("Failed to read script file: {}", e), 74)
+            })?
     } else if let Some(ref execute_script) = config.execute_script {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-script", "Using execute script from command line");
         execute_script.clone()
     } else {
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-script", "ERROR: Either --execute or --script option is required");
         return Err(("Either --execute or --script option is required".to_string(), 64));
     };
     
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-script", "Parsing DSL script");
+    
     // DSLパーサーでスクリプトを取得
     let script = parse_script(&script)
-        .map_err(|e| (format!("Failed to parse DSL: {}", e), 64))?;
+        .map_err(|e| {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-script", &format!("ERROR: Failed to parse DSL: {}", e));
+            (format!("Failed to parse DSL: {}", e), 64)
+        })?;
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-script", &format!("Parsed {} rules", script.rules.len()));
     
     let rules = &script.rules;
     let mut current_state = script.initial_state.clone();
@@ -107,6 +147,9 @@ fn run() -> Result<i32, (String, i32)> {
                      i + 1, state_display, pattern_display, rule.response, next_state_display, rule.timeout);
         }
     }
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-script", &format!("Initial state: {}, {} rules loaded", current_state, rules.len()));
     
     // 標準出力（バッファなし）
     let stdout = io::stdout();
@@ -136,6 +179,9 @@ fn run() -> Result<i32, (String, i32)> {
     let mut accumulated_output = String::new();
     let mut buffer = String::new();
     
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-script", "Entering main loop, reading from stdin");
+    
     loop {
         // タイムアウトチェック
         let now = Instant::now();
@@ -147,6 +193,9 @@ fn run() -> Result<i32, (String, i32)> {
                     dsl::Pattern::String(s) => format!("\"{}\"", s),
                     dsl::Pattern::Regex(_) => "regex".to_string(),
                 };
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", &format!("ERROR: Timeout - Pattern {} not found within {} seconds (current state: {})", 
+                    pattern_display, timeout_info.timeout_sec, current_state));
                 return Err((format!("Timeout: Pattern {} not found within {} seconds", pattern_display, timeout_info.timeout_sec), 1));
             }
         }
@@ -156,11 +205,16 @@ fn run() -> Result<i32, (String, i32)> {
         match stdin_lock.read_line(&mut buffer) {
             Ok(0) => {
                 // EOF（標準入力が閉じられた）
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", "EOF reached on stdin");
                 break;
             }
             Ok(_) => {
                 // 行を読み取った
                 accumulated_output.push_str(&buffer);
+                
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", &format!("Read line, accumulated length: {} bytes", accumulated_output.len()));
                 
                 if config.debug {
                     eprintln!("Accumulated output length: {} bytes", accumulated_output.len());
@@ -184,21 +238,34 @@ fn run() -> Result<i32, (String, i32)> {
                             dsl::Pattern::Regex(_) => "regex".to_string(),
                         };
                         
+                        #[cfg(debug_assertions)]
+                        debug_log::debug_log("aish-script", &format!("Matched pattern: {} (state: {})", pattern_display, current_state));
+                        
                         if config.debug || config.verbose {
                             eprintln!("Matched pattern: {} (current state: {})", pattern_display, current_state);
                         }
                         
                         // 標準出力に送信
+                        #[cfg(debug_assertions)]
+                        debug_log::debug_log("aish-script", &format!("Sending response: {:?}", rule.response));
+                        
                         match stdout_lock.write_all(rule.response.as_bytes()) {
                             Ok(_) => {
                                 if let Err(e) = stdout_lock.flush() {
+                                    #[cfg(debug_assertions)]
+                                    debug_log::debug_log("aish-script", &format!("ERROR: Failed to flush stdout: {}", e));
                                     return Err((format!("Failed to flush stdout: {}", e), 74));
                                 }
                             }
                             Err(e) => {
+                                #[cfg(debug_assertions)]
+                                debug_log::debug_log("aish-script", &format!("ERROR: Failed to write to stdout: {} (response: {:?})", e, rule.response));
                                 return Err((format!("Failed to write to stdout: {}", e), 74));
                             }
                         }
+                        
+                        #[cfg(debug_assertions)]
+                        debug_log::debug_log("aish-script", "Response sent successfully");
                         
                         if config.debug || config.verbose {
                             eprintln!("Sent to stdout: {:?}", rule.response);
@@ -220,6 +287,9 @@ fn run() -> Result<i32, (String, i32)> {
                         
                         // 状態遷移
                         if let Some(ref next_state) = rule.next_state {
+                            #[cfg(debug_assertions)]
+                            debug_log::debug_log("aish-script", &format!("State transition: {} -> {}", current_state, next_state));
+                            
                             if config.debug || config.verbose {
                                 eprintln!("State transition: {} -> {}", current_state, next_state);
                             }
@@ -234,6 +304,8 @@ fn run() -> Result<i32, (String, i32)> {
                 }
             }
             Err(e) => {
+                #[cfg(debug_assertions)]
+                debug_log::debug_log("aish-script", &format!("ERROR: Failed to read from stdin: {} (current state: {})", e, current_state));
                 return Err((format!("Failed to read from stdin: {}", e), 74));
             }
         }
@@ -246,8 +318,14 @@ fn run() -> Result<i32, (String, i32)> {
             dsl::Pattern::String(s) => format!("\"{}\"", s),
             dsl::Pattern::Regex(_) => "regex".to_string(),
         };
+        #[cfg(debug_assertions)]
+        debug_log::debug_log("aish-script", &format!("ERROR: Timeout after EOF - Pattern {} not found within {} seconds (final state: {})", 
+            pattern_display, timeout_info.timeout_sec, current_state));
         return Err((format!("Timeout: Pattern {} not found within {} seconds", pattern_display, timeout_info.timeout_sec), 1));
     }
+    
+    #[cfg(debug_assertions)]
+    debug_log::debug_log("aish-script", "Exiting successfully");
     
     Ok(0)
 }
