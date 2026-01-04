@@ -409,6 +409,244 @@ test_no_match() {
     fi
 }
 
+# テスト12: 逐次処理（状態遷移）
+test_sequential_state_transition() {
+    test_case "Sequential state transition"
+    
+    local input=$'Step 1\nStep 2\nStep 3'
+    local expected_output=$'response1\nresponse2\nresponse3\n'
+    
+    log_info "Running: echo -e \"$input\" | $BINARY -e 'state \"start\"; in state \"start\" match \"Step 1\" then send \"response1\\n\" goto \"state2\"; in state \"state2\" match \"Step 2\" then send \"response2\\n\" goto \"state3\"; in state \"state3\" match \"Step 3\" then send \"response3\\n\"'"
+    
+    local output=$(echo -e "$input" | $BINARY -e 'state "start"; in state "start" match "Step 1" then send "response1\n" goto "state2"; in state "state2" match "Step 2" then send "response2\n" goto "state3"; in state "state3" match "Step 3" then send "response3\n"' 2> "$TEST_DIR/test12.stderr")
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        if echo "$output" | grep -q "response1" && echo "$output" | grep -q "response2" && echo "$output" | grep -q "response3"; then
+            log_info "✓ Sequential state transition worked correctly"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Incorrect output: '$output'"
+            cat "$TEST_DIR/test12.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test12.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト13: 条件分岐（マッチしたパターンに基づく分岐）
+test_conditional_branch() {
+    test_case "Conditional branch based on pattern match"
+    
+    local input="Choice: yes"
+    local expected_output="yes_response"
+    
+    log_info "Running: echo \"$input\" | $BINARY -e 'state \"start\"; in state \"start\" match \"Choice: yes\" then send \"yes_response\\n\" goto \"yes_state\"; in state \"start\" match \"Choice: no\" then send \"no_response\\n\" goto \"no_state\"'"
+    
+    local output=$(echo -n "$input" | $BINARY -e 'state "start"; in state "start" match "Choice: yes" then send "yes_response\n" goto "yes_state"; in state "start" match "Choice: no" then send "no_response\n" goto "no_state"' 2> "$TEST_DIR/test13.stderr")
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        if echo "$output" | grep -q "$expected_output"; then
+            log_info "✓ Conditional branch worked correctly"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Incorrect output: '$output' (expected: '$expected_output')"
+            cat "$TEST_DIR/test13.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test13.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト14: ステートブロック構文（一つのステート内で複数のパターン）
+test_state_block_syntax() {
+    test_case "State block syntax (multiple patterns in one state)"
+    
+    local input="Choice: yes"
+    local expected_output="yes_response"
+    
+    log_info "Running: echo \"$input\" | $BINARY -e 'state \"start\" { match \"Choice: yes\" then send \"yes_response\\n\" goto \"yes_state\"; match \"Choice: no\" then send \"no_response\\n\" goto \"no_state\"; }'"
+    
+    local output=$(echo -n "$input" | $BINARY -e 'state "start" { match "Choice: yes" then send "yes_response\n" goto "yes_state"; match "Choice: no" then send "no_response\n" goto "no_state"; }' 2> "$TEST_DIR/test14.stderr")
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        if echo "$output" | grep -q "$expected_output"; then
+            log_info "✓ State block syntax worked correctly"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Incorrect output: '$output' (expected: '$expected_output')"
+            cat "$TEST_DIR/test14.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test14.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト15: ステートブロック構文での逐次処理
+test_state_block_sequential() {
+    test_case "Sequential processing with state block syntax"
+    
+    local input=$'Step 1\nStep 2\nStep 3'
+    local expected_output=$'response1\nresponse2\nresponse3\n'
+    
+    log_info "Running: echo -e \"$input\" | $BINARY -e 'state \"start\" { match \"Step 1\" then send \"response1\\n\" goto \"state2\"; }; state \"state2\" { match \"Step 2\" then send \"response2\\n\" goto \"state3\"; }; state \"state3\" { match \"Step 3\" then send \"response3\\n\"; }'"
+    
+    local output=$(echo -e "$input" | $BINARY -e 'state "start" { match "Step 1" then send "response1\n" goto "state2"; }; state "state2" { match "Step 2" then send "response2\n" goto "state3"; }; state "state3" { match "Step 3" then send "response3\n"; }' 2> "$TEST_DIR/test15.stderr")
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        if echo "$output" | grep -q "response1" && echo "$output" | grep -q "response2" && echo "$output" | grep -q "response3"; then
+            log_info "✓ Sequential processing with state block syntax worked correctly"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Incorrect output: '$output'"
+            cat "$TEST_DIR/test15.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code"
+        cat "$TEST_DIR/test15.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト16: 一つのステート内で複数のパターン（条件分岐）
+test_multiple_patterns_in_state() {
+    test_case "Multiple patterns in one state (conditional branching)"
+    
+    # テスト1: "Step 1"が来た場合
+    local input1="Step 1"
+    local expected_output1="response1"
+    
+    log_info "Running: echo \"$input1\" | $BINARY -e 'state \"start\" { match \"Step 1\" then send \"response1\\n\" goto \"state2\"; match \"Finish\" then send \"finish\\n\" goto \"state3\"; }'"
+    
+    local output1=$(echo -n "$input1" | $BINARY -e 'state "start" { match "Step 1" then send "response1\n" goto "state2"; match "Finish" then send "finish\n" goto "state3"; }' 2> "$TEST_DIR/test16a.stderr")
+    local exit_code1=$?
+    
+    if [ $exit_code1 -eq 0 ]; then
+        if echo "$output1" | grep -q "$expected_output1"; then
+            log_info "✓ Pattern 'Step 1' matched correctly"
+        else
+            log_error "✗ Incorrect output for 'Step 1': '$output1' (expected: '$expected_output1')"
+            cat "$TEST_DIR/test16a.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code1"
+        cat "$TEST_DIR/test16a.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+    
+    # テスト2: "Finish"が来た場合
+    local input2="Finish"
+    local expected_output2="finish"
+    
+    log_info "Running: echo \"$input2\" | $BINARY -e 'state \"start\" { match \"Step 1\" then send \"response1\\n\" goto \"state2\"; match \"Finish\" then send \"finish\\n\" goto \"state3\"; }'"
+    
+    local output2=$(echo -n "$input2" | $BINARY -e 'state "start" { match "Step 1" then send "response1\n" goto "state2"; match "Finish" then send "finish\n" goto "state3"; }' 2> "$TEST_DIR/test16b.stderr")
+    local exit_code2=$?
+    
+    if [ $exit_code2 -eq 0 ]; then
+        if echo "$output2" | grep -q "$expected_output2"; then
+            log_info "✓ Pattern 'Finish' matched correctly"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Incorrect output for 'Finish': '$output2' (expected: '$expected_output2')"
+            cat "$TEST_DIR/test16b.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code2"
+        cat "$TEST_DIR/test16b.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
+# テスト17: sendを省略した構文（then gotoのみ）
+test_then_goto_without_send() {
+    test_case "then goto without send (state transition only)"
+    
+    # テスト1: "Step 1"が来た場合（sendあり）
+    local input1="Step 1"
+    local expected_output1="response1"
+    
+    log_info "Running: echo \"$input1\" | $BINARY -e 'state \"start\" { match \"Step 1\" then send \"response1\\n\" goto \"state2\"; match \"Finish\" then goto \"state3\"; }'"
+    
+    local output1=$(echo -n "$input1" | $BINARY -e 'state "start" { match "Step 1" then send "response1\n" goto "state2"; match "Finish" then goto "state3"; }' 2> "$TEST_DIR/test17a.stderr")
+    local exit_code1=$?
+    
+    if [ $exit_code1 -eq 0 ]; then
+        if echo "$output1" | grep -q "$expected_output1"; then
+            log_info "✓ Pattern 'Step 1' with send matched correctly"
+        else
+            log_error "✗ Incorrect output for 'Step 1': '$output1' (expected: '$expected_output1')"
+            cat "$TEST_DIR/test17a.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code1"
+        cat "$TEST_DIR/test17a.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+    
+    # テスト2: "Finish"が来た場合（sendなし、状態遷移のみ）
+    local input2="Finish"
+    
+    log_info "Running: echo \"$input2\" | $BINARY -e 'state \"start\" { match \"Step 1\" then send \"response1\\n\" goto \"state2\"; match \"Finish\" then goto \"state3\"; }'"
+    
+    local output2=$(echo -n "$input2" | $BINARY -e 'state "start" { match "Step 1" then send "response1\n" goto "state2"; match "Finish" then goto "state3"; }' 2> "$TEST_DIR/test17b.stderr")
+    local exit_code2=$?
+    
+    if [ $exit_code2 -eq 0 ]; then
+        # sendがないので、出力は空であるべき
+        if [ -z "$output2" ]; then
+            log_info "✓ Pattern 'Finish' without send matched correctly (no output, state transition only)"
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            return 0
+        else
+            log_error "✗ Unexpected output for 'Finish': '$output2' (expected: empty)"
+            cat "$TEST_DIR/test17b.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            return 1
+        fi
+    else
+        log_error "Command failed with exit code: $exit_code2"
+        cat "$TEST_DIR/test17b.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+}
+
 # メイン実行
 main() {
     echo "========================================="
@@ -438,6 +676,12 @@ main() {
         "test_verbose_mode"
         "test_multiline_input"
         "test_no_match"
+        "test_sequential_state_transition"
+        "test_conditional_branch"
+        "test_state_block_syntax"
+        "test_state_block_sequential"
+        "test_multiple_patterns_in_state"
+        "test_then_goto_without_send"
     )
     
     for test_func in "${tests[@]}"; do

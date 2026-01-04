@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 mod dsl;
 
-use dsl::{Rule, parse_script};
+use dsl::parse_script;
 
 struct Config {
     execute_script: Option<String>,
@@ -86,19 +86,25 @@ fn run() -> Result<i32, (String, i32)> {
         return Err(("Either --execute or --script option is required".to_string(), 64));
     };
     
-    // DSLパーサーでルールを取得
-    let rules = parse_script(&script)
+    // DSLパーサーでスクリプトを取得
+    let script = parse_script(&script)
         .map_err(|e| (format!("Failed to parse DSL: {}", e), 64))?;
     
+    let rules = &script.rules;
+    let mut current_state = script.initial_state.clone();
+    
     if config.debug {
+        eprintln!("Initial state: {}", current_state);
         eprintln!("Parsed {} rules", rules.len());
         for (i, rule) in rules.iter().enumerate() {
             let pattern_display = match &rule.pattern {
                 dsl::Pattern::String(s) => format!("\"{}\"", s),
                 dsl::Pattern::Regex(_) => "regex".to_string(),
             };
-            eprintln!("  Rule {}: match {} then send {:?} (timeout: {:?})", 
-                     i + 1, pattern_display, rule.response, rule.timeout);
+            let state_display = rule.state.as_ref().map(|s| s.as_str()).unwrap_or("any");
+            let next_state_display = rule.next_state.as_ref().map(|s| s.as_str()).unwrap_or("none");
+            eprintln!("  Rule {}: [state: {}] match {} then send {:?} goto {} (timeout: {:?})", 
+                     i + 1, state_display, pattern_display, rule.response, next_state_display, rule.timeout);
         }
     }
     
@@ -160,8 +166,18 @@ fn run() -> Result<i32, (String, i32)> {
                     eprintln!("Accumulated output length: {} bytes", accumulated_output.len());
                 }
                 
-                // 各ルールに対してマッチングを試行
-                for (rule_index, rule) in rules.iter().enumerate() {
+                // 現在の状態に適用可能なルールをフィルタリング
+                let applicable_rules: Vec<(usize, &dsl::Rule)> = rules.iter()
+                    .enumerate()
+                    .filter(|(_, rule)| {
+                        // 状態が指定されていないルールは全状態で有効
+                        // 状態が指定されているルールは現在の状態と一致する場合のみ有効
+                        rule.state.as_ref().map(|s| s == &current_state).unwrap_or(true)
+                    })
+                    .collect();
+                
+                // 適用可能なルールに対してマッチングを試行
+                for (rule_index, rule) in applicable_rules {
                     if rule.matches(&accumulated_output) {
                         let pattern_display = match &rule.pattern {
                             dsl::Pattern::String(s) => format!("\"{}\"", s),
@@ -169,7 +185,7 @@ fn run() -> Result<i32, (String, i32)> {
                         };
                         
                         if config.debug || config.verbose {
-                            eprintln!("Matched pattern: {}", pattern_display);
+                            eprintln!("Matched pattern: {} (current state: {})", pattern_display, current_state);
                         }
                         
                         // 標準出力に送信
@@ -200,6 +216,14 @@ fn run() -> Result<i32, (String, i32)> {
                                     accumulated_output = accumulated_output[m.end()..].to_string();
                                 }
                             }
+                        }
+                        
+                        // 状態遷移
+                        if let Some(ref next_state) = rule.next_state {
+                            if config.debug || config.verbose {
+                                eprintln!("State transition: {} -> {}", current_state, next_state);
+                            }
+                            current_state = next_state.clone();
                         }
                         
                         // マッチしたルールのタイムアウトをクリア
