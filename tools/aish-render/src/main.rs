@@ -145,15 +145,22 @@ impl TerminalBuffer {
         
         i += 1; // ESCをスキップ
         
-        // OSCシーケンス: \x1B]...\x07
+        // OSCシーケンス: \x1B]...\x07 または \x1B]...\x1B\\
         if i < data.len() && data[i] == b']' {
             i += 1;
-            while i < data.len() && data[i] != 0x07 {
+            while i < data.len() {
+                if data[i] == 0x07 {
+                    // BEL終端
+                    i += 1;
+                    return i;
+                } else if data[i] == 0x1B && i + 1 < data.len() && data[i + 1] == b'\\' {
+                    // ST終端 (\x1B\\)
+                    i += 2;
+                    return i;
+                }
                 i += 1;
             }
-            if i < data.len() {
-                i += 1; // \x07をスキップ
-            }
+            // 終端が見つからない場合は終端までスキップ
             return i;
         }
         
@@ -163,6 +170,12 @@ impl TerminalBuffer {
         }
         
         i += 1; // [をスキップ
+        
+        // プライベートパラメータ（?）をチェック
+        let has_private_param = i < data.len() && data[i] == b'?';
+        if has_private_param {
+            i += 1; // ?をスキップ
+        }
         
         // パラメータを読み取る
         let mut params = Vec::new();
@@ -189,11 +202,6 @@ impl TerminalBuffer {
             params.push(current_param.parse().unwrap_or(0));
         }
         
-        // デフォルト値が1の場合
-        if params.is_empty() {
-            params.push(1);
-        }
-        
         // 終端文字を取得
         if i >= data.len() {
             return i;
@@ -204,18 +212,18 @@ impl TerminalBuffer {
         
         match terminator {
             'D' => {
-                // カーソル左移動
-                let steps = params[0];
+                // カーソル左移動（デフォルト値: 1）
+                let steps = if params.is_empty() { 1 } else { params[0] };
                 self.cursor.move_left(steps);
             }
             'C' => {
-                // カーソル右移動
-                let steps = params[0];
+                // カーソル右移動（デフォルト値: 1）
+                let steps = if params.is_empty() { 1 } else { params[0] };
                 self.cursor.move_right(steps);
             }
             'A' => {
-                // カーソル上移動
-                let steps = params[0];
+                // カーソル上移動（デフォルト値: 1）
+                let steps = if params.is_empty() { 1 } else { params[0] };
                 self.cursor.move_up(steps);
                 // 行の長さに合わせて列位置を調整
                 let line_len = {
@@ -227,8 +235,8 @@ impl TerminalBuffer {
                 }
             }
             'B' => {
-                // カーソル下移動
-                let steps = params[0];
+                // カーソル下移動（デフォルト値: 1）
+                let steps = if params.is_empty() { 1 } else { params[0] };
                 self.cursor.move_down(steps);
                 // 行の長さに合わせて列位置を調整
                 let line_len = {

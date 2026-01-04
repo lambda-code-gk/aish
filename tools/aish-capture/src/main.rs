@@ -355,8 +355,21 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
             }
         }
         
-        // Check for SIGUSR1 (flush log file)
+        // Check for SIGUSR1 (flush log file and write buffered data)
         if check_sigusr1() {
+            // Flush stdin buffer if there's data
+            if let Some(data) = stdin_text_buffer.flush() {
+                if !config.no_stdin {
+                    ensure_log_file_position(&mut log_file);
+                    let _ = write_stdin(&mut log_file, &data);
+                }
+            }
+            // Flush stdout buffer if there's data
+            if let Some(data) = stdout_text_buffer.flush() {
+                ensure_log_file_position(&mut log_file);
+                let _ = write_stdout(&mut log_file, &data);
+            }
+            // Flush log file to disk
             let _ = log_file.flush();
         }
         
