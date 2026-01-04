@@ -382,65 +382,113 @@ impl TerminalBuffer {
     }
     
     fn process_data(&mut self, data: &[u8]) {
-        let mut i = 0;
-        
-        while i < data.len() {
-            let ch = data[i] as char;
-            
-            if ch == '\x1B' {
-                // ANSIエスケープシーケンス
-                let new_i = self.process_ansi_escape(data, i);
-                if new_i == i {
-                    // 処理されなかった場合は1文字進む
-                    i += 1;
-                } else {
-                    i = new_i;
+        // UTF-8文字列として解析
+        let s = match std::str::from_utf8(data) {
+            Ok(s) => s,
+            Err(_) => {
+                // UTF-8として無効な場合はバイト単位で処理（フォールバック）
+                let mut i = 0;
+                while i < data.len() {
+                    if data[i] == 0x1B {
+                        let new_i = self.process_ansi_escape(data, i);
+                        i = if new_i > i { new_i } else { i + 1 };
+                    } else if data[i] == 0x08 {
+                        if self.cursor.col > 0 {
+                            let col_to_remove = self.cursor.col - 1;
+                            {
+                                let line = self.get_line(self.cursor.row);
+                                let char_count = line.chars().count();
+                                if col_to_remove < char_count {
+                                    let byte_pos = line.char_indices()
+                                        .nth(col_to_remove)
+                                        .map(|(pos, _)| pos)
+                                        .unwrap_or(line.len());
+                                    if let Some((_, ch)) = line.char_indices().nth(col_to_remove) {
+                                        let ch_len = ch.len_utf8();
+                                        line.drain(byte_pos..byte_pos + ch_len);
+                                    }
+                                }
+                            }
+                            self.cursor.move_left(1);
+                        }
+                        i += 1;
+                    } else if data[i] == b'\r' {
+                        self.cursor.col = 0;
+                        i += 1;
+                    } else if data[i] == b'\n' {
+                        self.cursor.row += 1;
+                        self.cursor.col = 0;
+                        self.ensure_line(self.cursor.row);
+                        i += 1;
+                    } else if data[i] == 0x07 || data[i] == 0x00 {
+                        i += 1;
+                    } else {
+                        i += 1;
+                    }
                 }
-            } else if ch == '\x08' {
-                // バックスペース
-                if self.cursor.col > 0 {
-                    let col_to_remove = self.cursor.col - 1;
-                    {
-                        let line = self.get_line(self.cursor.row);
-                        let char_count = line.chars().count();
-                        if col_to_remove < char_count {
-                            // 文字位置をバイト位置に変換
-                            let byte_pos = line.char_indices()
-                                .nth(col_to_remove)
-                                .map(|(pos, _)| pos)
-                                .unwrap_or(line.len());
-                            // その位置の文字を削除（1文字分のバイト数を取得）
-                            if let Some((_, ch)) = line.char_indices().nth(col_to_remove) {
-                                let ch_len = ch.len_utf8();
-                                line.drain(byte_pos..byte_pos + ch_len);
+                return;
+            }
+        };
+        
+        // 文字列として処理（UTF-8マルチバイト文字を正しく処理）
+        let s_bytes = s.as_bytes();
+        let mut byte_pos = 0;
+        while byte_pos < s.len() {
+            // エスケープシーケンスの検出（バイトレベル）
+            if s_bytes[byte_pos] == 0x1B {
+                // ANSIエスケープシーケンス
+                let new_pos = self.process_ansi_escape(s_bytes, byte_pos);
+                if new_pos > byte_pos {
+                    byte_pos = new_pos;
+                    continue;
+                }
+            }
+            
+            // 文字を取得
+            let remaining = &s[byte_pos..];
+            if let Some(ch) = remaining.chars().next() {
+                let ch_len = ch.len_utf8();
+                
+                if ch == '\x08' {
+                    // バックスペース
+                    if self.cursor.col > 0 {
+                        let col_to_remove = self.cursor.col - 1;
+                        {
+                            let line = self.get_line(self.cursor.row);
+                            let char_count = line.chars().count();
+                            if col_to_remove < char_count {
+                                let line_byte_pos = line.char_indices()
+                                    .nth(col_to_remove)
+                                    .map(|(pos, _)| pos)
+                                    .unwrap_or(line.len());
+                                if let Some((_, ch)) = line.char_indices().nth(col_to_remove) {
+                                    let ch_len = ch.len_utf8();
+                                    line.drain(line_byte_pos..line_byte_pos + ch_len);
+                                }
                             }
                         }
+                        self.cursor.move_left(1);
                     }
-                    self.cursor.move_left(1);
-                }
-                i += 1;
-            } else if ch == '\r' {
-                // キャリッジリターン
-                self.cursor.col = 0;
-                i += 1;
-            } else if ch == '\n' {
-                // ラインフィード
-                self.cursor.row += 1;
-                self.cursor.col = 0;
-                self.ensure_line(self.cursor.row);
-                i += 1;
-            } else if ch == '\x07' || ch == '\x00' {
-                // ベル文字、ヌル文字は無視
-                i += 1;
-            } else {
-                // 通常の文字
-                if ch.is_control() {
+                } else if ch == '\r' {
+                    // キャリッジリターン
+                    self.cursor.col = 0;
+                } else if ch == '\n' {
+                    // ラインフィード
+                    self.cursor.row += 1;
+                    self.cursor.col = 0;
+                    self.ensure_line(self.cursor.row);
+                } else if ch == '\x07' || ch == '\x00' {
+                    // ベル文字、ヌル文字は無視
+                } else if ch.is_control() {
                     // その他の制御文字は無視
-                    i += 1;
                 } else {
+                    // 通常の文字
                     self.insert_char(ch);
-                    i += 1;
                 }
+                
+                byte_pos += ch_len;
+            } else {
+                break;
             }
         }
     }
