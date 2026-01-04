@@ -19,10 +19,16 @@ echo "Building aish-render..."
 cd "$PROJECT_ROOT/tools/aish-render"
 cargo build --release
 
+# aish-scriptをビルド
+echo "Building aish-script..."
+cd "$PROJECT_ROOT/tools/aish-script"
+cargo build --release
+
 # ビルド成果物をbinフォルダにコピー
 echo "Deploying binaries to bin/..."
 cp "$PROJECT_ROOT/tools/aish-capture/target/release/aish-capture" "$BIN_DIR/"
 cp "$PROJECT_ROOT/tools/aish-render/target/release/aish-render" "$BIN_DIR/"
+cp "$PROJECT_ROOT/tools/aish-script/target/release/aish-script" "$BIN_DIR/"
 
 echo "Build complete! Binaries are in $BIN_DIR/"
 ls -lh "$BIN_DIR/"

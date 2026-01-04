@@ -5,7 +5,7 @@ mod util;
 use libc;
 use logfmt::*;
 use platform::*;
-use std::io::{self, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::process;
 
@@ -147,6 +147,17 @@ impl Default for Config {
     }
 }
 
+// Ensure log file position is correct (handle external truncation)
+fn ensure_log_file_position(log_file: &mut std::fs::File) {
+    if let (Ok(current_pos), Ok(metadata)) = (log_file.seek(SeekFrom::Current(0)), log_file.metadata()) {
+        let file_size = metadata.len();
+        if current_pos > file_size {
+            // File was truncated externally, reset position to end of file
+            let _ = log_file.seek(SeekFrom::End(0));
+        }
+    }
+}
+
 fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32)> {
     // Open output file
     let mut log_file = std::fs::OpenOptions::new()
@@ -201,6 +212,7 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
     let cmd_argv = cmd.unwrap_or_else(|| {
         vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())]
     });
+    ensure_log_file_position(&mut log_file);
     write_start(
         &mut log_file,
         initial_ws.ws_col,
@@ -245,6 +257,7 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
         if check_sigwinch() {
             if let Ok(ws) = get_winsize(stdin_fd) {
                 let _ = pty.set_winsize(ws);
+                ensure_log_file_position(&mut log_file);
                 let _ = write_resize(&mut log_file, ws.ws_col, ws.ws_row);
             }
         }
@@ -316,10 +329,18 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
                     let chunk = &stdin_buf[..n as usize];
                     let _ = unsafe { libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize) };
                     if !config.no_stdin {
-                        for data in stdin_text_buffer.append(chunk) { let _ = write_stdin(&mut log_file, &data); }
+                        for data in stdin_text_buffer.append(chunk) {
+                            ensure_log_file_position(&mut log_file);
+                            let _ = write_stdin(&mut log_file, &data);
+                        }
                     }
                 } else if n == 0 {
-                    if let Some(data) = stdin_text_buffer.flush() { if !config.no_stdin { let _ = write_stdin(&mut log_file, &data); } }
+                    if let Some(data) = stdin_text_buffer.flush() {
+                        if !config.no_stdin {
+                            ensure_log_file_position(&mut log_file);
+                            let _ = write_stdin(&mut log_file, &data);
+                        }
+                    }
                     stdin_eof = true;
                 }
             }
@@ -333,10 +354,16 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
                     if n > 0 {
                         let chunk = &fifo_buf[..n as usize];
                         let _ = unsafe { libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize) };
-                        for data in fifo_text_buffer.append(chunk) { let _ = write_stdin(&mut log_file, &data); }
+                        for data in fifo_text_buffer.append(chunk) {
+                            ensure_log_file_position(&mut log_file);
+                            let _ = write_stdin(&mut log_file, &data);
+                        }
                     } else if n == 0 {
                         // EOF on FIFO (should not happen with O_RDWR usually, but handle it)
-                        if let Some(data) = fifo_text_buffer.flush() { let _ = write_stdin(&mut log_file, &data); }
+                        if let Some(data) = fifo_text_buffer.flush() {
+                            ensure_log_file_position(&mut log_file);
+                            let _ = write_stdin(&mut log_file, &data);
+                        }
                         fifo_eof = true;
                     }
                 }
@@ -350,7 +377,10 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
                 let chunk = &pty_buf[..n as usize];
                 let _ = io::stdout().write_all(chunk);
                 let _ = io::stdout().flush();
-                for data in stdout_text_buffer.append(chunk) { let _ = write_stdout(&mut log_file, &data); }
+                for data in stdout_text_buffer.append(chunk) {
+                    ensure_log_file_position(&mut log_file);
+                    let _ = write_stdout(&mut log_file, &data);
+                }
             } else if n <= 0 {
                 // EOF or error on PTY - check if child still alive
                 let err = if n < 0 { Some(io::Error::last_os_error()) } else { None };
@@ -396,21 +426,28 @@ fn finalize_and_get_exit_code(
     config: &Config,
 ) -> i32 {
     if let Some(data) = stdin_text_buffer.flush() {
-        if !config.no_stdin { let _ = write_stdin(log_file, &data); }
+        if !config.no_stdin {
+            ensure_log_file_position(log_file);
+            let _ = write_stdin(log_file, &data);
+        }
     }
     if let Some(data) = fifo_text_buffer.flush() {
+        ensure_log_file_position(log_file);
         let _ = write_stdin(log_file, &data);
     }
     if let Some(data) = stdout_text_buffer.flush() {
+        ensure_log_file_position(log_file);
         let _ = write_stdout(log_file, &data);
     }
     
     match status {
         ProcessStatus::Exited(code) => {
+            ensure_log_file_position(log_file);
             let _ = write_exit_code(log_file, code);
             code
         }
         ProcessStatus::Signaled(sig) => {
+            ensure_log_file_position(log_file);
             let _ = write_exit_signal(log_file, sig);
             128 + sig
         }
