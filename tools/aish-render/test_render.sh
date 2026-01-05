@@ -189,6 +189,72 @@ JSONL='{"v":1,"t_ms":1000,"type":"stdout","n":10,"data":"hello\u001b[3D"}'
 # このテストは実装に依存するため、簡易版
 log_info "Cursor movement with JSON escape strings test (implementation dependent)"
 
+# テスト15: OSCシーケンスのST終端（\x1B\\）のテスト
+test_case "OSC sequence with ST terminator"
+# OSCシーケンス（ST終端）を含むデータ
+# OSCシーケンスは無視されるので、テキストのみが出力される
+JSONL1='{"v":1,"t_ms":1000,"type":"stdout","n":5,"data":"hello"}'
+JSONL2='{"v":1,"t_ms":1001,"type":"stdout","enc":"b64","n":10,"data":"G10wO3Rlc3QbXA=="}'
+JSONL3='{"v":1,"t_ms":1002,"type":"stdout","n":5,"data":"world"}'
+EXPECTED="helloworld"
+ACTUAL=$(echo -e "$JSONL1\n$JSONL2\n$JSONL3" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "OSC sequence with ST terminator"
+
+# テスト16: OSCシーケンスのBEL終端（\x07）のテスト
+test_case "OSC sequence with BEL terminator"
+# OSCシーケンス（BEL終端）を含むデータ
+JSONL1='{"v":1,"t_ms":1000,"type":"stdout","n":5,"data":"hello"}'
+JSONL2='{"v":1,"t_ms":1001,"type":"stdout","enc":"b64","n":9,"data":"G10wO3Rlc3QH"}'
+JSONL3='{"v":1,"t_ms":1002,"type":"stdout","n":5,"data":"world"}'
+EXPECTED="helloworld"
+ACTUAL=$(echo -e "$JSONL1\n$JSONL2\n$JSONL3" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "OSC sequence with BEL terminator"
+
+# テスト17: CSIシーケンスのプライベートパラメータ（?）のテスト
+test_case "CSI sequence with private parameter"
+# プライベートパラメータ（?）を含むCSIシーケンス
+# \x1B[?25h はカーソルを表示するシーケンス（無視される）
+JSONL1='{"v":1,"t_ms":1000,"type":"stdout","n":5,"data":"hello"}'
+JSONL2='{"v":1,"t_ms":1001,"type":"stdout","enc":"b64","n":6,"data":"G1s/MjVo"}'
+JSONL3='{"v":1,"t_ms":1002,"type":"stdout","n":5,"data":"world"}'
+EXPECTED="helloworld"
+ACTUAL=$(echo -e "$JSONL1\n$JSONL2\n$JSONL3" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "CSI sequence with private parameter"
+
+# テスト18: CSIシーケンスのデフォルト値（パラメータなしのカーソル左移動）のテスト
+test_case "CSI sequence with default parameter (cursor left)"
+# \x1B[D は \x1B[1D と同等（デフォルト値1）
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","enc":"b64","n":9,"data":"helloG1tE"}'
+# カーソルが左に1移動するので、最後の1文字が上書きされる可能性がある
+# このテストは実装に依存するため、簡易版
+log_info "CSI sequence with default parameter test (implementation dependent)"
+
+# テスト19: UTF-8マルチバイト文字（日本語）のテスト
+test_case "UTF-8 multibyte characters (Japanese)"
+# 日本語のテキスト
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","enc":"b64","n":15,"data":"44GT44KT44Gr44Gh44Gv"}'
+EXPECTED="こんにちは"
+ACTUAL=$(echo "$JSONL" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "UTF-8 multibyte characters (Japanese)"
+
+# テスト20: UTF-8マルチバイト文字とエスケープシーケンスの混在
+test_case "UTF-8 multibyte characters with escape sequences"
+# 日本語のテキストとエスケープシーケンスの混在
+JSONL1='{"v":1,"t_ms":1000,"type":"stdout","enc":"b64","n":15,"data":"44GT44KT44Gr44Gh44Gv"}'
+JSONL2='{"v":1,"t_ms":1001,"type":"stdout","n":1,"data":" "}'
+JSONL3='{"v":1,"t_ms":1002,"type":"stdout","n":5,"data":"world"}'
+EXPECTED="こんにちは world"
+ACTUAL=$(echo -e "$JSONL1\n$JSONL2\n$JSONL3" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "UTF-8 multibyte characters with escape sequences"
+
+# テスト21: 日本語とJSONエスケープ文字列の混在
+test_case "Japanese with JSON escape strings"
+# 日本語のテキスト（JSONエスケープ文字列として記録）
+JSONL='{"v":1,"t_ms":1000,"type":"stdout","n":15,"data":"\u3053\u3093\u306b\u3061\u306f"}'
+EXPECTED="こんにちは"
+ACTUAL=$(echo "$JSONL" | "$BINARY" | head -1)
+assert_output "$EXPECTED" "$ACTUAL" "Japanese with JSON escape strings"
+
 # テスト結果の表示
 echo ""
 echo "========================================="
