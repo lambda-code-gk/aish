@@ -68,7 +68,9 @@ if [ ! -d "$AISH_PART" ]; then
   mkdir -p "$AISH_PART"
 fi
 
+mkfifo $AISH_SESSION/fifo
+
 # No command specified, start a new session
-$AISH_CAPTURE_BIN -o $AISH_LOGFILE
+$AISH_CAPTURE_BIN -o $AISH_LOGFILE --input-fifo $AISH_SESSION/fifo
 echo "end"
 #rm -rf $session
