@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 
-# Set AISH_RENDER_BIN and AISH_CAPTURE_BIN
-# Default to bin directory in project root if not set
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AISH_RENDER_BIN="${AISH_RENDER_BIN:-$SCRIPT_DIR/bin/aish-render}"
-AISH_CAPTURE_BIN="${AISH_CAPTURE_BIN:-$SCRIPT_DIR/bin/aish-capture}"
-export AISH_RENDER_BIN
-export AISH_CAPTURE_BIN
 
 # Function to display usage
 usage() {
@@ -44,6 +37,10 @@ while getopts ":hd:" opt; do
     esac
 done
 shift $((OPTIND -1))
+
+AISH_HOME="${AISH_HOME:-$HOME/.aish}"
+export AISH_RENDER_BIN="${AISH_RENDER_BIN:-$AISH_HOME/bin/aish-render}"
+export AISH_CAPTURE_BIN="${AISH_CAPTURE_BIN:-$AISH_HOME/bin/aish-capture}"
 
 # Handle the command
 command=$1

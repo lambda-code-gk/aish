@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 
 # binフォルダを作成
-BIN_DIR="$PROJECT_ROOT/bin"
+BIN_DIR="$PROJECT_ROOT/_aish/bin"
 mkdir -p "$BIN_DIR"
 
 # ビルドコマンドを決定
@@ -44,7 +44,7 @@ cd "$PROJECT_ROOT/tools/aish-script"
 $BUILD_CMD
 
 # ビルド成果物をbinフォルダにコピー
-echo "Deploying binaries to bin/..."
+echo "Deploying binaries to _aish/bin/..."
 cp "$PROJECT_ROOT/tools/aish-capture/target/$TARGET_DIR/aish-capture" "$BIN_DIR/"
 cp "$PROJECT_ROOT/tools/aish-render/target/$TARGET_DIR/aish-render" "$BIN_DIR/"
 cp "$PROJECT_ROOT/tools/aish-script/target/$TARGET_DIR/aish-script" "$BIN_DIR/"
