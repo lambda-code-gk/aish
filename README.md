@@ -1,107 +1,113 @@
 # AISH
 
 AISH is a CUI automation framework powered by LLMs, designed to supercharge your Linux command-line experience.
-It lets you interact with your terminal using natural language — generate shell commands, review code, write commit messages, and fix bugs, all without switching context.
+It integrates LLMs directly into your terminal, allowing you to interact with your shell using natural language, automate tasks, and even let an AI agent perform actions on your behalf.
 
-⚠️ Important: AISH sends terminal input and output to external APIs (e.g., OpenAI, Google). Avoid transmitting large or sensitive data. Use at your own risk.
+⚠️ **Important**: AISH sends terminal input and output to external APIs (e.g., OpenAI, Google). Avoid transmitting large or sensitive data. Use at your own risk.
 
-🚧 Development Status: AISH is under active development. Some features are experimental or incomplete. Feedback and contributions are welcome!
+🚧 **Development Status**: AISH is under active development. Some features are experimental or incomplete. Feedback and contributions are welcome!
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lambda-code-gk/aish)
 
 ## ✨ Features
 
-* **LLM-embedded environment for command-line workflows**<br>
-  AISH integrates large language models directly into your terminal session, making AI a first-class part of your CUI experience.
-
-* **Natural language interface for the terminal**<br>
-  AISH allows you to interact with GPT or Gemini directly from your shell using the `aish` and `ai` command. It captures standard output and sends it to the model, providing contextual awareness of your terminal session.
-
-* **Task-oriented commands**<br>
-  AISH provides specialized commands for common tasks like code review, commit message generation, and bug fixing. Just type `ai <task>` to get started.
-
+*   **LLM-embedded environment**: AISH integrates large language models (GPT, Gemini) directly into your terminal session.
+*   **Context-aware interactions**: The `ai` command captures your terminal session's context, allowing the LLM to understand what you're working on.
+*   **AI Agent (New!)**: The `ai agent` task allows the LLM to execute shell commands to accomplish complex tasks autonomously.
+*   **Task-oriented workflows**: Specialized tasks for code review, commit message generation, bug fixing, and more.
+*   **High-performance tools**: Core components like terminal capture and script execution are implemented in Rust for efficiency and reliability.
 
 ## 🚀 Quick Start
 
 ### Requirements
 
-- script (used for logging terminal sessions)
-- jq
-- curl
-- Python 3.8 or later
+- **Rust & Cargo**: Required to build the core tools.
+- **Python 3.8+**: Required for some LLM interaction scripts.
+- **Dependencies**: `jq`, `curl`, `script` (standard on most Linux systems).
 
 ### Installation
 
-```bash
-git clone https://github.com/lambda-code-gk/aish.git
-cd aish
-ln -s $PWD/_aish ~/.aish
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/lambda-code-gk/aish.git
+    cd aish
+    ```
 
-if [ ! -d ~/bin ]; then
-    mkdir ~/bin
-fi
-ln -s $PWD/ai ~/bin/ai
-ln -s $PWD/aish ~/bin/aish
-# If necessary, add the path to ~/bin to your PATH.
+2.  **Build the core tools**:
+    ```bash
+    ./build.sh
+    ```
 
-cat << EOF >> ~/.bashrc
-if [ -n "\$AISH_SESSION" ]; then
-    source ~/.aish/aishrc
-fi
-EOF
-```
+3.  **Setup symlinks**:
+    ```bash
+    # Link configuration
+    ln -s $PWD/_aish ~/.aish
 
-Then set your API key:
+    # Link binaries to your path (e.g., ~/bin)
+    mkdir -p ~/bin
+    ln -s $PWD/ai ~/bin/ai
+    ln -s $PWD/aish ~/bin/aish
+    # Ensure ~/bin is in your PATH
+    ```
 
-~/.apikey
-```
-export OPENAI_API_KEY=sk-...
-export GOOGLE_API_KEY=...
-```
+4.  **Configure your shell**:
+    Add the following to your `~/.bashrc`:
+    ```bash
+    if [ -n "$AISH_SESSION" ]; then
+        source ~/.aish/aishrc
+    fi
+    ```
+
+5.  **Set your API keys**:
+    Create or update `~/.apikey`:
+    ```bash
+    export OPENAI_API_KEY=sk-...
+    export GOOGLE_API_KEY=...
+    ```
 
 ### Launching AISH
 
-To start the shell, run the following command:
+To start an AISH session, simply run:
 ```bash
 $ aish
-Script started, output log file is '/tmp/tmp.xxxxxxxxxx/script.log'.
-(aish:109)$ 
+(aish:0)$
 ```
 
-You can use the `ai` command to interact with the LLM.
-```bash
-(aish:0)$ cat README.md
-....
-(aish:109)$ ai "TL;DR"
-```
-
-You can clear the user message by using the Ctrl+L key combination.
+The prompt shows `(aish:N)` where `N` is the current size of the session context in tokens (estimated).
 
 ## 🛠 Available Tasks
 
-You can specify a task name as the first argument to the `ai` command. The following tasks are available:
+You can use the `ai <task>` command to perform various actions.
 
-- `ai default`:     Send a simple message to the LLM.
-- `ai gemini`:      Send a message to the LLM directly through Gemini.
-- `ai review`:      Review the code and give feedback on the files staged for Git.
-- `ai commit_msg`:  Create a commit message for the staged files in Git.
-- `ai fixit`:       Show the advice from the LLM on how to fix the code.
+| Task | Description |
+| :--- | :--- |
+| `ai agent` | **Agent mode**: Execute tasks using function calling with shell command execution. |
+| `ai review` | Review code changes staged in Git. |
+| `ai commit_msg` | Generate a Git commit message based on staged changes. |
+| `ai fixit` | Get AI advice on how to fix errors or improve code. |
+| `ai op` | Translate natural language to shell commands. |
+| `ai gpt` / `ai gemini` | Direct interaction with specific LLMs. |
+| `ai default` | General purpose chat with context. |
 
-
-You can also append additional arguments to the `ai` command to provide more context or specify options for the task. For example:
+Example:
 ```bash
-(aish:0)$ ai review "Feedback only architecture and design, no code style"
+(aish:120)$ ai agent "Update the README.md to include information about the new Rust tools"
 ```
 
+## 🧰 Core Tools (Rust)
+
+AISH includes several high-performance tools written in Rust:
+
+*   **`aish-capture`**: A lightweight PTY capture tool that records terminal sessions into JSONL format.
+*   **`aish-render`**: A tool to process and render terminal logs for LLM consumption.
+*   **`aish-script`**: An expect-like script execution tool used for automated interactions and testing.
 
 ## 🧭 Roadmap & Future Plans
 
-* Session management and history context
-* Improve shell script generation and execution
-* Pro features
-
-We aim to keep the core open-source. Advanced features may become part of a Pro tier in the future.
+*   Advanced session management and history context.
+*   Support for more LLM providers and local models.
+*   Enhanced agent capabilities and safety controls.
 
 ## 📄 License
-This project is licensed under the MIT License. See the LICENSE file for details.
 
+This project is licensed under the MIT License. See the LICENSE file for details.
