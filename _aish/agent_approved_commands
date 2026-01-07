@@ -1,0 +1,36 @@
+# 確認不要なコマンドリスト
+# このファイルに記載されたコマンドは、エージェント実行時に確認なしで実行されます
+# コメント行（#で始まる行）と空行は無視されます
+
+ls
+cat
+head
+tail
+grep
+find
+pwd
+echo
+date
+whoami
+uname
+wc
+sort
+uniq
+cut
+awk
+sed
+tr
+basename
+dirname
+readlink
+realpath
+test
+[
+stat
+file
+type
+which
+command
+true
+false
+

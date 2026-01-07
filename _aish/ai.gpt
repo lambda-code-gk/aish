@@ -15,12 +15,187 @@ MODEL="gpt-4o"
 TEMPERATURE=0.7
 LOG="$AISH_SESSION"/log.json
 
+# 確認不要なコマンドのリストをファイルから読み込む
+# 設定ファイル: $AISH_HOME/agent_approved_commands
+function get_approved_commands_list
+{
+  local config_file="$AISH_HOME/agent_approved_commands"
+  
+  # ファイルが存在する場合のみ読み込む
+  if [ -f "$config_file" ]; then
+    cat "$config_file" | grep -v '^#' | grep -v '^$'
+  fi
+}
+
+# コマンド文字列から各コマンドを抽出（パイプ、セミコロン、&&、||で分割）
+# 引用符で囲まれた部分は保護する
+function extract_commands
+{
+  local cmd="$1"
+  local result=""
+  
+  # Pythonを使って引用符を考慮したパースを行う
+  python3 -c "
+import sys
+import re
+import shlex
+
+cmd = sys.argv[1]
+
+# 引用符で囲まれた部分を保護しながら、パイプ、セミコロン、&&、||で分割
+# シンプルなアプローチ: 引用符外のパイプ、セミコロン、&&、||で分割
+parts = []
+in_quote = False
+quote_char = None
+current = ''
+i = 0
+
+while i < len(cmd):
+    char = cmd[i]
+    
+    if char in ['\"', \"'\"] and (i == 0 or cmd[i-1] != '\\\\'):
+        if not in_quote:
+            in_quote = True
+            quote_char = char
+        elif char == quote_char:
+            in_quote = False
+            quote_char = None
+        current += char
+    elif not in_quote and char == '|' and (i == 0 or cmd[i-1] != '|') and (i == len(cmd)-1 or cmd[i+1] != '|'):
+        # パイプ（||は除く）
+        if current.strip():
+            parts.append(current.strip())
+        current = ''
+    elif not in_quote and char == ';':
+        # セミコロン
+        if current.strip():
+            parts.append(current.strip())
+        current = ''
+    elif not in_quote and i < len(cmd) - 1 and cmd[i:i+2] == '&&':
+        # &&
+        if current.strip():
+            parts.append(current.strip())
+        current = ''
+        i += 1
+    elif not in_quote and i < len(cmd) - 1 and cmd[i:i+2] == '||':
+        # ||
+        if current.strip():
+            parts.append(current.strip())
+        current = ''
+        i += 1
+    else:
+        current += char
+    i += 1
+
+if current.strip():
+    parts.append(current.strip())
+
+# 各パートからコマンド名を抽出
+for part in parts:
+    # リダイレクト記号を除去
+    part = re.sub(r'\\s*\\d*[<>]&?\\s*\\S*', '', part)
+    # 最初の単語を抽出
+    words = part.strip().split()
+    if words:
+        print(words[0])
+" "$cmd" | sort -u
+}
+
+# コマンドが確認不要かチェック
+function is_command_approved
+{
+  local command="$1"
+  local approved_list=$(get_approved_commands_list)
+  
+  # コマンド文字列から各コマンドを抽出
+  local commands=$(extract_commands "$command")
+  
+  # すべてのコマンドが承認リストに含まれているかチェック
+  local all_approved=true
+  while IFS= read -r cmd_name; do
+    if [ -z "$cmd_name" ]; then
+      continue
+    fi
+    # コマンド名が承認リストに含まれているかチェック
+    if ! echo "$approved_list" | grep -Fxq "$cmd_name" 2>/dev/null; then
+      all_approved=false
+      break
+    fi
+  done <<< "$commands"
+  
+  if [ "$all_approved" = true ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# シェルコマンドを実行し、結果をJSON形式で返す
+function execute_shell_command
+{
+  command=$1
+  
+  # 承認済みコマンドリストのファイル
+  approved_commands_file="$AISH_SESSION/approved_commands"
+  
+  # 確認不要コマンドかチェック
+  if is_command_approved "$command"; then
+    # 確認をスキップして実行
+    :
+  # 承認済みコマンドかチェック
+  elif [ -f "$approved_commands_file" ] && grep -Fxq "$command" "$approved_commands_file" 2>/dev/null; then
+    # 確認をスキップして実行
+    :
+  else
+    # ユーザーに確認を求める
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🔧 Agent wants to execute command:" >&2
+    echo "   $command" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo -n "Execute? ([y]es / [n]o): " >&2
+    read -r confirm < /dev/tty
+    
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+      echo '{"exit_code": 1, "stdout": "", "stderr": "Command execution was cancelled by user"}'
+      return 1
+    fi
+    
+    # 承認済みリストに追加（ファイルが存在しない場合は作成）
+    if [ ! -f "$approved_commands_file" ]; then
+      touch "$approved_commands_file"
+    fi
+    echo "$command" >> "$approved_commands_file"
+  fi
+  
+  # 実行するコマンドを標準エラー出力に表示
+  echo "Executing: $command" >&2
+  
+  # コマンドを実行（stdoutとstderrを分離）
+  stdout_file=$(mktemp "$AISH_SESSION/stdout_XXXXXX")
+  stderr_file=$(mktemp "$AISH_SESSION/stderr_XXXXXX")
+  
+  bash -c "$command" > "$stdout_file" 2> "$stderr_file"
+  exit_code=$?
+  
+  stdout=$(cat "$stdout_file")
+  stderr=$(cat "$stderr_file")
+  
+  rm -f "$stdout_file" "$stderr_file"
+  
+  # JSON形式で返す
+  result="{\"exit_code\": $exit_code, \"stdout\": $(echo "$stdout" | json_string), \"stderr\": $(echo "$stderr" | json_string)}"
+  echo "$result"
+}
+
 function query
 {
     system_instruction=""
-    while getopts "s:" opt; do
+    agent_mode=false
+    while getopts "s:a" opt; do
         case $opt in
             s) system_instruction=$OPTARG ;;
+            a) agent_mode=true ;;
             *)  ;;
         esac
     done
@@ -32,7 +207,12 @@ function query
     if [ $? -ne 0 ]; then
         exit 1
     fi
-    echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
+    
+    if [ "$agent_mode" = true ]; then
+        echo -e "$files" | make_request_agent "$*" "$system_instruction" | send_to_llm_agent
+    else
+        echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
+    fi
 }
 
 function make_request
@@ -65,6 +245,43 @@ function make_request
     echo '}'
 }
 
+function make_request_agent
+{
+    query=$1
+    system=$2
+
+    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE', "tools": [{"type": "function", "function": {"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}}], "messages": ['
+
+    if [ ! -z "$system" ]; then
+        echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'},'
+    fi
+
+    local line_count=0
+    while IFS= read -r file; do
+        if [[ $line_count -gt 0 ]]; then
+            echo -n ','
+        fi
+        line_count=$((line_count + 1))
+        if [[ "$file" =~ "_user.txt" ]]; then
+            echo '  {"role": "user", "content": '$(cat "$file" | json_string)'}'
+        elif [[ "$file" =~ "_tool.txt" ]]; then
+            # tool roleの場合は特別な処理
+            echo -n '  {"role": "tool", "content": '
+            cat "$file"
+            echo '}'
+        else
+            # assistant roleの場合、tool_callsが含まれる可能性がある
+            echo -n '  {"role": "assistant", "content": '$(cat "$file" | json_string)'}'
+            # tool_callsがある場合は追加（現時点では簡易実装）
+        fi
+    done
+
+    user_input=$(echo -e "----\n# user message:\n$query" | json_string)
+    echo '  ,{"role": "user", "content": '"$user_input"'}'
+    echo ']'
+    echo '}'
+}
+
 function send_to_llm
 {
     REQUEST_FILE="$AISH_SESSION/request.txt"
@@ -88,4 +305,125 @@ function send_to_llm
 
     echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
     echo "$text" | detail.aish_pickup_codeblock
+}
+
+function send_to_llm_agent
+{
+    REQUEST_FILE="$AISH_SESSION/request.txt"
+    MAX_ITERATIONS=20
+    iteration=0
+    
+    # 初期リクエストを保存
+    cat > $REQUEST_FILE
+    
+    while [ $iteration -lt $MAX_ITERATIONS ]; do
+        iteration=$((iteration + 1))
+        request_data=$(cat "$REQUEST_FILE")
+
+        detail.aish_log_request "$request_data"
+
+        response=$(curl -s -X POST $ENDPOINT \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer $API_KEY" \
+          -d "$request_data")
+        
+        curl_exit_code=$?
+        if [ $curl_exit_code -ne 0 ]; then
+            echo "$response" >&2
+            exit 1
+        fi
+
+        detail.aish_log_response "$response"
+
+        # エラーチェック
+        error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
+        if [ ! -z "$error" ]; then
+            echo "$response" >&2
+            exit 1
+        fi
+
+        # tool_callsをチェック
+        has_tool_calls=$(echo "$response" | jq -e '.choices[0].message.tool_calls != null and (.choices[0].message.tool_calls | length > 0)' > /dev/null 2>&1 && echo "yes" || echo "no")
+        
+        if [ "$has_tool_calls" = "yes" ]; then
+            # tool callがある場合、各tool callを処理
+            temp_request="$AISH_SESSION/temp_request_$$.json"
+            
+            # モデルの応答（tool callsを含む）をmessagesに追加
+            assistant_message=$(echo "$response" | jq -c '.choices[0].message')
+            if [ -z "$assistant_message" ] || [ "$assistant_message" = "null" ]; then
+                echo "$response" >&2
+                exit 1
+            fi
+            
+            updated_request=$(echo "$request_data" | jq --argjson assistant_msg "$assistant_message" \
+                '.messages += [$assistant_msg]')
+            
+            if [ $? -ne 0 ]; then
+                exit 1
+            fi
+            
+            # 各tool callを処理してtool responseを収集
+            tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls[]')
+            
+            # 各tool callを処理
+            tool_messages="[]"
+            while IFS= read -r tool_call; do
+                if [ -z "$tool_call" ]; then
+                    continue
+                fi
+                tool_call_id=$(echo "$tool_call" | jq -r '.id')
+                func_name=$(echo "$tool_call" | jq -r '.function.name')
+                func_args=$(echo "$tool_call" | jq -r '.function.arguments')
+                
+                if [ "$func_name" = "execute_shell_command" ]; then
+                    command=$(echo "$func_args" | jq -r '.command')
+                    
+                    # シェルコマンドを実行
+                    result=$(execute_shell_command "$command")
+                    
+                    # tool messageを生成
+                    tool_message=$(echo "{}" | jq -c \
+                        --arg tool_call_id "$tool_call_id" \
+                        --argjson result "$result" \
+                        '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
+                    
+                    if [ $? -ne 0 ]; then
+                        exit 1
+                    fi
+                    
+                    # 配列に追加
+                    tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
+                fi
+            done <<< "$tool_calls"
+            
+            # すべてのtool messageをmessagesに追加
+            echo "$updated_request" | jq --argjson tool_msgs "$tool_messages" \
+                '.messages += $tool_msgs' > "$temp_request"
+            
+            if [ $? -ne 0 ]; then
+                exit 1
+            fi
+            
+            mv "$temp_request" "$REQUEST_FILE"
+            
+            # 次のイテレーションに進む
+            continue
+        else
+            # tool callがない場合、テキスト応答を返して終了
+            text="$(echo "$response" | jq -r '.choices[0].message.content // empty')"
+            
+            if [ "$text" == "null" -o -z "$text" ]; then
+                echo "$response" >&2
+                exit 1
+            fi
+
+            echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
+            echo "$text" | detail.aish_pickup_codeblock
+            return 0
+        fi
+    done
+    
+    echo "Error: Maximum iterations ($MAX_ITERATIONS) reached" >&2
+    exit 1
 }

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+system_instruction="You are an AI agent that can execute shell commands to accomplish tasks. \
+When you need to perform actions on the system, use the execute_shell_command function. \
+After completing the task, provide a final response to the user explaining what was done. \
+Keep your responses concise and focused on the task at hand."
+
+query -a -s "$system_instruction" "$@"
+

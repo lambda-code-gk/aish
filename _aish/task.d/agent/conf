@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+. $AISH_HOME/ai.gemini
+#. $AISH_HOME/ai.gpt
+
+description="Agent mode: Execute tasks using function calling with shell command execution."
+
