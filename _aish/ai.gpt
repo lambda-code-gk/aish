@@ -10,8 +10,9 @@ then
 fi
 API_KEY="$OPENAI_API_KEY"
 ENDPOINT="https://api.openai.com/v1/chat/completions"
-MODEL="gpt-4o"
 #MODEL="gpt-3.5-turbo"
+#MODEL="gpt-4o"
+MODEL="gpt-5.2"
 TEMPERATURE=0.7
 LOG="$AISH_SESSION"/log.json
 
