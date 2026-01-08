@@ -85,8 +85,7 @@ function send_to_llm
     exit 1
   fi
 
-  echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
-  echo "$text" | detail.aish_pickup_codeblock
+  save_response_text "$text"
 }
 
 function make_request_agent
@@ -249,8 +248,7 @@ function send_to_llm_agent
         exit 1
       fi
 
-      echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
-      echo "$text" | detail.aish_pickup_codeblock
+      save_response_text "$text"
       return 0
     fi
   done

@@ -35,3 +35,11 @@ function query_entry_prepare
   fi
 }
 
+# レスポンステキストをファイルに保存して標準出力にも出力
+# 引数: text - 保存・出力するテキスト
+function save_response_text
+{
+  local text="$1"
+  echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
+}
+
