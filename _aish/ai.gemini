@@ -18,31 +18,16 @@ LOG="$AISH_SESSION"/log.json
 # 共通ライブラリを読み込む
 . "$AISH_HOME/lib/agent_approve.sh"
 . "$AISH_HOME/lib/tool_execute_shell_command.sh"
+. "$AISH_HOME/lib/query_entry.sh"
 
 function query
 {
-  system_instruction=""
-  agent_mode=false
-  while getopts "s:a" opt; do
-    case $opt in
-      s) system_instruction=$OPTARG ;;
-      a) agent_mode=true ;;
-      *)  ;;
-    esac
-  done
-  shift $((OPTIND - 1))
-
-  aish_rollout
-
-  files=$(detail.aish_list_parts | detail.aish_security_check)
-  if [ $? -ne 0 ]; then
-      exit 1
-  fi
+  query_entry_prepare "$@"
   
-  if [ "$agent_mode" = true ]; then
-    echo -e "$files" | make_request_agent "$*" "$system_instruction" | send_to_llm_agent
+  if [ "$_query_agent_mode" = true ]; then
+    echo -e "$_query_files" | make_request_agent "$_query_args" "$_query_system_instruction" | send_to_llm_agent
   else
-    echo -e "$files" | make_request "$*" "$system_instruction" | send_to_llm
+    echo -e "$_query_files" | make_request "$_query_args" "$_query_system_instruction" | send_to_llm
   fi
 }
 
