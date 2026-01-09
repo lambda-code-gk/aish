@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 
-. $AISH_HOME/ai.gemini
-#. $AISH_HOME/ai.gpt
+if [ "$MODEL" = "gpt" ]; then
+    . $AISH_HOME/ai.gpt
+    echo "gpt-5.2"
+else
+    . $AISH_HOME/ai.gemini
+    echo "gemini-3-flash-preview"
+fi
 
 description="Agent mode: Execute tasks using function calling with shell command execution."
 

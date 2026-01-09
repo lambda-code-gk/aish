@@ -19,19 +19,10 @@ LOG="$AISH_SESSION"/log.json
 . "$AISH_HOME/lib/agent_approve.sh"
 . "$AISH_HOME/lib/tool_execute_shell_command.sh"
 . "$AISH_HOME/lib/query_entry.sh"
+. "$AISH_HOME/lib/llm_driver.sh"
 
-function query
-{
-  query_entry_prepare "$@"
-  
-  if [ "$_query_agent_mode" = true ]; then
-    echo -e "$_query_files" | make_request_agent "$_query_args" "$_query_system_instruction" | send_to_llm_agent
-  else
-    echo -e "$_query_files" | make_request "$_query_args" "$_query_system_instruction" | send_to_llm
-  fi
-}
-
-function make_request
+# Gemini形式のリクエストJSONを生成（通常モード）
+function _provider_make_request_payload
 {
   query=$1
   system=$2
@@ -62,33 +53,8 @@ function make_request
   echo '}'
 }
 
-function send_to_llm
-{
-  REQUEST_FILE="$AISH_SESSION/request.txt"
-  cat > $REQUEST_FILE
-  request_data=$(cat "$REQUEST_FILE")
-
-  detail.aish_log_request "$request_data"
-
-  response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/"$MODEL":generateContent?key="$GEMINI_API_KEY" \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    --data-binary @${REQUEST_FILE})
-
-  detail.aish_log_response "$response"
-
-  text="$(echo "$response" | jq -r '.candidates[0].content.parts[0].text')"
-
-  if [ "$text" == "null" -o -z "$text" ];
-  then
-    echo "$response"
-    exit 1
-  fi
-
-  save_response_text "$text"
-}
-
-function make_request_agent
+# Gemini形式のリクエストJSONを生成（エージェントモード）
+function _provider_make_request_payload_agent
 {
   query=$1
   system=$2
@@ -131,128 +97,115 @@ function make_request_agent
   echo '}'
 }
 
-function send_to_llm_agent
+# プロバイダ固有: Gemini APIへのHTTPリクエスト実行
+# 引数: request_file - リクエストJSONファイルのパス
+# 戻り値: レスポンスJSON文字列（標準出力）
+# 終了コード: curlの終了コード（0=成功、非0=エラー）
+function _provider_make_http_request
 {
-  REQUEST_FILE="$AISH_SESSION/request.txt"
-  MAX_ITERATIONS=20
-  iteration=0
-  
-  # 初期リクエストを保存
-  cat > $REQUEST_FILE
-  
-  while [ $iteration -lt $MAX_ITERATIONS ]; do
-    iteration=$((iteration + 1))
-    request_data=$(cat "$REQUEST_FILE")
-
-    detail.aish_log_request "$request_data"
-
-    response=$(curl -s https://generativelanguage.googleapis.com/v1beta/models/"$MODEL":generateContent?key="$GEMINI_API_KEY" \
+    local request_file="$1"
+    curl -s "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_API_KEY}" \
       -H 'Content-Type: application/json' \
       -X POST \
-      --data-binary @${REQUEST_FILE})
+      --data-binary @"$request_file"
+}
+
+# プロバイダ固有: レスポンスからテキストを抽出
+# 引数: response - レスポンスJSON文字列
+# 戻り値: 抽出したテキスト（または "null"）
+function _provider_parse_response_text
+{
+    local response="$1"
+    echo "$response" | jq -r '[.candidates[0].content.parts[]? | select(.text != null) | .text] | join("") // empty'
+}
+
+# プロバイダ固有: functionCallの有無をチェック
+# 引数: response - レスポンスJSON文字列
+# 戻り値: "yes" または "no"
+function _provider_check_tool_calls
+{
+    local response="$1"
+    echo "$response" | jq -e '.candidates[0].content.parts[] | select(.functionCall != null)' > /dev/null 2>&1 && echo "yes" || echo "no"
+}
+
+# プロバイダ固有: functionCallを処理して更新されたリクエストを返す
+# 引数: request_data - 現在のリクエストJSON文字列
+#      response - レスポンスJSON文字列
+# 戻り値: 更新されたリクエストJSON文字列
+function _provider_process_tool_calls
+{
+    local request_data="$1"
+    local response="$2"
     
-    curl_exit_code=$?
-    if [ $curl_exit_code -ne 0 ]; then
-      echo "$response" >&2
-      exit 1
-    fi
-
-    detail.aish_log_response "$response"
-
-    # エラーチェック
-    error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
-    if [ ! -z "$error" ]; then
-      echo "$response" >&2
-      exit 1
-    fi
-
-    # functionCallsをチェック
-    has_function_calls=$(echo "$response" | jq -e '.candidates[0].content.parts[] | select(.functionCall != null)' > /dev/null 2>&1 && echo "yes" || echo "no")
-    
-    if [ "$has_function_calls" = "yes" ]; then
-      # function callがある場合、各function callを処理
-      temp_request="$AISH_SESSION/temp_request_$$.json"
-      
-      # モデルの応答（function callを含む）をcontentsに追加
-      model_parts=$(echo "$response" | jq -c '.candidates[0].content.parts')
-      if [ -z "$model_parts" ] || [ "$model_parts" = "null" ]; then
+    # モデルの応答（function callを含む）をcontentsに追加
+    model_parts=$(echo "$response" | jq -c '.candidates[0].content.parts')
+    if [ -z "$model_parts" ] || [ "$model_parts" = "null" ]; then
         echo "$response" >&2
-        exit 1
-      fi
-      
-      updated_request=$(echo "$request_data" | jq --argjson model_parts "$model_parts" \
+        return 1
+    fi
+    
+    updated_request=$(echo "$request_data" | jq --argjson model_parts "$model_parts" \
         '.contents += [{"role": "model", "parts": $model_parts}]')
-      
-      if [ $? -ne 0 ]; then
-        exit 1
-      fi
-      
-      # 各function callを処理してfunction responseを収集
-      func_responses_file="$AISH_SESSION/func_responses_$$.json"
-      echo "[]" > "$func_responses_file"
-      
-      # function callのリストを一時ファイルに保存
-      func_calls_file="$AISH_SESSION/func_calls_$$.json"
-      echo "$response" | jq -c '.candidates[0].content.parts[] | select(.functionCall != null) | .functionCall' > "$func_calls_file"
-      
-      # 各function callを処理
-      while IFS= read -r func_call; do
+    
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    
+    # 各function callを処理してfunction responseを収集
+    func_responses_file="$AISH_SESSION/func_responses_$$.json"
+    echo "[]" > "$func_responses_file"
+    
+    # function callのリストを一時ファイルに保存
+    func_calls_file="$AISH_SESSION/func_calls_$$.json"
+    echo "$response" | jq -c '.candidates[0].content.parts[] | select(.functionCall != null) | .functionCall' > "$func_calls_file"
+    
+    # 各function callを処理
+    while IFS= read -r func_call; do
         if [ -z "$func_call" ]; then
-          continue
+            continue
         fi
         func_name=$(echo "$func_call" | jq -r '.name')
         func_args=$(echo "$func_call" | jq -r '.args')
         
         if [ "$func_name" = "execute_shell_command" ]; then
-          command=$(echo "$func_args" | jq -r '.command')
-          
-          # シェルコマンドを実行
-          result=$(execute_shell_command "$command")
-          
-          # function responseを生成
-          func_response=$(echo "$result" | jq -c '{functionResponse: {name: "execute_shell_command", response: .}}')
-          if [ $? -ne 0 ]; then
-            exit 1
-          fi
-          
-          # 配列に追加
-          echo "$(cat "$func_responses_file")" | jq --argjson func_res "$func_response" '. += [$func_res]' > "${func_responses_file}.new"
-          if [ $? -ne 0 ]; then
-            exit 1
-          fi
-          mv "${func_responses_file}.new" "$func_responses_file"
+            command=$(echo "$func_args" | jq -r '.command')
+            
+            # シェルコマンドを実行
+            result=$(execute_shell_command "$command")
+            
+            # function responseを生成
+            func_response=$(echo "$result" | jq -c '{functionResponse: {name: "execute_shell_command", response: .}}')
+            if [ $? -ne 0 ]; then
+                rm -f "$func_responses_file" "$func_calls_file"
+                return 1
+            fi
+            
+            # 配列に追加
+            echo "$(cat "$func_responses_file")" | jq --argjson func_res "$func_response" '. += [$func_res]' > "${func_responses_file}.new"
+            if [ $? -ne 0 ]; then
+                rm -f "$func_responses_file" "$func_calls_file"
+                return 1
+            fi
+            mv "${func_responses_file}.new" "$func_responses_file"
         fi
-      done < "$func_calls_file"
-      
-      # すべてのfunction responseをcontentsに追加
-      func_responses=$(cat "$func_responses_file")
-      echo "$updated_request" | jq --argjson func_responses "$func_responses" \
-        '.contents += ($func_responses | map({"role": "function", "parts": [.]}))' > "$temp_request"
-      
-      if [ $? -ne 0 ]; then
-        exit 1
-      fi
-      
-      mv "$temp_request" "$REQUEST_FILE"
-      rm -f "$func_responses_file" "$func_calls_file"
-      
-      # 次のイテレーションに進む
-      continue
-    else
-      # function callがない場合、テキスト応答を返して終了
-      # すべてのテキストパートを結合
-      text="$(echo "$response" | jq -r '[.candidates[0].content.parts[]? | select(.text != null) | .text] | join("")')"
-      
-      if [ "$text" == "null" -o -z "$text" ]; then
-        echo "$response" >&2
-        exit 1
-      fi
-
-      save_response_text "$text"
-      return 0
+    done < "$func_calls_file"
+    
+    # すべてのfunction responseをcontentsに追加
+    func_responses=$(cat "$func_responses_file")
+    final_request=$(echo "$updated_request" | jq --argjson func_responses "$func_responses" \
+        '.contents += ($func_responses | map({"role": "function", "parts": [.]}))')
+    
+    rm -f "$func_responses_file" "$func_calls_file"
+    
+    if [ $? -ne 0 ]; then
+        return 1
     fi
-  done
-  
-  echo "Error: Maximum iterations ($MAX_ITERATIONS) reached" >&2
-  exit 1
+    
+    echo "$final_request"
+}
+
+# 共通ライブラリを使用してクエリを実行
+function query
+{
+  _llm_driver_query "$@"
 }

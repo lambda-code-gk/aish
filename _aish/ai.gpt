@@ -20,19 +20,10 @@ LOG="$AISH_SESSION"/log.json
 . "$AISH_HOME/lib/agent_approve.sh"
 . "$AISH_HOME/lib/tool_execute_shell_command.sh"
 . "$AISH_HOME/lib/query_entry.sh"
+. "$AISH_HOME/lib/llm_driver.sh"
 
-function query
-{
-    query_entry_prepare "$@"
-    
-    if [ "$_query_agent_mode" = true ]; then
-        echo -e "$_query_files" | make_request_agent "$_query_args" "$_query_system_instruction" | send_to_llm_agent
-    else
-        echo -e "$_query_files" | make_request "$_query_args" "$_query_system_instruction" | send_to_llm
-    fi
-}
-
-function make_request
+# OpenAI形式のリクエストJSONを生成（通常モード）
+function _provider_make_request_payload
 {
     query=$1
     system=$2
@@ -62,7 +53,8 @@ function make_request
     echo '}'
 }
 
-function make_request_agent
+# OpenAI形式のリクエストJSONを生成（エージェントモード）
+function _provider_make_request_payload_agent
 {
     query=$1
     system=$2
@@ -99,146 +91,106 @@ function make_request_agent
     echo '}'
 }
 
-function send_to_llm
+# プロバイダ固有: OpenAI APIへのHTTPリクエスト実行
+# 引数: request_file - リクエストJSONファイルのパス
+# 戻り値: レスポンスJSON文字列（標準出力）
+# 終了コード: curlの終了コード（0=成功、非0=エラー）
+function _provider_make_http_request
 {
-    REQUEST_FILE="$AISH_SESSION/request.txt"
-    cat > "$REQUEST_FILE"
-    request_data=$(cat "$REQUEST_FILE")
-
-    detail.aish_log_request "$request_data"
-
-    response=$(curl -s -X POST $ENDPOINT \
+    local request_file="$1"
+    curl -s -X POST $ENDPOINT \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $API_KEY" \
-      -d "$request_data")
-
-    detail.aish_log_response "$response"
-
-    text="$(echo "$response" | jq -r '.choices[0].message.content')"
-    if [ "$text" == "null" -o -z "$text" ]; then
-        echo "$response"
-        exit 1
-    fi
-
-    save_response_text "$text"
+      -d @"$request_file"
 }
 
-function send_to_llm_agent
+# プロバイダ固有: レスポンスからテキストを抽出
+# 引数: response - レスポンスJSON文字列
+# 戻り値: 抽出したテキスト（または "null"）
+function _provider_parse_response_text
 {
-    REQUEST_FILE="$AISH_SESSION/request.txt"
-    MAX_ITERATIONS=20
-    iteration=0
+    local response="$1"
+    echo "$response" | jq -r '.choices[0].message.content // empty'
+}
+
+# プロバイダ固有: tool_callsの有無をチェック
+# 引数: response - レスポンスJSON文字列
+# 戻り値: "yes" または "no"
+function _provider_check_tool_calls
+{
+    local response="$1"
+    echo "$response" | jq -e '.choices[0].message.tool_calls != null and (.choices[0].message.tool_calls | length > 0)' > /dev/null 2>&1 && echo "yes" || echo "no"
+}
+
+# プロバイダ固有: tool_callsを処理して更新されたリクエストを返す
+# 引数: request_data - 現在のリクエストJSON文字列
+#      response - レスポンスJSON文字列
+# 戻り値: 更新されたリクエストJSON文字列
+function _provider_process_tool_calls
+{
+    local request_data="$1"
+    local response="$2"
+    local temp_request="$AISH_SESSION/temp_request_$$.json"
     
-    # 初期リクエストを保存
-    cat > $REQUEST_FILE
+    # モデルの応答（tool callsを含む）をmessagesに追加
+    assistant_message=$(echo "$response" | jq -c '.choices[0].message')
+    if [ -z "$assistant_message" ] || [ "$assistant_message" = "null" ]; then
+        echo "$response" >&2
+        return 1
+    fi
     
-    while [ $iteration -lt $MAX_ITERATIONS ]; do
-        iteration=$((iteration + 1))
-        request_data=$(cat "$REQUEST_FILE")
-
-        detail.aish_log_request "$request_data"
-
-        response=$(curl -s -X POST $ENDPOINT \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer $API_KEY" \
-          -d "$request_data")
-        
-        curl_exit_code=$?
-        if [ $curl_exit_code -ne 0 ]; then
-            echo "$response" >&2
-            exit 1
-        fi
-
-        detail.aish_log_response "$response"
-
-        # エラーチェック
-        error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
-        if [ ! -z "$error" ]; then
-            echo "$response" >&2
-            exit 1
-        fi
-
-        # tool_callsをチェック
-        has_tool_calls=$(echo "$response" | jq -e '.choices[0].message.tool_calls != null and (.choices[0].message.tool_calls | length > 0)' > /dev/null 2>&1 && echo "yes" || echo "no")
-        
-        if [ "$has_tool_calls" = "yes" ]; then
-            # tool callがある場合、各tool callを処理
-            temp_request="$AISH_SESSION/temp_request_$$.json"
-            
-            # モデルの応答（tool callsを含む）をmessagesに追加
-            assistant_message=$(echo "$response" | jq -c '.choices[0].message')
-            if [ -z "$assistant_message" ] || [ "$assistant_message" = "null" ]; then
-                echo "$response" >&2
-                exit 1
-            fi
-            
-            updated_request=$(echo "$request_data" | jq --argjson assistant_msg "$assistant_message" \
-                '.messages += [$assistant_msg]')
-            
-            if [ $? -ne 0 ]; then
-                exit 1
-            fi
-            
-            # 各tool callを処理してtool responseを収集
-            tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls[]')
-            
-            # 各tool callを処理
-            tool_messages="[]"
-            while IFS= read -r tool_call; do
-                if [ -z "$tool_call" ]; then
-                    continue
-                fi
-                tool_call_id=$(echo "$tool_call" | jq -r '.id')
-                func_name=$(echo "$tool_call" | jq -r '.function.name')
-                func_args=$(echo "$tool_call" | jq -r '.function.arguments')
-                
-                if [ "$func_name" = "execute_shell_command" ]; then
-                    command=$(echo "$func_args" | jq -r '.command')
-                    
-                    # シェルコマンドを実行
-                    result=$(execute_shell_command "$command")
-                    
-                    # tool messageを生成
-                    tool_message=$(echo "{}" | jq -c \
-                        --arg tool_call_id "$tool_call_id" \
-                        --argjson result "$result" \
-                        '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
-                    
-                    if [ $? -ne 0 ]; then
-                        exit 1
-                    fi
-                    
-                    # 配列に追加
-                    tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
-                fi
-            done <<< "$tool_calls"
-            
-            # すべてのtool messageをmessagesに追加
-            echo "$updated_request" | jq --argjson tool_msgs "$tool_messages" \
-                '.messages += $tool_msgs' > "$temp_request"
-            
-            if [ $? -ne 0 ]; then
-                exit 1
-            fi
-            
-            mv "$temp_request" "$REQUEST_FILE"
-            
-            # 次のイテレーションに進む
+    updated_request=$(echo "$request_data" | jq --argjson assistant_msg "$assistant_message" \
+        '.messages += [$assistant_msg]')
+    
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    
+    # 各tool callを処理してtool responseを収集
+    tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls[]')
+    
+    # 各tool callを処理
+    tool_messages="[]"
+    while IFS= read -r tool_call; do
+        if [ -z "$tool_call" ]; then
             continue
-        else
-            # tool callがない場合、テキスト応答を返して終了
-            text="$(echo "$response" | jq -r '.choices[0].message.content // empty')"
-            
-            if [ "$text" == "null" -o -z "$text" ]; then
-                echo "$response" >&2
-                exit 1
-            fi
-
-            save_response_text "$text"
-            return 0
         fi
-    done
+        tool_call_id=$(echo "$tool_call" | jq -r '.id')
+        func_name=$(echo "$tool_call" | jq -r '.function.name')
+        func_args=$(echo "$tool_call" | jq -r '.function.arguments')
+        
+        if [ "$func_name" = "execute_shell_command" ]; then
+            command=$(echo "$func_args" | jq -r '.command')
+            
+            # シェルコマンドを実行
+            result=$(execute_shell_command "$command")
+            
+            # tool messageを生成
+            tool_message=$(echo "{}" | jq -c \
+                --arg tool_call_id "$tool_call_id" \
+                --argjson result "$result" \
+                '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
+            
+            if [ $? -ne 0 ]; then
+                return 1
+            fi
+            
+            # 配列に追加
+            tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
+        fi
+    done <<< "$tool_calls"
     
-    echo "Error: Maximum iterations ($MAX_ITERATIONS) reached" >&2
-    exit 1
+    # すべてのtool messageをmessagesに追加
+    echo "$updated_request" | jq --argjson tool_msgs "$tool_messages" \
+        '.messages += $tool_msgs'
+    
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+}
+
+# 共通ライブラリを使用してクエリを実行
+function query
+{
+    _llm_driver_query "$@"
 }
