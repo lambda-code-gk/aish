@@ -22,6 +22,7 @@ LOG="$AISH_SESSION"/log.json
 # 共通ライブラリを読み込む
 . "$AISH_HOME/lib/agent_approve.sh"
 . "$AISH_HOME/lib/tool_execute_shell_command.sh"
+. "$AISH_HOME/lib/memory_manager.sh"
 . "$AISH_HOME/lib/query_entry.sh"
 . "$AISH_HOME/lib/llm_driver.sh"
 
@@ -70,7 +71,13 @@ function _provider_make_request_payload_agent
     echo '"system_instruction": {"parts": {"text": '$(echo "$system" | json_string)'}},'
   fi
 
-  echo '"tools": [{"functionDeclarations": [{"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}]}],'
+  echo '"tools": ['
+  echo '  {"functionDeclarations": ['
+  echo '    {"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}},'
+  echo '    {"name": "save_memory", "description": "Save useful information to the memory system. The memory will be stored in the project-specific directory if .aish/memory exists, otherwise in the global directory.", "parameters": {"type": "object", "properties": {"content": {"type": "string", "description": "The content to remember"}, "category": {"type": "string", "description": "Category: code_pattern, error_solution, workflow, best_practice, configuration, etc.", "default": "general"}, "keywords": {"type": "array", "items": {"type": "string"}, "description": "Keywords for searching this memory later"}}, "required": ["content"]}},'
+  echo '    {"name": "search_memory", "description": "Search memories related to the query. Searches both project-specific and global memories.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "category": {"type": "string", "description": "Filter by category (optional)"}, "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}}, "required": ["query"]}}'
+  echo '  ]}'
+  echo '],'
 
   echo '"contents":['
 
@@ -190,6 +197,26 @@ function _provider_process_tool_calls
                 rm -f "$func_responses_file" "$func_calls_file"
                 return 1
             fi
+            mv "${func_responses_file}.new" "$func_responses_file"
+        elif [ "$func_name" = "save_memory" ]; then
+            content=$(echo "$func_args" | jq -r '.content')
+            category=$(echo "$func_args" | jq -r '.category // "general"')
+            keywords=$(echo "$func_args" | jq -r '.keywords // [] | join(",")')
+            
+            result=$(save_memory "$content" "$category" "$keywords")
+            
+            func_response=$(echo "$result" | jq -c --arg name "$func_name" '{functionResponse: {name: $name, response: .}}')
+            echo "$(cat "$func_responses_file")" | jq --argjson func_res "$func_response" '. += [$func_res]' > "${func_responses_file}.new"
+            mv "${func_responses_file}.new" "$func_responses_file"
+        elif [ "$func_name" = "search_memory" ]; then
+            query_str=$(echo "$func_args" | jq -r '.query')
+            category=$(echo "$func_args" | jq -r '.category // ""')
+            limit=$(echo "$func_args" | jq -r '.limit // 5')
+            
+            result=$(search_memory_efficient "$query_str" "$category" "$limit")
+            
+            func_response=$(echo "$result" | jq -c --arg name "$func_name" '{functionResponse: {name: $name, response: .}}')
+            echo "$(cat "$func_responses_file")" | jq --argjson func_res "$func_response" '. += [$func_res]' > "${func_responses_file}.new"
             mv "${func_responses_file}.new" "$func_responses_file"
         fi
     done < "$func_calls_file"

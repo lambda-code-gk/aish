@@ -72,5 +72,24 @@ mkfifo $AISH_SESSION/fifo
 
 # No command specified, start a new session
 $AISH_CAPTURE_BIN -o $AISH_LOGFILE --input-fifo $AISH_SESSION/fifo
+
+# --- Self-Improvement Process ---
+if [ -f "$AISH_LOGFILE" ]; then
+    # バックグラウンドまたはメッセージを表示して実行
+    echo "Self-improving based on session history..."
+    (
+        export AISH_HOME="$AISH_HOME"
+        export AISH_SESSION="$AISH_SESSION"
+        [ -f "$AISH_HOME/lib/self_improve.sh" ] && . "$AISH_HOME/lib/self_improve.sh"
+        # 必要なライブラリ（ai.gpt または ai.gemini）を読み込む
+        # 現在の設定からプロバイダを特定
+        provider=$(cat "$AISH_HOME/task.d/agent/conf" 2>/dev/null | grep "provider" | cut -d'=' -f2 | tr -d '" ' || echo "gemini")
+        [ -f "$AISH_HOME/ai.$provider" ] && . "$AISH_HOME/ai.$provider"
+        
+        run_self_improvement "$AISH_LOGFILE"
+    ) > /dev/null 2>&1
+fi
+# --------------------------------
+
 echo "end"
 #rm -rf $session

@@ -27,6 +27,31 @@ function query_entry_prepare
   # 残りの引数を保存
   _query_args="$*"
   
+  # 関連する記憶を検索して注入
+  if [ ! -z "$_query_args" ]; then
+    # 記憶管理ライブラリを読み込む
+    [ -f "$AISH_HOME/lib/memory_manager.sh" ] && . "$AISH_HOME/lib/memory_manager.sh"
+    
+    # 検索を実行
+    local memories=$(search_memory_efficient "$_query_args" "" 3)
+    
+    if [ ! -z "$memories" ] && [ "$memories" != "[]" ]; then
+        local memory_text=$(echo "$memories" | jq -r '
+            "### Relevant Knowledge from Past Interactions:\n" +
+            ([.[] | "- [" + .category + "] " + .content + " (Keywords: " + (.keywords | join(", ")) + ")"] | join("\n"))
+        ')
+        
+        if [ ! -z "$memory_text" ]; then
+            # システムインストラクションの前に追加
+            if [ -z "$_query_system_instruction" ]; then
+                _query_system_instruction="$memory_text"
+            else
+                _query_system_instruction="$memory_text\n\nOriginal Instructions:\n$_query_system_instruction"
+            fi
+        fi
+    fi
+  fi
+  
   aish_rollout
   
   _query_files=$(detail.aish_list_parts | detail.aish_security_check)
