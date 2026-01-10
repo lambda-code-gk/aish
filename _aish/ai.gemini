@@ -2,15 +2,19 @@
 
 set -eo pipefail
 
-#MODEL="gemini-1.5-flash"
-#MODEL="gemini-1.5-pro"
-#MODEL="gemini-2.0-flash-exp"
-#MODEL="gemini-2.0-flash"
-#MODEL="gemini-2.5-pro-preview-03-25"
-#MODEL="gemini-2.5-flash-preview-04-17"
-#MODEL="gemini-2.5-pro-preview-05-06"
-#MODEL="gemini-2.5-flash-preview-05-20"
-#MODEL="gemini-2.5-flash-preview-05-20"
+# 対応しているモデルの一覧
+SUPPORTED_MODELS=(
+#  "gemini-1.5-flash"
+#  "gemini-1.5-pro"
+#  "gemini-2.0-flash-exp"
+#  "gemini-2.0-flash"
+#  "gemini-2.5-pro-preview-03-25"
+#  "gemini-2.5-flash-preview-04-17"
+#  "gemini-2.5-pro-preview-05-06"
+#  "gemini-2.5-flash-preview-05-20"
+  "gemini-3-flash-preview"
+)
+
 MODEL="gemini-3-flash-preview"
 
 LOG="$AISH_SESSION"/log.json
@@ -202,6 +206,31 @@ function _provider_process_tool_calls
     fi
     
     echo "$final_request"
+}
+
+# プロバイダ固有: APIから利用可能なモデル一覧を取得
+# 戻り値: モデル名のリスト（改行区切り）
+function _provider_list_available_models
+{
+    if [ -z "$GEMINI_API_KEY" ]; then
+        puts_error "GEMINI_API_KEY is not set"
+        return 1
+    fi
+    
+    response=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}")
+    if [ $? -ne 0 ]; then
+        puts_error "Failed to fetch models from Gemini API"
+        return 1
+    fi
+    
+    # エラーレスポンスのチェック
+    if echo "$response" | jq -e '.error' > /dev/null 2>&1; then
+        error_msg=$(echo "$response" | jq -r '.error.message // .error')
+        puts_error "Gemini API error: $error_msg"
+        return 1
+    fi
+    
+    echo "$response" | jq -r '.models[]? | select(.supportedGenerationMethods[]? | contains("generateContent")) | .name' | sed 's|^models/||'
 }
 
 # 共通ライブラリを使用してクエリを実行

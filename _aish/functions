@@ -286,3 +286,88 @@ function json_string
 {
   jq -Rs '.'
 }
+# エラー出力関数
+function puts_error
+{
+  echo "Error: $1" >&2
+}
+
+# モデル管理コマンド
+function aish_models
+{
+    # model_manager.shを読み込む
+    . "$AISH_HOME/lib/model_manager.sh"
+    
+    local provider=""
+    local show_unsupported=false
+    local show_available=false
+    
+    # オプション解析
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --provider|-p)
+                if [ -z "$2" ]; then
+                    puts_error "Option --provider requires a value"
+                    echo "Usage: aish models [OPTIONS]"
+                    return 1
+                fi
+                provider="$2"
+                shift 2
+                ;;
+            --unsupported|-u)
+                show_unsupported=true
+                shift
+                ;;
+            --available)
+                show_available=true
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: aish models [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --provider <name>    Show models for specific provider (gemini, gpt, etc.)"
+                echo "                       If not specified, show all providers"
+                echo "  --unsupported        Show unsupported models (available from API but not in SUPPORTED_MODELS)"
+                echo "                       Requires --provider option"
+                echo "  --available          Show available models from API"
+                echo "                       Requires --provider option"
+                echo "  -h, --help          Show this help message"
+                echo ""
+                echo "Examples:"
+                echo "  aish models                           # Show supported models for all providers"
+                echo "  aish models --provider gpt            # Show supported models for GPT provider"
+                echo "  aish models --provider gpt --unsupported  # Show unsupported models for GPT provider"
+                echo "  aish models --provider gpt --available    # Show available models from API for GPT provider"
+                return 0
+                ;;
+            *)
+                puts_error "Unknown option: $1"
+                echo "Usage: aish models [OPTIONS]"
+                echo "Use 'aish models --help' for more information"
+                return 1
+                ;;
+        esac
+    done
+    
+    # 未対応モデル表示または利用可能モデル表示の場合はプロバイダ指定が必要
+    if [ "$show_unsupported" = true ] || [ "$show_available" = true ]; then
+        if [ -z "$provider" ]; then
+            puts_error "--unsupported and --available options require --provider option"
+            return 1
+        fi
+    fi
+    
+    # アクションに応じて処理
+    if [ "$show_unsupported" = true ]; then
+        list_unsupported_models "$provider"
+    elif [ "$show_available" = true ]; then
+        list_available_models "$provider"
+    elif [ -z "$provider" ]; then
+        # プロバイダが指定されていない場合、全プロバイダの対応モデルを表示
+        list_all_supported_models
+    else
+        # 指定されたプロバイダの対応モデルを表示
+        list_supported_models "$provider"
+    fi
+}

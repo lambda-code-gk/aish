@@ -10,8 +10,14 @@ then
 fi
 API_KEY="$OPENAI_API_KEY"
 ENDPOINT="https://api.openai.com/v1/chat/completions"
-#MODEL="gpt-3.5-turbo"
-#MODEL="gpt-4o"
+
+# 対応しているモデルの一覧
+SUPPORTED_MODELS=(
+#  "gpt-3.5-turbo"
+#  "gpt-4o"
+  "gpt-5.2"
+)
+
 MODEL="gpt-5.2"
 TEMPERATURE=0.7
 LOG="$AISH_SESSION"/log.json
@@ -187,6 +193,32 @@ function _provider_process_tool_calls
     if [ $? -ne 0 ]; then
         return 1
     fi
+}
+
+# プロバイダ固有: APIから利用可能なモデル一覧を取得
+# 戻り値: モデル名のリスト（改行区切り）
+function _provider_list_available_models
+{
+    if [ -z "$OPENAI_API_KEY" ]; then
+        puts_error "OPENAI_API_KEY is not set"
+        return 1
+    fi
+    
+    response=$(curl -s -X GET "https://api.openai.com/v1/models" \
+      -H "Authorization: Bearer $OPENAI_API_KEY")
+    if [ $? -ne 0 ]; then
+        puts_error "Failed to fetch models from OpenAI API"
+        return 1
+    fi
+    
+    # エラーレスポンスのチェック
+    if echo "$response" | jq -e '.error' > /dev/null 2>&1; then
+        error_msg=$(echo "$response" | jq -r '.error.message // .error')
+        puts_error "OpenAI API error: $error_msg"
+        return 1
+    fi
+    
+    echo "$response" | jq -r '.data[]? | select(.id | startswith("gpt")) | .id' | sort
 }
 
 # 共通ライブラリを使用してクエリを実行
