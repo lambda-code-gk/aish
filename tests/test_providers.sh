@@ -117,19 +117,29 @@ test_gemini_payload_generation() {
 test_gpt_process_tool_calls() {
     test_case "GPT - process_tool_calls for memory functions"
     
-    # 実際の実装を確認（grepでロジックの存在を確認）
-    if grep -q 'if \[ "$func_name" = "save_memory" \]; then' "$GPT_LIB"; then
-        log_info "✓ GPT implementation handles save_memory"
+    # 実際の実装を確認（_execute_tool_call関数の呼び出しを確認）
+    if grep -q '_execute_tool_call' "$GPT_LIB"; then
+        log_info "✓ GPT implementation uses _execute_tool_call for tool execution"
     else
-        log_error "✗ GPT implementation does not handle save_memory"
+        log_error "✗ GPT implementation missing _execute_tool_call"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
     
-    if grep -q 'if \[ "$func_name" = "search_memory" \]; then' "$GPT_LIB"; then
-        log_info "✓ GPT implementation handles search_memory"
+    # tool_save_memoryとtool_search_memoryが読み込まれているか確認
+    if grep -q 'tool_save_memory.sh' "$GPT_LIB" && grep -q 'tool_search_memory.sh' "$GPT_LIB"; then
+        log_info "✓ GPT implementation loads memory tool libraries"
     else
-        log_error "✗ GPT implementation does not handle search_memory"
+        log_error "✗ GPT implementation missing memory tool library imports"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+    
+    # _load_all_tool_definitions_openaiが呼び出されているか確認
+    if grep -q '_load_all_tool_definitions_openai' "$GPT_LIB"; then
+        log_info "✓ GPT implementation loads tool definitions"
+    else
+        log_error "✗ GPT implementation missing tool definition loading"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
@@ -142,18 +152,29 @@ test_gpt_process_tool_calls() {
 test_gemini_process_tool_calls() {
     test_case "Gemini - process_tool_calls for memory functions"
     
-    if grep -q 'if \[ "$func_name" = "save_memory" \]; then' "$GEMINI_LIB"; then
-        log_info "✓ Gemini implementation handles save_memory"
+    # 実際の実装を確認（_execute_tool_call関数の呼び出しを確認）
+    if grep -q '_execute_tool_call' "$GEMINI_LIB"; then
+        log_info "✓ Gemini implementation uses _execute_tool_call for tool execution"
     else
-        log_error "✗ Gemini implementation does not handle save_memory"
+        log_error "✗ Gemini implementation missing _execute_tool_call"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
     
-    if grep -q 'if \[ "$func_name" = "search_memory" \]; then' "$GEMINI_LIB"; then
-        log_info "✓ Gemini implementation handles search_memory"
+    # tool_save_memoryとtool_search_memoryが読み込まれているか確認
+    if grep -q 'tool_save_memory.sh' "$GEMINI_LIB" && grep -q 'tool_search_memory.sh' "$GEMINI_LIB"; then
+        log_info "✓ Gemini implementation loads memory tool libraries"
     else
-        log_error "✗ Gemini implementation does not handle search_memory"
+        log_error "✗ Gemini implementation missing memory tool library imports"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 1
+    fi
+    
+    # _load_all_tool_definitions_geminiが呼び出されているか確認
+    if grep -q '_load_all_tool_definitions_gemini' "$GEMINI_LIB"; then
+        log_info "✓ Gemini implementation loads tool definitions"
+    else
+        log_error "✗ Gemini implementation missing tool definition loading"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
