@@ -61,3 +61,43 @@ function execute_shell_command
   echo "$result"
 }
 
+# OpenAI形式のtool定義を返す
+function _tool_execute_shell_command_definition_openai
+{
+  echo '{"type": "function", "function": {"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}}'
+}
+
+# Gemini形式のtool定義を返す
+function _tool_execute_shell_command_definition_gemini
+{
+  echo '{"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}'
+}
+
+# tool実行処理
+# 引数: tool_call_id - tool call ID（OpenAI形式のみ使用）
+#      func_args - 関数引数（JSON文字列）
+#      provider - "openai" または "gemini"
+# 戻り値: tool実行結果（JSON形式）
+function _tool_execute_shell_command_execute
+{
+  local tool_call_id="$1"
+  local func_args="$2"
+  local provider="$3"
+  
+  command=$(echo "$func_args" | jq -r '.command')
+  
+  if [ -z "$command" ]; then
+    echo '{"error": "command is required"}' >&2
+    return 1
+  fi
+  
+  # シェルコマンドを実行
+  result=$(execute_shell_command "$command")
+  
+  if [ $? -ne 0 ]; then
+    return 1
+  fi
+  
+  echo "$result"
+}
+

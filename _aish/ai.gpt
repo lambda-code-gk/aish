@@ -24,10 +24,16 @@ LOG="$AISH_SESSION"/log.json
 
 # 共通ライブラリを読み込む
 . "$AISH_HOME/lib/agent_approve.sh"
+. "$AISH_HOME/lib/tool_helper.sh"
 . "$AISH_HOME/lib/tool_execute_shell_command.sh"
+. "$AISH_HOME/lib/tool_save_memory.sh"
+. "$AISH_HOME/lib/tool_search_memory.sh"
 . "$AISH_HOME/lib/memory_manager.sh"
 . "$AISH_HOME/lib/query_entry.sh"
 . "$AISH_HOME/lib/llm_driver.sh"
+
+# 全てのtoolファイルを読み込む
+_load_all_tool_files
 
 # OpenAI形式のリクエストJSONを生成（通常モード）
 function _provider_make_request_payload
@@ -66,11 +72,9 @@ function _provider_make_request_payload_agent
     query=$1
     system=$2
 
-    local tools='[
-        {"type": "function", "function": {"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}},
-        {"type": "function", "function": {"name": "save_memory", "description": "Save useful information to the memory system. The memory will be stored in the project-specific directory if .aish/memory exists, otherwise in the global directory.", "parameters": {"type": "object", "properties": {"content": {"type": "string", "description": "The content to remember"}, "category": {"type": "string", "description": "Category: code_pattern, error_solution, workflow, best_practice, configuration, etc.", "default": "general"}, "keywords": {"type": "array", "items": {"type": "string"}, "description": "Keywords for searching this memory later"}}, "required": ["content"]}}},
-        {"type": "function", "function": {"name": "search_memory", "description": "Search memories related to the query. Searches both project-specific and global memories.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "category": {"type": "string", "description": "Filter by category (optional)"}, "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}}, "required": ["query"]}}}
-    ]'
+    # 動的にtool定義を読み込む
+    local tools
+    tools=$(_load_all_tool_definitions_openai)
 
     echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE', "tools": '$tools', "messages": ['
 
@@ -172,51 +176,33 @@ function _provider_process_tool_calls
         func_name=$(echo "$tool_call" | jq -r '.function.name')
         func_args=$(echo "$tool_call" | jq -r '.function.arguments')
         
-        if [ "$func_name" = "execute_shell_command" ]; then
-            command=$(echo "$func_args" | jq -r '.command')
-            
-            # シェルコマンドを実行
-            result=$(execute_shell_command "$command")
-            
-            # tool messageを生成
-            tool_message=$(echo "{}" | jq -c \
-                --arg tool_call_id "$tool_call_id" \
-                --argjson result "$result" \
-                '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
-            
-            if [ $? -ne 0 ]; then
-                return 1
+        # 動的にtool実行処理を呼び出す
+        result=$(_execute_tool_call "$func_name" "$tool_call_id" "$func_args" "openai")
+        execute_exit_code=$?
+        
+        if [ $execute_exit_code -ne 0 ] || [ -z "$result" ]; then
+            # エラーが発生した場合はエラーメッセージを返す
+            if [ -z "$result" ]; then
+                result='{"error": "Tool execution failed"}'
             fi
-            
-            # 配列に追加
-            tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
-        elif [ "$func_name" = "save_memory" ]; then
-            content=$(echo "$func_args" | jq -r '.content')
-            category=$(echo "$func_args" | jq -r '.category // "general"')
-            keywords=$(echo "$func_args" | jq -r '.keywords // [] | join(",")')
-            
-            result=$(save_memory "$content" "$category" "$keywords")
-            
             tool_message=$(echo "{}" | jq -c \
                 --arg tool_call_id "$tool_call_id" \
                 --argjson result "$result" \
                 '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
-            
-            tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
-        elif [ "$func_name" = "search_memory" ]; then
-            query_str=$(echo "$func_args" | jq -r '.query')
-            category=$(echo "$func_args" | jq -r '.category // ""')
-            limit=$(echo "$func_args" | jq -r '.limit // 5')
-            
-            result=$(search_memory_efficient "$query_str" "$category" "$limit")
-            
+        else
+            # tool messageを生成（resultはJSON形式の文字列）
             tool_message=$(echo "{}" | jq -c \
                 --arg tool_call_id "$tool_call_id" \
                 --argjson result "$result" \
                 '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
-            
-            tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
         fi
+        
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        
+        # 配列に追加
+        tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
     done <<< "$tool_calls"
     
     # すべてのtool messageをmessagesに追加
