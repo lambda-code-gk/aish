@@ -86,18 +86,20 @@ function query_entry_prepare
   # 関連する記憶を検索して注入
   if [ ! -z "$_query_args" ]; then
     # 検索を実行
-    local memories=$(search_memory_efficient "$_query_args" "" 3)
+    local memories=$(search_memory_efficient "$_query_args" "" 3 true)
     
     if [ ! -z "$memories" ] && [ "$memories" != "[]" ]; then
-        # subject、keywords、idをセットで表示してLLMが記憶を選択しやすくする
+        # subject、keywords、id、contentをセットで表示
         local memory_text=$(echo "$memories" | jq -r '
             "### Relevant Knowledge from Past Interactions:\n" +
-            "Each entry below shows: Subject, Keywords, and ID. Use get_memory_content with the ID to retrieve full details.\n\n" +
+            "Each entry below shows: Subject, Keywords, ID, and Content.\n\n" +
             ([.[] | 
-              (if .subject and .subject != "" then "Subject: " + .subject + " | " else "" end) +
-              "Keywords: " + (.keywords | join(", ")) + " | " +
-              "ID: " + .id + 
-              (if .category then " | Category: " + .category else "" end)
+              (if .subject and .subject != "" then "Subject: " + .subject + "\n" else "" end) +
+              "Keywords: " + (.keywords | join(", ")) + "\n" +
+              "ID: " + .id + "\n" +
+              (if .category then "Category: " + .category + "\n" else "" end) +
+              (if .content then "Content: " + .content + "\n" else "" end) +
+              "---"
             ] | join("\n"))
         ')
         
