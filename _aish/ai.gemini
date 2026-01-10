@@ -196,10 +196,14 @@ function _provider_process_tool_calls
             if [ -z "$result" ]; then
                 result='{"error": "Tool execution failed"}'
             fi
-            func_response=$(echo "$result" | jq -c --arg name "$func_name" '{functionResponse: {name: $name, response: .}}')
+            # Gemini APIは配列を直接受け付けないため、配列の場合はオブジェクトでラップ
+            wrapped_result=$(echo "$result" | jq 'if type == "array" then {results: .} else . end')
+            func_response=$(echo "$wrapped_result" | jq -c --arg name "$func_name" '{functionResponse: {name: $name, response: .}}')
         else
+            # Gemini APIは配列を直接受け付けないため、配列の場合はオブジェクトでラップ
+            wrapped_result=$(echo "$result" | jq 'if type == "array" then {results: .} else . end')
             # function responseを生成
-            func_response=$(echo "$result" | jq -c --arg name "$func_name" '{functionResponse: {name: $name, response: .}}')
+            func_response=$(echo "$wrapped_result" | jq -c --arg name "$func_name" '{functionResponse: {name: $name, response: .}}')
         fi
         
         if [ $? -ne 0 ]; then

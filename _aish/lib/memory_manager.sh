@@ -217,12 +217,14 @@ function save_memory
 # 引数: query - 検索クエリ
 #      category - カテゴリフィルタ（オプション、空の場合は全カテゴリ）
 #      limit - 結果数の上限（デフォルト: 5）
+#      include_content - contentを含めるかどうか（デフォルト: true、falseの場合はメタデータのみ）
 # 戻り値: JSON配列形式で検索結果を返す
 function search_memory_efficient
 {
     local query="$1"
     local category="${2:-}"
     local limit="${3:-5}"
+    local include_content="${4:-true}"
     
     if [ -z "$query" ]; then
         echo "[]"
@@ -244,30 +246,59 @@ function search_memory_efficient
     if [ -f "$project_memory_dir/metadata.json" ]; then
         # クエリを小文字に変換（bash側で実行）
         local query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
-        project_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
-            [.memories[] | select(.category == $cat or $cat == "") | 
-              # マッチング判定: クエリがキーワードを含んでいるか、またはコンテンツがクエリを含んでいるか
-              select(
-                (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
-                (.content | ascii_downcase | contains($query_lower))
-              ) |
-              # スコアを事前に計算
-              . + {
-                _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
-                        (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
-              } |
-              {
-                id: .id,
-                category: .category,
-                content: .content,
-                keywords: .keywords,
-                score: ._score,
-                source: "project",
-                memory_dir: .memory_dir,
-                project_root: .project_root
-              }] |
-              sort_by(-.score) | .[0:($limit | tonumber)]' \
-            "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        
+        if [ "$include_content" = "false" ]; then
+            # メタデータのみを返す（contentを除外）
+            project_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                [.memories[] | select(.category == $cat or $cat == "") | 
+                  # マッチング判定: クエリがキーワードを含んでいるか、またはコンテンツがクエリを含んでいるか
+                  select(
+                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
+                    (.content | ascii_downcase | contains($query_lower))
+                  ) |
+                  # スコアを事前に計算
+                  . + {
+                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
+                            (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                  } |
+                  {
+                    id: .id,
+                    category: .category,
+                    keywords: .keywords,
+                    score: ._score,
+                    source: "project",
+                    memory_dir: .memory_dir,
+                    project_root: .project_root
+                  }] |
+                  sort_by(-.score) | .[0:($limit | tonumber)]' \
+                "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        else
+            # contentを含める（既存の動作）
+            project_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                [.memories[] | select(.category == $cat or $cat == "") | 
+                  # マッチング判定: クエリがキーワードを含んでいるか、またはコンテンツがクエリを含んでいるか
+                  select(
+                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
+                    (.content | ascii_downcase | contains($query_lower))
+                  ) |
+                  # スコアを事前に計算
+                  . + {
+                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
+                            (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                  } |
+                  {
+                    id: .id,
+                    category: .category,
+                    content: .content,
+                    keywords: .keywords,
+                    score: ._score,
+                    source: "project",
+                    memory_dir: .memory_dir,
+                    project_root: .project_root
+                  }] |
+                  sort_by(-.score) | .[0:($limit | tonumber)]' \
+                "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        fi
         
         if [ "$project_results" != "null" ] && [ "$project_results" != "" ]; then
             results="$project_results"
@@ -278,28 +309,55 @@ function search_memory_efficient
     if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
         # クエリを小文字に変換（bash側で実行）
         local query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
-        global_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
-            [.memories[] | select(.category == $cat or $cat == "") | 
-              select(
-                (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
-                (.content | ascii_downcase | contains($query_lower))
-              ) |
-              . + {
-                _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
-                        (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
-              } |
-              {
-                id: .id,
-                category: .category,
-                content: .content,
-                keywords: .keywords,
-                score: ._score,
-                source: "global",
-                memory_dir: .memory_dir,
-                project_root: .project_root
-              }] |
-              sort_by(-.score) | .[0:($limit | tonumber)]' \
-            "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        
+        if [ "$include_content" = "false" ]; then
+            # メタデータのみを返す（contentを除外）
+            global_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                [.memories[] | select(.category == $cat or $cat == "") | 
+                  select(
+                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
+                    (.content | ascii_downcase | contains($query_lower))
+                  ) |
+                  . + {
+                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
+                            (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                  } |
+                  {
+                    id: .id,
+                    category: .category,
+                    keywords: .keywords,
+                    score: ._score,
+                    source: "global",
+                    memory_dir: .memory_dir,
+                    project_root: .project_root
+                  }] |
+                  sort_by(-.score) | .[0:($limit | tonumber)]' \
+                "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        else
+            # contentを含める（既存の動作）
+            global_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                [.memories[] | select(.category == $cat or $cat == "") | 
+                  select(
+                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
+                    (.content | ascii_downcase | contains($query_lower))
+                  ) |
+                  . + {
+                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
+                            (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                  } |
+                  {
+                    id: .id,
+                    category: .category,
+                    content: .content,
+                    keywords: .keywords,
+                    score: ._score,
+                    source: "global",
+                    memory_dir: .memory_dir,
+                    project_root: .project_root
+                  }] |
+                  sort_by(-.score) | .[0:($limit | tonumber)]' \
+                "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        fi
         
         if [ "$global_results" != "null" ] && [ "$global_results" != "" ]; then
             # 両方の結果をマージ（プロジェクト固有を優先、重複を除外）
@@ -308,17 +366,31 @@ function search_memory_efficient
             else
                 # プロジェクト結果とグローバル結果をマージ
                 # 同じIDまたは同じ内容の場合はプロジェクト固有を優先
-                results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
-                    flatten |
-                    # IDで重複を除去（プロジェクト固有を優先）
-                    group_by(.id) | map(.[0]) |
-                    # contentで重複を除去（プロジェクト固有を優先）
-                    group_by(.content) | map(.[0]) |
-                    # scoreでソート
-                    sort_by(-.score) |
-                    # limitを適用
-                    .[0:($limit | tonumber)]
-                ')
+                if [ "$include_content" = "false" ]; then
+                    # contentがない場合はIDのみで重複除去
+                    results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
+                        flatten |
+                        # IDで重複を除去（プロジェクト固有を優先）
+                        group_by(.id) | map(.[0]) |
+                        # scoreでソート
+                        sort_by(-.score) |
+                        # limitを適用
+                        .[0:($limit | tonumber)]
+                    ')
+                else
+                    # contentがある場合は従来通り
+                    results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
+                        flatten |
+                        # IDで重複を除去（プロジェクト固有を優先）
+                        group_by(.id) | map(.[0]) |
+                        # contentで重複を除去（プロジェクト固有を優先）
+                        group_by(.content) | map(.[0]) |
+                        # scoreでソート
+                        sort_by(-.score) |
+                        # limitを適用
+                        .[0:($limit | tonumber)]
+                    ')
+                fi
             fi
         fi
     fi

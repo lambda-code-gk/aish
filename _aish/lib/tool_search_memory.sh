@@ -6,13 +6,13 @@
 # OpenAI形式のtool定義を返す
 function _tool_search_memory_definition_openai
 {
-  echo '{"type": "function", "function": {"name": "search_memory", "description": "Search memories related to the query. Searches both project-specific and global memories.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "category": {"type": "string", "description": "Filter by category (optional)"}, "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}}, "required": ["query"]}}}'
+  echo '{"type": "function", "function": {"name": "search_memory", "description": "Search memories related to the query. Returns memory metadata (id, category, keywords, score) without full content for efficiency. Use get_memory_content to retrieve full content of relevant memories when needed. Returns an array of memory objects directly.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "category": {"type": "string", "description": "Filter by category (optional)"}, "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}}, "required": ["query"]}}}'
 }
 
 # Gemini形式のtool定義を返す
 function _tool_search_memory_definition_gemini
 {
-  echo '{"name": "search_memory", "description": "Search memories related to the query. Searches both project-specific and global memories.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "category": {"type": "string", "description": "Filter by category (optional)"}, "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}}, "required": ["query"]}}'
+  echo '{"name": "search_memory", "description": "Search memories related to the query. Returns memory metadata (id, category, keywords, score) without full content for efficiency. Use get_memory_content to retrieve full content of relevant memories when needed. Note: When using Gemini API, the result is wrapped in a results object (response.results array).", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "category": {"type": "string", "description": "Filter by category (optional)"}, "limit": {"type": "integer", "description": "Maximum number of results", "default": 5}}, "required": ["query"]}}'
 }
 
 # tool実行処理
@@ -35,7 +35,8 @@ function _tool_search_memory_execute
     return 1
   fi
   
-  result=$(search_memory_efficient "$query_str" "$category" "$limit")
+  # include_content=falseで呼び出し（メタデータのみ返す）
+  result=$(search_memory_efficient "$query_str" "$category" "$limit" "false")
   
   if [ $? -ne 0 ]; then
     return 1

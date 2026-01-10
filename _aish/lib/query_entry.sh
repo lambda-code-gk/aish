@@ -36,9 +36,16 @@ function query_entry_prepare
     local memories=$(search_memory_efficient "$_query_args" "" 3)
     
     if [ ! -z "$memories" ] && [ "$memories" != "[]" ]; then
+        # contentが存在する場合はcontentを表示、ない場合はメタデータのみ表示
         local memory_text=$(echo "$memories" | jq -r '
             "### Relevant Knowledge from Past Interactions:\n" +
-            ([.[] | "- [" + .category + "] " + .content + " (Keywords: " + (.keywords | join(", ")) + ")"] | join("\n"))
+            ([.[] | 
+              if has("content") and .content != null then
+                "- [" + .category + "] " + .content + " (Keywords: " + (.keywords | join(", ")) + ")"
+              else
+                "- ID: " + .id + " [" + .category + "] Keywords: " + (.keywords | join(", ")) + " (use get_memory_content to retrieve details)"
+              end
+            ] | join("\n"))
         ')
         
         if [ ! -z "$memory_text" ]; then

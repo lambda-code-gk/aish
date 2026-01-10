@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+# memory_manager.shの関数を使用するため、読み込む
+. "$AISH_HOME/lib/memory_manager.sh"
+
+# OpenAI形式のtool定義を返す
+function _tool_get_memory_content_definition_openai
+{
+  echo '{"type": "function", "function": {"name": "get_memory_content", "description": "Get the full content of a specific memory by its ID. Use this after search_memory returns memory IDs to retrieve detailed information when needed.", "parameters": {"type": "object", "properties": {"memory_id": {"type": "string", "description": "The memory ID returned by search_memory"}}, "required": ["memory_id"]}}}'
+}
+
+# Gemini形式のtool定義を返す
+function _tool_get_memory_content_definition_gemini
+{
+  echo '{"name": "get_memory_content", "description": "Get the full content of a specific memory by its ID. Use this after search_memory returns memory IDs to retrieve detailed information when needed.", "parameters": {"type": "object", "properties": {"memory_id": {"type": "string", "description": "The memory ID returned by search_memory"}}, "required": ["memory_id"]}}'
+}
+
+# tool実行処理
+# 引数: tool_call_id - tool call ID（OpenAI形式のみ使用）
+#      func_args - 関数引数（JSON文字列）
+#      provider - "openai" または "gemini"
+# 戻り値: tool実行結果（JSON形式）
+function _tool_get_memory_content_execute
+{
+  local tool_call_id="$1"
+  local func_args="$2"
+  local provider="$3"
+  
+  memory_id=$(echo "$func_args" | jq -r '.memory_id')
+  
+  if [ -z "$memory_id" ] || [ "$memory_id" = "null" ]; then
+    echo '{"error": "memory_id is required"}' >&2
+    return 1
+  fi
+  
+  # プロジェクト固有の記憶ディレクトリを取得
+  local memory_dir
+  memory_dir=$(find_memory_directory)
+  
+  # プロジェクト固有から検索
+  if [ -f "$memory_dir/metadata.json" ]; then
+    result=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$memory_dir/metadata.json" 2>/dev/null)
+    
+    if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+      echo "$result"
+      return 0
+    fi
+  fi
+  
+  # 見つからない場合はグローバルから検索
+  if [ -f "$AISH_HOME/memory/metadata.json" ]; then
+    result=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$AISH_HOME/memory/metadata.json" 2>/dev/null)
+    
+    if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+      echo "$result"
+      return 0
+    fi
+  fi
+  
+  # 見つからない場合
+  echo "{\"error\": \"Memory with ID $memory_id not found\"}"
+  return 1
+}
+
