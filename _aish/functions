@@ -371,3 +371,138 @@ function aish_models
         list_supported_models "$provider"
     fi
 }
+
+# 記憶管理コマンド
+function aish_memory
+{
+    # memory_manager.shを読み込む
+    . "$AISH_HOME/lib/memory_manager.sh"
+    
+    local action=""
+    local memory_id=""
+    
+    # オプション解析
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --list|-l)
+                action="list"
+                shift
+                ;;
+            --show|-s)
+                if [ -z "$2" ]; then
+                    puts_error "Option --show requires a memory ID"
+                    echo "Usage: aish memory --show <id>"
+                    return 1
+                fi
+                action="show"
+                memory_id="$2"
+                shift 2
+                ;;
+            --revoke|-r)
+                if [ -z "$2" ]; then
+                    puts_error "Option --revoke requires a memory ID"
+                    echo "Usage: aish memory --revoke <id>"
+                    return 1
+                fi
+                action="revoke"
+                memory_id="$2"
+                shift 2
+                ;;
+            -h|--help)
+                echo "Usage: aish memory [OPTIONS]"
+                echo ""
+                echo "Options:"
+                echo "  --list, -l              List all memories"
+                echo "  --show <id>, -s <id>    Show detailed information for a specific memory"
+                echo "  --revoke <id>, -r <id>  Delete a specific memory"
+                echo "  -h, --help             Show this help message"
+                echo ""
+                echo "Examples:"
+                echo "  aish memory --list                      # List all memories"
+                echo "  aish memory --show 5b91615c770ecbb2     # Show details for a specific memory"
+                echo "  aish memory --revoke 5b91615c770ecbb2   # Delete a specific memory"
+                return 0
+                ;;
+            *)
+                puts_error "Unknown option: $1"
+                echo "Usage: aish memory [OPTIONS]"
+                echo "Use 'aish memory --help' for more information"
+                return 1
+                ;;
+        esac
+    done
+    
+    # アクションが指定されていない場合はヘルプを表示
+    if [ -z "$action" ]; then
+        puts_error "No action specified"
+        echo "Usage: aish memory [OPTIONS]"
+        echo "Use 'aish memory --help' for more information"
+        return 1
+    fi
+    
+    # アクションに応じて処理
+    case "$action" in
+        list)
+            local memories_json
+            memories_json=$(list_memories)
+            if [ $? -ne 0 ]; then
+                puts_error "Failed to list memories"
+                return 1
+            fi
+            
+            # メモリの数を取得
+            local count
+            count=$(echo "$memories_json" | jq 'length' 2>/dev/null || echo "0")
+            
+            if [ "$count" = "0" ] || [ "$count" = "null" ]; then
+                echo "No memories found."
+                return 0
+            fi
+            
+            echo "Found $count memory/memories:"
+            echo ""
+            
+            # 表形式で表示
+            echo "$memories_json" | jq -r '.[] | "ID: \(.id)\n  Category: \(.category)\n  Keywords: \(.keywords | join(", "))\n  Timestamp: \(.timestamp)\n  Usage Count: \(.usage_count)\n  Source: \(.source // "unknown")\n"' | sed 's/^  /  /'
+            ;;
+        show)
+            local memory_json
+            memory_json=$(get_memory_content "$memory_id" 2>/dev/null)
+            
+            if [ $? -ne 0 ] || [ -z "$memory_json" ]; then
+                puts_error "Memory with id '$memory_id' not found"
+                return 1
+            fi
+            
+            # エラーチェック
+            local error
+            error=$(echo "$memory_json" | jq -r '.error // empty' 2>/dev/null)
+            if [ ! -z "$error" ]; then
+                puts_error "$error"
+                return 1
+            fi
+            
+            echo "Memory Details:"
+            echo ""
+            echo "$memory_json" | jq -r '
+                "ID: \(.id)\n" +
+                "Category: \(.category)\n" +
+                "Keywords: \(.keywords | join(", "))\n" +
+                "Timestamp: \(.timestamp)\n" +
+                "Usage Count: \(.usage_count)\n" +
+                "Source: \(.source // "unknown")\n" +
+                "Memory Directory: \(.memory_dir)\n" +
+                "Project Root: \(.project_root // "N/A")\n" +
+                "Content:\n\(.content)\n"
+            '
+            ;;
+        revoke)
+            revoke_memory "$memory_id"
+            return $?
+            ;;
+        *)
+            puts_error "Unknown action: $action"
+            return 1
+            ;;
+    esac
+}

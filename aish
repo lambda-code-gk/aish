@@ -14,6 +14,8 @@ usage() {
     echo "  clear                  Clear the console and part files."
     echo "  ls                     List the part files."
     echo "  rm_last                Remove the last part file."
+    echo "  memory                 Manage memories (--list, --show <id>, --revoke <id>)."
+    echo "  models                 Manage models (--provider, --unsupported, --available)."
     exit 1
 }
 

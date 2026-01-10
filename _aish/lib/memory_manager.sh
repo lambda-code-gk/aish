@@ -403,3 +403,238 @@ function search_memory_efficient
     echo "$results"
 }
 
+# 記憶を削除
+# 引数: memory_id - 削除する記憶のID
+# 戻り値: 成功時は0、失敗時は1
+function revoke_memory
+{
+    local memory_id="$1"
+    
+    if [ -z "$memory_id" ]; then
+        echo "Error: memory_id is required" >&2
+        return 1
+    fi
+    
+    # プロジェクト固有とグローバルの両方の記憶ディレクトリを確認
+    local project_memory_dir
+    project_memory_dir=$(find_memory_directory)
+    local global_memory_dir="$AISH_HOME/memory"
+    
+    local found=false
+    local memory_dir_to_use=""
+    local memory_entry=""
+    
+    # 1. プロジェクト固有の記憶を検索
+    if [ -f "$project_memory_dir/metadata.json" ]; then
+        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$project_memory_dir/metadata.json" 2>/dev/null)
+        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
+            found=true
+            memory_dir_to_use="$project_memory_dir"
+        fi
+    fi
+    
+    # 2. グローバルの記憶を検索（プロジェクト固有で見つからなかった場合）
+    if [ "$found" = false ] && [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
+        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$global_memory_dir/metadata.json" 2>/dev/null)
+        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
+            found=true
+            memory_dir_to_use="$global_memory_dir"
+        fi
+    fi
+    
+    if [ "$found" = false ]; then
+        echo "Error: Memory with id '$memory_id' not found" >&2
+        return 1
+    fi
+    
+    # カテゴリとファイル名を取得
+    local category
+    category=$(echo "$memory_entry" | jq -r '.category' 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$category" ]; then
+        echo "Error: Failed to extract category from memory entry" >&2
+        return 1
+    fi
+    
+    # カテゴリ別ファイルを削除
+    local category_file="$memory_dir_to_use/by_category/${category}_${memory_id}.json"
+    if [ -f "$category_file" ]; then
+        rm -f "$category_file"
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to delete category file: $category_file" >&2
+            return 1
+        fi
+    fi
+    
+    # メタデータから削除
+    local metadata_file="$memory_dir_to_use/metadata.json"
+    local temp_metadata
+    temp_metadata=$(mktemp)
+    jq --arg id "$memory_id" '.memories = (.memories | map(select(.id != $id))) | .last_updated = now' \
+        "$metadata_file" > "$temp_metadata" 2>/dev/null
+    
+    if [ $? -ne 0 ]; then
+        rm -f "$temp_metadata"
+        echo "Error: Failed to update metadata" >&2
+        return 1
+    fi
+    
+    mv "$temp_metadata" "$metadata_file"
+    
+    # キーワードインデックスから削除
+    local keyword_file="$memory_dir_to_use/by_keyword/keywords.json"
+    if [ -f "$keyword_file" ]; then
+        local keywords
+        keywords=$(echo "$memory_entry" | jq -r '.keywords[]?' 2>/dev/null)
+        if [ $? -eq 0 ] && [ ! -z "$keywords" ]; then
+            echo "$keywords" | while IFS= read -r keyword; do
+                if [ ! -z "$keyword" ]; then
+                    local temp_keyword
+                    temp_keyword=$(mktemp)
+                    jq --arg kw "$keyword" --arg id "$memory_id" \
+                        'if has($kw) then .[$kw] = (.[$kw] | map(select(. != $id))) | if .[$kw] == [] then del(.[$kw]) else . end else . end' \
+                        "$keyword_file" > "$temp_keyword" 2>/dev/null
+                    
+                    if [ $? -eq 0 ]; then
+                        mv "$temp_keyword" "$keyword_file"
+                    else
+                        rm -f "$temp_keyword"
+                    fi
+                fi
+            done
+        fi
+    fi
+    
+    echo "Memory '$memory_id' has been revoked successfully"
+    return 0
+}
+
+# 記憶の一覧を取得
+# 引数: memory_dir - 記憶ディレクトリ（オプション、指定しない場合は自動検出）
+# 戻り値: JSON配列形式で記憶の一覧を返す（contentは含まない）
+function list_memories
+{
+    local memory_dir="${1:-}"
+    
+    if [ -z "$memory_dir" ]; then
+        memory_dir=$(find_memory_directory)
+    fi
+    
+    local project_memory_dir="$memory_dir"
+    local global_memory_dir="$AISH_HOME/memory"
+    
+    local results="[]"
+    
+    # 1. プロジェクト固有の記憶を取得
+    if [ -f "$project_memory_dir/metadata.json" ]; then
+        local project_results
+        project_results=$(jq -c '[.memories[] | {
+            id: .id,
+            category: .category,
+            keywords: .keywords,
+            timestamp: .timestamp,
+            usage_count: .usage_count,
+            memory_dir: .memory_dir,
+            project_root: .project_root,
+            source: "project"
+        }]' "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        
+        if [ "$project_results" != "null" ] && [ "$project_results" != "" ]; then
+            results="$project_results"
+        fi
+    fi
+    
+    # 2. グローバルの記憶も取得（プロジェクト固有とは別のディレクトリの場合）
+    if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
+        local global_results
+        global_results=$(jq -c '[.memories[] | {
+            id: .id,
+            category: .category,
+            keywords: .keywords,
+            timestamp: .timestamp,
+            usage_count: .usage_count,
+            memory_dir: .memory_dir,
+            project_root: .project_root,
+            source: "global"
+        }]' "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        
+        if [ "$global_results" != "null" ] && [ "$global_results" != "" ]; then
+            # 両方の結果をマージ
+            if [ "$results" = "[]" ]; then
+                results="$global_results"
+            else
+                results=$(echo "$results $global_results" | jq -s 'flatten')
+            fi
+        fi
+    fi
+    
+    # 結果が空の場合は空配列を返す
+    if [ "$results" = "null" ] || [ -z "$results" ]; then
+        results="[]"
+    fi
+    
+    echo "$results"
+}
+
+# 記憶の詳細情報を取得
+# 引数: memory_id - 記憶のID
+# 戻り値: JSON形式で記憶の詳細情報を返す
+function get_memory_content
+{
+    local memory_id="$1"
+    
+    if [ -z "$memory_id" ]; then
+        echo '{"error": "memory_id is required"}' >&2
+        return 1
+    fi
+    
+    # プロジェクト固有とグローバルの両方の記憶ディレクトリを確認
+    local project_memory_dir
+    project_memory_dir=$(find_memory_directory)
+    local global_memory_dir="$AISH_HOME/memory"
+    
+    local memory_entry=""
+    
+    # 1. プロジェクト固有の記憶を検索
+    if [ -f "$project_memory_dir/metadata.json" ]; then
+        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$project_memory_dir/metadata.json" 2>/dev/null)
+        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
+            # contentを含む完全な情報をカテゴリ別ファイルから取得
+            local category
+            category=$(echo "$memory_entry" | jq -r '.category' 2>/dev/null)
+            if [ $? -eq 0 ] && [ ! -z "$category" ]; then
+                local category_file="$project_memory_dir/by_category/${category}_${memory_id}.json"
+                if [ -f "$category_file" ]; then
+                    memory_entry=$(cat "$category_file" 2>/dev/null)
+                fi
+            fi
+            # sourceを追加
+            memory_entry=$(echo "$memory_entry" | jq -c '. + {source: "project"}' 2>/dev/null)
+            echo "$memory_entry"
+            return 0
+        fi
+    fi
+    
+    # 2. グローバルの記憶を検索
+    if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
+        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$global_memory_dir/metadata.json" 2>/dev/null)
+        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
+            # contentを含む完全な情報をカテゴリ別ファイルから取得
+            local category
+            category=$(echo "$memory_entry" | jq -r '.category' 2>/dev/null)
+            if [ $? -eq 0 ] && [ ! -z "$category" ]; then
+                local category_file="$global_memory_dir/by_category/${category}_${memory_id}.json"
+                if [ -f "$category_file" ]; then
+                    memory_entry=$(cat "$category_file" 2>/dev/null)
+                fi
+            fi
+            # sourceを追加
+            memory_entry=$(echo "$memory_entry" | jq -c '. + {source: "global"}' 2>/dev/null)
+            echo "$memory_entry"
+            return 0
+        fi
+    fi
+    
+    echo '{"error": "Memory not found"}' >&2
+    return 1
+}
+
