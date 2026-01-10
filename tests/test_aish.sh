@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+# プロジェクトルートに移動
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # 色付き出力のための変数
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,7 +19,7 @@ TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
 # aishコマンドのパス
-AISH_CMD="${AISH_CMD:-./aish}"
+AISH_CMD="${AISH_CMD:-$PROJECT_ROOT/aish}"
 
 # AISH_HOMEの設定（テスト用）
 export AISH_HOME="${TEST_DIR}/.aish"
@@ -372,12 +377,11 @@ test_no_command() {
     
     # aish-captureバイナリの存在確認（実際のセッション開始には必要）
     local aish_capture_bin=""
-    local script_dir="$(cd "$(dirname "$AISH_CMD")" && pwd)"
     
-    if [ -f "$script_dir/tools/aish-capture/target/release/aish-capture" ]; then
-        aish_capture_bin="$script_dir/tools/aish-capture/target/release/aish-capture"
-    elif [ -f "$script_dir/tools/aish-capture/target/debug/aish-capture" ]; then
-        aish_capture_bin="$script_dir/tools/aish-capture/target/debug/aish-capture"
+    if [ -f "$PROJECT_ROOT/tools/aish-capture/target/release/aish-capture" ]; then
+        aish_capture_bin="$PROJECT_ROOT/tools/aish-capture/target/release/aish-capture"
+    elif [ -f "$PROJECT_ROOT/tools/aish-capture/target/debug/aish-capture" ]; then
+        aish_capture_bin="$PROJECT_ROOT/tools/aish-capture/target/debug/aish-capture"
     fi
     
     if [ -n "$aish_capture_bin" ] && [ -f "$aish_capture_bin" ]; then

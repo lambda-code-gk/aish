@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+# プロジェクトルートに移動
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # 色付き出力のための変数
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,7 +19,7 @@ TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
 # aiコマンドのパス
-AI_CMD="${AI_CMD:-./ai}"
+AI_CMD="${AI_CMD:-$PROJECT_ROOT/ai}"
 
 # AISH_HOMEの設定（テスト用）
 export AISH_HOME="${TEST_DIR}/.aish"

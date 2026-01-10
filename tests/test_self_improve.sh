@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+# プロジェクトルートに移動
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # 色付き出力のための変数
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,14 +19,14 @@ TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
 # AISH環境のシミュレーション
-export AISH_HOME="$(pwd)/_aish"
+export AISH_HOME="$PROJECT_ROOT/_aish"
 export AISH_SESSION="$TEST_DIR/session"
 mkdir -p "$AISH_SESSION/part"
 export AISH_LOGFILE="$AISH_SESSION/log.jsonl"
 
 # ライブラリのパス
-SELF_IMPROVE_LIB="_aish/lib/self_improve.sh"
-MEMORY_LIB="_aish/lib/memory_manager.sh"
+SELF_IMPROVE_LIB="$PROJECT_ROOT/_aish/lib/self_improve.sh"
+MEMORY_LIB="$PROJECT_ROOT/_aish/lib/memory_manager.sh"
 
 # テスト結果のカウント
 TESTS_PASSED=0

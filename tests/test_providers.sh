@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+# プロジェクトルートに移動
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # 色付き出力のための変数
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,7 +19,7 @@ TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
 # AISH環境のシミュレーション
-export AISH_HOME="$(pwd)/_aish"
+export AISH_HOME="$PROJECT_ROOT/_aish"
 export AISH_SESSION="$TEST_DIR/session"
 mkdir -p "$AISH_SESSION/part"
 export AISH_PART="$AISH_SESSION/part"
@@ -24,9 +29,9 @@ export OPENAI_API_KEY="sk-dummy"
 export GEMINI_API_KEY="dummy-key"
 
 # ライブラリのパス
-MEMORY_LIB="_aish/lib/memory_manager.sh"
-GPT_LIB="_aish/ai.gpt"
-GEMINI_LIB="_aish/ai.gemini"
+MEMORY_LIB="$PROJECT_ROOT/_aish/lib/memory_manager.sh"
+GPT_LIB="$PROJECT_ROOT/_aish/ai.gpt"
+GEMINI_LIB="$PROJECT_ROOT/_aish/ai.gemini"
 
 # テスト結果のカウント
 TESTS_PASSED=0
@@ -161,7 +166,7 @@ test_gemini_process_tool_calls() {
 test_agent_instruction_update() {
     test_case "Agent System Instruction - contains memory instructions"
     
-    local agent_exec="_aish/task.d/agent/execute"
+    local agent_exec="$PROJECT_ROOT/_aish/task.d/agent/execute"
     if grep -i -q "memory" "$agent_exec" && (grep -q "save_memory" "$agent_exec" || grep -q "search_memory" "$agent_exec"); then
         log_info "✓ Agent system instruction contains memory-related guidance"
         TESTS_PASSED=$((TESTS_PASSED + 1))

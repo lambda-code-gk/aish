@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+# プロジェクトルートに移動
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # 色付き出力のための変数
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,14 +19,14 @@ TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
 # AISH環境のシミュレーション
-export AISH_HOME="$(pwd)/_aish"
+export AISH_HOME="$PROJECT_ROOT/_aish"
 export AISH_SESSION="$TEST_DIR/session"
 mkdir -p "$AISH_SESSION/part"
 export AISH_PART="$AISH_SESSION/part"
 
 # ライブラリのパス
-QUERY_ENTRY_LIB="_aish/lib/query_entry.sh"
-MEMORY_LIB="_aish/lib/memory_manager.sh"
+QUERY_ENTRY_LIB="$PROJECT_ROOT/_aish/lib/query_entry.sh"
+MEMORY_LIB="$PROJECT_ROOT/_aish/lib/memory_manager.sh"
 
 # テスト結果のカウント
 TESTS_PASSED=0
@@ -51,7 +56,7 @@ setup_test_memories() {
     
     # 共通関数を読み込むためにAISH_HOMEを設定
     (
-        export AISH_HOME="$(pwd)/_aish"
+        export AISH_HOME="$PROJECT_ROOT/_aish"
         source "$MEMORY_LIB"
         init_memory_directory "$memory_dir"
         save_memory "To fix permission denied for scripts, use chmod +x <script_name>." "error_solution" "permission,chmod,denied" > /dev/null
@@ -86,7 +91,7 @@ test_memory_injection() {
     # query_entry_prepare を実行
     # 本来は AISH_HOME/lib から読み込まれるが、テスト用に直接sourceする
     (
-        export AISH_HOME="$(pwd)/_aish"
+        export AISH_HOME="$PROJECT_ROOT/_aish"
         # 記憶ディレクトリを指すように細工（find_memory_directoryがここを見つけるようにする）
         export AISH_HOME_MEMORY="$memory_dir" 
         # project-specific memoryとして認識させるためにカレントディレクトリに .aish/memory を作る
