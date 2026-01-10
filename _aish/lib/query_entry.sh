@@ -27,11 +27,49 @@ function query_entry_prepare
   # 残りの引数を保存
   _query_args="$*"
   
+  # 記憶管理ライブラリを読み込む
+  [ -f "$AISH_HOME/lib/memory_manager.sh" ] && . "$AISH_HOME/lib/memory_manager.sh"
+  
+  # metadata.jsonから全てのキーワードを抽出してコンテキストに追加
+  # プロジェクト固有とグローバルの両方を確認
+  local project_memory_dir
+  project_memory_dir=$(find_memory_directory 2>/dev/null)
+  local global_memory_dir="$AISH_HOME/memory"
+  
+  # 両方のmetadata.jsonからキーワードを集約
+  local keywords_array="[]"
+  
+  # プロジェクト固有のmetadata.jsonからキーワードを取得
+  if [ ! -z "$project_memory_dir" ] && [ -f "$project_memory_dir/metadata.json" ]; then
+    local project_keywords=$(jq -c '[.memories[]?.keywords[]?] | unique' "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+    if [ ! -z "$project_keywords" ] && [ "$project_keywords" != "null" ] && [ "$project_keywords" != "[]" ]; then
+      keywords_array=$(echo "$keywords_array $project_keywords" | jq -s 'flatten | unique')
+    fi
+  fi
+  
+  # グローバルのmetadata.jsonからキーワードを取得（プロジェクト固有と異なる場合のみ）
+  if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
+    local global_keywords=$(jq -c '[.memories[]?.keywords[]?] | unique' "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+    if [ ! -z "$global_keywords" ] && [ "$global_keywords" != "null" ] && [ "$global_keywords" != "[]" ]; then
+      keywords_array=$(echo "$keywords_array $global_keywords" | jq -s 'flatten | unique')
+    fi
+  fi
+  
+  # キーワードが存在する場合はコンテキストに追加
+  local keywords_text=$(echo "$keywords_array" | jq -r 'join(", ")' 2>/dev/null)
+  if [ ! -z "$keywords_text" ] && [ "$keywords_text" != "null" ] && [ "$keywords_text" != "" ]; then
+    local keywords_context="### Available Knowledge Keywords:\nThese keywords are available in the memory system. Use the search_memory tool if you need detailed information about these topics:\n$keywords_text\n"
+    
+    # システムインストラクションの前に追加
+    if [ -z "$_query_system_instruction" ]; then
+      _query_system_instruction="$keywords_context"
+    else
+      _query_system_instruction="$keywords_context\n$_query_system_instruction"
+    fi
+  fi
+  
   # 関連する記憶を検索して注入
   if [ ! -z "$_query_args" ]; then
-    # 記憶管理ライブラリを読み込む
-    [ -f "$AISH_HOME/lib/memory_manager.sh" ] && . "$AISH_HOME/lib/memory_manager.sh"
-    
     # 検索を実行
     local memories=$(search_memory_efficient "$_query_args" "" 3)
     
@@ -49,12 +87,8 @@ function query_entry_prepare
         ')
         
         if [ ! -z "$memory_text" ]; then
-            # システムインストラクションの前に追加
-            if [ -z "$_query_system_instruction" ]; then
-                _query_system_instruction="$memory_text"
-            else
-                _query_system_instruction="$memory_text\n\nOriginal Instructions:\n$_query_system_instruction"
-            fi
+            # システムインストラクションに追加
+            _query_system_instruction="$_query_system_instruction\n\n$memory_text"
         fi
     fi
   fi
