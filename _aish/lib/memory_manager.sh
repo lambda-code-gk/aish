@@ -92,12 +92,14 @@ function get_memory_directory
 # 引数: content - 記憶する内容
 #      category - カテゴリ（デフォルト: "general"）
 #      keywords - キーワード（カンマ区切り、デフォルト: 空）
+#      subject - 主題・タイトル（デフォルト: 空）
 # 戻り値: JSON形式で memory_id, memory_dir, project_root を返す
 function save_memory
 {
     local content="$1"
     local category="${2:-general}"
     local keywords="${3:-}"
+    local subject="${4:-}"
     
     if [ -z "$content" ]; then
         echo '{"error": "content is required"}' >&2
@@ -148,6 +150,7 @@ function save_memory
         --arg content "$content" \
         --arg category "$category" \
         --argjson keywords "$keywords_array" \
+        --arg subject "$subject" \
         --arg timestamp "$timestamp" \
         --arg memory_dir "$memory_dir" \
         --arg project_root "$project_root" \
@@ -156,6 +159,7 @@ function save_memory
             content: $content,
             category: $category,
             keywords: $keywords,
+            subject: $subject,
             timestamp: $timestamp,
             usage_count: 0,
             memory_dir: $memory_dir,
@@ -265,6 +269,7 @@ function search_memory_efficient
                     id: .id,
                     category: .category,
                     keywords: .keywords,
+                    subject: .subject,
                     score: ._score,
                     source: "project",
                     memory_dir: .memory_dir,
@@ -291,6 +296,7 @@ function search_memory_efficient
                     category: .category,
                     content: .content,
                     keywords: .keywords,
+                    subject: .subject,
                     score: ._score,
                     source: "project",
                     memory_dir: .memory_dir,
@@ -326,6 +332,7 @@ function search_memory_efficient
                     id: .id,
                     category: .category,
                     keywords: .keywords,
+                    subject: .subject,
                     score: ._score,
                     source: "global",
                     memory_dir: .memory_dir,
@@ -350,6 +357,7 @@ function search_memory_efficient
                     category: .category,
                     content: .content,
                     keywords: .keywords,
+                    subject: .subject,
                     score: ._score,
                     source: "global",
                     memory_dir: .memory_dir,
@@ -531,6 +539,7 @@ function list_memories
             id: .id,
             category: .category,
             keywords: .keywords,
+            subject: .subject,
             timestamp: .timestamp,
             usage_count: .usage_count,
             memory_dir: .memory_dir,
@@ -550,6 +559,7 @@ function list_memories
             id: .id,
             category: .category,
             keywords: .keywords,
+            subject: .subject,
             timestamp: .timestamp,
             usage_count: .usage_count,
             memory_dir: .memory_dir,
@@ -587,6 +597,9 @@ function get_memory_content
         return 1
     fi
     
+    # 呼び出しを表示
+    echo "get_memory_content: $memory_id" >&2
+
     # プロジェクト固有とグローバルの両方の記憶ディレクトリを確認
     local project_memory_dir
     project_memory_dir=$(find_memory_directory)

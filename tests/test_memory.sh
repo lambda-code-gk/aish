@@ -3,11 +3,6 @@
 
 set -euo pipefail
 
-# プロジェクトルートに移動
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$PROJECT_ROOT"
-
 # 色付き出力のための変数
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -18,7 +13,7 @@ NC='\033[0m' # No Color
 TEST_DIR=$(mktemp -d)
 
 # 実際のプロジェクトの記憶ディレクトリをバックアップ
-PROJECT_MEMORY_DIR="$PROJECT_ROOT/_aish/memory"
+PROJECT_MEMORY_DIR="$(pwd)/_aish/memory"
 PROJECT_BACKUP_DIR=$(mktemp -d)
 PROJECT_METADATA_BACKUP="$PROJECT_BACKUP_DIR/metadata.json"
 PROJECT_CATEGORY_BACKUP="$PROJECT_BACKUP_DIR/by_category"
@@ -74,7 +69,7 @@ TEST_AISH_HOME="$TEST_DIR/.aish"
 mkdir -p "$TEST_AISH_HOME/memory"
 
 # ライブラリのパス
-MEMORY_LIB="${MEMORY_LIB:-$PROJECT_ROOT/_aish/lib/memory_manager.sh}"
+MEMORY_LIB="${MEMORY_LIB:-_aish/lib/memory_manager.sh}"
 
 # テスト結果のカウント
 TESTS_PASSED=0

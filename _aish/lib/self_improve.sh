@@ -60,7 +60,8 @@ Otherwise, respond ONLY with a JSON object in the following format:
 {
   \"content\": \"A clear and concise summary of the knowledge\",
   \"category\": \"One of: code_pattern, error_solution, workflow, best_practice, configuration, general\",
-  \"keywords\": [\"keyword1\", \"keyword2\", ...]
+  \"keywords\": [\"keyword1\", \"keyword2\", ...],
+  \"subject\": \"A brief subject or title describing what this knowledge is about\"
 }"
 
     # query 関数を使用してLLMに要約を依頼
@@ -82,11 +83,12 @@ Otherwise, respond ONLY with a JSON object in the following format:
         local content=$(echo "$json_response" | jq -r '.content // empty')
         local category=$(echo "$json_response" | jq -r '.category // "general"')
         local keywords=$(echo "$json_response" | jq -r '.keywords // [] | join(",")')
+        local subject=$(echo "$json_response" | jq -r '.subject // ""')
 
         if [ ! -z "$content" ]; then
             # 記憶の保存
             # memory_manager.sh の save_memory を使用
-            save_memory "$content" "$category" "$keywords"
+            save_memory "$content" "$category" "$keywords" "$subject"
         fi
     fi
 }

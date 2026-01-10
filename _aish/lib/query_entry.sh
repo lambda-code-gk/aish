@@ -30,41 +30,56 @@ function query_entry_prepare
   # 記憶管理ライブラリを読み込む
   [ -f "$AISH_HOME/lib/memory_manager.sh" ] && . "$AISH_HOME/lib/memory_manager.sh"
   
-  # metadata.jsonから全てのキーワードを抽出してコンテキストに追加
+  # metadata.jsonから全記憶のsubject、keywords、idを取得してコンテキストに追加
   # プロジェクト固有とグローバルの両方を確認
   local project_memory_dir
   project_memory_dir=$(find_memory_directory 2>/dev/null)
   local global_memory_dir="$AISH_HOME/memory"
   
-  # 両方のmetadata.jsonからキーワードを集約
-  local keywords_array="[]"
+  # 両方のmetadata.jsonから記憶情報を集約
+  local memories_info="[]"
   
-  # プロジェクト固有のmetadata.jsonからキーワードを取得
+  # プロジェクト固有のmetadata.jsonから記憶情報を取得
   if [ ! -z "$project_memory_dir" ] && [ -f "$project_memory_dir/metadata.json" ]; then
-    local project_keywords=$(jq -c '[.memories[]?.keywords[]?] | unique' "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
-    if [ ! -z "$project_keywords" ] && [ "$project_keywords" != "null" ] && [ "$project_keywords" != "[]" ]; then
-      keywords_array=$(echo "$keywords_array $project_keywords" | jq -s 'flatten | unique')
+    local project_memories=$(jq -c '[.memories[]? | {id: .id, subject: (.subject // ""), keywords: .keywords, category: .category}]' "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+    if [ ! -z "$project_memories" ] && [ "$project_memories" != "null" ] && [ "$project_memories" != "[]" ]; then
+      memories_info="$project_memories"
     fi
   fi
   
-  # グローバルのmetadata.jsonからキーワードを取得（プロジェクト固有と異なる場合のみ）
+  # グローバルのmetadata.jsonから記憶情報を取得（プロジェクト固有と異なる場合のみ）
   if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
-    local global_keywords=$(jq -c '[.memories[]?.keywords[]?] | unique' "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
-    if [ ! -z "$global_keywords" ] && [ "$global_keywords" != "null" ] && [ "$global_keywords" != "[]" ]; then
-      keywords_array=$(echo "$keywords_array $global_keywords" | jq -s 'flatten | unique')
+    local global_memories=$(jq -c '[.memories[]? | {id: .id, subject: (.subject // ""), keywords: .keywords, category: .category}]' "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+    if [ ! -z "$global_memories" ] && [ "$global_memories" != "null" ] && [ "$global_memories" != "[]" ]; then
+      # プロジェクト固有の記憶情報とマージ（重複を除外）
+      if [ "$memories_info" != "[]" ]; then
+        memories_info=$(echo "$memories_info $global_memories" | jq -s 'flatten | group_by(.id) | map(.[0])')
+      else
+        memories_info="$global_memories"
+      fi
     fi
   fi
   
-  # キーワードが存在する場合はコンテキストに追加
-  local keywords_text=$(echo "$keywords_array" | jq -r 'join(", ")' 2>/dev/null)
-  if [ ! -z "$keywords_text" ] && [ "$keywords_text" != "null" ] && [ "$keywords_text" != "" ]; then
-    local keywords_context="### Available Knowledge Keywords:\nThese keywords are available in the memory system. Use the search_memory tool if you need detailed information about these topics:\n$keywords_text\n"
+  # 記憶情報が存在する場合はコンテキストに追加
+  if [ "$memories_info" != "[]" ] && [ "$memories_info" != "null" ] && [ ! -z "$memories_info" ]; then
+    local memories_text=$(echo "$memories_info" | jq -r '
+      "### Available Knowledge in Memory System:\n" +
+      "Each entry shows: Subject, Keywords, and ID. Use get_memory_content with the ID to retrieve full details, or use search_memory to search for specific topics.\n\n" +
+      ([.[] | 
+        (if .subject and .subject != "" then "Subject: " + .subject + " | " else "" end) +
+        "Keywords: " + (.keywords | join(", ")) + " | " +
+        "ID: " + .id +
+        (if .category then " | Category: " + .category else "" end)
+      ] | join("\n"))
+    ')
     
-    # システムインストラクションの前に追加
-    if [ -z "$_query_system_instruction" ]; then
-      _query_system_instruction="$keywords_context"
-    else
-      _query_system_instruction="$keywords_context\n$_query_system_instruction"
+    if [ ! -z "$memories_text" ] && [ "$memories_text" != "null" ]; then
+      # システムインストラクションの前に追加
+      if [ -z "$_query_system_instruction" ]; then
+        _query_system_instruction="$memories_text"
+      else
+        _query_system_instruction="$memories_text\n\n$_query_system_instruction"
+      fi
     fi
   fi
   
@@ -74,15 +89,15 @@ function query_entry_prepare
     local memories=$(search_memory_efficient "$_query_args" "" 3)
     
     if [ ! -z "$memories" ] && [ "$memories" != "[]" ]; then
-        # contentが存在する場合はcontentを表示、ない場合はメタデータのみ表示
+        # subject、keywords、idをセットで表示してLLMが記憶を選択しやすくする
         local memory_text=$(echo "$memories" | jq -r '
             "### Relevant Knowledge from Past Interactions:\n" +
+            "Each entry below shows: Subject, Keywords, and ID. Use get_memory_content with the ID to retrieve full details.\n\n" +
             ([.[] | 
-              if has("content") and .content != null then
-                "- [" + .category + "] " + .content + " (Keywords: " + (.keywords | join(", ")) + ")"
-              else
-                "- ID: " + .id + " [" + .category + "] Keywords: " + (.keywords | join(", ")) + " (use get_memory_content to retrieve details)"
-              end
+              (if .subject and .subject != "" then "Subject: " + .subject + " | " else "" end) +
+              "Keywords: " + (.keywords | join(", ")) + " | " +
+              "ID: " + .id + 
+              (if .category then " | Category: " + .category else "" end)
             ] | join("\n"))
         ')
         

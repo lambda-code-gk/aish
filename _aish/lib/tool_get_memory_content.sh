@@ -42,6 +42,13 @@ function _tool_get_memory_content_execute
     result=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$memory_dir/metadata.json" 2>/dev/null)
     
     if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+      # 標準エラー出力に検索結果を表示: id,subject
+      local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
+      if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
+        echo "get_memory_content: $memory_id,$subject" >&2
+      else
+        echo "get_memory_content: $memory_id," >&2
+      fi
       echo "$result"
       return 0
     fi
@@ -52,12 +59,20 @@ function _tool_get_memory_content_execute
     result=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$AISH_HOME/memory/metadata.json" 2>/dev/null)
     
     if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+      # 標準エラー出力に検索結果を表示: id,subject
+      local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
+      if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
+        echo "$memory_id,$subject" >&2
+      else
+        echo "$memory_id," >&2
+      fi
       echo "$result"
       return 0
     fi
   fi
   
   # 見つからない場合
+  echo "get_memory_content: $memory_id not found" >&2
   echo "{\"error\": \"Memory with ID $memory_id not found\"}"
   return 1
 }
