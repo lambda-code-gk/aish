@@ -40,22 +40,26 @@ function query_entry_prepare
   local memories_info="[]"
   
   # プロジェクト固有のmetadata.jsonから記憶情報を取得
-  if [ ! -z "$project_memory_dir" ] && [ -f "$project_memory_dir/metadata.json" ]; then
-    local project_memories=$(jq -c '[.memories[]? | {id: .id, subject: (.subject // ""), keywords: .keywords, category: .category}]' "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+  local project_memories_raw=$(memory_system_load_all "$project_memory_dir")
+  if [ "$project_memories_raw" != "[]" ]; then
+    local project_memories=$(echo "$project_memories_raw" | jq -c '[.[] | {id: .id, subject: (.subject // ""), keywords: .keywords, category: .category}]' 2>/dev/null || echo "[]")
     if [ ! -z "$project_memories" ] && [ "$project_memories" != "null" ] && [ "$project_memories" != "[]" ]; then
       memories_info="$project_memories"
     fi
   fi
   
   # グローバルのmetadata.jsonから記憶情報を取得（プロジェクト固有と異なる場合のみ）
-  if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
-    local global_memories=$(jq -c '[.memories[]? | {id: .id, subject: (.subject // ""), keywords: .keywords, category: .category}]' "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
-    if [ ! -z "$global_memories" ] && [ "$global_memories" != "null" ] && [ "$global_memories" != "[]" ]; then
-      # プロジェクト固有の記憶情報とマージ（重複を除外）
-      if [ "$memories_info" != "[]" ]; then
-        memories_info=$(echo "$memories_info $global_memories" | jq -s 'flatten | group_by(.id) | map(.[0])')
-      else
-        memories_info="$global_memories"
+  if [ "$project_memory_dir" != "$global_memory_dir" ]; then
+    local global_memories_raw=$(memory_system_load_all "$global_memory_dir")
+    if [ "$global_memories_raw" != "[]" ]; then
+      local global_memories=$(echo "$global_memories_raw" | jq -c '[.[] | {id: .id, subject: (.subject // ""), keywords: .keywords, category: .category}]' 2>/dev/null || echo "[]")
+      if [ ! -z "$global_memories" ] && [ "$global_memories" != "null" ] && [ "$global_memories" != "[]" ]; then
+        # プロジェクト固有の記憶情報とマージ（重複を除外）
+        if [ "$memories_info" != "[]" ]; then
+          memories_info=$(echo "$memories_info $global_memories" | jq -s 'flatten | group_by(.id) | map(.[0])')
+        else
+          memories_info="$global_memories"
+        fi
       fi
     fi
   fi
@@ -125,4 +129,3 @@ function save_response_text
   local text="$1"
   echo "$text" | tee "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_assistant.txt"
 }
-

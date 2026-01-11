@@ -3,6 +3,8 @@
 # 記憶管理ライブラリ
 # プロジェクト単位で記憶を分離できる階層的記憶システムを提供します
 
+source "$(dirname "${BASH_SOURCE[0]}")/memory_system.sh"
+
 # プロジェクト固有の記憶ディレクトリを検索
 # 現在の作業ディレクトリから上に辿って .aish/memory を探す
 # 見つからなければ $AISH_HOME/memory を返す
@@ -40,20 +42,9 @@ function init_memory_directory
     mkdir -p "$memory_dir/by_keyword"
     
     # メタデータファイルが存在しない場合は作成
-    local metadata_file="$memory_dir/metadata.json"
-    if [ ! -f "$metadata_file" ]; then
-        jq -n \
-            --arg memory_dir "$memory_dir" \
-            '{
-                memories: [],
-                last_updated: null,
-                memory_dir: $memory_dir
-            }' > "$metadata_file"
-        
-        if [ $? -ne 0 ]; then
-            echo "Error: Failed to create metadata.json" >&2
-            return 1
-        fi
+    memory_system_init "$memory_dir"
+    if [ $? -ne 0 ]; then
+        return 1
     fi
     
     # キーワードインデックスファイルが存在しない場合は作成
@@ -119,7 +110,6 @@ function save_memory
         return 1
     fi
     
-    local metadata_file="$memory_dir/metadata.json"
     local keyword_file="$memory_dir/by_keyword/keywords.json"
     
     # 記憶IDを生成（タイムスタンプとランダム文字列の組み合わせ）
@@ -180,19 +170,10 @@ function save_memory
     fi
     
     # メタデータに追加
-    local temp_metadata
-    temp_metadata=$(mktemp)
-    jq --argjson entry "$memory_entry" \
-        '.memories += [$entry] | .last_updated = now | .memory_dir = $entry.memory_dir' \
-        "$metadata_file" > "$temp_metadata"
-    
+    memory_system_save_entry "$memory_dir" "$memory_entry"
     if [ $? -ne 0 ]; then
-        rm -f "$temp_metadata"
-        echo '{"error": "Failed to update metadata"}' >&2
         return 1
     fi
-    
-    mv "$temp_metadata" "$metadata_file"
     
     # キーワードインデックスを更新
     if [ "$keywords_array" != "[]" ]; then
@@ -247,14 +228,15 @@ function search_memory_efficient
     local global_results="[]"
     
     # 1. プロジェクト固有の記憶を検索
-    if [ -f "$project_memory_dir/metadata.json" ]; then
+    local project_memories=$(memory_system_load_all "$project_memory_dir")
+    if [ "$project_memories" != "[]" ]; then
         # クエリを小文字に変換（bash側で実行）
         local query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
         
         if [ "$include_content" = "false" ]; then
             # メタデータのみを返す（contentを除外）
-            project_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
-                [.memories[] | select(.category == $cat or $cat == "") | 
+            project_results=$(echo "$project_memories" | jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                [.[] | select(.category == $cat or $cat == "") | 
                   # マッチング判定: クエリがキーワードを含んでいるか、またはコンテンツがクエリを含んでいるか
                   select(
                     (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
@@ -275,12 +257,11 @@ function search_memory_efficient
                     memory_dir: .memory_dir,
                     project_root: .project_root
                   }] |
-                  sort_by(-.score) | .[0:($limit | tonumber)]' \
-                "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+                  sort_by(-.score) | .[0:($limit | tonumber)]' 2>/dev/null || echo "[]")
         else
             # contentを含める（既存の動作）
-            project_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
-                [.memories[] | select(.category == $cat or $cat == "") | 
+            project_results=$(echo "$project_memories" | jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                [.[] | select(.category == $cat or $cat == "") | 
                   # マッチング判定: クエリがキーワードを含んでいるか、またはコンテンツがクエリを含んでいるか
                   select(
                     (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
@@ -302,8 +283,7 @@ function search_memory_efficient
                     memory_dir: .memory_dir,
                     project_root: .project_root
                   }] |
-                  sort_by(-.score) | .[0:($limit | tonumber)]' \
-                "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+                  sort_by(-.score) | .[0:($limit | tonumber)]' 2>/dev/null || echo "[]")
         fi
         
         if [ "$project_results" != "null" ] && [ "$project_results" != "" ]; then
@@ -312,92 +292,93 @@ function search_memory_efficient
     fi
     
     # 2. グローバルの記憶も検索（プロジェクト固有とは別のディレクトリの場合）
-    if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
-        # クエリを小文字に変換（bash側で実行）
-        local query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
-        
-        if [ "$include_content" = "false" ]; then
-            # メタデータのみを返す（contentを除外）
-            global_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
-                [.memories[] | select(.category == $cat or $cat == "") | 
-                  select(
-                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
-                    (.content | ascii_downcase | contains($query_lower))
-                  ) |
-                  . + {
-                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
-                            (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
-                  } |
-                  {
-                    id: .id,
-                    category: .category,
-                    keywords: .keywords,
-                    subject: .subject,
-                    score: ._score,
-                    source: "global",
-                    memory_dir: .memory_dir,
-                    project_root: .project_root
-                  }] |
-                  sort_by(-.score) | .[0:($limit | tonumber)]' \
-                "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
-        else
-            # contentを含める（既存の動作）
-            global_results=$(jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
-                [.memories[] | select(.category == $cat or $cat == "") | 
-                  select(
-                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
-                    (.content | ascii_downcase | contains($query_lower))
-                  ) |
-                  . + {
-                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
-                            (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
-                  } |
-                  {
-                    id: .id,
-                    category: .category,
-                    content: .content,
-                    keywords: .keywords,
-                    subject: .subject,
-                    score: ._score,
-                    source: "global",
-                    memory_dir: .memory_dir,
-                    project_root: .project_root
-                  }] |
-                  sort_by(-.score) | .[0:($limit | tonumber)]' \
-                "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
-        fi
-        
-        if [ "$global_results" != "null" ] && [ "$global_results" != "" ]; then
-            # 両方の結果をマージ（プロジェクト固有を優先、重複を除外）
-            if [ "$results" = "[]" ]; then
-                results="$global_results"
+    if [ "$project_memory_dir" != "$global_memory_dir" ]; then
+        local global_memories=$(memory_system_load_all "$global_memory_dir")
+        if [ "$global_memories" != "[]" ]; then
+            # クエリを小文字に変換（bash側で実行）
+            local query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
+            
+            if [ "$include_content" = "false" ]; then
+                # メタデータのみを返す（contentを除外）
+                global_results=$(echo "$global_memories" | jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                    [.[] | select(.category == $cat or $cat == "") | 
+                      select(
+                        (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
+                        (.content | ascii_downcase | contains($query_lower))
+                      ) |
+                      . + {
+                        _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
+                                (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                      } |
+                      {
+                        id: .id,
+                        category: .category,
+                        keywords: .keywords,
+                        subject: .subject,
+                        score: ._score,
+                        source: "global",
+                        memory_dir: .memory_dir,
+                        project_root: .project_root
+                      }] |
+                      sort_by(-.score) | .[0:($limit | tonumber)]' 2>/dev/null || echo "[]")
             else
-                # プロジェクト結果とグローバル結果をマージ
-                # 同じIDまたは同じ内容の場合はプロジェクト固有を優先
-                if [ "$include_content" = "false" ]; then
-                    # contentがない場合はIDのみで重複除去
-                    results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
-                        flatten |
-                        # IDで重複を除去（プロジェクト固有を優先）
-                        group_by(.id) | map(.[0]) |
-                        # scoreでソート
-                        sort_by(-.score) |
-                        # limitを適用
-                        .[0:($limit | tonumber)]
-                    ')
+                # contentを含める（既存の動作）
+                global_results=$(echo "$global_memories" | jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
+                    [.[] | select(.category == $cat or $cat == "") | 
+                      select(
+                        (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
+                        (.content | ascii_downcase | contains($query_lower))
+                      ) |
+                      . + {
+                        _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
+                                (if (.content | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                      } |
+                      {
+                        id: .id,
+                        category: .category,
+                        content: .content,
+                        keywords: .keywords,
+                        subject: .subject,
+                        score: ._score,
+                        source: "global",
+                        memory_dir: .memory_dir,
+                        project_root: .project_root
+                      }] |
+                      sort_by(-.score) | .[0:($limit | tonumber)]' 2>/dev/null || echo "[]")
+            fi
+            
+            if [ "$global_results" != "null" ] && [ "$global_results" != "" ]; then
+                # 両方の結果をマージ（プロジェクト固有を優先、重複を除外）
+                if [ "$results" = "[]" ]; then
+                    results="$global_results"
                 else
-                    # contentがある場合は従来通り
-                    results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
-                        flatten |
-                        # IDで重複を除去（プロジェクト固有を優先）
-                        group_by(.id) | map(.[0]) |
-                        # contentで重複を除去（プロジェクト固有を優先）
-                        group_by(.content) | map(.[0]) |
-                        # scoreでソート
-                        sort_by(-.score) |
-                        # limitを適用
-                        .[0:($limit | tonumber)]
-                    ')
+                    # プロジェクト結果とグローバル結果をマージ
+                    # 同じIDまたは同じ内容の場合はプロジェクト固有を優先
+                    if [ "$include_content" = "false" ]; then
+                        # contentがない場合はIDのみで重複除去
+                        results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
+                            flatten |
+                            # IDで重複を除去（プロジェクト固有を優先）
+                            group_by(.id) | map(.[0]) |
+                            # scoreでソート
+                            sort_by(-.score) |
+                            # limitを適用
+                            .[0:($limit | tonumber)]
+                        ')
+                    else
+                        # contentがある場合は従来通り
+                        results=$(echo "$results $global_results" | jq -s --argjson limit "$limit" '
+                            flatten |
+                            # IDで重複を除去（プロジェクト固有を優先）
+                            group_by(.id) | map(.[0]) |
+                            # contentで重複を除去（プロジェクト固有を優先）
+                            group_by(.content) | map(.[0]) |
+                            # scoreでソート
+                            sort_by(-.score) |
+                            # limitを適用
+                            .[0:($limit | tonumber)]
+                        ')
+                    fi
                 fi
             fi
         fi
@@ -433,18 +414,16 @@ function revoke_memory
     local memory_entry=""
     
     # 1. プロジェクト固有の記憶を検索
-    if [ -f "$project_memory_dir/metadata.json" ]; then
-        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$project_memory_dir/metadata.json" 2>/dev/null)
-        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
-            found=true
-            memory_dir_to_use="$project_memory_dir"
-        fi
+    memory_entry=$(memory_system_get_by_id "$project_memory_dir" "$memory_id")
+    if [ ! -z "$memory_entry" ]; then
+        found=true
+        memory_dir_to_use="$project_memory_dir"
     fi
     
     # 2. グローバルの記憶を検索（プロジェクト固有で見つからなかった場合）
-    if [ "$found" = false ] && [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
-        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$global_memory_dir/metadata.json" 2>/dev/null)
-        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
+    if [ "$found" = false ] && [ "$project_memory_dir" != "$global_memory_dir" ]; then
+        memory_entry=$(memory_system_get_by_id "$global_memory_dir" "$memory_id")
+        if [ ! -z "$memory_entry" ]; then
             found=true
             memory_dir_to_use="$global_memory_dir"
         fi
@@ -474,19 +453,10 @@ function revoke_memory
     fi
     
     # メタデータから削除
-    local metadata_file="$memory_dir_to_use/metadata.json"
-    local temp_metadata
-    temp_metadata=$(mktemp)
-    jq --arg id "$memory_id" '.memories = (.memories | map(select(.id != $id))) | .last_updated = now' \
-        "$metadata_file" > "$temp_metadata" 2>/dev/null
-    
+    memory_system_delete_entry "$memory_dir_to_use" "$memory_id"
     if [ $? -ne 0 ]; then
-        rm -f "$temp_metadata"
-        echo "Error: Failed to update metadata" >&2
         return 1
     fi
-    
-    mv "$temp_metadata" "$metadata_file"
     
     # キーワードインデックスから削除
     local keyword_file="$memory_dir_to_use/by_keyword/keywords.json"
@@ -533,9 +503,10 @@ function list_memories
     local results="[]"
     
     # 1. プロジェクト固有の記憶を取得
-    if [ -f "$project_memory_dir/metadata.json" ]; then
+    local project_memories=$(memory_system_load_all "$project_memory_dir")
+    if [ "$project_memories" != "[]" ]; then
         local project_results
-        project_results=$(jq -c '[.memories[] | {
+        project_results=$(echo "$project_memories" | jq -c '[.[] | {
             id: .id,
             category: .category,
             keywords: .keywords,
@@ -545,7 +516,7 @@ function list_memories
             memory_dir: .memory_dir,
             project_root: .project_root,
             source: "project"
-        }]' "$project_memory_dir/metadata.json" 2>/dev/null || echo "[]")
+        }]' 2>/dev/null || echo "[]")
         
         if [ "$project_results" != "null" ] && [ "$project_results" != "" ]; then
             results="$project_results"
@@ -553,26 +524,29 @@ function list_memories
     fi
     
     # 2. グローバルの記憶も取得（プロジェクト固有とは別のディレクトリの場合）
-    if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
-        local global_results
-        global_results=$(jq -c '[.memories[] | {
-            id: .id,
-            category: .category,
-            keywords: .keywords,
-            subject: .subject,
-            timestamp: .timestamp,
-            usage_count: .usage_count,
-            memory_dir: .memory_dir,
-            project_root: .project_root,
-            source: "global"
-        }]' "$global_memory_dir/metadata.json" 2>/dev/null || echo "[]")
-        
-        if [ "$global_results" != "null" ] && [ "$global_results" != "" ]; then
-            # 両方の結果をマージ
-            if [ "$results" = "[]" ]; then
-                results="$global_results"
-            else
-                results=$(echo "$results $global_results" | jq -s 'flatten')
+    if [ "$project_memory_dir" != "$global_memory_dir" ]; then
+        local global_memories=$(memory_system_load_all "$global_memory_dir")
+        if [ "$global_memories" != "[]" ]; then
+            local global_results
+            global_results=$(echo "$global_memories" | jq -c '[.[] | {
+                id: .id,
+                category: .category,
+                keywords: .keywords,
+                subject: .subject,
+                timestamp: .timestamp,
+                usage_count: .usage_count,
+                memory_dir: .memory_dir,
+                project_root: .project_root,
+                source: "global"
+            }]' 2>/dev/null || echo "[]")
+            
+            if [ "$global_results" != "null" ] && [ "$global_results" != "" ]; then
+                # 両方の結果をマージ
+                if [ "$results" = "[]" ]; then
+                    results="$global_results"
+                else
+                    results=$(echo "$results $global_results" | jq -s 'flatten')
+                fi
             fi
         fi
     fi
@@ -608,29 +582,27 @@ function get_memory_content
     local memory_entry=""
     
     # 1. プロジェクト固有の記憶を検索
-    if [ -f "$project_memory_dir/metadata.json" ]; then
-        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$project_memory_dir/metadata.json" 2>/dev/null)
-        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
-            # contentを含む完全な情報をカテゴリ別ファイルから取得
-            local category
-            category=$(echo "$memory_entry" | jq -r '.category' 2>/dev/null)
-            if [ $? -eq 0 ] && [ ! -z "$category" ]; then
-                local category_file="$project_memory_dir/by_category/${category}_${memory_id}.json"
-                if [ -f "$category_file" ]; then
-                    memory_entry=$(cat "$category_file" 2>/dev/null)
-                fi
+    memory_entry=$(memory_system_get_by_id "$project_memory_dir" "$memory_id")
+    if [ ! -z "$memory_entry" ]; then
+        # contentを含む完全な情報をカテゴリ別ファイルから取得
+        local category
+        category=$(echo "$memory_entry" | jq -r '.category' 2>/dev/null)
+        if [ $? -eq 0 ] && [ ! -z "$category" ]; then
+            local category_file="$project_memory_dir/by_category/${category}_${memory_id}.json"
+            if [ -f "$category_file" ]; then
+                memory_entry=$(cat "$category_file" 2>/dev/null)
             fi
-            # sourceを追加
-            memory_entry=$(echo "$memory_entry" | jq -c '. + {source: "project"}' 2>/dev/null)
-            echo "$memory_entry"
-            return 0
         fi
+        # sourceを追加
+        memory_entry=$(echo "$memory_entry" | jq -c '. + {source: "project"}' 2>/dev/null)
+        echo "$memory_entry"
+        return 0
     fi
     
     # 2. グローバルの記憶を検索
-    if [ "$project_memory_dir" != "$global_memory_dir" ] && [ -f "$global_memory_dir/metadata.json" ]; then
-        memory_entry=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$global_memory_dir/metadata.json" 2>/dev/null)
-        if [ $? -eq 0 ] && [ ! -z "$memory_entry" ]; then
+    if [ "$project_memory_dir" != "$global_memory_dir" ]; then
+        memory_entry=$(memory_system_get_by_id "$global_memory_dir" "$memory_id")
+        if [ ! -z "$memory_entry" ]; then
             # contentを含む完全な情報をカテゴリ別ファイルから取得
             local category
             category=$(echo "$memory_entry" | jq -r '.category' 2>/dev/null)

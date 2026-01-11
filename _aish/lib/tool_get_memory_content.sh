@@ -38,37 +38,33 @@ function _tool_get_memory_content_execute
   memory_dir=$(find_memory_directory)
   
   # プロジェクト固有から検索
-  if [ -f "$memory_dir/metadata.json" ]; then
-    result=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$memory_dir/metadata.json" 2>/dev/null)
-    
-    if [ ! -z "$result" ] && [ "$result" != "null" ]; then
-      # 標準エラー出力に検索結果を表示: id,subject
-      local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
-      if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
-        echo "get_memory_content: $memory_id,$subject" >&2
-      else
-        echo "get_memory_content: $memory_id," >&2
-      fi
-      echo "$result"
-      return 0
+  result=$(memory_system_get_by_id "$memory_dir" "$memory_id")
+  
+  if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+    # 標準エラー出力に検索結果を表示: id,subject
+    local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
+    if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
+      echo "get_memory_content: $memory_id,$subject" >&2
+    else
+      echo "get_memory_content: $memory_id," >&2
     fi
+    echo "$result"
+    return 0
   fi
   
   # 見つからない場合はグローバルから検索
-  if [ -f "$AISH_HOME/memory/metadata.json" ]; then
-    result=$(jq -c --arg id "$memory_id" '.memories[] | select(.id == $id)' "$AISH_HOME/memory/metadata.json" 2>/dev/null)
-    
-    if [ ! -z "$result" ] && [ "$result" != "null" ]; then
-      # 標準エラー出力に検索結果を表示: id,subject
-      local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
-      if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
-        echo "$memory_id,$subject" >&2
-      else
-        echo "$memory_id," >&2
-      fi
-      echo "$result"
-      return 0
+  result=$(memory_system_get_by_id "$AISH_HOME/memory" "$memory_id")
+  
+  if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+    # 標準エラー出力に検索結果を表示: id,subject
+    local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
+    if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
+      echo "$memory_id,$subject" >&2
+    else
+      echo "$memory_id," >&2
     fi
+    echo "$result"
+    return 0
   fi
   
   # 見つからない場合
