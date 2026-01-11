@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# functionsファイルのjson_string関数を使用するため、読み込む
+. "$AISH_HOME/functions"
+
 # agent_approve.shの関数を使用するため、読み込む
 . "$AISH_HOME/lib/agent_approve.sh"
 
@@ -26,19 +29,26 @@ function execute_shell_command
     echo "🔧 Agent wants to execute command:" >&2
     echo "   $command" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo -n "Execute? ([y]es / [n]o): " >&2
+    echo -n "Execute? ([Enter] once / (A)pprove always / (N)o): " >&2
     read -r confirm < /dev/tty
     
-    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-      echo '{"exit_code": 1, "stdout": "", "stderr": "Command execution was cancelled by user"}'
-      return 1
-    fi
-    
-    # 承認済みリストに追加（ファイルが存在しない場合は作成）
-    if [ ! -f "$approved_commands_file" ]; then
-      touch "$approved_commands_file"
-    fi
-    echo "$command" >> "$approved_commands_file"
+    case "$confirm" in
+      "" | [Yy] | [Yy][Ee][Ss])
+        # 今回のみ実行（リストに追加しない）
+        ;;
+      [Aa] | [Aa][Pp][Pp][Rr][Oo][Vv][Ee])
+        # 承認済みリストに追加（永続的に許可）
+        if [ ! -f "$approved_commands_file" ]; then
+          touch "$approved_commands_file"
+        fi
+        echo "$command" >> "$approved_commands_file"
+        ;;
+      *)
+        # 中止
+        echo '{"exit_code": 1, "stdout": "", "stderr": "Command execution was cancelled by user"}'
+        return 1
+        ;;
+    esac
   fi
   
   # 実行するコマンドを標準エラー出力に表示
@@ -100,4 +110,3 @@ function _tool_execute_shell_command_execute
   
   echo "$result"
 }
-
