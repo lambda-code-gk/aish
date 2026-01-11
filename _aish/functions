@@ -185,14 +185,10 @@ function detail.aish_filter_command
   if [[ "$1" == "-q" ]]; then
     quiet_mode="-q"
   fi
-  local display_mode=""
-  if [[ "$1" == "-d" ]]; then
-    display_mode="--color=always"
-  fi
   if [ ! -e "$AISH_SESSION"/approved_lines ]; then
     touch "$AISH_SESSION"/approved_lines
   fi
-  python3 "$AISH_HOME"/bad_patterns.py --skip-heuristics "$AISH_HOME"/blocklist | grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines
+  python3 "$AISH_HOME"/bad_patterns.py "$AISH_HOME"/rules.json | grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines
 }
 
 function detail.aish_filter_sensitive_info

@@ -1,0 +1,45 @@
+[
+  {
+    "id": "aws-access-key",
+    "description": "AWS Access Key ID",
+    "regex": "AKIA[0-9A-Z]{16}",
+    "keywords": ["AKIA"]
+  },
+  {
+    "id": "github-pat",
+    "description": "GitHub Personal Access Token",
+    "regex": "gh[pousr]_[A-Za-z0-9]{36,}",
+    "keywords": ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+  },
+  {
+    "id": "generic-secret",
+    "description": "Generic Secret (High Entropy)",
+    "regex": "[A-Za-z0-9+/]{40,}={0,2}",
+    "keywords": ["secret", "key", "token", "password", "api", "auth"],
+    "entropy": 3.5
+  },
+  {
+    "id": "private-key",
+    "description": "Private Key",
+    "regex": "-----BEGIN .+ PRIVATE KEY-----",
+    "keywords": ["BEGIN", "PRIVATE", "KEY"]
+  },
+  {
+    "id": "ssh-rsa",
+    "description": "SSH RSA Private Key",
+    "regex": "ssh-rsa AAAA[0-9A-Za-z+/=]{100,}",
+    "keywords": ["ssh-rsa", "AAAA"]
+  },
+  {
+    "id": "password-assignment",
+    "description": "Potential password assignment",
+    "regex": "(password|passwd|pwd)[^=]{0,5}=[^;\\n]+",
+    "keywords": ["password", "passwd", "pwd"]
+  },
+  {
+    "id": "ipv6-address",
+    "description": "IPv6 address (often false positive, but kept for legacy)",
+    "regex": ".*:.*:.*:.*:.*:.*:.*$",
+    "keywords": [":"]
+  }
+]
