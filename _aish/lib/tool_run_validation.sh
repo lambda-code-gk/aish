@@ -9,7 +9,7 @@ function run_validation
   local mode="${1:-auto}"
   local project_root="${2:-$(pwd)}"
   
-  echo "run_validation $mode $project_root" >&2
+  detail.aish_log_tool "run_validation $mode $project_root"
 
   case "$mode" in
     configured)

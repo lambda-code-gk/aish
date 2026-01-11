@@ -9,7 +9,7 @@ function diff_files
   local before="$1"
   local after="$2"
   
-  echo "diff_files $before $after" >&2
+  detail.aish_log_tool "diff_files $before $after"
 
   if [ -z "$before" ]; then
     echo '{"error": "before is required"}' >&2

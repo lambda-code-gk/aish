@@ -27,6 +27,7 @@ function _tool_search_memory_execute
   local provider="$3"
   
   query_str=$(echo "$func_args" | jq -r '.query')
+  detail.aish_log_tool "search_memory: $query_str"
   category=$(echo "$func_args" | jq -r '.category // ""')
   limit=$(echo "$func_args" | jq -r '.limit // 5')
   

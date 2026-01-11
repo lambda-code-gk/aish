@@ -42,7 +42,7 @@ function execute_shell_command
   fi
   
   # 実行するコマンドを標準エラー出力に表示
-  echo "Executing: $command" >&2
+  detail.aish_log_tool "Executing: $command"
   
   # コマンドを実行（stdoutとstderrを分離）
   stdout_file=$(mktemp "$AISH_SESSION/stdout_XXXXXX")

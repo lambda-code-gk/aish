@@ -10,7 +10,7 @@ function read_file
   local start_line="${2:-}"
   local end_line="${3:-}"
 
-  echo "read_file: $path, $start_line, $end_line" >&2
+  detail.aish_log_tool "read_file: $path, $start_line, $end_line"
 
   if [ -z "$path" ]; then
     echo '{"error": "path is required"}' >&2

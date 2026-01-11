@@ -44,9 +44,9 @@ function _tool_get_memory_content_execute
     # 標準エラー出力に検索結果を表示: id,subject
     local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
     if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
-      echo "get_memory_content: $memory_id,$subject" >&2
+      detail.aish_log_tool "get_memory_content: $memory_id,$subject"
     else
-      echo "get_memory_content: $memory_id," >&2
+      detail.aish_log_tool "get_memory_content: $memory_id,"
     fi
     echo "$result"
     return 0
@@ -59,9 +59,9 @@ function _tool_get_memory_content_execute
     # 標準エラー出力に検索結果を表示: id,subject
     local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
     if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
-      echo "$memory_id,$subject" >&2
+      detail.aish_log_tool "get_memory_content: $memory_id,$subject"
     else
-      echo "$memory_id," >&2
+      detail.aish_log_tool "get_memory_content: $memory_id,"
     fi
     echo "$result"
     return 0

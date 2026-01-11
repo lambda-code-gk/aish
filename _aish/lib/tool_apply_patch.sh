@@ -8,7 +8,7 @@ function apply_patch
 {
   local patch="$1"
   
-  echo "apply_patch start" >&2
+  detail.aish_log_tool "apply_patch start"
 
   if [ -z "$patch" ]; then
     echo '{"error": "patch is required"}' >&2
