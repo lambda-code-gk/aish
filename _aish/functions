@@ -455,15 +455,11 @@ function aish_memory
             count=$(echo "$memories_json" | jq 'length' 2>/dev/null || echo "0")
             
             if [ "$count" = "0" ] || [ "$count" = "null" ]; then
-                echo "No memories found."
                 return 0
             fi
             
-            echo "Found $count memory/memories:"
-            echo ""
-            
-            # 表形式で表示
-            echo "$memories_json" | jq -r '.[] | "ID: \(.id)\n  Category: \(.category)\n  Keywords: \(.keywords | join(", "))\n  Timestamp: \(.timestamp)\n  Usage Count: \(.usage_count)\n  Source: \(.source // "unknown")\n"' | sed 's/^  /  /'
+            # id\ttimestamp\tsubject 形式で表示
+            echo "$memories_json" | jq -r '.[] | "\(.id)\t\(.timestamp | sub("T"; " ") | .[0:16])\t\(.subject // "")"'
             ;;
         show)
             local memory_json
