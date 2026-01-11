@@ -9,6 +9,8 @@ function run_validation
   local mode="${1:-auto}"
   local project_root="${2:-$(pwd)}"
   
+  echo "run_validation $mode $project_root" >&2
+
   case "$mode" in
     configured)
       run_validation_configured "$project_root"

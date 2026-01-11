@@ -94,77 +94,102 @@ function _llm_driver_send_request_with_tools
         exit 1
     fi
     
-    while [ $iteration -lt $MAX_ITERATIONS ]; do
-        iteration=$((iteration + 1))
-        if [ -f "$REQUEST_FILE" ]; then
-            request_data=$(cat "$REQUEST_FILE")
-        else
-            echo "Error: Request file not found" >&2
-            exit 1
-        fi
-
-        detail.aish_log_request "$request_data"
-
-        # プロバイダ固有のHTTPリクエストを実行
-        # 注意: response=$(...) の前に一時ファイルに出力し、終了コードを取得してから読み込む
-        if [ -z "$AISH_SESSION" ]; then
-            echo "Error: AISH_SESSION is not set" >&2
-            exit 1
-        fi
-        temp_response_file="$AISH_SESSION/temp_response_$$.json"
-        _provider_make_http_request "$REQUEST_FILE" > "$temp_response_file"
-        http_exit_code=$?
-        if [ -f "$temp_response_file" ]; then
-            response=$(cat "$temp_response_file")
-            rm -f "$temp_response_file"
-        else
-            response=""
-        fi
-        
-        if [ $http_exit_code -ne 0 ]; then
-            echo "$response" >&2
-            exit 1
-        fi
-
-        detail.aish_log_response "$response"
-
-        # エラーチェック
-        error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
-        if [ ! -z "$error" ]; then
-            echo "$response" >&2
-            exit 1
-        fi
-
-        # プロバイダ固有のtool/function callチェック
-        has_tool_calls=$(_provider_check_tool_calls "$response")
-        
-        if [ "$has_tool_calls" = "yes" ]; then
-            # tool/function callがある場合、プロバイダ固有の処理を実行
-            updated_request=$(_provider_process_tool_calls "$request_data" "$response")
-            
-            if [ $? -ne 0 ]; then
+    # メインループ：ユーザーが続けることを選択する限り継続
+    while true; do
+        # イテレーションループ
+        while [ $iteration -lt $MAX_ITERATIONS ]; do
+            iteration=$((iteration + 1))
+            if [ -f "$REQUEST_FILE" ]; then
+                request_data=$(cat "$REQUEST_FILE")
+            else
+                echo "Error: Request file not found" >&2
                 exit 1
             fi
+
+            detail.aish_log_request "$request_data"
+
+            # プロバイダ固有のHTTPリクエストを実行
+            # 注意: response=$(...) の前に一時ファイルに出力し、終了コードを取得してから読み込む
+            if [ -z "$AISH_SESSION" ]; then
+                echo "Error: AISH_SESSION is not set" >&2
+                exit 1
+            fi
+            temp_response_file="$AISH_SESSION/temp_response_$$.json"
+            _provider_make_http_request "$REQUEST_FILE" > "$temp_response_file"
+            http_exit_code=$?
+            if [ -f "$temp_response_file" ]; then
+                response=$(cat "$temp_response_file")
+                rm -f "$temp_response_file"
+            else
+                response=""
+            fi
             
-            echo "$updated_request" > "$REQUEST_FILE"
-            
-            # 次のイテレーションに進む
-            continue
-        else
-            # tool/function callがない場合、テキスト応答を返して終了
-            text=$(_provider_parse_response_text "$response")
-            
-            if [ "$text" == "null" ] || [ -z "$text" ]; then
+            if [ $http_exit_code -ne 0 ]; then
                 echo "$response" >&2
                 exit 1
             fi
 
-            save_response_text "$text"
-            return 0
-        fi
+            detail.aish_log_response "$response"
+
+            # エラーチェック
+            error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
+            if [ ! -z "$error" ]; then
+                echo "$response" >&2
+                exit 1
+            fi
+
+            # プロバイダ固有のtool/function callチェック
+            has_tool_calls=$(_provider_check_tool_calls "$response")
+            
+            if [ "$has_tool_calls" = "yes" ]; then
+                # tool/function callがある場合、プロバイダ固有の処理を実行
+                updated_request=$(_provider_process_tool_calls "$request_data" "$response")
+                
+                if [ $? -ne 0 ]; then
+                    exit 1
+                fi
+                
+                echo "$updated_request" > "$REQUEST_FILE"
+                
+                # 次のイテレーションに進む
+                continue
+            else
+                # tool/function callがない場合、テキスト応答を返して終了
+                text=$(_provider_parse_response_text "$response")
+                
+                if [ "$text" == "null" ] || [ -z "$text" ]; then
+                    echo "$response" >&2
+                    exit 1
+                fi
+
+                save_response_text "$text"
+                return 0
+            fi
+        done
+        
+        # 最大イテレーションに達した場合、ユーザーに続けるか終了するかを尋ねる
+        echo "Warning: Maximum iterations ($MAX_ITERATIONS) reached" >&2
+        while true; do
+            echo -n "Continue? (y/n): " >&2
+            read -r answer < /dev/tty
+            case "$answer" in
+                [Yy]|[Yy][Ee][Ss])
+                    # 続ける場合、MAX_ITERATIONSを増やしてループを継続
+                    MAX_ITERATIONS=$((MAX_ITERATIONS + 10))
+                    echo "Continuing with increased max iterations ($MAX_ITERATIONS)..." >&2
+                    # 外側のループを継続
+                    break
+                    ;;
+                [Nn]|[Nn][Oo])
+                    # 終了する場合
+                    echo "Error: Maximum iterations reached, exiting" >&2
+                    exit 1
+                    ;;
+                *)
+                    echo "Please answer 'y' or 'n'" >&2
+                    ;;
+            esac
+        done
     done
-    
-    echo "Error: Maximum iterations ($MAX_ITERATIONS) reached" >&2
-    exit 1
 }
 

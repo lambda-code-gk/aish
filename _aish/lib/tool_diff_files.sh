@@ -9,6 +9,8 @@ function diff_files
   local before="$1"
   local after="$2"
   
+  echo "diff_files $before $after" >&2
+
   if [ -z "$before" ]; then
     echo '{"error": "before is required"}' >&2
     return 1

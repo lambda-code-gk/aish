@@ -9,7 +9,9 @@ function read_file
   local path="$1"
   local start_line="${2:-}"
   local end_line="${3:-}"
-  
+
+  echo "read_file: $path, $start_line, $end_line" >&2
+
   if [ -z "$path" ]; then
     echo '{"error": "path is required"}' >&2
     return 1

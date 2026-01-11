@@ -8,6 +8,8 @@ function apply_patch
 {
   local patch="$1"
   
+  echo "apply_patch start" >&2
+
   if [ -z "$patch" ]; then
     echo '{"error": "patch is required"}' >&2
     return 1
