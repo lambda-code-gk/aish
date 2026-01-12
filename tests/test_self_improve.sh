@@ -119,7 +119,7 @@ test_self_improve_execution() {
     )
     
     # 記憶が保存されたか確認
-    if [[ $(ls "$AISH_HOME_TEST/memory/by_category/error_solution_"*.json 2>/dev/null | wc -l) -gt 0 ]]; then
+    if [[ $(ls "$AISH_HOME_TEST/memory/entries/"*.json 2>/dev/null | wc -l) -gt 0 ]]; then
         log_info "✓ Memory was automatically saved from session history"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0

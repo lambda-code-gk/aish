@@ -33,36 +33,13 @@ function _tool_get_memory_content_execute
     return 1
   fi
   
-  # プロジェクト固有の記憶ディレクトリを取得
-  local memory_dir
-  memory_dir=$(find_memory_directory)
+  # memory_manager.sh の get_memory_content を呼び出す
+  result=$(get_memory_content "$memory_id")
   
-  # プロジェクト固有から検索
-  result=$(memory_system_get_by_id "$memory_dir" "$memory_id")
-  
-  if [ ! -z "$result" ] && [ "$result" != "null" ]; then
+  if [ $? -eq 0 ] && [ ! -z "$result" ] && [ "$result" != "null" ]; then
     # 標準エラー出力に検索結果を表示: id,subject
     local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
-    if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
-      detail.aish_log_tool "get_memory_content: $memory_id,$subject"
-    else
-      detail.aish_log_tool "get_memory_content: $memory_id,"
-    fi
-    echo "$result"
-    return 0
-  fi
-  
-  # 見つからない場合はグローバルから検索
-  result=$(memory_system_get_by_id "$AISH_HOME/memory" "$memory_id")
-  
-  if [ ! -z "$result" ] && [ "$result" != "null" ]; then
-    # 標準エラー出力に検索結果を表示: id,subject
-    local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
-    if [ ! -z "$subject" ] && [ "$subject" != "null" ]; then
-      detail.aish_log_tool "get_memory_content: $memory_id,$subject"
-    else
-      detail.aish_log_tool "get_memory_content: $memory_id,"
-    fi
+    detail.aish_log_tool "get_memory_content: $memory_id,${subject:-}"
     echo "$result"
     return 0
   fi
@@ -72,4 +49,3 @@ function _tool_get_memory_content_execute
   echo "{\"error\": \"Memory with ID $memory_id not found\"}"
   return 1
 }
-

@@ -43,7 +43,7 @@ function memory_system_save_entry
     local temp_metadata
     temp_metadata=$(mktemp)
     jq --argjson entry "$memory_entry" \
-        '.memories += [$entry] | .last_updated = now | .memory_dir = $entry.memory_dir' \
+        '.memories += [($entry | del(.content))] | .last_updated = now' \
         "$metadata_file" > "$temp_metadata"
     
     if [ $? -ne 0 ]; then

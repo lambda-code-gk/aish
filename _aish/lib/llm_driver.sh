@@ -84,7 +84,7 @@ function _llm_driver_send_request_with_tools
         exit 1
     fi
     REQUEST_FILE="$AISH_SESSION/request.txt"
-    MAX_ITERATIONS=20
+    MAX_ITERATIONS=50
     iteration=0
     
     # 初期リクエストを保存
@@ -175,7 +175,7 @@ function _llm_driver_send_request_with_tools
             case "$answer" in
                 [Yy]|[Yy][Ee][Ss])
                     # 続ける場合、MAX_ITERATIONSを増やしてループを継続
-                    MAX_ITERATIONS=$((MAX_ITERATIONS + 10))
+                    MAX_ITERATIONS=$((MAX_ITERATIONS + 20))
                     echo "Continuing with increased max iterations ($MAX_ITERATIONS)..." >&2
                     # 外側のループを継続
                     break

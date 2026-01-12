@@ -133,85 +133,58 @@ test_read_file_range() {
     fi
 }
 
-# テスト3: apply_patch - パッチを適用
-test_apply_patch() {
-    test_case "apply_patch - apply unified diff patch"
+# テスト3: write_file - ファイルを書き込む
+test_write_file() {
+    test_case "write_file - write content to file"
     
-    local test_file="$TEST_DIR/test.txt"
-    echo -e "line1\nline2\nline3" > "$test_file"
-    
-    # テストディレクトリに移動してからパッチを適用
-    cd "$TEST_DIR"
-    
-    local patch_content="--- a/test.txt
-+++ b/test.txt
-@@ -1,3 +1,4 @@
- line1
-+newline
- line2
- line3"
+    local test_file="$TEST_DIR/test_write.txt"
+    local content="hello world"
     
     # ツール定義関数を読み込む
-    . "$TOOL_LIB_DIR/tool_apply_patch.sh" 2>/dev/null || true
+    . "$TOOL_LIB_DIR/tool_write_file.sh" 2>/dev/null || true
     
     # テスト用の実行関数を呼び出す
-    local func_args=$(echo "{\"patch\": $(echo "$patch_content" | jq -Rs .)}" | jq -c .)
-    local result=$(_tool_apply_patch_execute "" "$func_args" "openai" 2>/dev/null || echo '{"error":"function not found"}')
-    
-    cd "$PROJECT_ROOT"
+    local func_args=$(echo "{\"path\": \"$test_file\", \"content\": \"$content\"}" | jq -c .)
+    local result=$(_tool_write_file_execute "" "$func_args" "openai" 2>/dev/null || echo '{"error":"function not found"}')
     
     local success=$(echo "$result" | jq -r '.success // false' 2>/dev/null || echo "false")
-    local file_content=$(cat "$test_file" 2>/dev/null || echo "")
+    local actual_content=$(cat "$test_file" 2>/dev/null || echo "")
     
-    if [ "$success" = "true" ] && echo "$file_content" | grep -q "newline"; then
-        log_info "✓ Correctly applied patch"
+    if [ "$success" = "true" ] && [ "$actual_content" = "$content" ]; then
+        log_info "✓ Correctly wrote file"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
-        log_error "✗ Failed to apply patch. success=$success"
+        log_error "✗ Failed to write file. success=$success, content=$actual_content"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
 }
 
-# テスト4: dry_run_patch - パッチの適用を確認（適用しない）
-test_dry_run_patch() {
-    test_case "dry_run_patch - dry run unified diff patch"
+# テスト4: replace_block - ブロックを置換
+test_replace_block() {
+    test_case "replace_block - replace a block of code"
     
-    local test_file="$TEST_DIR/test.txt"
-    local original_content="line1\nline2\nline3"
-    echo -e "$original_content" > "$test_file"
-    
-    # テストディレクトリに移動してからパッチを確認
-    cd "$TEST_DIR"
-    
-    local patch_content="--- a/test.txt
-+++ b/test.txt
-@@ -1,3 +1,4 @@
- line1
-+newline
- line2
- line3"
+    local test_file="$TEST_DIR/test_replace.txt"
+    echo -e "line1\nline2\nline3" > "$test_file"
     
     # ツール定義関数を読み込む
-    . "$TOOL_LIB_DIR/tool_apply_patch.sh" 2>/dev/null || true
+    . "$TOOL_LIB_DIR/tool_replace_block.sh" 2>/dev/null || true
     
     # テスト用の実行関数を呼び出す
-    local func_args=$(echo "{\"patch\": $(echo "$patch_content" | jq -Rs .)}" | jq -c .)
-    local result=$(_tool_dry_run_patch_execute "" "$func_args" "openai" 2>/dev/null || echo '{"error":"function not found"}')
-    
-    cd "$PROJECT_ROOT"
+    local func_args=$(echo "{\"path\": \"$test_file\", \"old_block\": \"line2\", \"new_block\": \"newline2\"}" | jq -c .)
+    local result=$(_tool_replace_block_execute "" "$func_args" "openai" 2>/dev/null || echo '{"error":"function not found"}')
     
     local success=$(echo "$result" | jq -r '.success // false' 2>/dev/null || echo "false")
-    local can_apply=$(echo "$result" | jq -r '.can_apply // false' 2>/dev/null || echo "false")
-    local file_content=$(cat "$test_file" 2>/dev/null || echo "")
+    local actual_content=$(cat "$test_file" 2>/dev/null || echo "")
+    local diff=$(echo "$result" | jq -r '.diff // empty' 2>/dev/null || echo "")
     
-    if [ "$success" = "true" ] && [ "$can_apply" = "true" ] && [ "$file_content" = "$(echo -e "$original_content")" ]; then
-        log_info "✓ Correctly dry-run patch (file not modified)"
+    if [ "$success" = "true" ] && echo "$actual_content" | grep -q "newline2" && [ ! -z "$diff" ]; then
+        log_info "✓ Correctly replaced block"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
-        log_error "✗ Failed to dry-run patch. success=$success, can_apply=$can_apply"
+        log_error "✗ Failed to replace block. success=$success, content=$actual_content"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
@@ -364,8 +337,8 @@ main() {
     local tests=(
         "test_read_file_full"
         "test_read_file_range"
-        "test_apply_patch"
-        "test_dry_run_patch"
+        "test_write_file"
+        "test_replace_block"
         "test_diff_files"
         "test_run_validation_configured"
         "test_run_validation_auto_makefile"
