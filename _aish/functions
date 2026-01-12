@@ -380,7 +380,7 @@ function aish_memory
     . "$AISH_HOME/lib/memory_manager.sh"
     
     local action=""
-    local memory_id=""
+    local ids=()
     
     # オプション解析
     while [[ $# -gt 0 ]]; do
@@ -390,53 +390,50 @@ function aish_memory
                 shift
                 ;;
             --show|-s)
-                if [ -z "$2" ]; then
-                    puts_error "Option --show requires a memory ID"
-                    echo "Usage: aish memory --show <id>"
-                    return 1
-                fi
                 action="show"
-                memory_id="$2"
-                shift 2
+                shift
                 ;;
             --revoke|-r)
-                if [ -z "$2" ]; then
-                    puts_error "Option --revoke requires a memory ID"
-                    echo "Usage: aish memory --revoke <id>"
-                    return 1
-                fi
                 action="revoke"
-                memory_id="$2"
-                shift 2
+                shift
                 ;;
             -h|--help)
-                echo "Usage: aish memory [OPTIONS]"
+                echo "Usage: aish memory [OPTIONS] [ID...]"
                 echo ""
                 echo "Options:"
                 echo "  --list, -l              List all memories"
-                echo "  --show <id>, -s <id>    Show detailed information for a specific memory"
-                echo "  --revoke <id>, -r <id>  Delete a specific memory"
+                echo "  --show [id...], -s [id...] Show detailed information for specific memories (default action)"
+                echo "  --revoke [id...], -r [id...] Delete specific memories"
                 echo "  -h, --help             Show this help message"
                 echo ""
                 echo "Examples:"
                 echo "  aish memory --list                      # List all memories"
-                echo "  aish memory --show 5b91615c770ecbb2     # Show details for a specific memory"
-                echo "  aish memory --revoke 5b91615c770ecbb2   # Delete a specific memory"
+                echo "  aish memory --show 5b91615c 0fa71065   # Show details for multiple memories"
+                echo "  aish memory 5b91615c 0fa71065          # Same as above (default action)"
+                echo "  aish memory --revoke 5b91615c 0fa71065 # Delete multiple memories"
                 return 0
                 ;;
-            *)
+            -*)
                 puts_error "Unknown option: $1"
-                echo "Usage: aish memory [OPTIONS]"
+                echo "Usage: aish memory [OPTIONS] [ID...]"
                 echo "Use 'aish memory --help' for more information"
                 return 1
+                ;;
+            *)
+                # If no action is set, default to show
+                if [ -z "$action" ]; then
+                    action="show"
+                fi
+                ids+=("$1")
+                shift
                 ;;
         esac
     done
     
-    # アクションが指定されていない場合はヘルプを表示
+    # アクションが指定されていない場合はエラー
     if [ -z "$action" ]; then
         puts_error "No action specified"
-        echo "Usage: aish memory [OPTIONS]"
+        echo "Usage: aish memory [OPTIONS] [ID...]"
         echo "Use 'aish memory --help' for more information"
         return 1
     fi
@@ -463,39 +460,53 @@ function aish_memory
             echo "$memories_json" | jq -r '.[] | "\(.id)\t\(.timestamp | sub("T"; " ") | .[0:16])\t\(.subject // "")"'
             ;;
         show)
-            local memory_json
-            memory_json=$(get_memory_content "$memory_id" 2>/dev/null)
-            
-            if [ $? -ne 0 ] || [ -z "$memory_json" ]; then
-                puts_error "Memory with id '$memory_id' not found"
+            if [ ${#ids[@]} -eq 0 ]; then
+                puts_error "Option --show requires at least one memory ID"
                 return 1
             fi
             
-            # エラーチェック
-            local error
-            error=$(echo "$memory_json" | jq -r '.error // empty' 2>/dev/null)
-            if [ ! -z "$error" ]; then
-                puts_error "$error"
-                return 1
-            fi
-            
-            echo "Memory Details:"
-            echo ""
-            echo "$memory_json" | jq -r '
-                "ID: \(.id)\n" +
-                "Category: \(.category)\n" +
-                "Keywords: \(.keywords | join(", "))\n" +
-                "Timestamp: \(.timestamp)\n" +
-                "Usage Count: \(.usage_count)\n" +
-                "Source: \(.source // "unknown")\n" +
-                "Memory Directory: \(.memory_dir)\n" +
-                "Project Root: \(.project_root // "N/A")\n" +
-                "Content:\n\(.content)\n"
-            '
+            for memory_id in "${ids[@]}"; do
+                local memory_json
+                memory_json=$(get_memory_content "$memory_id" 2>/dev/null)
+                
+                if [ $? -ne 0 ] || [ -z "$memory_json" ]; then
+                    puts_error "Memory with id '$memory_id' not found"
+                    continue
+                fi
+                
+                # エラーチェック
+                local error
+                error=$(echo "$memory_json" | jq -r '.error // empty' 2>/dev/null)
+                if [ ! -z "$error" ]; then
+                    puts_error "Memory '$memory_id': $error"
+                    continue
+                fi
+                
+                echo "Memory Details (ID: $memory_id):"
+                echo ""
+                echo "$memory_json" | jq -r '
+                    "ID: \(.id)\n" +
+                    "Category: \(.category)\n" +
+                    "Keywords: \(.keywords | join(", "))\n" +
+                    "Timestamp: \(.timestamp)\n" +
+                    "Usage Count: \(.usage_count)\n" +
+                    "Source: \(.source // "unknown")\n" +
+                    "Memory Directory: \(.memory_dir)\n" +
+                    "Project Root: \(.project_root // "N/A")\n" +
+                    "Content:\n\(.content)\n"
+                '
+                echo "----------------------------------------"
+            done
             ;;
         revoke)
-            revoke_memory "$memory_id"
-            return $?
+            if [ ${#ids[@]} -eq 0 ]; then
+                puts_error "Option --revoke requires at least one memory ID"
+                return 1
+            fi
+            
+            for memory_id in "${ids[@]}"; do
+                revoke_memory "$memory_id"
+            done
             ;;
         *)
             puts_error "Unknown action: $action"
