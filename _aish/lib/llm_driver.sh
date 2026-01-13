@@ -141,6 +141,17 @@ function _llm_driver_send_request_with_tools
             # プロバイダ固有のtool/function callチェック
             has_tool_calls=$(_provider_check_tool_calls "$response")
             
+            # テキスト応答があれば表示（思考過程として）
+            text=$(_provider_parse_response_text "$response")
+            if [ ! -z "$text" ] && [ "$text" != "null" ]; then
+                if [ "$has_tool_calls" = "yes" ] && [ "$AISH_HIDE_THOUGHT" != "true" ]; then
+                    # ツール実行がある場合のテキストは「思考過程」としてstderrに出力
+                    # 改行をスペースに置換してコンパクトに表示
+                    local compact_text=$(echo "$text" | tr '\n' ' ' | sed 's/  */ /g')
+                    printf "\033[90m[Thinking] %s\033[0m\n" "$compact_text" >&2
+                fi
+            fi
+
             if [ "$has_tool_calls" = "yes" ]; then
                 # tool/function callがある場合、プロバイダ固有の処理を実行
                 updated_request=$(_provider_process_tool_calls "$request_data" "$response")

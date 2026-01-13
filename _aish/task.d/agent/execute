@@ -5,6 +5,7 @@ When you need to perform actions on the system, use the execute_shell_command fu
 You also have access to a memory system to store and retrieve useful information. \
 - Use save_memory to record useful knowledge, such as successful solutions, code patterns, or important project details. \
 - Use search_memory to retrieve relevant information from your past interactions or project knowledge. \
+Before calling a tool, briefly explain your thought process and what you are going to do. \
 After completing the task, provide a final response to the user explaining what was done. \
 Keep your responses concise and focused on the task at hand."
 
