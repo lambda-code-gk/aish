@@ -43,11 +43,19 @@ echo "Building aish-script..."
 cd "$PROJECT_ROOT/tools/aish-script"
 $BUILD_CMD
 
+# leakscanをビルド
+echo "Building leakscan..."
+cd "$PROJECT_ROOT/tools/leakscan"
+$BUILD_CMD
+
 # ビルド成果物をbinフォルダにコピー
 echo "Deploying binaries to _aish/bin/..."
+# 使用中のバイナリを上書きできるよう、一度削除してからコピーする
+rm -f "$BIN_DIR/aish-capture" "$BIN_DIR/aish-render" "$BIN_DIR/aish-script" "$BIN_DIR/leakscan"
 cp "$PROJECT_ROOT/tools/aish-capture/target/$TARGET_DIR/aish-capture" "$BIN_DIR/"
 cp "$PROJECT_ROOT/tools/aish-render/target/$TARGET_DIR/aish-render" "$BIN_DIR/"
 cp "$PROJECT_ROOT/tools/aish-script/target/$TARGET_DIR/aish-script" "$BIN_DIR/"
+cp "$PROJECT_ROOT/tools/leakscan/target/$TARGET_DIR/leakscan" "$BIN_DIR/"
 
 echo "Build complete! Binaries are in $BIN_DIR/"
 ls -lh "$BIN_DIR/"

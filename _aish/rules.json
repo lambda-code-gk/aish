@@ -12,6 +12,18 @@
     "keywords": ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
   },
   {
+    "id": "google-api-key",
+    "description": "Google API Key",
+    "regex": "AIzaSy[A-Za-z0-9_-]{33}",
+    "keywords": ["AIzaSy"]
+  },
+  {
+    "id": "openai-api-key",
+    "description": "OpenAI API Key",
+    "regex": "sk-(proj-)?[A-Za-z0-9]{20,}",
+    "keywords": ["sk-", "sk-proj-"]
+  },
+  {
     "id": "generic-secret",
     "description": "Generic Secret (High Entropy)",
     "regex": "[A-Za-z0-9+/]{40,}={0,2}",

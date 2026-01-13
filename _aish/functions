@@ -188,7 +188,7 @@ function detail.aish_filter_command
   if [ ! -e "$AISH_SESSION"/approved_lines ]; then
     touch "$AISH_SESSION"/approved_lines
   fi
-  python3 "$AISH_HOME"/bad_patterns.py "$AISH_HOME"/rules.json | grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines
+  "$AISH_HOME"/bin/leakscan "$AISH_HOME"/rules.json | grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines
 }
 
 function detail.aish_filter_sensitive_info
