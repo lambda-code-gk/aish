@@ -1,9 +1,11 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Write, IsTerminal};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
 #[cfg(debug_assertions)]
 mod debug_log;
+
+// ... (rest of the code before main)
 
 // JSONL行をパースしてtype, data, encフィールドを抽出
 fn parse_jsonl_line(line: &str) -> Option<(String, Option<String>, Option<String>)> {
@@ -499,15 +501,24 @@ impl TerminalBuffer {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let mut follow = false;
+    for arg in &args[1..] {
+        if arg == "-f" || arg == "--follow" {
+            follow = true;
+        }
+    }
+
     #[cfg(debug_assertions)]
     {
         if let Some(log_file) = debug_log::init_debug_log() {
-            debug_log::debug_log("aish-render", &format!("Starting aish-render, debug log: {}", log_file));
+            debug_log::debug_log("aish-render", &format!("Starting aish-render (follow={}), debug log: {}", follow, log_file));
         }
     }
     
     let stdin = io::stdin();
     let mut buffer = TerminalBuffer::new();
+    let is_stdout_tty = io::stdout().is_terminal();
     
     #[cfg(debug_assertions)]
     debug_log::debug_log("aish-render", "Reading JSONL lines from stdin");
@@ -552,26 +563,45 @@ fn main() {
                     };
                     
                     buffer.process_data(&data);
+                    
+                    if follow {
+                        // 画面をクリアして再描画
+                        let mut out = io::stdout().lock();
+                        // \x1B[2J: 画面全体を消去, \x1B[H: カーソルを(1,1)に移動
+                        let _ = write!(out, "\x1B[2J\x1B[H{}", buffer.output());
+                        
+                        // カーソル位置を再現
+                        if is_stdout_tty {
+                            // \x1B[row;colH: カーソル位置の設定（1ベース）
+                            let _ = write!(out, "\x1B[{};{}H", buffer.cursor.row + 1, buffer.cursor.col + 1);
+                        }
+                        let _ = out.flush();
+                    }
                 }
+            } else if event_type == "resize" {
+                // resizeイベントは現在無視（バッファサイズ制限がないため）
             }
         }
     }
     
-    #[cfg(debug_assertions)]
-    debug_log::debug_log("aish-render", "Finished processing, outputting result");
-    
-    let output = buffer.output();
-    if let Err(e) = io::stdout().write_all(output.as_bytes()) {
+    if !follow {
         #[cfg(debug_assertions)]
-        debug_log::debug_log("aish-render", &format!("ERROR: Failed to write output to stdout: {}", e));
-        eprintln!("aish-render: Failed to write output: {}", e);
-        std::process::exit(74);
-    }
-    if let Err(e) = io::stdout().write_all(b"\n") {
-        #[cfg(debug_assertions)]
-        debug_log::debug_log("aish-render", &format!("ERROR: Failed to write newline to stdout: {}", e));
-        eprintln!("aish-render: Failed to write newline: {}", e);
-        std::process::exit(74);
+        debug_log::debug_log("aish-render", "Finished processing, outputting result");
+        
+        let output = buffer.output();
+        let mut out = io::stdout().lock();
+        if let Err(e) = out.write_all(output.as_bytes()) {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-render", &format!("ERROR: Failed to write output to stdout: {}", e));
+            eprintln!("aish-render: Failed to write output: {}", e);
+            std::process::exit(74);
+        }
+        if let Err(e) = out.write_all(b"\n") {
+            #[cfg(debug_assertions)]
+            debug_log::debug_log("aish-render", &format!("ERROR: Failed to write newline to stdout: {}", e));
+            eprintln!("aish-render: Failed to write newline: {}", e);
+            std::process::exit(74);
+        }
     }
     
     #[cfg(debug_assertions)]

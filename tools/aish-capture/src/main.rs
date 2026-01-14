@@ -437,7 +437,25 @@ fn execute(config: Config, cmd: Option<Vec<String>>) -> Result<i32, (String, i32
             return Err((format!("poll failed: {}", err), 74));
         }
         
-        if n == 0 { continue; }
+        if n == 0 {
+            // Timeout - flush buffers to log file to ensure real-time updates
+            if let Some(data) = stdin_text_buffer.flush() {
+                if !config.no_stdin {
+                    ensure_log_file_position(&mut log_file);
+                    let _ = write_stdin(&mut log_file, &data);
+                }
+            }
+            if let Some(data) = fifo_text_buffer.flush() {
+                ensure_log_file_position(&mut log_file);
+                let _ = write_stdin(&mut log_file, &data);
+            }
+            if let Some(data) = stdout_text_buffer.flush() {
+                ensure_log_file_position(&mut log_file);
+                let _ = write_stdout(&mut log_file, &data);
+            }
+            let _ = log_file.flush();
+            continue;
+        }
 
         // Read from stdin
         if let Some(idx) = stdin_idx {
