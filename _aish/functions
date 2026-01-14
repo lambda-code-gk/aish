@@ -47,6 +47,12 @@ function aish_ls
   ls part_* | sort -r | nl
   cd - > /dev/null
 }
+# list sessions
+function aish_sessions
+{
+  local sessions_dir="${AISH_HOME}/sessions"
+  ls -1 "$sessions_dir" 2>/dev/null | grep -v "latest" | sort -r
+}
 function aish_last
 {
   # show the last part file

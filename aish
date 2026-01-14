@@ -10,6 +10,8 @@ usage() {
     echo "  [args...]     Arguments for the command."
     echo ""
     echo "Available commands:"
+    echo "  resume [id]            Resume a session (default: latest)."
+    echo "  sessions               List available sessions."
     echo "  rollout                Write the terminal log to the part file."
     echo "  clear                  Clear the console and part files."
     echo "  ls                     List the part files."
@@ -41,23 +43,53 @@ done
 shift $((OPTIND -1))
 
 AISH_HOME="${AISH_HOME:-$HOME/.aish}"
+SESSIONS_DIR="$AISH_HOME/sessions"
 export AISH_RENDER_BIN="${AISH_RENDER_BIN:-$AISH_HOME/bin/aish-render}"
 export AISH_CAPTURE_BIN="${AISH_CAPTURE_BIN:-$AISH_HOME/bin/aish-capture}"
 
 # Handle the command
 command=$1
-shift
+
+if [ "$command" = "sessions" ]; then
+    ls -1 "$SESSIONS_DIR" 2>/dev/null | grep -v "latest" | sort -r
+    exit 0
+fi
+
+if [ "$command" = "resume" ]; then
+    shift
+    session_id=$1
+    if [ -z "$session_id" ]; then
+        session_id=$(ls -1t "$SESSIONS_DIR" 2>/dev/null | grep -v "latest" | head -n 1)
+        if [ -z "$session_id" ]; then
+            echo "No sessions found to resume."
+            exit 1
+        fi
+        echo "Resuming latest session: $session_id"
+    fi
+    session="$SESSIONS_DIR/$session_id"
+    if [ ! -d "$session" ]; then
+        echo "Session not found: $session_id"
+        exit 1
+    fi
+    command=""
+fi
 
 if [ ! -z "$command" ]; then
+    shift
     . $AISH_HOME/functions
     func_name="aish_${command}"
     $func_name $@
     exit $?
 fi
 
-# If no directory is specified, use mktemp
+# If no directory is specified, use a new timestamped one in SESSIONS_DIR
 if [ -z "$session" ]; then
-    session=$(mktemp -d)
+    mkdir -p "$SESSIONS_DIR"
+    session_id=$(date +%Y%m%d_%H%M%S)
+    session="$SESSIONS_DIR/$session_id"
+    mkdir -p "$session"
+    ln -sfT "$session_id" "$SESSIONS_DIR/latest"
+    echo "Starting new session: $session_id"
 else
     mkdir -p $session
 fi
@@ -70,10 +102,16 @@ if [ ! -d "$AISH_PART" ]; then
   mkdir -p "$AISH_PART"
 fi
 
-mkfifo $AISH_SESSION/fifo
+[ -p "$AISH_SESSION/fifo" ] || { rm -f "$AISH_SESSION/fifo"; mkfifo "$AISH_SESSION/fifo"; }
+
+# Determine if we should append to the log file
+append_flag=""
+if [ -f "$AISH_LOGFILE" ]; then
+    append_flag="--append"
+fi
 
 # No command specified, start a new session
-$AISH_CAPTURE_BIN -o $AISH_LOGFILE --input-fifo $AISH_SESSION/fifo
+$AISH_CAPTURE_BIN $append_flag -o $AISH_LOGFILE --input-fifo $AISH_SESSION/fifo
 
 # --- Self-Improvement Process ---
 if [ -f "$AISH_LOGFILE" ]; then
