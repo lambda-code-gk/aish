@@ -62,13 +62,26 @@ function execute_shell_command
   bash -c "$command" > "$stdout_file" 2> "$stderr_file"
   exit_code=$?
   
-  stdout=$(cat "$stdout_file")
-  stderr=$(cat "$stderr_file")
+  stdout_size=$(wc -c < "$stdout_file")
+  if [ "$stdout_size" -gt "$max_output_length" ]; then
+    stdout=$(head -c "$max_output_length" "$stdout_file")
+    stdout+=$'\n\n[... Output truncated due to size limit ('"$max_output_length"' bytes) ...]'
+  else
+    stdout=$(cat "$stdout_file")
+  fi
+
+  stderr_size=$(wc -c < "$stderr_file")
+  if [ "$stderr_size" -gt "$max_output_length" ]; then
+    stderr=$(head -c "$max_output_length" "$stderr_file")
+    stderr+=$'\n\n[... Output truncated due to size limit ('"$max_output_length"' bytes) ...]'
+  else
+    stderr=$(cat "$stderr_file")
+  fi
   
   rm -f "$stdout_file" "$stderr_file"
   
   # JSON形式で返す
-  result="{\"exit_code\": $exit_code, \"stdout\": $(echo "$stdout" | json_string), \"stderr\": $(echo "$stderr" | json_string)}"
+  result="{\"exit_code\": $exit_code, \"stdout\": $(echo -n "$stdout" | json_string), \"stderr\": $(echo -n "$stderr" | json_string)}"
   echo "$result"
 }
 
