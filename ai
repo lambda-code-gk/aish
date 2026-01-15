@@ -10,11 +10,23 @@ function puts_error
   echo "Error: $1" >&2
 }
 
+if [ -n "$AISH_SESSION" ]; then
+  LOCK_FILE="$AISH_SESSION/ai.lock"
+  if [ -f "$LOCK_FILE" ]; then
+    puts_error "Another ai process is already running in this session. Recursive calls are not allowed."
+    exit 1
+  fi
+  touch "$LOCK_FILE"
+fi
+
 function cleanup_on_exit()
 {
   # skip recording if the script is interrupted
   detail.aish_flush_script_log
   detail.aish_truncate_script_log
+  if [ -n "$AISH_SESSION" ]; then
+    rm -f "$AISH_SESSION/ai.lock"
+  fi
   echo
   exit $?
 }
