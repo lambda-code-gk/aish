@@ -10,6 +10,7 @@
 function execute_shell_command
 {
   command=$1
+  max_output_length=${2:-10000}
   
   # 承認済みコマンドリストのファイル
   approved_commands_file="$AISH_SESSION/approved_commands"
@@ -95,6 +96,7 @@ function _tool_execute_shell_command_execute
   local provider="$3"
   
   command=$(echo "$func_args" | jq -r '.command')
+  max_output_length=$(echo "$func_args" | jq -r '.max_output_length // empty')
   
   if [ -z "$command" ]; then
     echo '{"error": "command is required"}' >&2
@@ -102,7 +104,7 @@ function _tool_execute_shell_command_execute
   fi
   
   # シェルコマンドを実行
-  result=$(execute_shell_command "$command")
+  result=$(execute_shell_command "$command" "$max_output_length")
   
   if [ $? -ne 0 ]; then
     return 1
