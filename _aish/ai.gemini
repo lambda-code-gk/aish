@@ -15,7 +15,8 @@ SUPPORTED_MODELS=(
   "gemini-3-flash-preview"
 )
 
-MODEL="gemini-3-flash-preview"
+MODEL="${MODEL:-gemini-3-flash-preview}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
 
 LOG="$AISH_SESSION"/log.json
 

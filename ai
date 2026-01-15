@@ -35,7 +35,7 @@ trap cleanup_on_exit EXIT INT TERM
 APP_DIR=$(dirname "$(readlink -f "$0")")
 
 # '+' disables getopt's argument reordering.
-PARSED_OPTIONS=$(getopt -o +hT --long +help,skip-security-check,no-thought -n "$(basename "$0")" -- "$@")
+PARSED_OPTIONS=$(getopt -o +hTp: --long +help,skip-security-check,no-thought,profile:,pro,cheap,local -n "$(basename "$0")" -- "$@")
 
 eval set -- "$PARSED_OPTIONS"
 while true; do
@@ -48,6 +48,22 @@ while true; do
       export AISH_HIDE_THOUGHT="true"
       shift
       ;;
+    -p|--profile)
+      export AISH_PROFILE="$2"
+      shift 2
+      ;;
+    --pro)
+      export AISH_PROFILE="pro"
+      shift
+      ;;
+    --cheap)
+      export AISH_PROFILE="cheap"
+      shift
+      ;;
+    --local)
+      export AISH_PROFILE="local"
+      shift
+      ;;
     -h|--help)
       help="true"
       shift
@@ -56,6 +72,15 @@ while true; do
     *) puts_error "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Load profile if specified or default
+if [ -z "$AISH_PROFILE" ]; then
+  export AISH_PROFILE="default"
+fi
+
+if [ -f "$AISH_HOME/profiles/$AISH_PROFILE.sh" ]; then
+  . "$AISH_HOME/profiles/$AISH_PROFILE.sh"
+fi
 
 
 task="$AISH_HOME/task.d/default"

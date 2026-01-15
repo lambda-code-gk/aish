@@ -18,8 +18,8 @@ SUPPORTED_MODELS=(
   "gpt-5.2"
 )
 
-MODEL="gpt-5.2"
-TEMPERATURE=0.7
+MODEL="${MODEL:-gpt-5.2}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
 LOG="$AISH_SESSION"/log.json
 
 # 共通ライブラリを読み込む
