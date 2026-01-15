@@ -216,14 +216,17 @@ fn parse_rule(rule_str: &str) -> Result<Rule, String> {
             ""
         };
         
-        let mut regex_str = String::from("(?");
-        if flags.contains('i') {
-            regex_str.push('i');
+        let mut regex_str = String::new();
+        if !flags.is_empty() {
+            regex_str.push_str("(?");
+            if flags.contains('i') {
+                regex_str.push('i');
+            }
+            if flags.contains('m') {
+                regex_str.push('m');
+            }
+            regex_str.push(')');
         }
-        if flags.contains('m') {
-            regex_str.push('m');
-        }
-        regex_str.push(')');
         regex_str.push_str(pattern_str);
         
         let re = Regex::new(&regex_str)
