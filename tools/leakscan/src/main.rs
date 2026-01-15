@@ -8,6 +8,7 @@ use std::io::{self, BufRead};
 #[derive(Deserialize, Debug)]
 struct Rule {
     id: String,
+    description: Option<String>,
     regex: String,
     keywords: Option<Vec<String>>,
     entropy: Option<f64>,
@@ -15,6 +16,7 @@ struct Rule {
 
 struct CompiledRule {
     id: String,
+    description: Option<String>,
     re: Regex,
     keywords: Option<Vec<String>>,
     entropy: Option<f64>,
@@ -84,6 +86,7 @@ fn main() {
         .into_iter()
         .map(|r| CompiledRule {
             id: r.id,
+            description: r.description,
             re: Regex::new(&r.regex).unwrap_or_else(|_| panic!("Invalid regex: {}", r.regex)),
             keywords: r.keywords,
             entropy: r.entropy,
@@ -104,7 +107,7 @@ fn main() {
             continue;
         }
 
-        let mut matched_rule_id: Option<String> = None;
+        let mut matched_rule: Option<&CompiledRule> = None;
         let mut match_range: Option<(usize, usize)> = None;
 
         for rule in &rules {
@@ -124,13 +127,13 @@ fn main() {
                         continue;
                     }
                 }
-                matched_rule_id = Some(rule.id.clone());
+                matched_rule = Some(rule);
                 match_range = Some((m.start(), m.end()));
                 break;
             }
         }
 
-        if let Some(id) = matched_rule_id {
+        if let Some(rule) = matched_rule {
             let output_line = if color {
                 if let Some((start, end)) = match_range {
                     format!(
@@ -157,7 +160,8 @@ fn main() {
             };
 
             if verbose {
-                let _ = writeln!(stdout, "{}  (match={})", output_line, id);
+                let reason = rule.description.as_deref().unwrap_or(&rule.id);
+                let _ = writeln!(stdout, "{}  (reason: {})", output_line, reason);
             } else {
                 let _ = writeln!(stdout, "{}", output_line);
             }

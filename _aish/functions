@@ -221,7 +221,7 @@ function detail.aish_filter_sensitive_info
     echo -e "\033[1;33m⚠️  SECURITY WARNING: Bad patterns matched\033[0m" >&2
     echo "" >&2
     echo "----------------------------------------" >&2
-    cat "$tmp_filtered" | "$AISH_HOME"/bin/leakscan --color "$AISH_HOME"/rules.json >&2
+    cat "$tmp_filtered" | "$AISH_HOME"/bin/leakscan --color -v "$AISH_HOME"/rules.json >&2
     echo "----------------------------------------" >&2
     echo >&2
   fi
