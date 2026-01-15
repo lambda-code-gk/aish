@@ -5,7 +5,7 @@
 ## プロジェクト概要
 
 - **メインプロジェクト**: AISH（AISH is a CUI automation framework powered by LLMs）
-- **プロジェクトルート**: `/home/honda/labo/aish_make_rust_dev`
+- **プロジェクトルート**: pwdにて確認
 
 ## デバッグ方法
 開発用のディレクトリで作業している際は以下の手順で実行すると開発環境のファイルを参照するようになります。
@@ -41,6 +41,10 @@ export AISH_HOME="$PROJECT_ROOT/_aish"
 - **テストを先に書く**: 実装より先にテストを書くことを徹底する
 - **気付きの記録**: 開発中に気付きや改善点があった場合は、このAGENTS.mdを更新すること
 
+#### 禁止事項
+
+- aiコマンドは再帰的に呼び出す事はできません。function callingから呼び出さないで下さい。
+
 ## サブプロジェクト
 
 ### aish-capture
@@ -69,7 +73,7 @@ expect機能を提供するスクリプト実行ツール（Rust実装）
 ## プロジェクト全体のドキュメント
 
 - **プロジェクトREADME**: [`README.md`](README.md)
-- **設計ドキュメント**: [`plan/01_improve_terminal_capture.md`](plan/01_improve_terminal_capture.md)
+- **設計ドキュメント**: plan/*.md
 
 ## 更新履歴
 

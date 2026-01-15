@@ -29,6 +29,32 @@ function query_entry_prepare
   
   # 記憶管理ライブラリを読み込む
   [ -f "$AISH_HOME/lib/memory_manager.sh" ] && . "$AISH_HOME/lib/memory_manager.sh"
+
+  # AGENTS.mdの内容を注入 (カレントディレクトリから上に辿って検索)
+  local current_search_dir=$(pwd)
+  local agents_path=""
+  while [ "$current_search_dir" != "/" ]; do
+    if [ -f "$current_search_dir/AGENTS.md" ]; then
+      agents_path="$current_search_dir/AGENTS.md"
+      break
+    fi
+    current_search_dir=$(dirname "$current_search_dir")
+  done
+
+  if [ ! -z "$agents_path" ]; then
+    local agents_content=$(cat "$agents_path")
+    if [ ! -z "$agents_content" ]; then
+      local agents_text="### AGENTS.md Instructions:
+$agents_content"
+      if [ -z "$_query_system_instruction" ]; then
+        _query_system_instruction="$agents_text"
+      else
+        _query_system_instruction="$agents_text
+
+$_query_system_instruction"
+      fi
+    fi
+  fi
   
   # エージェントモードの場合のみ、利用可能な記憶の概要を注入
   if [ "$_query_agent_mode" = true ]; then
@@ -84,7 +110,9 @@ function query_entry_prepare
         if [ -z "$_query_system_instruction" ]; then
           _query_system_instruction="$memories_text"
         else
-          _query_system_instruction="$memories_text\n\n$_query_system_instruction"
+          _query_system_instruction="$memories_text
+
+$_query_system_instruction"
         fi
       fi
     fi
@@ -112,7 +140,9 @@ function query_entry_prepare
         
         if [ ! -z "$memory_text" ]; then
             # システムインストラクションに追加
-            _query_system_instruction="$_query_system_instruction\n\n$memory_text"
+            _query_system_instruction="$_query_system_instruction
+
+$memory_text"
         fi
     fi
   fi
