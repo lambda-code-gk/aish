@@ -88,13 +88,13 @@ function execute_shell_command
 # OpenAI形式のtool定義を返す
 function _tool_execute_shell_command_definition_openai
 {
-  echo '{"type": "function", "function": {"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}}'
+  echo '{"type": "function", "function": {"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr.", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}, "max_output_length": {"type": "integer", "description": "Maximum number of bytes to return from stdout and stderr (default: 10000). A reasonable size is 10000 to balance context usage and information.", "default": 10000}}, "required": ["command"]}}}'
 }
 
 # Gemini形式のtool定義を返す
 function _tool_execute_shell_command_definition_gemini
 {
-  echo '{"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}}, "required": ["command"]}}'
+  echo '{"name": "execute_shell_command", "description": "Execute a shell command and return the result with exit code, stdout, and stderr.", "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "The shell command to execute"}, "max_output_length": {"type": "integer", "description": "Maximum number of bytes to return from stdout and stderr (default: 10000). A reasonable size is 10000 to balance context usage and information.", "default": 10000}}, "required": ["command"]}}'
 }
 
 # tool実行処理
