@@ -50,8 +50,8 @@
   },
   {
     "id": "ipv6-address",
-    "description": "IPv6 address (often false positive, but kept for legacy)",
-    "regex": ".*:.*:.*:.*:.*:.*:.*$",
+    "description": "IPv6 address",
+    "regex": "([0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){0,5}::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}|::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:",
     "keywords": [":"]
   }
 ]
