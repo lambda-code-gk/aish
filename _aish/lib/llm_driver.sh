@@ -14,11 +14,19 @@ function _llm_driver_query
 {
     query_entry_prepare "$@"
     
+    local exit_code=0
     if [ "$_query_agent_mode" = true ]; then
         echo -e "$_query_files" | _provider_make_request_payload_agent "$_query_args" "$_query_system_instruction" | _llm_driver_send_request_with_tools
+        exit_code=$?
     else
         echo -e "$_query_files" | _provider_make_request_payload "$_query_args" "$_query_system_instruction" | _llm_driver_send_request
+        exit_code=$?
     fi
+    
+    # Cleanup masked files
+    rm -f "$AISH_SESSION"/masked_* 2>/dev/null
+    
+    return $exit_code
 }
 
 # send_to_llmの共通実装

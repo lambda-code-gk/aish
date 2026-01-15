@@ -194,7 +194,12 @@ function detail.aish_filter_command
   if [ ! -e "$AISH_SESSION"/approved_lines ]; then
     touch "$AISH_SESSION"/approved_lines
   fi
-  "$AISH_HOME"/bin/leakscan "$AISH_HOME"/rules.json | grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines
+  if [ ! -e "$AISH_SESSION"/mask_lines ]; then
+    touch "$AISH_SESSION"/mask_lines
+  fi
+  "$AISH_HOME"/bin/leakscan "$AISH_HOME"/rules.json | \
+    grep -v $quiet_mode -F -f "$AISH_SESSION"/approved_lines | \
+    grep -v $quiet_mode -F -f "$AISH_SESSION"/mask_lines
 }
 
 function detail.aish_filter_sensitive_info
@@ -222,11 +227,14 @@ function detail.aish_filter_sensitive_info
   fi
 
   if [ "$matched" = true ]; then
-    echo -n "Send request? ([y]es / [n]o / [a]lways allow this line): " >&2
+    echo -n "Send request? ([y]es / [n]o / [a]lways allow / [m]ask and always send): " >&2
     read -r confirm < /dev/tty
     if [[ "$confirm" == "a" ]]; then
-      cat "$tmp_filtered" >> $AISH_SESSION/approved_lines
+      cat "$tmp_filtered" >> "$AISH_SESSION/approved_lines"
       echo "⚠️  SECURITY WARNING: Bad patterns matched, but the line is approved for future use." >&2
+    elif [[ "$confirm" == "m" ]]; then
+      cat "$tmp_filtered" >> "$AISH_SESSION/mask_lines"
+      echo "INFO: Bad patterns matched. These lines will be masked in future requests." >&2
     elif [[ "$confirm" != "y" ]]; then
       echo "❌  Request has been aborted." >&2
       return 1
@@ -234,6 +242,24 @@ function detail.aish_filter_sensitive_info
   fi
 
   return 0
+}
+
+function detail.aish_apply_masking
+{
+    local file="$1"
+    local mask_file="$AISH_SESSION/mask_lines"
+    if [ ! -s "$mask_file" ]; then
+        cat "$file"
+        return
+    fi
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        if grep -q -F -x "$line" "$mask_file"; then
+            echo "$line" | "$AISH_HOME"/bin/leakscan --mask "$AISH_HOME"/rules.json
+        else
+            echo "$line"
+        fi
+    done < "$file"
 }
 
 function detail.aish_security_check
@@ -247,15 +273,25 @@ function detail.aish_security_check
       echo "⚠️  SKIP SECURITY FILTER!!" >&2
     fi
 
+    local exit_code=0
     while IFS= read -r file; do
         if [[ "$skip_security_check" != "true" ]]; then
             if ! detail.aish_filter_sensitive_info < "$file"; then
-              exit 1
+              exit_code=1
+              break
             fi
         fi
-        echo "$file"
+        
+        # Apply masking if mask_lines exists and is not empty
+        if [[ "$skip_security_check" != "true" ]] && [ -s "$AISH_SESSION/mask_lines" ]; then
+            local masked_file=$(mktemp "$AISH_SESSION/masked_XXXXXX")
+            detail.aish_apply_masking "$file" > "$masked_file"
+            echo "$masked_file"
+        else
+            echo "$file"
+        fi
     done
-    return 0
+    return $exit_code
 }
 
 function detail.aish_puts_as_markdown

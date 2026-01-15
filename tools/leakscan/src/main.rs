@@ -43,6 +43,7 @@ fn main() {
     let mut args: Vec<String> = env::args().collect();
     let mut verbose = false;
     let mut color = false;
+    let mut mask = false;
 
     if let Some(pos) = args.iter().position(|x| x == "-v") {
         verbose = true;
@@ -52,9 +53,13 @@ fn main() {
         color = true;
         args.remove(pos);
     }
+    if let Some(pos) = args.iter().position(|x| x == "--mask") {
+        mask = true;
+        args.remove(pos);
+    }
 
     if args.len() != 2 {
-        eprintln!("Usage: cat file.txt | {} [-v] [--color] <rules.json>", args[0]);
+        eprintln!("Usage: cat file.txt | {} [-v] [--color] [--mask] <rules.json>", args[0]);
         std::process::exit(1);
     }
 
@@ -94,8 +99,8 @@ fn main() {
             Ok(l) => l,
             Err(_) => break,
         };
-        let line_clean = line.trim();
-        if line_clean.is_empty() {
+        let line_to_process = if mask { &line } else { line.trim() };
+        if !mask && line_to_process.is_empty() {
             continue;
         }
 
@@ -105,13 +110,13 @@ fn main() {
         for rule in &rules {
             // Step 1: Keyword check
             if let Some(ref keywords) = rule.keywords {
-                if !keywords.iter().any(|kw| line_clean.contains(kw)) {
+                if !keywords.iter().any(|kw| line_to_process.contains(kw)) {
                     continue;
                 }
             }
 
             // Step 2: Regex check
-            if let Some(m) = rule.re.find(line_clean) {
+            if let Some(m) = rule.re.find(line_to_process) {
                 // Step 3: Entropy check
                 if let Some(threshold) = rule.entropy {
                     let matched_str = m.as_str();
@@ -130,15 +135,25 @@ fn main() {
                 if let Some((start, end)) = match_range {
                     format!(
                         "{}\x1b[1;31m{}\x1b[0m{}",
-                        &line_clean[..start],
-                        &line_clean[start..end],
-                        &line_clean[end..]
+                        &line_to_process[..start],
+                        &line_to_process[start..end],
+                        &line_to_process[end..]
                     )
                 } else {
-                    line_clean.to_string()
+                    line_to_process.to_string()
+                }
+            } else if mask {
+                if let Some((start, end)) = match_range {
+                    format!(
+                        "{}********{}",
+                        &line_to_process[..start],
+                        &line_to_process[end..]
+                    )
+                } else {
+                    line_to_process.to_string()
                 }
             } else {
-                line_clean.to_string()
+                line_to_process.to_string()
             };
 
             if verbose {
@@ -146,6 +161,9 @@ fn main() {
             } else {
                 let _ = writeln!(stdout, "{}", output_line);
             }
+        } else if mask {
+            // If masking and no match, print original line
+            let _ = writeln!(stdout, "{}", line);
         }
     }
 }
