@@ -213,10 +213,10 @@ function detail.aish_filter_sensitive_info
 
   if [[ -s "$tmp_filtered" ]]; then
     matched=true
-    echo "⚠️  SECURITY WARNING: Bad patterns matched" >&2
+    echo -e "\033[1;33m⚠️  SECURITY WARNING: Bad patterns matched\033[0m" >&2
     echo "" >&2
     echo "----------------------------------------" >&2
-    cat "$tmp_filtered" >&2
+    cat "$tmp_filtered" | "$AISH_HOME"/bin/leakscan --color "$AISH_HOME"/rules.json >&2
     echo "----------------------------------------" >&2
     echo >&2
   fi

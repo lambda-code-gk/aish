@@ -42,14 +42,19 @@ fn shannon_entropy(s: &str) -> f64 {
 fn main() {
     let mut args: Vec<String> = env::args().collect();
     let mut verbose = false;
+    let mut color = false;
 
     if let Some(pos) = args.iter().position(|x| x == "-v") {
         verbose = true;
         args.remove(pos);
     }
+    if let Some(pos) = args.iter().position(|x| x == "--color") {
+        color = true;
+        args.remove(pos);
+    }
 
     if args.len() != 2 {
-        eprintln!("Usage: cat file.txt | {} [-v] <rules.json>", args[0]);
+        eprintln!("Usage: cat file.txt | {} [-v] [--color] <rules.json>", args[0]);
         std::process::exit(1);
     }
 
@@ -95,6 +100,7 @@ fn main() {
         }
 
         let mut matched_rule_id: Option<String> = None;
+        let mut match_range: Option<(usize, usize)> = None;
 
         for rule in &rules {
             // Step 1: Keyword check
@@ -114,15 +120,31 @@ fn main() {
                     }
                 }
                 matched_rule_id = Some(rule.id.clone());
+                match_range = Some((m.start(), m.end()));
                 break;
             }
         }
 
         if let Some(id) = matched_rule_id {
-            if verbose {
-                let _ = writeln!(stdout, "{}  (match={})", line_clean, id);
+            let output_line = if color {
+                if let Some((start, end)) = match_range {
+                    format!(
+                        "{}\x1b[1;31m{}\x1b[0m{}",
+                        &line_clean[..start],
+                        &line_clean[start..end],
+                        &line_clean[end..]
+                    )
+                } else {
+                    line_clean.to_string()
+                }
             } else {
-                let _ = writeln!(stdout, "{}", line_clean);
+                line_clean.to_string()
+            };
+
+            if verbose {
+                let _ = writeln!(stdout, "{}  (match={})", output_line, id);
+            } else {
+                let _ = writeln!(stdout, "{}", output_line);
             }
         }
     }
