@@ -94,7 +94,33 @@ function _llm_driver_send_request_with_tools
     REQUEST_FILE="$AISH_SESSION/request.txt"
     MAX_ITERATIONS=50
     iteration=0
+
+    # 中断ハンドラ
+    function _on_interrupt_agent
+    {
+        echo -e "\n\033[1;33mInterrupt received. Saving checkpoint...\033[0m" >&2
+        if [ -f "$REQUEST_FILE" ]; then
+            # Save the current full request payload for accurate resumption
+            cp "$REQUEST_FILE" "$AISH_SESSION/checkpoint_request.json"
+            
+            # Create a summary for the system prompt
+            local last_tool=$(jq -r '(.messages // .contents) | map(select(.role == "assistant" or .role == "model") | select((.tool_calls // .parts[].functionCall) != null)) | last | (.tool_calls[0].function.name // .parts[].functionCall.name) // "none"' "$REQUEST_FILE" 2>/dev/null)
+            
+            cat > "$AISH_SESSION/checkpoint_summary.txt" <<EOF
+[Interrupted Session Summary]
+- Session ID: $(basename "$AISH_SESSION")
+- Last Iteration: $iteration
+- Last Action: $last_tool
+- Full history stored in the session log.
+EOF
+            echo "Checkpoint saved to $AISH_SESSION/checkpoint_request.json" >&2
+        fi
+        exit 130
+    }
     
+    # 既存のEXIT trapを維持しつつ、INTのみ上書き
+    trap _on_interrupt_agent INT
+
     # 初期リクエストを保存
     cat > "$REQUEST_FILE"
     if [ ! -f "$REQUEST_FILE" ]; then

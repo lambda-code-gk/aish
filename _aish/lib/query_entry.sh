@@ -12,14 +12,18 @@ function query_entry_prepare
   _query_system_instruction=""
   _query_agent_mode=false
   
-  # OPTINDをリセット（再呼び出しに対応）
-  OPTIND=1
-  
-  while getopts "s:a" opt; do
+  # 解析の前にOPTINDをリセット
+  local OPTIND=1
+  while getopts ":s:ac" opt; do
     case $opt in
       s) _query_system_instruction=$OPTARG ;;
       a) _query_agent_mode=true ;;
-      *)  ;;
+      c) AISH_CONTINUE=true ;;
+      :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
+      \?) 
+          ((OPTIND--))
+          break 
+          ;;
     esac
   done
   shift $((OPTIND - 1))
@@ -27,6 +31,35 @@ function query_entry_prepare
   # 残りの引数を保存
   _query_args="$*"
   
+  # 継続モードの処理
+  if [ "$AISH_CONTINUE" = "true" ]; then
+    # カレントセッション以外の最新セッションを探す
+    local latest_session=$(ls -dt "$AISH_HOME/sessions/"* 2>/dev/null | grep -v "${AISH_SESSION:-NONEXISTENT}" | head -n 1)
+    
+    # カレントセッション自体にチェックポイントがある場合（aish resume等）も考慮
+    if [ -n "$AISH_SESSION" ] && [ -f "$AISH_SESSION/checkpoint_summary.txt" ]; then
+        latest_session="$AISH_SESSION"
+    fi
+
+    if [ -n "$latest_session" ] && [ -f "$latest_session/checkpoint_summary.txt" ]; then
+      local checkpoint_text=$(cat "$latest_session/checkpoint_summary.txt")
+      local resume_instruction="### PREVIOUS SESSION CONTEXT (CONTINUED):
+This session is a continuation of a previous interrupted task.
+$checkpoint_text
+
+Please continue the work based on this context and the new instructions below."
+      
+      if [ -z "$_query_system_instruction" ]; then
+        _query_system_instruction="$resume_instruction"
+      else
+        _query_system_instruction="$_query_system_instruction
+
+$resume_instruction"
+      fi
+      echo -e "\033[1;36mResuming from session: $(basename "$latest_session")\033[0m" >&2
+    fi
+  fi
+
   # 記憶管理ライブラリを読み込む
   [ -f "$AISH_HOME/lib/memory_manager.sh" ] && . "$AISH_HOME/lib/memory_manager.sh"
 
@@ -84,7 +117,7 @@ $_query_system_instruction"
         if [ ! -z "$global_memories" ] && [ "$global_memories" != "null" ] && [ "$global_memories" != "[]" ]; then
           # プロジェクト固有の記憶情報とマージ（重複を除外）
           if [ "$memories_info" != "[]" ]; then
-            memories_info=$(echo "$memories_info $global_memories" | jq -s 'flatten | group_by(.id) | map(.[0])')
+            memories_info=$(jq -n --argjson project "$memories_info" --argjson global "$global_memories" '$project + $global | group_by(.id) | map(.[0])')
           else
             memories_info="$global_memories"
           fi
