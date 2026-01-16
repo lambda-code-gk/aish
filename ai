@@ -87,16 +87,38 @@ if [ -f "$AISH_HOME/profiles/$AISH_PROFILE.sh" ]; then
 fi
 
 
-task="$AISH_HOME/task.d/default"
-if [ -e "$AISH_HOME/task.d/$1" ];
-then
-  task="$AISH_HOME/task.d/$1"
-  shift
+task_arg="$1"
+task_path=""
+
+if [ -n "$task_arg" ]; then
+  # Security check: prevent directory traversal
+  if [[ "$task_arg" == /* ]] || [[ "$task_arg" == *..* ]]; then
+    puts_error "Invalid task name: $task_arg"
+    exit 1
+  fi
+
+  # 1. Directory (legacy)
+  if [ -d "$AISH_HOME/task.d/$task_arg" ] && [ -f "$AISH_HOME/task.d/$task_arg/execute" ]; then
+    task_path="$AISH_HOME/task.d/$task_arg"
+    shift
+  # 2. File exactly as specified
+  elif [ -f "$AISH_HOME/task.d/$task_arg" ]; then
+    task_path="$AISH_HOME/task.d/$task_arg"
+    shift
+  # 3. File with .sh suffix
+  elif [ -f "$AISH_HOME/task.d/$task_arg.sh" ]; then
+    task_path="$AISH_HOME/task.d/$task_arg.sh"
+    shift
+  fi
+fi
+
+if [ -z "$task_path" ]; then
+  task_path="$AISH_HOME/task.d/default"
 fi
 
 if [[ "$help" == "true" ]];
 then
-  echo "Usage: `basename $0` [options] [task] [message]"
+  echo "Usage: $(basename "$0") [options] [task] [message]"
   echo "Options:"
   printf "  %s\t%s\n" "-h, --help" "Show this help message"
   printf "  %s\t%s\n" "-T, --no-thought" "Hide agent's thinking process"
@@ -104,17 +126,41 @@ then
   printf "  %s\t%s\n" "--skip-security-check" "Skip security checks"
   echo
   echo "Tasks:"
-  while read -r task_dir;
-  do
-    task_name=$(basename "$task_dir")
-    if [ -e "$task_dir/conf" ]; then
-      . $task_dir/conf
-      echo -e "  $task_name\t$description"
-      description=""
-    fi
-  done < <(find "$AISH_HOME/task.d" -mindepth 1 -maxdepth 1 -type d)| column -t -s $'\t'
+  (
+    # Directory tasks
+    find "$AISH_HOME/task.d" -mindepth 1 -maxdepth 1 -type d | while read -r task_dir; do
+      task_name=$(basename "$task_dir")
+      if [ -f "$task_dir/conf" ] && [ -f "$task_dir/execute" ]; then
+        desc=$( ( . "$task_dir/conf"; echo "$description" ) )
+        echo -e "  $task_name\t$desc"
+      fi
+    done
+
+    # Script tasks (.sh)
+    find "$AISH_HOME/task.d" -type f -name "*.sh" | while read -r script_file; do
+      rel_path=${script_file#$AISH_HOME/task.d/}
+      task_name=${rel_path%.sh}
+      desc=$(grep -m 1 "^# Description:" "$script_file" | sed 's/^# Description:[[:space:]]*//')
+      echo -e "  $task_name\t$desc"
+    done
+
+    # Plain files (without extension)
+    find "$AISH_HOME/task.d" -type f ! -name "*.*" | while read -r plain_file; do
+      rel_path=${plain_file#$AISH_HOME/task.d/}
+      [ "$(basename "$rel_path")" == "execute" ] && continue
+      [ "$(basename "$rel_path")" == "conf" ] && continue
+      task_name="$rel_path"
+      desc=$(grep -m 1 "^# Description:" "$plain_file" | sed 's/^# Description:[[:space:]]*//')
+      echo -e "  $task_name\t$desc"
+    done
+  ) | sort -u | column -t -s $'\t'
   exit 0
 fi
 
-. $task/conf
-. $task/execute
+if [ -d "$task_path" ]; then
+  . "$task_path/conf"
+  . "$task_path/execute"
+else
+  . "$AISH_HOME/task.d/default/conf"
+  . "$task_path"
+fi

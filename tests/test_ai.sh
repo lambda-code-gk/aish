@@ -25,6 +25,9 @@ AI_CMD="${AI_CMD:-$PROJECT_ROOT/ai}"
 export AISH_HOME="${TEST_DIR}/.aish"
 mkdir -p "$AISH_HOME"
 
+# AISH_SESSIONを解除して再帰呼び出しエラーを回避
+unset AISH_SESSION
+
 # テスト用のfunctionsファイルを作成
 mkdir -p "$AISH_HOME"
 cat > "$AISH_HOME/functions" << 'EOF'

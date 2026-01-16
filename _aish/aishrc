@@ -30,8 +30,18 @@ function _ai_subcommand_completions
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [[ ${COMP_CWORD} -eq 1 ]]; then
-        opts=$(ls $AISH_HOME/task.d)
-        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        local task_dir="${AISH_HOME:-$HOME/.aish}/task.d"
+        [ ! -d "$task_dir" ] && return 0
+
+        # 1. Directory tasks (top-level only)
+        local dirs=$(find "$task_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
+        # 2. Script tasks (hierarchical, strip .sh)
+        local scripts=$(find "$task_dir" -type f -name "*.sh" -printf '%P\n' | sed 's/\.sh$//')
+        # 3. Extensionless files (hierarchical)
+        local plain=$(find "$task_dir" -type f ! -name "*.*" -printf '%P\n')
+
+        opts=$(echo -e "${dirs}\n${scripts}\n${plain}" | grep -vE "(^|/)execute$" | sort -u)
+        COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
         return 0
     fi
 }
