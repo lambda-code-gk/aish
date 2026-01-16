@@ -32,12 +32,12 @@ function query_entry_prepare
   _query_args="$*"
   
   # 継続モードの処理
-  if [ "$AISH_CONTINUE" = "true" ]; then
+  if [ "${AISH_CONTINUE:-}" = "true" ]; then
     # カレントセッション以外の最新セッションを探す
     local latest_session=$(ls -dt "$AISH_HOME/sessions/"* 2>/dev/null | grep -v "${AISH_SESSION:-NONEXISTENT}" | head -n 1)
     
     # カレントセッション自体にチェックポイントがある場合（aish resume等）も考慮
-    if [ -n "$AISH_SESSION" ] && [ -f "$AISH_SESSION/checkpoint_summary.txt" ]; then
+    if [ -n "${AISH_SESSION:-}" ] && [ -f "$AISH_SESSION/checkpoint_summary.txt" ]; then
         latest_session="$AISH_SESSION"
     fi
 

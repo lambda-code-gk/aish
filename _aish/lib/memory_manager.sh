@@ -7,7 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/memory_system.sh"
 
 # プロジェクト固有の記憶ディレクトリを検索
 # 現在の作業ディレクトリから上に辿って .aish/memory を探す
-# 見つからなければ $AISH_HOME/memory を返す
+# 見つからなければ ${AISH_HOME:-}/memory を返す
 function find_memory_directory
 {
     local current_dir
@@ -23,7 +23,7 @@ function find_memory_directory
     done
     
     # 見つからなければグローバルの記憶ディレクトリを使用
-    echo "$AISH_HOME/memory"
+    echo "${AISH_HOME:-}/memory"
 }
 
 # 記憶ディレクトリを初期化
@@ -189,7 +189,7 @@ function search_memory_efficient
     
     local project_memory_dir
     project_memory_dir=$(find_memory_directory)
-    local global_memory_dir="$AISH_HOME/memory"
+    local global_memory_dir="${AISH_HOME:-}/memory"
     
     local results="[]"
     local project_results="[]"
@@ -315,7 +315,7 @@ function revoke_memory
     # プロジェクト固有とグローバルの両方の記憶ディレクトリを確認
     local project_memory_dir
     project_memory_dir=$(find_memory_directory)
-    local global_memory_dir="$AISH_HOME/memory"
+    local global_memory_dir="${AISH_HOME:-}/memory"
     
     local found=false
     local memory_dir_to_use=""
@@ -374,7 +374,7 @@ function list_memories
     fi
     
     local project_memory_dir="$memory_dir"
-    local global_memory_dir="$AISH_HOME/memory"
+    local global_memory_dir="${AISH_HOME:-}/memory"
     
     local results="[]"
     
@@ -450,7 +450,7 @@ function get_memory_content
     # プロジェクト固有とグローバルの両方の記憶ディレクトリを確認
     local project_memory_dir
     project_memory_dir=$(find_memory_directory)
-    local global_memory_dir="$AISH_HOME/memory"
+    local global_memory_dir="${AISH_HOME:-}/memory"
     
     local memory_entry=""
     
