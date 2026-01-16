@@ -26,6 +26,7 @@ function cleanup_on_exit()
   detail.aish_truncate_script_log
   if [ -n "$AISH_SESSION" ]; then
     rm -f "$AISH_SESSION/ai.lock"
+    rm -f "$AISH_SESSION"/masked_* 2>/dev/null
   fi
   echo
   exit $?

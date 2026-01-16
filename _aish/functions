@@ -211,10 +211,7 @@ function detail.aish_filter_sensitive_info
     return 1
   fi
 
-  trap 'rm -f "$tmp_filtered"' EXIT
-
   cat | detail.aish_filter_command > "$tmp_filtered"
-
 
   if [[ -s "$tmp_filtered" ]]; then
     matched=true
@@ -226,6 +223,7 @@ function detail.aish_filter_sensitive_info
     echo >&2
   fi
 
+  local result=0
   if [ "$matched" = true ]; then
     echo -n "Send request? ([y]es / [n]o / [a]lways allow / [m]ask and always send): " >&2
     read -r confirm < /dev/tty
@@ -237,11 +235,12 @@ function detail.aish_filter_sensitive_info
       echo "INFO: Bad patterns matched. These lines will be masked in future requests." >&2
     elif [[ "$confirm" != "y" ]]; then
       echo "❌  Request has been aborted." >&2
-      return 1
+      result=1
     fi
   fi
 
-  return 0
+  rm -f "$tmp_filtered"
+  return $result
 }
 
 function detail.aish_apply_masking

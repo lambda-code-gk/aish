@@ -23,9 +23,6 @@ function _llm_driver_query
         exit_code=$?
     fi
     
-    # Cleanup masked files
-    rm -f "$AISH_SESSION"/masked_* 2>/dev/null
-    
     return $exit_code
 }
 
