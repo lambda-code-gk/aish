@@ -184,8 +184,10 @@ function search_memory_efficient
         return 0
     fi
 
-    # 呼び出しを表示
-    echo "Searching memory: $query" >&2
+    # デバッグ時のみ表示
+    if [ "${AISH_DEBUG:-}" = "true" ]; then
+        echo "Searching memory: $query" >&2
+    fi
     
     local project_memory_dir
     project_memory_dir=$(find_memory_directory)
@@ -203,15 +205,23 @@ function search_memory_efficient
         
         project_results=$(echo "$project_memories" | jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
             [.[] | select(.category == $cat or $cat == "") | 
-              # マッチング判定: クエリがキーワードを含んでいるか、または主題がクエリを含んでいるか
-              select(
-                (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
-                (.subject | ascii_downcase | contains($query_lower))
-              ) |
-              # スコアを事前に計算
+              # マッチング判定: クエリがキーワードを含んでいるか（単語境界を考慮）、または主題がクエリを含んでいるか
+              # 特殊文字をエスケープして正規表現を作成
               . + {
-                _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
-                        (if (.subject | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                _matched_kws: [.keywords[] | select(. as $kw | 
+                  ($kw | split("") | map(if . | test("[.\\+*?\\[\\](){}^$|]") then "\\" + . else . end) | join("")) as $escaped_kw |
+                  if ($kw | length) >= 3 then
+                    ($query_lower | test("\\b" + ($escaped_kw | ascii_downcase) + "\\b"))
+                  else
+                    ($query_lower | contains($kw | ascii_downcase))
+                  end
+                )]
+              } |
+              select((._matched_kws | length > 0) or (.subject | ascii_downcase | contains($query_lower))) |
+              # スコアを計算（主題一致を優先）
+              . + {
+                _score: ((._matched_kws | length) +
+                        (if (.subject | ascii_downcase | contains($query_lower)) then 2 else 0 end))
               } |
               {
                 id: .id,
@@ -238,13 +248,20 @@ function search_memory_efficient
             
             global_results=$(echo "$global_memories" | jq -c --arg query_lower "$query_lower" --arg cat "$category" --argjson limit "$limit" '
                 [.[] | select(.category == $cat or $cat == "") | 
-                  select(
-                    (any(.keywords[]; . as $kw | $query_lower | contains($kw | ascii_downcase))) or 
-                    (.subject | ascii_downcase | contains($query_lower))
-                  ) |
                   . + {
-                    _score: (([.keywords[] | select(. as $kw | $query_lower | contains($kw | ascii_downcase))] | length) +
-                            (if (.subject | ascii_downcase | contains($query_lower)) then 1 else 0 end))
+                    _matched_kws: [.keywords[] | select(. as $kw | 
+                      ($kw | split("") | map(if . | test("[.\\+*?\\[\\](){}^$|]") then "\\" + . else . end) | join("")) as $escaped_kw |
+                      if ($kw | length) >= 3 then
+                        ($query_lower | test("\\b" + ($escaped_kw | ascii_downcase) + "\\b"))
+                      else
+                        ($query_lower | contains($kw | ascii_downcase))
+                      end
+                    )]
+                  } |
+                  select((._matched_kws | length > 0) or (.subject | ascii_downcase | contains($query_lower))) |
+                  . + {
+                    _score: ((._matched_kws | length) +
+                            (if (.subject | ascii_downcase | contains($query_lower)) then 2 else 0 end))
                   } |
                   {
                     id: .id,

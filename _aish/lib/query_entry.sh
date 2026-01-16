@@ -14,6 +14,7 @@ function query_entry_prepare
   
   # 解析の前にOPTINDをリセット
   local OPTIND=1
+  _query_preview="${AISH_PREVIEW_QUERY:-false}"
   while getopts ":s:ac" opt; do
     case $opt in
       s) _query_system_instruction=$OPTARG ;;
@@ -151,8 +152,8 @@ $_query_system_instruction"
     fi
   fi
   
-  # 関連する記憶を検索して注入
-  if [ ! -z "$_query_args" ]; then
+  # 関連する記憶を検索して注入（非エージェントモードのみ）
+  if [ "$_query_agent_mode" = false ] && [ ! -z "$_query_args" ]; then
     # 検索を実行
     local memories=$(search_memory_efficient "$_query_args" "" 3 true)
     
@@ -185,6 +186,16 @@ $memory_text"
   _query_files=$(detail.aish_list_parts | detail.aish_security_check)
   if [ $? -ne 0 ]; then
     exit 1
+  fi
+
+  if [ "${_query_preview:-}" = "true" ]; then
+    echo -e "\033[1;34m=== SYSTEM INSTRUCTION ===\033[0m"
+    echo "$_query_system_instruction"
+    echo -e "\033[1;34m=== CONTEXT FILES ===\033[0m"
+    echo "$_query_files"
+    echo -e "\033[1;34m=== USER QUERY ===\033[0m"
+    echo "$_query_args"
+    exit 0
   fi
 }
 
