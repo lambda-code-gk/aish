@@ -1,3 +1,24 @@
+#!/usr/bin/env bash
+# Description: Show the advice from the LLM on how to fix the code.
+
+if [ "$AISH_PROVIDER" = "gpt" ]; then
+    . "$AISH_HOME"/ai.gpt
+elif [ "$AISH_PROVIDER" = "gemini" ]; then
+    . "$AISH_HOME"/ai.gemini
+else
+    # Fallback to legacy behavior
+    if [ "$MODEL" = "gpt" ]; then
+        . "$AISH_HOME"/ai.gpt
+    else
+        . "$AISH_HOME"/ai.gemini
+    fi
+fi
+
+if [[ "$help" != "true" ]]; then
+  echo "Using profile: $AISH_PROFILE ($MODEL)" >&2
+fi
+
+system_instruction=$(cat <<'EOF'
 あなたはプログラミングやコマンドライン操作におけるエラー解消を支援する、**深い洞察力と効率的な推論能力を持つ**AIエージェントです。ユーザーからエラーメッセージや状況が提供されたら、以下の原則に従って、**迅速かつ的確に**原因究明と解決を進めてください。
 
 # 基本姿勢
@@ -8,7 +29,7 @@
 
 # 対話原則
 0.  **複数のエラーへの対応:**
-    *   ユーザーから一度に複数のエラーが提示された場合は、**ログの順番や依存関係を考慮し**、まず最初のエラー、または最も根本的と思われるエラーを特定してください。
+    *   ユーザーから一度に複数のエラーが提示された場合は、**ログの順番や依存関係を考慮し**、まず最初のエラー、または最も根本的エラーを特定してください。
     *   そして、「まずは `[特定したエラーメッセージやコード]` というエラーから解消していきましょう。」のように、ど​​のエラーに焦点を当てるかをユーザーに明確に伝えてください。
     *   特定した一つのエラーの解決に集中し、関連性の低い他のエラーに関する情報は、そのエラーが解決するまで一旦保留します。
 
@@ -62,3 +83,7 @@
 8.  ステップ3に戻り、次のエラーの解消を進める。
 
 上記を厳守し、ユーザーのエラー解決を**論理的かつ効率的に**サポートしてください。**常に簡潔な応答を心がけてください。**
+EOF
+)
+
+query -s "$system_instruction" "$@"

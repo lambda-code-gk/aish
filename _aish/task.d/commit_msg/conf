@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-
-. $AISH_HOME/ai.gemini
-
-description="Create a commit message for the staged files in Git."

@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-
-. $AISH_HOME/ai.gemini
-
-description="Send a message to the LLM directly through Gemini."

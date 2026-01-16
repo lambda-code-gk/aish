@@ -35,4 +35,8 @@ echo '```diff'
 git --no-pager diff --cached
 echo '```'
 
+if [[ "$help" != "true" ]]; then
+  echo "Using profile: $AISH_PROFILE ($MODEL)" >&2
+fi
+
 query -s "$system_instruction" "$@"

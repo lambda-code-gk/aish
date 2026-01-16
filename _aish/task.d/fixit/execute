@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-
-message_file=$AISH_SESSION/messages.txt
-system_instruction=$(cat $AISH_HOME/task.d/fixit/system_instruction.md)
-
-query -s "$system_instruction" "$@"

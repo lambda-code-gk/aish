@@ -113,7 +113,19 @@ if [ -n "$task_arg" ]; then
 fi
 
 if [ -z "$task_path" ]; then
-  task_path="$AISH_HOME/task.d/default"
+  # Try to find default task
+  if [ -d "$AISH_HOME/task.d/default" ] && [ -f "$AISH_HOME/task.d/default/execute" ]; then
+    task_path="$AISH_HOME/task.d/default"
+  elif [ -f "$AISH_HOME/task.d/default.sh" ]; then
+    task_path="$AISH_HOME/task.d/default.sh"
+  elif [ -f "$AISH_HOME/task.d/default" ]; then
+    task_path="$AISH_HOME/task.d/default"
+  fi
+fi
+
+if [ -z "$task_path" ]; then
+   puts_error "Default task not found in $AISH_HOME/task.d/"
+   exit 1
 fi
 
 if [[ "$help" == "true" ]];
@@ -161,6 +173,11 @@ if [ -d "$task_path" ]; then
   . "$task_path/conf"
   . "$task_path/execute"
 else
-  . "$AISH_HOME/task.d/default/conf"
+  # If it's a file, we just source it.
+  # We used to source default/conf here, but that's legacy behavior.
+  # For backward compatibility, check if it exists.
+  if [ -f "$AISH_HOME/task.d/default/conf" ]; then
+    . "$AISH_HOME/task.d/default/conf"
+  fi
   . "$task_path"
 fi

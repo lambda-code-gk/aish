@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+# Description: Agent mode: Execute tasks using function calling with shell command execution.
+
+if [ "$AISH_PROVIDER" = "gpt" ]; then
+    . "$AISH_HOME"/ai.gpt
+elif [ "$AISH_PROVIDER" = "gemini" ]; then
+    . "$AISH_HOME"/ai.gemini
+else
+    # Fallback to legacy behavior
+    if [ "$MODEL" = "gpt" ]; then
+        . "$AISH_HOME"/ai.gpt
+    else
+        . "$AISH_HOME"/ai.gemini
+    fi
+fi
+
+if [[ "$help" != "true" ]]; then
+  echo "Using profile: $AISH_PROFILE ($MODEL)" >&2
+fi
 
 system_instruction="You are an AI agent that can execute shell commands and manage an external memory system to accomplish tasks. \
 When you need to perform actions on the system, use the execute_shell_command function. \
@@ -10,4 +28,3 @@ After completing the task, provide a final response to the user explaining what 
 Keep your responses concise and focused on the task at hand."
 
 query -a -s "$system_instruction" "$@"
-

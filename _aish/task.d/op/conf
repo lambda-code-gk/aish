@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-
-. $AISH_HOME/ai.gemini
-
-description="Show commands in the system shell."
-
-
-TEMPERATURE=0.0
-SYSTEM_FILE=$AISH_HOME/system/operate.txt

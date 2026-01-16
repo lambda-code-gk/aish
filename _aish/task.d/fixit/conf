@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-
-. $AISH_HOME/ai.gemini
-
-description="Show the advice from the LLM on how to fix the code."
