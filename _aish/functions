@@ -3,19 +3,25 @@
 # flush terminal log to the file
 function detail.aish_flush_script_log
 {
-  kill -USR1 $AISH_PID
+  if [[ -n "$AISH_PID" ]]; then
+    kill -USR1 "$AISH_PID" 2>/dev/null || true
+  fi
 }
 # truncate the terminal log
 function detail.aish_truncate_script_log
 {
-  truncate -s 0 $AISH_LOGFILE
+  if [[ -f "$AISH_LOGFILE" ]]; then
+    truncate -s 0 "$AISH_LOGFILE"
+  fi
 }
 # write the terminal log to the part file
 function aish_rollout
 {
   detail.aish_flush_script_log
   if [[ ! -f "$AISH_SESSION"/mute ]]; then
-    cat $AISH_LOGFILE | $AISH_RENDER_BIN > $AISH_PART/part_$(date +%Y%m%d_%H%M%S)_user.txt
+    if [[ -f "$AISH_LOGFILE" ]]; then
+      cat "$AISH_LOGFILE" | $AISH_RENDER_BIN > "$AISH_PART/part_$(date +%Y%m%d_%H%M%S)_user.txt"
+    fi
   fi
   detail.aish_truncate_script_log
 }
@@ -261,11 +267,12 @@ function detail.aish_apply_masking
     # マスク対象の行を連想配列に読み込む (プロセス起動を抑制)
     declare -A mask_lines_map
     while IFS= read -r line || [ -n "$line" ]; do
+        [ -z "$line" ] && continue
         mask_lines_map["$line"]=1
     done < "$mask_file"
 
     while IFS= read -r line || [ -n "$line" ]; do
-        if [[ ${mask_lines_map["$line"]} ]]; then
+        if [ -n "$line" ] && [[ ${mask_lines_map["$line"]} ]]; then
             echo "$line" | "$AISH_HOME"/bin/leakscan --mask "$AISH_HOME"/rules.json
         else
             echo "$line"
