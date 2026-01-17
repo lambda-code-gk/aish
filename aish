@@ -52,6 +52,9 @@ command=$1
 
 if [ "$command" = "sessions" ]; then
     ls -1 "$SESSIONS_DIR" 2>/dev/null | grep -v "latest" | sort -r
+    if [ -d $AISH_SESSION ]; then
+    	echo "current: $(basename $AISH_SESSION)"
+    fi
     exit 0
 fi
 
