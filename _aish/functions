@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# エラーハンドリングとログライブラリを読み込む
+# error_error などの関数と detail.aish_log_* 関数が使用するため
+. "${AISH_HOME:-$HOME/.aish}/lib/error_handler.sh"
+. "${AISH_HOME:-$HOME/.aish}/lib/logger.sh"
+
 # flush terminal log to the file
 function detail.aish_flush_script_log
 {
@@ -175,21 +180,6 @@ function detail.aish_pickup_codeblock
   done
 }
 
-function detail.aish_log_request
-{
-  echo '{"type":"request","timestamp":"'$(date +%Y-%m-%dT%H:%M:%S.%NZ)'", "payload":' >> $LOG
-  echo "$1"'}' >> $LOG
-}
-function detail.aish_log_response
-{
-  echo '{"type":"response","timestamp":"'$(date +%Y-%m-%dT%H:%M:%S.%NZ)'", "payload":' >> $LOG
-  echo "$1"'}' >> $LOG
-}
-
-function detail.aish_log_tool
-{
-  echo -e "\033[0;32m[Tool] $*\033[0m" >&2
-}
 
 function detail.aish_filter_command
 {
@@ -347,11 +337,6 @@ function json_string
 {
   jq -Rs '.'
 }
-# エラー出力関数
-function puts_error
-{
-  echo "Error: $1" >&2
-}
 
 # モデル管理コマンド
 function aish_models
@@ -368,7 +353,7 @@ function aish_models
         case "$1" in
             --provider|-p)
                 if [ -z "$2" ]; then
-                    puts_error "Option --provider requires a value"
+                    error_error "Option --provider requires a value"
                     echo "Usage: aish models [OPTIONS]"
                     return 1
                 fi
@@ -403,7 +388,7 @@ function aish_models
                 return 0
                 ;;
             *)
-                puts_error "Unknown option: $1"
+                error_error "Unknown option: $1"
                 echo "Usage: aish models [OPTIONS]"
                 echo "Use 'aish models --help' for more information"
                 return 1
@@ -414,7 +399,7 @@ function aish_models
     # 未対応モデル表示または利用可能モデル表示の場合はプロバイダ指定が必要
     if [ "$show_unsupported" = true ] || [ "$show_available" = true ]; then
         if [ -z "$provider" ]; then
-            puts_error "--unsupported and --available options require --provider option"
+            error_error "--unsupported and --available options require --provider option"
             return 1
         fi
     fi
@@ -474,7 +459,7 @@ function aish_memory
                 return 0
                 ;;
             -*)
-                puts_error "Unknown option: $1"
+                error_error "Unknown option: $1"
                 echo "Usage: aish memory [OPTIONS] [ID...]"
                 echo "Use 'aish memory --help' for more information"
                 return 1
@@ -492,7 +477,7 @@ function aish_memory
     
     # アクションが指定されていない場合はエラー
     if [ -z "$action" ]; then
-        puts_error "No action specified"
+        error_error "No action specified"
         echo "Usage: aish memory [OPTIONS] [ID...]"
         echo "Use 'aish memory --help' for more information"
         return 1
@@ -504,7 +489,7 @@ function aish_memory
             local memories_json
             memories_json=$(list_memories)
             if [ $? -ne 0 ]; then
-                puts_error "Failed to list memories"
+                error_error "Failed to list memories"
                 return 1
             fi
             
@@ -521,7 +506,7 @@ function aish_memory
             ;;
         show)
             if [ ${#ids[@]} -eq 0 ]; then
-                puts_error "Option --show requires at least one memory ID"
+                error_error "Option --show requires at least one memory ID"
                 return 1
             fi
             
@@ -530,7 +515,7 @@ function aish_memory
                 memory_json=$(get_memory_content "$memory_id" 2>/dev/null)
                 
                 if [ $? -ne 0 ] || [ -z "$memory_json" ]; then
-                    puts_error "Memory with id '$memory_id' not found"
+                    error_error "Memory with id '$memory_id' not found"
                     continue
                 fi
                 
@@ -538,7 +523,7 @@ function aish_memory
                 local error
                 error=$(echo "$memory_json" | jq -r '.error // empty' 2>/dev/null)
                 if [ ! -z "$error" ]; then
-                    puts_error "Memory '$memory_id': $error"
+                    error_error "Memory '$memory_id': $error"
                     continue
                 fi
                 
@@ -560,7 +545,7 @@ function aish_memory
             ;;
         revoke)
             if [ ${#ids[@]} -eq 0 ]; then
-                puts_error "Option --revoke requires at least one memory ID"
+                error_error "Option --revoke requires at least one memory ID"
                 return 1
             fi
             
@@ -569,7 +554,7 @@ function aish_memory
             done
             ;;
         *)
-            puts_error "Unknown action: $action"
+            error_error "Unknown action: $action"
             return 1
             ;;
     esac

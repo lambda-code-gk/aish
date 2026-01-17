@@ -39,7 +39,7 @@ function _tool_get_memory_content_execute
   if [ $? -eq 0 ] && [ ! -z "$result" ] && [ "$result" != "null" ]; then
     # 標準エラー出力に検索結果を表示: id,subject
     local subject=$(echo "$result" | jq -r '.subject // ""' 2>/dev/null)
-    detail.aish_log_tool "get_memory_content: $memory_id,${subject:-}"
+    log_tool "get_memory_content: $memory_id,${subject:-}" "tool"
     echo "$result"
     return 0
   fi

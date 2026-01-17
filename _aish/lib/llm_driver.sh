@@ -8,6 +8,10 @@
 #   - _provider_check_tool_calls: tool/function callの有無をチェック
 #   - _provider_process_tool_calls: tool/function callを処理
 
+# エラーハンドリングとログライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
+. "$AISH_HOME/lib/logger.sh"
+
 # query関数の共通実装
 # 引数: クエリ関数と同じ引数
 function _llm_driver_query
@@ -31,26 +35,19 @@ function _llm_driver_query
 function _llm_driver_send_request
 {
     if [ -z "$AISH_SESSION" ]; then
-        echo "Error: AISH_SESSION is not set" >&2
-        exit 1
+        error_fatal "AISH_SESSION is not set" '{"component": "llm_driver", "function": "_llm_driver_send_request"}' 1
     fi
     REQUEST_FILE="$AISH_SESSION/request.txt"
     cat > "$REQUEST_FILE"
-    if [ -f "$REQUEST_FILE" ]; then
-        request_data=$(cat "$REQUEST_FILE")
-    else
-        echo "Error: Failed to create request file" >&2
-        exit 1
+    if [ ! -f "$REQUEST_FILE" ]; then
+        error_fatal "Failed to create request file" '{"component": "llm_driver", "function": "_llm_driver_send_request", "file": "'"$REQUEST_FILE"'"}'
     fi
+    request_data=$(cat "$REQUEST_FILE")
 
-    detail.aish_log_request "$request_data"
+    log_request "$request_data" "llm"
 
     # プロバイダ固有のHTTPリクエストを実行
     # 注意: response=$(...) の前に一時ファイルに出力し、終了コードを取得してから読み込む
-    if [ -z "$AISH_SESSION" ]; then
-        echo "Error: AISH_SESSION is not set" >&2
-        exit 1
-    fi
     temp_response_file="$AISH_SESSION/temp_response_$$.json"
     _provider_make_http_request "$REQUEST_FILE" > "$temp_response_file"
     http_exit_code=$?
@@ -62,17 +59,20 @@ function _llm_driver_send_request
     fi
     
     if [ $http_exit_code -ne 0 ]; then
-        echo "$response" >&2
+        error_error "HTTP request failed" '{"component": "llm_driver", "function": "_llm_driver_send_request", "exit_code": '$http_exit_code', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
         exit 1
     fi
 
-    detail.aish_log_response "$response"
+    log_response "$response" "llm"
 
     # プロバイダ固有のレスポンス解析
     text=$(_provider_parse_response_text "$response")
     
     if [ "$text" == "null" ] || [ -z "$text" ]; then
-        echo "$response"
+        # エラーレスポンスの場合はエラーメッセージを抽出して表示
+        local error_msg=$(echo "$response" | jq -r '.error.message // .error // "Unknown error"' 2>/dev/null || echo "Failed to parse response")
+        error_error "LLM API returned empty or null response: $error_msg" '{"component": "llm_driver", "function": "_llm_driver_send_request", "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
+        echo "$response" >&2
         exit 1
     fi
 
@@ -85,8 +85,7 @@ function _llm_driver_send_request
 function _llm_driver_send_request_with_tools
 {
     if [ -z "$AISH_SESSION" ]; then
-        echo "Error: AISH_SESSION is not set" >&2
-        exit 1
+        error_fatal "AISH_SESSION is not set" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools"}' 1
     fi
     REQUEST_FILE="$AISH_SESSION/request.txt"
     MAX_ITERATIONS=50
@@ -121,8 +120,7 @@ EOF
     # 初期リクエストを保存
     cat > "$REQUEST_FILE"
     if [ ! -f "$REQUEST_FILE" ]; then
-        echo "Error: Failed to create request file" >&2
-        exit 1
+        error_fatal "Failed to create request file" '{"component": "llm_driver", "function": "_llm_driver_send_request", "file": "'"$REQUEST_FILE"'"}'
     fi
     
     # メインループ：ユーザーが続けることを選択する限り継続
@@ -133,17 +131,15 @@ EOF
             if [ -f "$REQUEST_FILE" ]; then
                 request_data=$(cat "$REQUEST_FILE")
             else
-                echo "Error: Request file not found" >&2
-                exit 1
+                error_fatal "Request file not found" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "file": "'"$REQUEST_FILE"'", "iteration": '$iteration'}'
             fi
 
-            detail.aish_log_request "$request_data"
+            log_request "$request_data" "llm"
 
             # プロバイダ固有のHTTPリクエストを実行
             # 注意: response=$(...) の前に一時ファイルに出力し、終了コードを取得してから読み込む
             if [ -z "$AISH_SESSION" ]; then
-                echo "Error: AISH_SESSION is not set" >&2
-                exit 1
+                error_fatal "AISH_SESSION is not set" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools"}' 1
             fi
             temp_response_file="$AISH_SESSION/temp_response_$$.json"
             _provider_make_http_request "$REQUEST_FILE" > "$temp_response_file"
@@ -156,16 +152,16 @@ EOF
             fi
             
             if [ $http_exit_code -ne 0 ]; then
-                echo "$response" >&2
+                error_error "HTTP request failed" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "exit_code": '$http_exit_code', "iteration": '$iteration', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
                 exit 1
             fi
 
-            detail.aish_log_response "$response"
+            log_response "$response" "llm"
 
             # エラーチェック
             error=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null)
             if [ ! -z "$error" ]; then
-                echo "$response" >&2
+                error_error "LLM API error: $error" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "iteration": '$iteration', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
                 exit 1
             fi
 
@@ -200,6 +196,9 @@ EOF
                 text=$(_provider_parse_response_text "$response")
                 
                 if [ "$text" == "null" ] || [ -z "$text" ]; then
+                    # エラーレスポンスの場合はエラーメッセージを抽出して表示
+                    local error_msg=$(echo "$response" | jq -r '.error.message // .error // "Unknown error"' 2>/dev/null || echo "Failed to parse response")
+                    error_error "LLM API returned empty or null response: $error_msg" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "iteration": '$iteration', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
                     echo "$response" >&2
                     exit 1
                 fi

@@ -5,10 +5,13 @@
 
 #set -xe
 
-function puts_error
-{
-  echo "Error: $1" >&2
-}
+# エラーハンドリングとログライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
+. "$AISH_HOME/lib/logger.sh"
+
+# エラーハンドリングとロガーの初期化
+error_handler_init
+logger_init
 
 # セッション管理ライブラリを読み込む
 . "$AISH_HOME/lib/session_manager.sh"
@@ -70,7 +73,7 @@ while true; do
       shift
       ;;
     --) shift; break ;;
-    *) puts_error "Unknown option: $1"; exit 1 ;;
+    *) error_error "Unknown option: $1" '{"component": "ai"}'; exit 1 ;;
   esac
 done
 
@@ -90,7 +93,7 @@ task_path=""
 if [ -n "$task_arg" ]; then
   # Security check: prevent directory traversal
   if [[ "$task_arg" == /* ]] || [[ "$task_arg" == *..* ]]; then
-    puts_error "Invalid task name: $task_arg"
+    error_error "Invalid task name: $task_arg" '{"component": "ai"}'
     exit 1
   fi
 
@@ -121,7 +124,7 @@ if [ -z "$task_path" ]; then
 fi
 
 if [ -z "$task_path" ]; then
-   puts_error "Default task not found in $AISH_HOME/task.d/"
+   error_error "Default task not found in $AISH_HOME/task.d/" '{"component": "ai"}'
    exit 1
 fi
 

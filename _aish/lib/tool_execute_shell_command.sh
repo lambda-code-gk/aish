@@ -6,6 +6,10 @@
 # agent_approve.shの関数を使用するため、読み込む
 . "$AISH_HOME/lib/agent_approve.sh"
 
+# エラーハンドリングとログライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
+. "$AISH_HOME/lib/logger.sh"
+
 # シェルコマンドを実行し、結果をJSON形式で返す
 function execute_shell_command
 {
@@ -52,8 +56,9 @@ function execute_shell_command
     esac
   fi
   
-  # 実行するコマンドを標準エラー出力に表示
-  detail.aish_log_tool "Executing: $command"
+  # 実行するコマンドをログに記録
+  log_info "Executing shell command" "tool_execute_shell_command" "$(jq -n --arg cmd "$command" '{command: $cmd}' 2>/dev/null || echo '{}')"
+  log_tool "Executing: $command" "tool"
   
   # コマンドを実行（stdoutとstderrを分離）
   stdout_file=$(mktemp "$AISH_SESSION/stdout_XXXXXX")

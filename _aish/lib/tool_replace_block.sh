@@ -10,7 +10,7 @@ function replace_block
   local old_block="$2"
   local new_block="$3"
   
-  detail.aish_log_tool "replace_block start: $path"
+  log_tool "replace_block start: $path" "tool"
 
   if [ -z "$path" ]; then
     echo '{"error": "path is required"}' >&2

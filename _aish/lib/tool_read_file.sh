@@ -3,6 +3,10 @@
 # functionsファイルのjson_string関数を使用するため、読み込む
 . "$AISH_HOME/functions"
 
+# エラーハンドリングとログライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
+. "$AISH_HOME/lib/logger.sh"
+
 # ファイルを読み込む関数
 function read_file
 {
@@ -10,15 +14,16 @@ function read_file
   local start_line="${2:-}"
   local end_line="${3:-}"
 
-  detail.aish_log_tool "read_file: $path, $start_line, $end_line"
+  log_info "Reading file" "tool_read_file" "$(jq -n --arg path "$path" --arg start "$start_line" --arg end "$end_line" '{path: $path, start_line: $start, end_line: $end}' 2>/dev/null || echo '{}')"
+  log_tool "read_file: $path, $start_line, $end_line" "tool"
 
   if [ -z "$path" ]; then
-    echo '{"error": "path is required"}' >&2
+    error_error "path is required" '{"component": "tool_read_file", "function": "read_file"}'
     return 1
   fi
   
   if [ ! -f "$path" ]; then
-    echo '{"error": "file not found: '"$path"'"}' >&2
+    error_error "file not found: $path" '{"component": "tool_read_file", "function": "read_file", "path": "'"$path"'"}'
     return 1
   fi
   

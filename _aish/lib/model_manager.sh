@@ -3,12 +3,8 @@
 # モデル管理ライブラリ
 # プロバイダごとの対応モデル一覧を表示する機能を提供します
 
-# エラー出力関数（functions で定義されているが、念のため）
-if ! type puts_error >/dev/null 2>&1; then
-    function puts_error {
-        echo "Error: $1" >&2
-    }
-fi
+# エラーハンドリングライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
 
 # プロバイダファイルからSUPPORTED_MODELS配列を抽出
 # 引数: provider - プロバイダ名（例: "gpt", "gemini"）
@@ -46,7 +42,7 @@ function list_supported_models
     local provider="$1"
     
     if [ -z "$provider" ]; then
-        puts_error "Provider name is required"
+        error_error "Provider name is required"
         return 1
     fi
     
@@ -54,7 +50,7 @@ function list_supported_models
     supported_models=$(_extract_supported_models "$provider")
     
     if [ $? -ne 0 ] || [ -z "$supported_models" ]; then
-        puts_error "Failed to extract supported models for provider: $provider"
+        error_error "Failed to extract supported models for provider: $provider"
         return 1
     fi
     
@@ -86,7 +82,7 @@ function list_all_supported_models
     done
     
     if [ "$found" = false ]; then
-        puts_error "No provider files found"
+        error_error "No provider files found"
         return 1
     fi
 }
@@ -98,14 +94,14 @@ function list_available_models
     local provider="$1"
     
     if [ -z "$provider" ]; then
-        puts_error "Provider name is required"
+        error_error "Provider name is required"
         return 1
     fi
     
     local provider_file="$AISH_HOME/ai.$provider"
     
     if [ ! -f "$provider_file" ]; then
-        puts_error "Provider file not found: $provider_file"
+        error_error "Provider file not found: $provider_file"
         return 1
     fi
     
@@ -130,7 +126,7 @@ function list_available_models
     )
     
     if [ $? -ne 0 ] || [ -z "$available_models" ]; then
-        puts_error "Failed to fetch available models for provider: $provider"
+        error_error "Failed to fetch available models for provider: $provider"
         return 1
     fi
     
@@ -150,7 +146,7 @@ function list_unsupported_models
     local provider="$1"
     
     if [ -z "$provider" ]; then
-        puts_error "Provider name is required"
+        error_error "Provider name is required"
         return 1
     fi
     
@@ -159,7 +155,7 @@ function list_unsupported_models
     supported_models=$(_extract_supported_models "$provider")
     
     if [ $? -ne 0 ]; then
-        puts_error "Failed to extract supported models for provider: $provider"
+        error_error "Failed to extract supported models for provider: $provider"
         return 1
     fi
     
@@ -184,7 +180,7 @@ function list_unsupported_models
     )
     
     if [ $? -ne 0 ] || [ -z "$available_models" ]; then
-        puts_error "Failed to fetch available models for provider: $provider"
+        error_error "Failed to fetch available models for provider: $provider"
         return 1
     fi
     

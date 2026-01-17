@@ -30,7 +30,7 @@ function _tool_save_memory_execute
   category=$(echo "$func_args" | jq -r '.category // "general"')
   keywords=$(echo "$func_args" | jq -r '.keywords // [] | join(",")')
   subject=$(echo "$func_args" | jq -r '.subject // ""')
-  detail.aish_log_tool "save_memory: $subject ($category)"
+  log_tool "save_memory: $subject ($category)" "tool"
   
   if [ -z "$content" ]; then
     echo '{"error": "content is required"}' >&2

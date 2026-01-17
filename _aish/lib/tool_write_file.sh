@@ -3,16 +3,21 @@
 # functionsファイルのjson_string関数を使用するため、読み込む
 . "$AISH_HOME/functions"
 
+# エラーハンドリングとログライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
+. "$AISH_HOME/lib/logger.sh"
+
 # ファイルを書き込む関数
 function write_file
 {
   local path="$1"
   local content="$2"
   
-  detail.aish_log_tool "write_file start: $path"
+  log_info "Writing file" "tool_write_file" "$(jq -n --arg path "$path" '{path: $path}' 2>/dev/null || echo '{}')"
+  log_tool "write_file start: $path" "tool"
 
   if [ -z "$path" ]; then
-    echo '{"error": "path is required"}' >&2
+    error_error "path is required" '{"component": "tool_write_file", "function": "write_file"}'
     return 1
   fi
   
