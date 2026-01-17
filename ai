@@ -3,31 +3,23 @@
 
 . $AISH_HOME/functions
 
-#set -x
+#set -xe
 
 function puts_error
 {
   echo "Error: $1" >&2
 }
 
-if [ -n "$AISH_SESSION" ]; then
-  LOCK_FILE="$AISH_SESSION/ai.lock"
-  if [ -f "$LOCK_FILE" ]; then
-    puts_error "Another ai process is already running in this session. Recursive calls are not allowed."
-    exit 1
-  fi
-  touch "$LOCK_FILE"
-fi
+# セッション管理ライブラリを読み込む
+. "$AISH_HOME/lib/session_manager.sh"
+
+# セッション管理を初期化（ロックチェックと一時セッション作成）
+session_manager_init
 
 function cleanup_on_exit()
 {
-  # skip recording if the script is interrupted
-  detail.aish_flush_script_log
-  detail.aish_truncate_script_log
-  if [ -n "$AISH_SESSION" ]; then
-    rm -f "$AISH_SESSION/ai.lock"
-    rm -f "$AISH_SESSION"/masked_* 2>/dev/null
-  fi
+  # セッション管理のクリーンアップ処理を呼び出す
+  session_manager_cleanup
   echo
   exit $?
 }

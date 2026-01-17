@@ -43,25 +43,30 @@ function _provider_make_request_payload
 
     echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": ['
 
+    local first=true
     if [ ! -z "$system" ]; then
       echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'}'
+      first=false
     fi
 
-    local line_count=0
     while IFS= read -r file; do
-        if [[ $line_count -gt 0 ]]; then
+        [ -z "$file" ] && continue
+        if [ "$first" = false ]; then
             echo -n ','
         fi
-        line_count=$((line_count + 1))
         if [[ "$file" =~ "_user.txt" ]]; then
             echo '  {"role": "user", "content": '$(cat "$file" | json_string)'}'
         else
             echo '  {"role": "assistant", "content": '$(cat "$file" | json_string)'}'
         fi
+        first=false
     done
 
     user_input=$(echo -e "----\n# user message:\n$query" | json_string)
-    echo '  ,{"role": "user", "content": '"$user_input"'}'
+    if [ "$first" = false ]; then
+        echo -n ','
+    fi
+    echo '  {"role": "user", "content": '"$user_input"'}'
     echo ']'
     echo '}'
 }
@@ -78,16 +83,17 @@ function _provider_make_request_payload_agent
 
     echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE', "tools": '$tools', "messages": ['
 
+    local first=true
     if [ ! -z "$system" ]; then
-        echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'},'
+        echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'}'
+        first=false
     fi
 
-    local line_count=0
     while IFS= read -r file; do
-        if [[ $line_count -gt 0 ]]; then
+        [ -z "$file" ] && continue
+        if [ "$first" = false ]; then
             echo -n ','
         fi
-        line_count=$((line_count + 1))
         if [[ "$file" =~ "_user.txt" ]]; then
             echo '  {"role": "user", "content": '$(cat "$file" | json_string)'}'
         elif [[ "$file" =~ "_tool.txt" ]]; then
@@ -100,10 +106,14 @@ function _provider_make_request_payload_agent
             echo -n '  {"role": "assistant", "content": '$(cat "$file" | json_string)'}'
             # tool_callsがある場合は追加（現時点では簡易実装）
         fi
+        first=false
     done
 
     user_input=$(echo -e "----\n# user message:\n$query" | json_string)
-    echo '  ,{"role": "user", "content": '"$user_input"'}'
+    if [ "$first" = false ]; then
+        echo -n ','
+    fi
+    echo '  {"role": "user", "content": '"$user_input"'}'
     echo ']'
     echo '}'
 }

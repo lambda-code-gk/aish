@@ -43,7 +43,6 @@ export AISH_HOME="$PROJECT_ROOT/_aish"
 
 #### 禁止事項
 
-- aiコマンドは再帰的に呼び出す事はできません。function callingから呼び出さないで下さい。
 
 ## サブプロジェクト
 

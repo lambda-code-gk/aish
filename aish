@@ -43,35 +43,24 @@ done
 shift $((OPTIND -1))
 
 AISH_HOME="${AISH_HOME:-$HOME/.aish}"
-SESSIONS_DIR="$AISH_HOME/sessions"
 export AISH_RENDER_BIN="${AISH_RENDER_BIN:-$AISH_HOME/bin/aish-render}"
 export AISH_CAPTURE_BIN="${AISH_CAPTURE_BIN:-$AISH_HOME/bin/aish-capture}"
+
+# セッション管理ライブラリを読み込む
+. "$AISH_HOME/lib/session_manager.sh"
 
 # Handle the command
 command=$1
 
 if [ "$command" = "sessions" ]; then
-    ls -1 "$SESSIONS_DIR" 2>/dev/null | grep -v "latest" | sort -r
-    if [ -d $AISH_SESSION ]; then
-    	echo "current: $(basename $AISH_SESSION)"
-    fi
+    session_manager_list_sessions
     exit 0
 fi
 
 if [ "$command" = "resume" ]; then
     shift
-    session_id=$1
-    if [ -z "$session_id" ]; then
-        session_id=$(ls -1t "$SESSIONS_DIR" 2>/dev/null | grep -v "latest" | head -n 1)
-        if [ -z "$session_id" ]; then
-            echo "No sessions found to resume."
-            exit 1
-        fi
-        echo "Resuming latest session: $session_id"
-    fi
-    session="$SESSIONS_DIR/$session_id"
-    if [ ! -d "$session" ]; then
-        echo "Session not found: $session_id"
+    session_id="$1"
+    if ! session_manager_resume_session "$session_id"; then
         exit 1
     fi
     command=""
@@ -85,27 +74,12 @@ if [ ! -z "$command" ]; then
     exit $?
 fi
 
-# If no directory is specified, use a new timestamped one in SESSIONS_DIR
+# No command specified, start a new session
 if [ -z "$session" ]; then
-    mkdir -p "$SESSIONS_DIR"
-    session_id=$(date +%Y%m%d_%H%M%S)
-    session="$SESSIONS_DIR/$session_id"
-    mkdir -p "$session"
-    ln -sfT "$session_id" "$SESSIONS_DIR/latest"
-    echo "Starting new session: $session_id"
+    session_manager_create_new_session
 else
-    mkdir -p $session
+    session_manager_setup_session "$session"
 fi
-
-export AISH_SESSION="$session"
-export AISH_PART="$AISH_SESSION/part"
-export AISH_LOGFILE="$session/script.jsonl"
-
-if [ ! -d "$AISH_PART" ]; then
-  mkdir -p "$AISH_PART"
-fi
-
-[ -p "$AISH_SESSION/fifo" ] || { rm -f "$AISH_SESSION/fifo"; mkfifo "$AISH_SESSION/fifo"; }
 
 # Determine if we should append to the log file
 append_flag=""

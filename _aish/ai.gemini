@@ -50,6 +50,7 @@ function _provider_make_request_payload
   echo '"contents":['
 
   while IFS= read -r file; do
+    [ -z "$file" ] && continue
     if [[ "$file" =~ "_user.txt" ]]; then
       role="user"
     else
@@ -92,6 +93,7 @@ function _provider_make_request_payload_agent
   echo '"contents":['
 
   while IFS= read -r file; do
+    [ -z "$file" ] && continue
     if [[ "$file" =~ "_user.txt" ]]; then
       role="user"
     elif [[ "$file" =~ "_function.txt" ]]; then
