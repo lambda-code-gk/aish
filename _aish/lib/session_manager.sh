@@ -141,8 +141,13 @@ function session_manager_cleanup
       rm -f "$_ORIGINAL_AISH_SESSION/ai.lock"
       rm -f "$_ORIGINAL_AISH_SESSION"/masked_* 2>/dev/null
     fi
+  else
+    # 一時セッションの場合
+    if [ "${AISH_DEBUG:-false}" != "true" ]; then
+      # デバッグモードでない場合は一時セッションを削除
+      rm -rf "$AISH_SESSION"
+    fi
   fi
-  # 一時セッションは削除しない（保持する）
 }
 
 # 一時セッションかどうかを判定する
