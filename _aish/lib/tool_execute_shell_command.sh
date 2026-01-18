@@ -10,6 +10,15 @@
 . "$AISH_HOME/lib/error_handler.sh"
 . "$AISH_HOME/lib/logger.sh"
 
+# 監査ログライブラリを読み込む（エラー時はスキップ）
+if [ -f "$AISH_HOME/lib/audit_logger.sh" ]; then
+    . "$AISH_HOME/lib/audit_logger.sh" 2>/dev/null || true
+    # コンポーネント名を固定したヘルパー関数
+    _audit() {
+        audit_log_with_fields_safe "$1" "tool_execute_shell_command" "${@:2}"
+    }
+fi
+
 # シェルコマンドを実行し、結果をJSON形式で返す
 function execute_shell_command
 {
@@ -22,11 +31,17 @@ function execute_shell_command
   # 確認不要コマンドかチェック
   if is_command_approved "$command"; then
     # 確認をスキップして実行
-    :
+    # 監査ログ記録: 自動承認（global_list）
+    _audit "command_approval" \
+      "command" "$command" \
+      "--metadata" "approval_method" "global_list" "approval_status" "auto_approved"
   # 承認済みコマンドかチェック
   elif [ -f "$approved_commands_file" ] && grep -Fxq "$command" "$approved_commands_file" 2>/dev/null; then
     # 確認をスキップして実行
-    :
+    # 監査ログ記録: セッションリスト承認
+    _audit "command_approval" \
+      "command" "$command" \
+      "--metadata" "approval_method" "session_list" "approval_status" "session_approved"
   else
     # ユーザーに確認を求める
     echo "" >&2
@@ -40,6 +55,10 @@ function execute_shell_command
     case "$confirm" in
       "" | [Yy] | [Yy][Ee][Ss])
         # 今回のみ実行（リストに追加しない）
+        # 監査ログ記録: ユーザー承認（1回のみ）
+        _audit "command_approval" \
+          "command" "$command" \
+          "--metadata" "approval_method" "user_interaction" "approval_status" "user_approved"
         ;;
       [Aa] | [Aa][Pp][Pp][Rr][Oo][Vv][Ee])
         # 承認済みリストに追加（永続的に許可）
@@ -47,9 +66,17 @@ function execute_shell_command
           touch "$approved_commands_file"
         fi
         echo "$command" >> "$approved_commands_file"
+        # 監査ログ記録: ユーザー承認（永続）
+        _audit "command_approval" \
+          "command" "$command" \
+          "--metadata" "approval_method" "user_interaction" "approval_status" "session_approved"
         ;;
       *)
         # 中止
+        # 監査ログ記録: コマンド拒否
+        _audit "command_rejection" \
+          "command" "$command" \
+          "--metadata" "approval_status" "user_rejected"
         echo '{"exit_code": 1, "stdout": "", "stderr": "Command execution was cancelled by user"}'
         return 1
         ;;
@@ -84,6 +111,13 @@ function execute_shell_command
   fi
   
   rm -f "$stdout_file" "$stderr_file"
+  
+  # 監査ログ記録: コマンド実行
+  _audit "command_execution" \
+    "command" "$command" \
+    "exit_code" "$exit_code" \
+    "stdout_size" "$stdout_size" \
+    "stderr_size" "$stderr_size"
   
   # JSON形式で返す
   result="{\"exit_code\": $exit_code, \"stdout\": $(echo -n "$stdout" | json_string), \"stderr\": $(echo -n "$stderr" | json_string)}"

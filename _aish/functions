@@ -5,6 +5,15 @@
 . "${AISH_HOME:-$HOME/.aish}/lib/error_handler.sh"
 . "${AISH_HOME:-$HOME/.aish}/lib/logger.sh"
 
+# 監査ログライブラリを読み込む（エラー時はスキップ）
+if [ -f "${AISH_HOME:-$HOME/.aish}/lib/audit_logger.sh" ]; then
+    . "${AISH_HOME:-$HOME/.aish}/lib/audit_logger.sh" 2>/dev/null || true
+    # コンポーネント名を固定したヘルパー関数
+    _audit() {
+        audit_log_with_fields_safe "$1" "functions" "${@:2}"
+    }
+fi
+
 # flush terminal log to the file
 function detail.aish_flush_script_log
 {
@@ -217,6 +226,15 @@ function detail.aish_filter_sensitive_info
     cat "$tmp_filtered" | "$AISH_HOME"/bin/leakscan --color -v "$AISH_HOME"/rules.json >&2
     echo "----------------------------------------" >&2
     echo >&2
+    
+    # 監査ログ記録: 機密情報検出
+    # マッチした行数を取得
+    local matched_lines=$(wc -l < "$tmp_filtered" 2>/dev/null || echo "0")
+    # パターンIDを抽出（簡易実装：leakscanのverbose出力から抽出を試みる）
+    # 実際のマッチングは複雑なため、一旦空配列として記録
+    _audit "sensitive_info_detected" \
+      "matched_lines" "$matched_lines" \
+      "matched_patterns" "[]"
   fi
 
   local result=0
@@ -226,9 +244,19 @@ function detail.aish_filter_sensitive_info
     if [[ "$confirm" == "a" ]]; then
       cat "$tmp_filtered" >> "$AISH_SESSION/approved_lines"
       echo "⚠️  SECURITY WARNING: Bad patterns matched, but the line is approved for future use." >&2
+      # 監査ログ記録: 機密情報承認（always allow）
+      local matched_lines=$(wc -l < "$tmp_filtered" 2>/dev/null || echo "0")
+      _audit "sensitive_info_approved" \
+        "matched_lines" "$matched_lines" \
+        "matched_patterns" "[]"
     elif [[ "$confirm" == "m" ]]; then
       cat "$tmp_filtered" >> "$AISH_SESSION/mask_lines"
       echo "INFO: Bad patterns matched. These lines will be masked in future requests." >&2
+      # 監査ログ記録: 機密情報マスク
+      local matched_lines=$(wc -l < "$tmp_filtered" 2>/dev/null || echo "0")
+      _audit "sensitive_info_masked" \
+        "matched_lines" "$matched_lines" \
+        "matched_patterns" "[]"
     elif [[ "$confirm" != "y" ]]; then
       echo "❌  Request has been aborted." >&2
       result=1

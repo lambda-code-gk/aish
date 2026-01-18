@@ -3,6 +3,15 @@
 # セッション管理ライブラリ
 # aiコマンドとaishコマンドのセッション管理を提供します
 
+# 監査ログライブラリを読み込む（エラー時はスキップ）
+if [ -f "${AISH_HOME:-$HOME/.aish}/lib/audit_logger.sh" ]; then
+    . "${AISH_HOME:-$HOME/.aish}/lib/audit_logger.sh" 2>/dev/null || true
+    # コンポーネント名を固定したヘルパー関数
+    _audit() {
+        audit_log_with_fields_safe "$1" "session_manager" "${@:2}"
+    }
+fi
+
 # 元のセッション情報を保存する変数（aiコマンド用）
 _ORIGINAL_AISH_SESSION=""
 _TEMP_SESSION_CREATED=false
@@ -28,6 +37,9 @@ function session_manager_create_new_session
   echo "Starting new session: $session_id" >&2
   
   session_manager_setup_session "$session"
+  
+  # 監査ログ記録: セッション作成
+  _audit "session_created" "is_temp" "false"
 }
 
 # 既存のセッションを再開する
@@ -54,6 +66,9 @@ function session_manager_resume_session
   fi
   
   session_manager_setup_session "$session"
+  
+  # 監査ログ記録: セッション再開
+  _audit "session_resumed" "session_id" "$session_id"
 }
 
 # セッション一覧を表示する
@@ -119,6 +134,9 @@ function session_manager_init
 
     session_manager_setup_session "$temp_session"
     _TEMP_SESSION_CREATED=true
+    
+    # 監査ログ記録: 一時セッション作成
+    _audit "session_created" "is_temp" "true"
   else
     # ロックファイルが存在しない場合は通常通りロックファイルを作成
     touch "$lock_file"
@@ -140,11 +158,18 @@ function session_manager_cleanup
       fi
       rm -f "$_ORIGINAL_AISH_SESSION/ai.lock"
       rm -f "$_ORIGINAL_AISH_SESSION"/masked_* 2>/dev/null
+      
+      # 監査ログ記録: セッション削除（元のセッションの場合のみ、一時セッションは通常削除されない）
+      # 注: 元のセッションが削除される場合は明示的に記録されるが、ここでは削除されないため記録しない
     fi
   else
     # 一時セッションの場合
+    local temp_session_id=$(basename "$AISH_SESSION" 2>/dev/null || echo "")
+    local is_temp=true
     if [ "${AISH_DEBUG:-false}" != "true" ]; then
       # デバッグモードでない場合は一時セッションを削除
+      # 監査ログ記録: 一時セッション削除（削除前に記録）
+      _audit "session_deleted" "is_temp" "true"
       rm -rf "$AISH_SESSION"
     fi
   fi
