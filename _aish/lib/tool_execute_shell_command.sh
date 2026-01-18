@@ -28,23 +28,59 @@ function execute_shell_command
   # 承認済みコマンドリストのファイル
   approved_commands_file="$AISH_SESSION/approved_commands"
   
+  # 1. 危険性チェック（承認チェックより先に実行）
+  local detected_patterns=$(check_command_danger "$command")
+  local danger_level=$?
+  local danger_level_str=""
+  local show_warning=false
+  
+  if [ $danger_level -gt 0 ]; then
+    danger_level_str=$(_get_danger_level_string $danger_level)
+    show_warning=true
+    
+    # 監査ログ記録: 危険コマンド検出
+    _audit "command_danger_detected" \
+      "command" "$command" \
+      "danger_level" "$danger_level_str" \
+      "--metadata" "detected_patterns" "$(echo "$detected_patterns" | tr '\n' ',')"
+  fi
+  
   # 確認不要コマンドかチェック
   if is_command_approved "$command"; then
     # 確認をスキップして実行
     # 監査ログ記録: 自動承認（global_list）
+    # 危険性警告を表示（自動承認されていても警告は表示）
+    if [ "$show_warning" = true ]; then
+      echo "" >&2
+      _get_danger_warning_message $danger_level "$detected_patterns" "$command" >&2
+    fi
+    
+    # 監査ログ記録: 自動承認（global_list）
     _audit "command_approval" \
       "command" "$command" \
-      "--metadata" "approval_method" "global_list" "approval_status" "auto_approved"
+      "--metadata" "approval_method" "global_list" "approval_status" "auto_approved" "danger_level" "$danger_level_str"
   # 承認済みコマンドかチェック
   elif [ -f "$approved_commands_file" ] && grep -Fxq "$command" "$approved_commands_file" 2>/dev/null; then
+    # 危険性警告を表示（承認済みでも警告は表示）
+    if [ "$show_warning" = true ]; then
+      echo "" >&2
+      _get_danger_warning_message $danger_level "$detected_patterns" "$command" >&2
+    fi
+    
     # 確認をスキップして実行
     # 監査ログ記録: セッションリスト承認
     _audit "command_approval" \
       "command" "$command" \
-      "--metadata" "approval_method" "session_list" "approval_status" "session_approved"
+      "--metadata" "approval_method" "session_list" "approval_status" "session_approved" "danger_level" "$danger_level_str"
   else
     # ユーザーに確認を求める
     echo "" >&2
+    
+    # 危険性警告を表示（承認要求時にも表示）
+    if [ "$show_warning" = true ]; then
+      _get_danger_warning_message $danger_level "$detected_patterns" "$command" >&2
+    fi
+    
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "🔧 Agent wants to execute command:" >&2
     echo "   $command" >&2
@@ -58,7 +94,7 @@ function execute_shell_command
         # 監査ログ記録: ユーザー承認（1回のみ）
         _audit "command_approval" \
           "command" "$command" \
-          "--metadata" "approval_method" "user_interaction" "approval_status" "user_approved"
+          "--metadata" "approval_method" "user_interaction" "approval_status" "user_approved" "danger_level" "$danger_level_str"
         ;;
       [Aa] | [Aa][Pp][Pp][Rr][Oo][Vv][Ee])
         # 承認済みリストに追加（永続的に許可）
@@ -69,14 +105,14 @@ function execute_shell_command
         # 監査ログ記録: ユーザー承認（永続）
         _audit "command_approval" \
           "command" "$command" \
-          "--metadata" "approval_method" "user_interaction" "approval_status" "session_approved"
+          "--metadata" "approval_method" "user_interaction" "approval_status" "session_approved" "danger_level" "$danger_level_str"
         ;;
       *)
         # 中止
         # 監査ログ記録: コマンド拒否
         _audit "command_rejection" \
           "command" "$command" \
-          "--metadata" "approval_status" "user_rejected"
+          "--metadata" "approval_status" "user_rejected" "danger_level" "$danger_level_str"
         echo '{"exit_code": 1, "stdout": "", "stderr": "Command execution was cancelled by user"}'
         return 1
         ;;
@@ -117,7 +153,8 @@ function execute_shell_command
     "command" "$command" \
     "exit_code" "$exit_code" \
     "stdout_size" "$stdout_size" \
-    "stderr_size" "$stderr_size"
+    "stderr_size" "$stderr_size" \
+    "--metadata" "danger_level" "$danger_level_str"
   
   # JSON形式で返す
   result="{\"exit_code\": $exit_code, \"stdout\": $(echo -n "$stdout" | json_string), \"stderr\": $(echo -n "$stderr" | json_string)}"

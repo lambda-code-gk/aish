@@ -196,11 +196,27 @@ EOF
                 text=$(_provider_parse_response_text "$response")
                 
                 if [ "$text" == "null" ] || [ -z "$text" ]; then
-                    # エラーレスポンスの場合はエラーメッセージを抽出して表示
-                    local error_msg=$(echo "$response" | jq -r '.error.message // .error // "Unknown error"' 2>/dev/null || echo "Failed to parse response")
-                    error_error "LLM API returned empty or null response: $error_msg" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "iteration": '$iteration', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
-                    echo "$response" >&2
-                    exit 1
+                    # レスポンスが空の場合、エラーメッセージを確認
+                    local error_msg=$(echo "$response" | jq -r '.error.message // .error // empty' 2>/dev/null)
+                    if [ ! -z "$error_msg" ]; then
+                        # エラーレスポンスの場合はエラーメッセージを表示して終了
+                        error_error "LLM API returned error: $error_msg" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "iteration": '$iteration', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
+                        echo "$response" >&2
+                        exit 1
+                    else
+                        # エラーでなくテキストが空の場合（ツール実行後の正常終了の場合など）
+                        # メッセージ履歴があるかチェック
+                        local has_messages=$(echo "$request_data" | jq -e '.messages != null and (.messages | length > 0)' 2>/dev/null && echo "true" || echo "false")
+                        if [ "$has_messages" = "true" ]; then
+                            # メッセージ履歴がある場合は正常終了として扱う（ツール実行の結果だけで終了する場合）
+                            return 0
+                        else
+                            # メッセージ履歴もない場合はエラー
+                            error_error "LLM API returned empty response with no error" '{"component": "llm_driver", "function": "_llm_driver_send_request_with_tools", "iteration": '$iteration', "response": '"$(echo "$response" | jq -c . 2>/dev/null || echo "\"$response\"")"'}'
+                            echo "$response" >&2
+                            exit 1
+                        fi
+                    fi
                 fi
 
                 save_response_text "$text"
