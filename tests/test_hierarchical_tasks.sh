@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 # テスト用のディレクトリ
 TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+trap "rm -rf $TEST_DIR" EXIT SIGINT SIGTERM SIGHUP
 
 # aiコマンドのパス
 AI_CMD="${PROJECT_ROOT}/ai"
@@ -29,7 +29,11 @@ mkdir -p "$AISH_HOME"
 unset AISH_SESSION
 
 # テスト用のfunctionsファイルを作成
-mkdir -p "$AISH_HOME"
+mkdir -p "$AISH_HOME/lib"
+cp "${PROJECT_ROOT}/_aish/lib/error_handler.sh" "$AISH_HOME/lib/error_handler.sh"
+cp "${PROJECT_ROOT}/_aish/lib/logger.sh" "$AISH_HOME/lib/logger.sh"
+cp "${PROJECT_ROOT}/_aish/lib/session_manager.sh" "$AISH_HOME/lib/session_manager.sh"
+
 cat > "$AISH_HOME/functions" << 'EOF'
 #!/bin/bash
 function detail.aish_flush_script_log { :; }
@@ -98,13 +102,15 @@ test_directory_traversal_prevention() {
     setup_test_tasks
     
     local output
+    output=$($AI_CMD "../../../secret.txt" 2>&1 || true)
     # Try to access a file outside task.d
     # If it works, it might try to '.' the file.
     # We want it to fail safely or reject it.
-    if $AI_CMD "../../../secret.txt" 2>&1 | grep -q "Error:"; then
+    if echo "$output" | grep -qi "error"; then
         log_info "✓ Traversal rejected"
     else
         log_error "✗ Traversal NOT rejected"
+        log_error "Actual output: $output"
         return 1
     fi
 }

@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 # テスト用のディレクトリ
 TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+trap "rm -rf $TEST_DIR" EXIT SIGINT SIGTERM SIGHUP
 
 # aiコマンドのパス
 AI_CMD="${AI_CMD:-$PROJECT_ROOT/ai}"
@@ -29,7 +29,11 @@ mkdir -p "$AISH_HOME"
 unset AISH_SESSION
 
 # テスト用のfunctionsファイルを作成
-mkdir -p "$AISH_HOME"
+mkdir -p "$AISH_HOME/lib"
+cp "${PROJECT_ROOT}/_aish/lib/error_handler.sh" "$AISH_HOME/lib/error_handler.sh"
+cp "${PROJECT_ROOT}/_aish/lib/logger.sh" "$AISH_HOME/lib/logger.sh"
+cp "${PROJECT_ROOT}/_aish/lib/session_manager.sh" "$AISH_HOME/lib/session_manager.sh"
+
 cat > "$AISH_HOME/functions" << 'EOF'
 #!/bin/bash
 function detail.aish_flush_script_log {

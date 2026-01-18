@@ -16,14 +16,17 @@ NC='\033[0m' # No Color
 
 # テスト用のディレクトリ
 TEST_DIR=$(mktemp -d)
-trap "rm -rf $TEST_DIR" EXIT
+trap "rm -rf $TEST_DIR" EXIT SIGINT SIGTERM SIGHUP
 
 # aishコマンドのパス
 AISH_CMD="${AISH_CMD:-$PROJECT_ROOT/aish}"
 
 # AISH_HOMEの設定（テスト用）
 export AISH_HOME="${TEST_DIR}/.aish"
-mkdir -p "$AISH_HOME"
+mkdir -p "$AISH_HOME/lib"
+cp "${PROJECT_ROOT}/_aish/lib/error_handler.sh" "$AISH_HOME/lib/error_handler.sh"
+cp "${PROJECT_ROOT}/_aish/lib/logger.sh" "$AISH_HOME/lib/logger.sh"
+cp "${PROJECT_ROOT}/_aish/lib/session_manager.sh" "$AISH_HOME/lib/session_manager.sh"
 
 # テスト用のfunctionsファイルを作成
 cat > "$AISH_HOME/functions" << 'EOF'

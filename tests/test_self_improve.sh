@@ -112,7 +112,10 @@ test_self_improve_execution() {
     export -f query
     
     # 実行（AISH_HOMEを偽装して実行）
+    # プロジェクトの.aish/memoryを拾わないように一時ディレクトリに移動して実行
     (
+        mkdir -p "$TEST_DIR/work"
+        cd "$TEST_DIR/work"
         export AISH_HOME="$AISH_HOME_TEST"
         source "$SELF_IMPROVE_LIB"
         run_self_improvement "$AISH_LOGFILE" "$AISH_HOME/memory"

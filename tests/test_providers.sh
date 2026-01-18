@@ -187,13 +187,18 @@ test_gemini_process_tool_calls() {
 test_agent_instruction_update() {
     test_case "Agent System Instruction - contains memory instructions"
     
-    local agent_exec="$PROJECT_ROOT/_aish/task.d/agent/execute"
-    if grep -i -q "memory" "$agent_exec" && (grep -q "save_memory" "$agent_exec" || grep -q "search_memory" "$agent_exec"); then
+    local agent_exec="$PROJECT_ROOT/_aish/task.d/agent.sh"
+    if [ ! -f "$agent_exec" ]; then
+        # fallback to legacy directory if it still exists (unlikely in this version but for robustness)
+        agent_exec="$PROJECT_ROOT/_aish/task.d/agent/execute"
+    fi
+
+    if [ -f "$agent_exec" ] && grep -i -q "memory" "$agent_exec" && (grep -q "save_memory" "$agent_exec" || grep -q "search_memory" "$agent_exec"); then
         log_info "✓ Agent system instruction contains memory-related guidance"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
     else
-        log_error "✗ Agent system instruction missing memory guidance"
+        log_error "✗ Agent system instruction missing memory guidance or file not found"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         return 1
     fi
