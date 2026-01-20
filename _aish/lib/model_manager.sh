@@ -70,7 +70,7 @@ function list_supported_models
 # 全プロバイダの対応モデル一覧を表示
 function list_all_supported_models
 {
-    local providers=("gpt" "gemini")
+    local providers=("gpt" "gemini" "ollama")
     local found=false
     
     for provider in "${providers[@]}"; do

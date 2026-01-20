@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+# Ollama 用プロバイダ
+# - デフォルトではローカルの Ollama サーバー (http://localhost:11434) を利用
+# - OpenAI 互換の /v1/chat/completions エンドポイントを利用して会話
+
+# ベースURLとエンドポイント
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
+ENDPOINT="${ENDPOINT:-$OLLAMA_BASE_URL/v1/chat/completions}"
+MODELS_ENDPOINT="${MODELS_ENDPOINT:-$OLLAMA_BASE_URL/api/tags}"
+
+# 対応しているモデルの例
+# 実際にインストールされているモデルは `ollama list` で確認してください
+SUPPORTED_MODELS=(
+  "llama3.1"
+  "llama3.1:8b"
+  "qwen2.5:7b"
+)
+
+MODEL="${MODEL:-llama3.1}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
+
+LOG="$AISH_SESSION"/log.json
+
+# エラーハンドリングとログライブラリを読み込む
+. "$AISH_HOME/lib/error_handler.sh"
+. "$AISH_HOME/lib/logger.sh"
+
+# ロガーの初期化
+logger_init
+
+# 共通ライブラリを読み込む
+. "$AISH_HOME/lib/agent_approve.sh"
+. "$AISH_HOME/lib/tool_helper.sh"
+. "$AISH_HOME/lib/tool_execute_shell_command.sh"
+. "$AISH_HOME/lib/tool_save_memory.sh"
+. "$AISH_HOME/lib/tool_search_memory.sh"
+. "$AISH_HOME/lib/memory_manager.sh"
+. "$AISH_HOME/lib/query_entry.sh"
+. "$AISH_HOME/lib/llm_driver.sh"
+
+# 全てのtoolファイルを読み込む
+_load_all_tool_files
+
+# OpenAI 互換 (chat.completions) 形式のリクエストJSONを生成（通常モード）
+function _provider_make_request_payload
+{
+    query=$1
+    system=$2
+
+    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": ['
+
+    local first=true
+    if [ ! -z "$system" ]; then
+      echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'}'
+      first=false
+    fi
+
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        if [ "$first" = false ]; then
+            echo -n ','
+        fi
+        if [[ "$file" =~ "_user.txt" ]]; then
+            echo '  {"role": "user", "content": '$(cat "$file" | json_string)'}'
+        else
+            echo '  {"role": "assistant", "content": '$(cat "$file" | json_string)'}'
+        fi
+        first=false
+    done
+
+    user_input=$(echo -e "----\n# user message:\n$query" | json_string)
+    if [ "$first" = false ]; then
+        echo -n ','
+    fi
+    echo '  {"role": "user", "content": '"$user_input"'}'
+    echo ']'
+    echo '}'
+}
+
+# OpenAI 互換 (chat.completions) 形式のリクエストJSONを生成（エージェントモード）
+function _provider_make_request_payload_agent
+{
+    query=$1
+    system=$2
+
+    # 動的にtool定義を読み込む（OpenAI 互換形式）
+    local tools
+    tools=$(_load_all_tool_definitions_openai)
+
+    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE', "tools": '$tools', "messages": ['
+
+    local first=true
+    if [ ! -z "$system" ]; then
+        echo '  {"role": "system", "content": '"$(echo "$system" | json_string)"'}'
+        first=false
+    fi
+
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        if [ "$first" = false ]; then
+            echo -n ','
+        fi
+        if [[ "$file" =~ "_user.txt" ]]; then
+            echo '  {"role": "user", "content": '$(cat "$file" | json_string)'}'
+        elif [[ "$file" =~ "_tool.txt" ]]; then
+            # tool roleの場合は特別な処理
+            echo -n '  {"role": "tool", "content": '
+            cat "$file"
+            echo '}'
+        else
+            # assistant roleの場合、tool_callsが含まれる可能性がある
+            echo -n '  {"role": "assistant", "content": '$(cat "$file" | json_string)'}'
+        fi
+        first=false
+    done
+    user_input=$(echo -e "----\n# user message:\n$query" | json_string)
+    if [ "$first" = false ]; then
+        echo -n ','
+    fi
+    echo '  {"role": "user", "content": '"$user_input"'}'
+    echo ']'
+    echo '}'
+}
+
+# プロバイダ固有: Ollama (OpenAI 互換) API へのHTTPリクエスト実行
+# 引数: request_file - リクエストJSONファイルのパス
+# 戻り値: レスポンスJSON文字列（標準出力）
+# 終了コード: curlの終了コード（0=成功、非0=エラー）
+function _provider_make_http_request
+{
+    local request_file="$1"
+
+    # 一部の環境では Authorization ヘッダは不要だが、OLLAMA_API_KEY があれば送る
+    local curl_opts=(
+      -s
+      -X POST "$ENDPOINT"
+      -H "Content-Type: application/json"
+      --data-binary @"$request_file"
+    )
+
+    if [ -n "$OLLAMA_API_KEY" ]; then
+      curl_opts+=(-H "Authorization: Bearer $OLLAMA_API_KEY")
+    fi
+
+    curl "${curl_opts[@]}"
+}
+
+# プロバイダ固有: レスポンスからテキストを抽出
+# 引数: response - レスポンスJSON文字列
+# 戻り値: 抽出したテキスト（または "null"）
+function _provider_parse_response_text
+{
+    local response="$1"
+    echo "$response" | jq -r '.choices[0].message.content // empty'
+}
+
+# プロバイダ固有: tool_callsの有無をチェック
+# 引数: response - レスポンスJSON文字列
+# 戻り値: "yes" または "no"
+function _provider_check_tool_calls
+{
+    local response="$1"
+    echo "$response" | jq -e '.choices[0].message.tool_calls != null and (.choices[0].message.tool_calls | length > 0)' > /dev/null 2>&1 && echo "yes" || echo "no"
+}
+
+# プロバイダ固有: tool_callsを処理して更新されたリクエストを返す
+# 引数: request_data - 現在のリクエストJSON文字列
+#      response - レスポンスJSON文字列
+# 戻り値: 更新されたリクエストJSON文字列
+function _provider_process_tool_calls
+{
+    local request_data="$1"
+    local response="$2"
+    local temp_request="$AISH_SESSION/temp_request_$$.json"
+
+    # モデルの応答（tool callsを含む）をmessagesに追加
+    assistant_message=$(echo "$response" | jq -c '.choices[0].message')
+    if [ -z "$assistant_message" ] || [ "$assistant_message" = "null" ]; then
+        echo "$response" >&2
+        return 1
+    fi
+
+    updated_request=$(echo "$request_data" | jq --argjson assistant_msg "$assistant_message" \
+        '.messages += [$assistant_msg]')
+
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    # 各tool callを処理してtool responseを収集
+    tool_calls=$(echo "$response" | jq -c '.choices[0].message.tool_calls[]')
+
+    # 各tool callを処理
+    tool_messages="[]"
+    while IFS= read -r tool_call; do
+        if [ -z "$tool_call" ]; then
+            continue
+        fi
+        tool_call_id=$(echo "$tool_call" | jq -r '.id')
+        func_name=$(echo "$tool_call" | jq -r '.function.name')
+        func_args=$(echo "$tool_call" | jq -r '.function.arguments')
+
+        # 動的にtool実行処理を呼び出す
+        result=$(_execute_tool_call "$func_name" "$tool_call_id" "$func_args" "openai")
+        execute_exit_code=$?
+
+        if [ $execute_exit_code -ne 0 ] || [ -z "$result" ]; then
+            # エラーが発生した場合はエラーメッセージを返す
+            if [ -z "$result" ]; then
+                result='{"error": "Tool execution failed"}'
+            fi
+            tool_message=$(echo "{}" | jq -c \
+                --arg tool_call_id "$tool_call_id" \
+                --argjson result "$result" \
+                '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
+        else
+            # tool messageを生成（resultはJSON形式の文字列）
+            tool_message=$(echo "{}" | jq -c \
+                --arg tool_call_id "$tool_call_id" \
+                --argjson result "$result" \
+                '{role: "tool", tool_call_id: $tool_call_id, content: ($result | tostring)}')
+        fi
+
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+
+        # 配列に追加
+        tool_messages=$(echo "$tool_messages" | jq --argjson tool_msg "$tool_message" '. += [$tool_msg]')
+    done <<< "$tool_calls"
+
+    # すべてのtool messageをmessagesに追加
+    echo "$updated_request" | jq --argjson tool_msgs "$tool_messages" \
+        '.messages += $tool_msgs'
+
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+}
+
+# プロバイダ固有: APIから利用可能なモデル一覧を取得
+# 戻り値: モデル名のリスト（改行区切り）
+function _provider_list_available_models
+{
+    local response
+    response=$(curl -s "$MODELS_ENDPOINT")
+    if [ $? -ne 0 ] || [ -z "$response" ]; then
+        error_error "Failed to fetch models from Ollama API" '{"component": "ai.ollama", "function": "_provider_list_available_models"}'
+        return 1
+    fi
+
+    # Ollama の /api/tags 応答からモデル名を抽出
+    echo "$response" | jq -r '.models[]? | .model' | sort
+}
+
+# 共通ライブラリを使用してクエリを実行
+function query
+{
+  _llm_driver_query "$@"
+}
+
+
