@@ -32,7 +32,8 @@ unset AISH_SESSION
 mkdir -p "$AISH_HOME/lib"
 cp "${PROJECT_ROOT}/_aish/lib/error_handler.sh" "$AISH_HOME/lib/error_handler.sh"
 cp "${PROJECT_ROOT}/_aish/lib/logger.sh" "$AISH_HOME/lib/logger.sh"
-cp "${PROJECT_ROOT}/_aish/lib/session_manager.sh" "$AISH_HOME/lib/session_manager.sh"
+cp "${PROJECT_ROOT}/_aish/lib/session.sh" "$AISH_HOME/lib/session.sh"
+cp "${PROJECT_ROOT}/_aish/lib/task.sh" "$AISH_HOME/lib/task.sh"
 
 cat > "$AISH_HOME/functions" << 'EOF'
 #!/bin/bash

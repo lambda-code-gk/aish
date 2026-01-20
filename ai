@@ -14,18 +14,18 @@ error_handler_init
 logger_init
 
 # セッション管理ライブラリを読み込む
-. "$AISH_HOME/lib/session_manager.sh"
+. "$AISH_HOME/lib/session.sh"
 
 # タスク管理ライブラリを読み込む
 . "$AISH_HOME/lib/task.sh"
 
 # セッション管理を初期化（ロックチェックと一時セッション作成）
-session_manager_init
+session_manager_prepare_session_for_ai
 
 function cleanup_on_exit()
 {
   # セッション管理のクリーンアップ処理を呼び出す
-  session_manager_cleanup
+  session_manager_cleanup_session_for_ai
   echo
   exit $?
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+#set -x
 
 # Function to display usage
 usage() {
@@ -47,7 +48,7 @@ export AISH_RENDER_BIN="${AISH_RENDER_BIN:-$AISH_HOME/bin/aish-render}"
 export AISH_CAPTURE_BIN="${AISH_CAPTURE_BIN:-$AISH_HOME/bin/aish-capture}"
 
 # セッション管理ライブラリを読み込む
-. "$AISH_HOME/lib/session_manager.sh"
+. "$AISH_HOME/lib/session.sh"
 
 # Handle the command
 command=$1
@@ -59,10 +60,7 @@ fi
 
 if [ "$command" = "resume" ]; then
     shift
-    session_id="$1"
-    if ! session_manager_resume_session "$session_id"; then
-        exit 1
-    fi
+    session_id="${1:-latest}"
     command=""
 fi
 
@@ -74,11 +72,13 @@ if [ ! -z "$command" ]; then
     exit $?
 fi
 
-# No command specified, start a new session
-if [ -z "$session" ]; then
-    session_manager_create_new_session
+# resume session if specified or create a new session
+if [ -n "$session_id" ]; then
+    session_resume "$session_id"
+elif [ -n "$session" ]; then
+    session_resume_with_directory "$session"
 else
-    session_manager_setup_session "$session"
+    session_manager_create_new_session
 fi
 
 # Determine if we should append to the log file

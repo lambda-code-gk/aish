@@ -22,6 +22,17 @@ function session_manager_get_sessions_dir
   echo "${AISH_HOME}/sessions"
 }
 
+# セッション一覧を表示する
+function session_manager_list_sessions
+{
+  local sessions_dir=$(session_manager_get_sessions_dir)
+  ls -1 "$sessions_dir" 2>/dev/null | grep -v "latest" | sort -r
+  
+  if [ -d "$AISH_SESSION" ]; then
+    echo "current: $(basename $AISH_SESSION)" >&2
+  fi
+}
+
 # 新規セッションを作成する
 # 戻り値: 作成されたセッションのパス（環境変数としても設定される）
 function session_manager_create_new_session
@@ -36,85 +47,16 @@ function session_manager_create_new_session
   
   echo "Starting new session: $session_id" >&2
   
-  session_manager_setup_session "$session"
+  _session_setup "$session"
   
   # 監査ログ記録: セッション作成
   _audit "session_created" "is_temp" "false"
 }
 
-# 既存のセッションを再開する
-# 引数: session_id - 再開するセッションID（省略時は最新）
-function session_manager_resume_session
-{
-  local session_id="$1"
-  local sessions_dir=$(session_manager_get_sessions_dir)
-  
-  if [ -z "$session_id" ]; then
-    # 最新のセッションを取得
-    session_id=$(ls -1t "$sessions_dir" 2>/dev/null | grep -v "latest" | head -n 1)
-    if [ -z "$session_id" ]; then
-      echo "No sessions found to resume." >&2
-      return 1
-    fi
-    echo "Resuming latest session: $session_id" >&2
-  fi
-  
-  local session="$sessions_dir/$session_id"
-  if [ ! -d "$session" ]; then
-    echo "Session not found: $session_id" >&2
-    return 1
-  fi
-  
-  session_manager_setup_session "$session"
-  
-  # 監査ログ記録: セッション再開
-  _audit "session_resumed" "session_id" "$session_id"
-}
-
-# セッション一覧を表示する
-function session_manager_list_sessions
-{
-  local sessions_dir=$(session_manager_get_sessions_dir)
-  ls -1 "$sessions_dir" 2>/dev/null | grep -v "latest" | sort -r
-  
-  if [ -d "$AISH_SESSION" ]; then
-    echo "current: $(basename $AISH_SESSION)" >&2
-  fi
-}
-
-# セッション環境変数を設定し、必要なディレクトリとFIFOを作成する
-# 引数: session - セッションディレクトリのパス
-function session_manager_setup_session
-{
-  local session="$1"
-  
-  if [ -z "$session" ]; then
-    echo "Error: session path is required" >&2
-    return 1
-  fi
-  
-  # セッションディレクトリが存在しない場合は作成
-  if [ ! -d "$session" ]; then
-    mkdir -p "$session"
-  fi
-  
-  # 環境変数を設定
-  export AISH_SESSION="$session"
-  export AISH_PART="$AISH_SESSION/part"
-  export AISH_LOGFILE="$session/script.jsonl"
-  
-  # partディレクトリを作成
-  if [ ! -d "$AISH_PART" ]; then
-    mkdir -p "$AISH_PART"
-  fi
-  
-  # FIFOを作成
-  [ -p "$AISH_SESSION/fifo" ] || { rm -f "$AISH_SESSION/fifo"; mkfifo "$AISH_SESSION/fifo"; }
-}
 
 # ロックファイルをチェックし、必要に応じて一時セッションを作成する（aiコマンド用）
 # この関数は ai コマンドの開始時に呼び出される
-function session_manager_init
+function session_manager_prepare_session_for_ai
 {
   if [ -z "$AISH_SESSION" ]; then
     # AISH_SESSIONが設定されていない場合は何もしない
@@ -132,7 +74,7 @@ function session_manager_init
     local temp_session_id="${original_session_id}_${child_session_id}"
     local temp_session="$sessions_dir/$temp_session_id"
 
-    session_manager_setup_session "$temp_session"
+    _session_setup "$temp_session"
     _TEMP_SESSION_CREATED=true
     
     # 監査ログ記録: 一時セッション作成
@@ -146,7 +88,7 @@ function session_manager_init
 
 # セッションのクリーンアップ処理（aiコマンド用）
 # 元のセッションの場合のみロックファイルを削除する
-function session_manager_cleanup
+function session_manager_cleanup_session_for_ai
 {
   if [ "$_TEMP_SESSION_CREATED" = false ]; then
     # 元のセッションの場合のみログ記録とロックファイル処理を行う
@@ -175,16 +117,71 @@ function session_manager_cleanup
   fi
 }
 
-# 一時セッションかどうかを判定する
-# 戻り値: true または false（文字列として返す）
-function session_manager_is_temp_session
+
+# 既存のセッションを再開する
+# 引数: session_id - 再開するセッションID（省略時は最新）
+function session_resume
 {
-  echo "$_TEMP_SESSION_CREATED"
+  local session_id="$1"
+  local sessions_dir=$(session_manager_get_sessions_dir)
+  
+  if [ "$session_id" = "latest" ]; then
+    # 最新のセッションを取得
+    session_id=$(ls -1t "$sessions_dir" 2>/dev/null | grep -v "latest" | head -n 1)
+    if [ -z "$session_id" ]; then
+      echo "No sessions found to resume." >&2
+      return 1
+    fi
+    echo "Resuming latest session: $session_id" >&2
+  fi
+  
+  local session="$sessions_dir/$session_id"
+  if [ ! -d "$session" ]; then
+    echo "Session not found: $session_id" >&2
+    return 1
+  fi
+  
+  _session_setup "$session"
+  
+  # 監査ログ記録: セッション再開
+  _audit "session_resumed" "session_id" "$session_id"
 }
 
-# 元のセッションのパスを取得する
-function session_manager_get_original_session
+function session_resume_with_directory
 {
-  echo "$_ORIGINAL_AISH_SESSION"
+  local session_dir="$1"
+  _session_setup "$session_dir"
+  # 監査ログ記録: セッション再開
+  _audit "session_resumed" "session_dir" "$session_dir"
 }
 
+
+# セッション環境変数を設定し、必要なディレクトリとFIFOを作成する
+# 引数: session - セッションディレクトリのパス
+function _session_setup
+{
+  local session="$1"
+  
+  if [ -z "$session" ]; then
+    echo "Error: session path is required" >&2
+    return 1
+  fi
+  
+  # セッションディレクトリが存在しない場合は作成
+  if [ ! -d "$session" ]; then
+    mkdir -p "$session"
+  fi
+  
+  # 環境変数を設定
+  export AISH_SESSION="$session"
+  export AISH_PART="$AISH_SESSION/part"
+  export AISH_LOGFILE="$session/script.jsonl"
+  
+  # partディレクトリを作成
+  if [ ! -d "$AISH_PART" ]; then
+    mkdir -p "$AISH_PART"
+  fi
+  
+  # FIFOを作成
+  [ -p "$AISH_SESSION/fifo" ] || { rm -f "$AISH_SESSION/fifo"; mkfifo "$AISH_SESSION/fifo"; }
+}
