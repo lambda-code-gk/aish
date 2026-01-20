@@ -1,5 +1,3 @@
 export AISH_PROVIDER="ollama"
-export MODEL="${MODEL:-llama3.1}"
-export TEMPERATURE="${TEMPERATURE:-0.7}"
-
-
+export MODEL="qwen3:1.7b"
+export TEMPERATURE=0.7

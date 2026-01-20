@@ -105,9 +105,11 @@ function task_list_all
 
 # タスクを実行する
 # 引数: task_path - 実行するタスクのパス
+#       * - タスクに渡す引数
 function task_execute
 {
   local task_path="$1"
+  shift
   
   if [ -z "$task_path" ]; then
     error_error "Task path is empty" '{"component": "task"}'
@@ -116,7 +118,7 @@ function task_execute
   
   if [ -d "$task_path" ]; then
     . "$task_path/conf"
-    . "$task_path/execute"
+    . "$task_path/execute" "$@"
   else
     # If it's a file, we just source it.
     # We used to source default/conf here, but that's legacy behavior.
@@ -124,7 +126,7 @@ function task_execute
     if [ -f "$AISH_HOME/task.d/default/conf" ]; then
       . "$AISH_HOME/task.d/default/conf"
     fi
-    . "$task_path"
+    . "$task_path" "$@"
   fi
 }
 

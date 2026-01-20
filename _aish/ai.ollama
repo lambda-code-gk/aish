@@ -17,9 +17,10 @@ SUPPORTED_MODELS=(
   "llama3.1"
   "llama3.1:8b"
   "qwen2.5:7b"
+  "gemma2:2b"
 )
 
-MODEL="${MODEL:-llama3.1}"
+MODEL="${MODEL:-gemma2:2b}"
 TEMPERATURE="${TEMPERATURE:-0.7}"
 
 LOG="$AISH_SESSION"/log.json

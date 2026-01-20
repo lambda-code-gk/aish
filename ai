@@ -131,4 +131,4 @@ then
   exit 0
 fi
 
-task_execute "$task_path"
+task_execute "$task_path" "$@"

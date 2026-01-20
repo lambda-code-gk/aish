@@ -5,6 +5,8 @@ if [ "$AISH_PROVIDER" = "gpt" ]; then
     . "$AISH_HOME"/ai.gpt
 elif [ "$AISH_PROVIDER" = "gemini" ]; then
     . "$AISH_HOME"/ai.gemini
+elif [ "$AISH_PROVIDER" = "ollama" ]; then
+    . "$AISH_HOME"/ai.ollama
 else
     # Fallback to legacy behavior
     if [ "$MODEL" = "gpt" ]; then
