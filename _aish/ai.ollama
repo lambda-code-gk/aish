@@ -51,7 +51,12 @@ function _provider_make_request_payload
     query=$1
     system=$2
 
-    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE',"messages": ['
+    local options_json=""
+    if [ -n "$NUM_CTX" ]; then
+        options_json=', "options": {"num_ctx": '$NUM_CTX'}'
+    fi
+
+    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE$options_json', "messages": ['
 
     local first=true
     if [ ! -z "$system" ]; then
@@ -91,7 +96,12 @@ function _provider_make_request_payload_agent
     local tools
     tools=$(_load_all_tool_definitions_openai)
 
-    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE', "tools": '$tools', "messages": ['
+    local options_json=""
+    if [ -n "$NUM_CTX" ]; then
+        options_json=', "options": {"num_ctx": '$NUM_CTX'}'
+    fi
+
+    echo '{"model": "'$MODEL'", "temperature": '$TEMPERATURE$options_json', "tools": '$tools', "messages": ['
 
     local first=true
     if [ ! -z "$system" ]; then
