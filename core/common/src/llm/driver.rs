@@ -2,6 +2,7 @@
 //!
 //! プロバイダに依存しない共通処理を提供します。
 
+use crate::error::Error;
 use crate::llm::provider::{LlmProvider, Message};
 
 /// LLMドライバー
@@ -24,26 +25,28 @@ impl<P: LlmProvider> LlmDriver<P> {
     /// 
     /// # Returns
     /// * `Ok(String)` - LLMからの応答テキスト
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
+    /// * `Err(Error)` - エラーメッセージと終了コード
     pub fn query(
         &self,
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
-    ) -> Result<String, (String, i32)> {
+    ) -> Result<String, Error> {
+        use crate::error::json_error;
+        
         // リクエストペイロードを生成
         let payload = self.provider.make_request_payload(query, system_instruction, history)?;
         
         // JSON文字列に変換
         let request_json = serde_json::to_string(&payload)
-            .map_err(|e| (format!("Failed to serialize request: {}", e), 74))?;
+            .map_err(|e| json_error(&format!("Failed to serialize request: {}", e)))?;
         
         // HTTPリクエストを実行
         let response_json = self.provider.make_http_request(&request_json)?;
         
         // レスポンスからテキストを抽出
         let text = self.provider.parse_response_text(&response_json)?
-            .ok_or_else(|| ("No text in response".to_string(), 74))?;
+            .ok_or_else(|| json_error("No text in response"))?;
         
         Ok(text)
     }
@@ -58,20 +61,22 @@ impl<P: LlmProvider> LlmDriver<P> {
     /// 
     /// # Returns
     /// * `Ok(())` - 成功
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
+    /// * `Err(Error)` - エラーメッセージと終了コード
     pub fn query_streaming(
         &self,
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
-        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-    ) -> Result<(), (String, i32)> {
+        callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+    ) -> Result<(), Error> {
+        use crate::error::json_error;
+        
         // リクエストペイロードを生成
         let payload = self.provider.make_request_payload(query, system_instruction, history)?;
         
         // JSON文字列に変換
         let request_json = serde_json::to_string(&payload)
-            .map_err(|e| (format!("Failed to serialize request: {}", e), 74))?;
+            .map_err(|e| json_error(&format!("Failed to serialize request: {}", e)))?;
         
         // ストリーミングHTTPリクエストを実行
         self.provider.make_http_streaming_request(&request_json, callback)
@@ -97,20 +102,21 @@ mod tests {
             "mock"
         }
 
-        fn make_http_request(&self, _request_json: &str) -> Result<String, (String, i32)> {
+        fn make_http_request(&self, _request_json: &str) -> Result<String, Error> {
             Ok(r#"{"candidates":[{"content":{"parts":[{"text":"Hello, world!"}]}}]}"#.to_string())
         }
 
-        fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, (String, i32)> {
+        fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error> {
+            use crate::error::json_error;
             let v: Value = serde_json::from_str(response_json)
-                .map_err(|e| (format!("Failed to parse JSON: {}", e), 74))?;
+                .map_err(|e| json_error(&format!("Failed to parse JSON: {}", e)))?;
             let text = v["candidates"][0]["content"]["parts"][0]["text"]
                 .as_str()
                 .map(|s| s.to_string());
             Ok(text)
         }
 
-        fn check_tool_calls(&self, _response_json: &str) -> Result<bool, (String, i32)> {
+        fn check_tool_calls(&self, _response_json: &str) -> Result<bool, Error> {
             Ok(false)
         }
 
@@ -119,7 +125,7 @@ mod tests {
             _query: &str,
             _system_instruction: Option<&str>,
             _history: &[Message],
-        ) -> Result<Value, (String, i32)> {
+        ) -> Result<Value, Error> {
             Ok(serde_json::json!({
                 "contents": [{
                     "role": "user",
@@ -131,8 +137,8 @@ mod tests {
         fn make_http_streaming_request(
             &self,
             _request_json: &str,
-            callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-        ) -> Result<(), (String, i32)> {
+            callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+        ) -> Result<(), Error> {
             callback("Hello, ")?;
             callback("world!")?;
             Ok(())
@@ -226,20 +232,22 @@ mod tests {
             "error_mock"
         }
 
-        fn make_http_request(&self, _request_json: &str) -> Result<String, (String, i32)> {
+        fn make_http_request(&self, _request_json: &str) -> Result<String, Error> {
+            use crate::error::http_error;
             match self.error_type {
-                ErrorType::HttpError => Err(("HTTP request failed".to_string(), 74)),
+                ErrorType::HttpError => Err(http_error("HTTP request failed")),
                 _ => Ok(r#"{"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}"#.to_string()),
             }
         }
 
-        fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, (String, i32)> {
+        fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error> {
+            use crate::error::json_error;
             match self.error_type {
-                ErrorType::ParseError => Err(("Failed to parse response".to_string(), 74)),
+                ErrorType::ParseError => Err(json_error("Failed to parse response")),
                 ErrorType::NoText => Ok(None),
                 _ => {
                     let v: Value = serde_json::from_str(response_json)
-                        .map_err(|e| (format!("Failed to parse JSON: {}", e), 74))?;
+                        .map_err(|e| json_error(&format!("Failed to parse JSON: {}", e)))?;
                     let text = v["candidates"][0]["content"]["parts"][0]["text"]
                         .as_str()
                         .map(|s| s.to_string());
@@ -248,7 +256,7 @@ mod tests {
             }
         }
 
-        fn check_tool_calls(&self, _response_json: &str) -> Result<bool, (String, i32)> {
+        fn check_tool_calls(&self, _response_json: &str) -> Result<bool, Error> {
             Ok(false)
         }
 
@@ -257,9 +265,10 @@ mod tests {
             _query: &str,
             _system_instruction: Option<&str>,
             _history: &[Message],
-        ) -> Result<Value, (String, i32)> {
+        ) -> Result<Value, Error> {
+            use crate::error::json_error;
             match self.error_type {
-                ErrorType::PayloadError => Err(("Failed to create payload".to_string(), 74)),
+                ErrorType::PayloadError => Err(json_error("Failed to create payload")),
                 _ => Ok(serde_json::json!({
                     "contents": [{
                         "role": "user",
@@ -272,10 +281,11 @@ mod tests {
         fn make_http_streaming_request(
             &self,
             _request_json: &str,
-            _callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-        ) -> Result<(), (String, i32)> {
+            _callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+        ) -> Result<(), Error> {
+            use crate::error::http_error;
             match self.error_type {
-                ErrorType::HttpError => Err(("HTTP request failed".to_string(), 74)),
+                ErrorType::HttpError => Err(http_error("HTTP request failed")),
                 _ => Ok(()),
             }
         }

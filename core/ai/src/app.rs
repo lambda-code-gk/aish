@@ -1,8 +1,9 @@
 use crate::args::Config;
+use common::error::{Error, invalid_argument, io_error_default};
 use common::llm::{ProviderType, create_driver};
 use std::io::{self, Write};
 
-pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
+pub fn run_app(config: Config) -> Result<i32, Error> {
     if config.help {
         print_help();
         return Ok(0);
@@ -16,7 +17,7 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
     query_parts.extend_from_slice(&config.message_args);
     
     if query_parts.is_empty() {
-        return Err(("No query provided. Please provide a message to send to the LLM.".to_string(), 64));
+        return Err(invalid_argument("No query provided. Please provide a message to send to the LLM."));
     }
     
     let query = query_parts.join(" ");
@@ -24,7 +25,7 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
     // プロバイダタイプを決定
     let provider_type = if let Some(ref provider_str) = config.provider {
         ProviderType::from_str(provider_str)
-            .ok_or_else(|| (format!("Unknown provider: {}. Supported providers: gemini, gpt, echo", provider_str), 64))?
+            .ok_or_else(|| invalid_argument(&format!("Unknown provider: {}. Supported providers: gemini, gpt, echo", provider_str)))?
     } else {
         // デフォルトはGemini
         ProviderType::Gemini
@@ -40,7 +41,7 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
         &[],
         Box::new(|chunk| {
             print!("{}", chunk);
-            io::stdout().flush().map_err(|e| (format!("Failed to flush stdout: {}", e), 74))?;
+            io::stdout().flush().map_err(|e| io_error_default(&format!("Failed to flush stdout: {}", e)))?;
             Ok(())
         }),
     )?;

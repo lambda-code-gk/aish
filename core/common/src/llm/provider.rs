@@ -1,5 +1,6 @@
 //! LLMプロバイダのトレイト定義
 
+use crate::error::Error;
 use serde_json::Value;
 
 /// LLMプロバイダのトレイト
@@ -16,8 +17,8 @@ pub trait LlmProvider {
     /// 
     /// # Returns
     /// * `Ok(String)` - レスポンスJSON文字列
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
-    fn make_http_request(&self, request_json: &str) -> Result<String, (String, i32)>;
+    /// * `Err(Error)` - エラーメッセージと終了コード
+    fn make_http_request(&self, request_json: &str) -> Result<String, Error>;
     
     /// レスポンスからテキストを抽出
     /// 
@@ -26,8 +27,8 @@ pub trait LlmProvider {
     /// 
     /// # Returns
     /// * `Ok(Option<String>)` - 抽出したテキスト（存在しない場合はNone）
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
-    fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, (String, i32)>;
+    /// * `Err(Error)` - エラーメッセージと終了コード
+    fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error>;
     
     /// tool/function callの有無をチェック
     /// 
@@ -36,8 +37,8 @@ pub trait LlmProvider {
     /// 
     /// # Returns
     /// * `Ok(bool)` - tool callがある場合はtrue
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
-    fn check_tool_calls(&self, response_json: &str) -> Result<bool, (String, i32)>;
+    /// * `Err(Error)` - エラーメッセージと終了コード
+    fn check_tool_calls(&self, response_json: &str) -> Result<bool, Error>;
     
     /// リクエストペイロードを生成（通常モード）
     /// 
@@ -48,13 +49,13 @@ pub trait LlmProvider {
     /// 
     /// # Returns
     /// * `Ok(Value)` - リクエストJSON
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
+    /// * `Err(Error)` - エラーメッセージと終了コード
     fn make_request_payload(
         &self,
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
-    ) -> Result<Value, (String, i32)>;
+    ) -> Result<Value, Error>;
 
     /// ストリーミングHTTPリクエストを実行
     /// 
@@ -64,12 +65,12 @@ pub trait LlmProvider {
     /// 
     /// # Returns
     /// * `Ok(())` - 成功
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
+    /// * `Err(Error)` - エラーメッセージと終了コード
     fn make_http_streaming_request(
         &self,
         request_json: &str,
-        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-    ) -> Result<(), (String, i32)>;
+        callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+    ) -> Result<(), Error>;
 }
 
 /// メッセージ構造体

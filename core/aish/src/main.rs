@@ -3,6 +3,7 @@ mod app;
 mod shell;
 
 use std::process;
+use common::error::Error;
 use args::parse_args;
 use app::run_app;
 
@@ -17,7 +18,7 @@ fn main() {
     process::exit(exit_code);
 }
 
-pub fn run() -> Result<i32, (String, i32)> {
+pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
     run_app(config)
 }

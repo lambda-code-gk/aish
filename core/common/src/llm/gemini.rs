@@ -1,5 +1,6 @@
 //! Gemini 3 Flashプロバイダの実装
 
+use crate::error::{Error, env_error, http_error, json_error};
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::env;
@@ -19,11 +20,11 @@ impl GeminiProvider {
     /// 
     /// # Returns
     /// * `Ok(Self)` - プロバイダ
-    /// * `Err((String, i32))` - エラーメッセージと終了コード
-    pub fn new(model: Option<String>) -> Result<Self, (String, i32)> {
+    /// * `Err(Error)` - エラーメッセージと終了コード
+    pub fn new(model: Option<String>) -> Result<Self, Error> {
         let model = model.unwrap_or_else(|| "gemini-3-flash-preview".to_string());
         let api_key = env::var("GEMINI_API_KEY")
-            .map_err(|_| ("GEMINI_API_KEY environment variable is not set".to_string(), 64))?;
+            .map_err(|_| env_error("GEMINI_API_KEY environment variable is not set"))?;
         
         Ok(Self { model, api_key })
     }
@@ -34,7 +35,7 @@ impl LlmProvider for GeminiProvider {
         "gemini"
     }
 
-    fn make_http_request(&self, request_json: &str) -> Result<String, (String, i32)> {
+    fn make_http_request(&self, request_json: &str) -> Result<String, Error> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
@@ -46,11 +47,11 @@ impl LlmProvider for GeminiProvider {
             .header("Content-Type", "application/json")
             .body(request_json.to_string())
             .send()
-            .map_err(|e| (format!("HTTP request failed: {}", e), 74))?;
+            .map_err(|e| http_error(&format!("HTTP request failed: {}", e)))?;
         
         let status = response.status();
         let response_text = response.text()
-            .map_err(|e| (format!("Failed to read response: {}", e), 74))?;
+            .map_err(|e| http_error(&format!("Failed to read response: {}", e)))?;
         
         if !status.is_success() {
             // エラーレスポンスを解析してメッセージを抽出
@@ -62,22 +63,22 @@ impl LlmProvider for GeminiProvider {
             } else {
                 format!("HTTP {}: {}", status, response_text)
             };
-            return Err((format!("Gemini API error: {}", error_msg), 74));
+            return Err(http_error(&format!("Gemini API error: {}", error_msg)));
         }
         
         Ok(response_text)
     }
 
-    fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, (String, i32)> {
+    fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error> {
         let v: Value = serde_json::from_str(response_json)
-            .map_err(|e| (format!("Failed to parse response JSON: {}", e), 74))?;
+            .map_err(|e| json_error(&format!("Failed to parse response JSON: {}", e)))?;
         
         // エラーチェック
         if let Some(error) = v.get("error") {
             let error_msg = error["message"]
                 .as_str()
                 .unwrap_or("Unknown error");
-            return Err((format!("Gemini API error: {}", error_msg), 74));
+            return Err(http_error(&format!("Gemini API error: {}", error_msg)));
         }
         
         // テキストを抽出
@@ -92,9 +93,9 @@ impl LlmProvider for GeminiProvider {
         Ok(text)
     }
 
-    fn check_tool_calls(&self, response_json: &str) -> Result<bool, (String, i32)> {
+    fn check_tool_calls(&self, response_json: &str) -> Result<bool, Error> {
         let v: Value = serde_json::from_str(response_json)
-            .map_err(|e| (format!("Failed to parse response JSON: {}", e), 74))?;
+            .map_err(|e| json_error(&format!("Failed to parse response JSON: {}", e)))?;
         
         let has_tool_calls = v["candidates"][0]["content"]["parts"]
             .as_array()
@@ -111,7 +112,7 @@ impl LlmProvider for GeminiProvider {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
-    ) -> Result<Value, (String, i32)> {
+    ) -> Result<Value, Error> {
         let mut payload = json!({});
         
         // システム指示を追加
@@ -146,8 +147,8 @@ impl LlmProvider for GeminiProvider {
     fn make_http_streaming_request(
         &self,
         request_json: &str,
-        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-    ) -> Result<(), (String, i32)> {
+        callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+    ) -> Result<(), Error> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
             self.model, self.api_key
@@ -160,12 +161,12 @@ impl LlmProvider for GeminiProvider {
             .header("Accept", "text/event-stream")
             .body(request_json.to_string())
             .send()
-            .map_err(|e| (format!("HTTP request failed: {}", e), 74))?;
+            .map_err(|e| http_error(&format!("HTTP request failed: {}", e)))?;
         
         let status = response.status();
         if !status.is_success() {
             let response_text = response.text()
-                .map_err(|e| (format!("Failed to read response: {}", e), 74))?;
+                .map_err(|e| http_error(&format!("Failed to read response: {}", e)))?;
             let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
                 v["error"]["message"]
                     .as_str()
@@ -174,7 +175,7 @@ impl LlmProvider for GeminiProvider {
             } else {
                 format!("HTTP {}: {}", status, response_text)
             };
-            return Err((format!("Gemini API error: {}", error_msg), 74));
+            return Err(http_error(&format!("Gemini API error: {}", error_msg)));
         }
         
         // Gemini APIはJSON配列形式でストリーミングレスポンスを返す
@@ -186,7 +187,7 @@ impl LlmProvider for GeminiProvider {
         let mut in_object = false;
         
         for line_result in reader.lines() {
-            let line = line_result.map_err(|e| (format!("Failed to read stream line: {}", e), 74))?;
+            let line = line_result.map_err(|e| http_error(&format!("Failed to read stream line: {}", e)))?;
             
             for c in line.chars() {
                 match c {
@@ -233,8 +234,8 @@ impl GeminiProvider {
     /// JSONチャンクを処理してテキストを抽出
     fn handle_json_chunk(
         json_str: &str,
-        callback: &Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-    ) -> Result<(), (String, i32)> {
+        callback: &Box<dyn Fn(&str) -> Result<(), Error>>,
+    ) -> Result<(), Error> {
         // JSONとしてパース
         let v: Value = match serde_json::from_str(json_str) {
             Ok(v) => v,

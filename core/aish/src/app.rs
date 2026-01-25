@@ -1,8 +1,9 @@
 use crate::args::Config;
 use crate::shell::run_shell;
+use common::error::{Error, invalid_argument};
 use common::session::Session;
 
-pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
+pub fn run_app(config: Config) -> Result<i32, Error> {
     if config.help {
         print_help();
         return Ok(0);
@@ -17,10 +18,9 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
     };
     
     // ホームディレクトリが指定されていない場合はエラー
-    let home_dir = config.home_dir.ok_or((
-        "Home directory (-d/--home-dir) is required".to_string(),
-        64
-    ))?;
+    let home_dir = config.home_dir.ok_or_else(|| {
+        invalid_argument("Home directory (-d/--home-dir) is required")
+    })?;
     
     // セッション管理を初期化（ホームディレクトリを指定）
     let session = Session::new(&session_path, &home_dir)?;

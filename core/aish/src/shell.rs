@@ -1,8 +1,9 @@
 use std::process;
 use std::env;
+use common::error::{Error, system_error};
 use common::session::Session;
 
-pub fn run_shell(session: &Session) -> Result<i32, (String, i32)> {
+pub fn run_shell(session: &Session) -> Result<i32, Error> {
     // 環境変数SHELLを確認、なければbashをデフォルトとして使用
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
     
@@ -19,18 +20,12 @@ pub fn run_shell(session: &Session) -> Result<i32, (String, i32)> {
     let mut child = cmd
         .spawn()
         .map_err(|e| {
-            (
-                format!("Failed to spawn shell '{}': {}", shell, e),
-                70, // システムエラー
-            )
+            system_error(&format!("Failed to spawn shell '{}': {}", shell, e))
         })?;
     
     // シェルの終了を待つ
     let exit_status = child.wait().map_err(|e| {
-        (
-            format!("Failed to wait for shell process: {}", e),
-            70, // システムエラー
-        )
+        system_error(&format!("Failed to wait for shell process: {}", e))
     })?;
     
     // シェルの終了コードを返す

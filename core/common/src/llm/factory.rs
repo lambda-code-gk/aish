@@ -2,6 +2,7 @@
 //!
 //! プロバイダタイプに基づいて適切なプロバイダを作成します。
 
+use crate::error::Error;
 use crate::llm::driver::LlmDriver;
 use crate::llm::gemini::GeminiProvider;
 use crate::llm::gpt::GptProvider;
@@ -59,7 +60,7 @@ impl LlmProvider for AnyProvider {
         }
     }
 
-    fn make_http_request(&self, request_json: &str) -> Result<String, (String, i32)> {
+    fn make_http_request(&self, request_json: &str) -> Result<String, Error> {
         match self {
             Self::Gemini(p) => p.make_http_request(request_json),
             Self::Gpt(p) => p.make_http_request(request_json),
@@ -67,7 +68,7 @@ impl LlmProvider for AnyProvider {
         }
     }
 
-    fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, (String, i32)> {
+    fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error> {
         match self {
             Self::Gemini(p) => p.parse_response_text(response_json),
             Self::Gpt(p) => p.parse_response_text(response_json),
@@ -75,7 +76,7 @@ impl LlmProvider for AnyProvider {
         }
     }
 
-    fn check_tool_calls(&self, response_json: &str) -> Result<bool, (String, i32)> {
+    fn check_tool_calls(&self, response_json: &str) -> Result<bool, Error> {
         match self {
             Self::Gemini(p) => p.check_tool_calls(response_json),
             Self::Gpt(p) => p.check_tool_calls(response_json),
@@ -88,7 +89,7 @@ impl LlmProvider for AnyProvider {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
-    ) -> Result<Value, (String, i32)> {
+    ) -> Result<Value, Error> {
         match self {
             Self::Gemini(p) => p.make_request_payload(query, system_instruction, history),
             Self::Gpt(p) => p.make_request_payload(query, system_instruction, history),
@@ -99,8 +100,8 @@ impl LlmProvider for AnyProvider {
     fn make_http_streaming_request(
         &self,
         request_json: &str,
-        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-    ) -> Result<(), (String, i32)> {
+        callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+    ) -> Result<(), Error> {
         match self {
             Self::Gemini(p) => p.make_http_streaming_request(request_json, callback),
             Self::Gpt(p) => p.make_http_streaming_request(request_json, callback),
@@ -117,11 +118,11 @@ impl LlmProvider for AnyProvider {
 /// 
 /// # Returns
 /// * `Ok(AnyProvider)` - プロバイダ
-/// * `Err((String, i32))` - エラーメッセージと終了コード
+/// * `Err(Error)` - エラーメッセージと終了コード
 pub fn create_provider(
     provider_type: ProviderType,
     model: Option<String>,
-) -> Result<AnyProvider, (String, i32)> {
+) -> Result<AnyProvider, Error> {
     match provider_type {
         ProviderType::Gemini => {
             let provider = GeminiProvider::new(model)?;
@@ -147,11 +148,11 @@ pub fn create_provider(
 /// 
 /// # Returns
 /// * `Ok(LlmDriver<AnyProvider>)` - ドライバー
-/// * `Err((String, i32))` - エラーメッセージと終了コード
+/// * `Err(Error)` - エラーメッセージと終了コード
 pub fn create_driver(
     provider_type: ProviderType,
     model: Option<String>,
-) -> Result<LlmDriver<AnyProvider>, (String, i32)> {
+) -> Result<LlmDriver<AnyProvider>, Error> {
     let provider = create_provider(provider_type, model)?;
     Ok(LlmDriver::new(provider))
 }

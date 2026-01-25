@@ -17,12 +17,14 @@ impl Default for Config {
     }
 }
 
-pub fn parse_args() -> Result<Config, (String, i32)> {
+use common::error::{Error, invalid_argument};
+
+pub fn parse_args() -> Result<Config, Error> {
     let args: Vec<String> = std::env::args().collect();
     parse_args_from(&args)
 }
 
-fn parse_args_from(args: &[String]) -> Result<Config, (String, i32)> {
+fn parse_args_from(args: &[String]) -> Result<Config, Error> {
     let mut config = Config::default();
     
     let mut i = 1;
@@ -35,13 +37,13 @@ fn parse_args_from(args: &[String]) -> Result<Config, (String, i32)> {
             "-p" | "--provider" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err(("Option -p/--provider requires an argument".to_string(), 64));
+                    return Err(invalid_argument("Option -p/--provider requires an argument"));
                 }
                 config.provider = Some(args[i].clone());
                 i += 1;
             }
             _ if args[i].starts_with('-') => {
-                return Err((format!("Unknown option: {}", args[i]), 64));
+                return Err(invalid_argument(&format!("Unknown option: {}", args[i])));
             }
             _ => {
                 // 位置引数（タスク名とメッセージ引数）

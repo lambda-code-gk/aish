@@ -3,6 +3,7 @@
 //! このプロバイダは実際にLLM APIを呼び出さず、クエリを表示するだけです。
 //! デバッグやテスト用に使用します。
 
+use crate::error::Error;
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::io::{self, Write};
@@ -24,7 +25,7 @@ impl LlmProvider for EchoProvider {
         "echo"
     }
 
-    fn make_http_request(&self, request_json: &str) -> Result<String, (String, i32)> {
+    fn make_http_request(&self, request_json: &str) -> Result<String, Error> {
         // クエリを表示
         println!("[Echo Provider] Request JSON:");
         println!("{}", request_json);
@@ -33,12 +34,12 @@ impl LlmProvider for EchoProvider {
         Ok(r#"{"echo": "This is a dummy response from echo provider"}"#.to_string())
     }
 
-    fn parse_response_text(&self, _response_json: &str) -> Result<Option<String>, (String, i32)> {
+    fn parse_response_text(&self, _response_json: &str) -> Result<Option<String>, Error> {
         // Echoプロバイダは常に固定のメッセージを返す
         Ok(Some("[Echo Provider] Query received (no actual LLM call made)".to_string()))
     }
 
-    fn check_tool_calls(&self, _response_json: &str) -> Result<bool, (String, i32)> {
+    fn check_tool_calls(&self, _response_json: &str) -> Result<bool, Error> {
         // Echoプロバイダはtool callをサポートしない
         Ok(false)
     }
@@ -48,7 +49,7 @@ impl LlmProvider for EchoProvider {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
-    ) -> Result<Value, (String, i32)> {
+    ) -> Result<Value, Error> {
         // クエリ情報を表示
         println!("[Echo Provider] Query: {}", query);
         if let Some(system) = system_instruction {
@@ -83,8 +84,8 @@ impl LlmProvider for EchoProvider {
     fn make_http_streaming_request(
         &self,
         _request_json: &str,
-        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
-    ) -> Result<(), (String, i32)> {
+        callback: Box<dyn Fn(&str) -> Result<(), Error>>,
+    ) -> Result<(), Error> {
         let text = "[Echo Provider] This is a simulated streaming response from the echo provider. It displays text chunk by chunk to demonstrate the streaming capability.";
         
         for word in text.split_whitespace() {
