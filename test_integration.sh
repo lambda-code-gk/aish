@@ -107,24 +107,45 @@ test_ai_binary() {
     
     log_info "Binary path: $binary_path"
     
-    # テスト1: バイナリが実行できること
-    log_info "Test 1: Binary execution"
+    # テスト1: 引数なしで実行した場合、適切なエラーメッセージが表示されること
+    log_info "Test 1: Error handling (no query)"
     if "$binary_path" > "$TEST_DIR/ai_test1.stdout" 2> "$TEST_DIR/ai_test1.stderr"; then
-        local exit_code=$?
-        log_info "✓ Binary executed successfully (exit code: $exit_code)"
+        log_error "✗ Expected error for no query, but command succeeded"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("ai (should fail without query)")
+        return 1
     else
         local exit_code=$?
-        log_error "✗ Binary execution failed (exit code: $exit_code)"
-        cat "$TEST_DIR/ai_test1.stderr"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-        FAILED_TESTS+=("ai (execution failed)")
-        return 1
+        if [ $exit_code -eq 64 ]; then
+            log_info "✓ Correctly failed with no query (exit code: $exit_code)"
+        else
+            log_error "✗ Expected exit code 64, got $exit_code"
+            cat "$TEST_DIR/ai_test1.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            FAILED_TESTS+=("ai (wrong exit code)")
+            return 1
+        fi
     fi
     
     # テスト2: エラーハンドリング（存在しないオプション）
-    # 注意: 実装が完了していないため、このテストはスキップまたは警告のみ
-    log_info "Test 2: Error handling (invalid option) - SKIPPED (implementation pending)"
-    log_warn "Error handling test will be enabled once argument parsing is implemented"
+    log_info "Test 2: Error handling (invalid option)"
+    if "$binary_path" --unknown-option > "$TEST_DIR/ai_test2.stdout" 2> "$TEST_DIR/ai_test2.stderr"; then
+        log_error "✗ Expected error for unknown option, but command succeeded"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("ai (should fail with unknown option)")
+        return 1
+    else
+        local exit_code=$?
+        if [ $exit_code -eq 64 ]; then
+            log_info "✓ Correctly failed with unknown option (exit code: $exit_code)"
+        else
+            log_error "✗ Expected exit code 64, got $exit_code"
+            cat "$TEST_DIR/ai_test2.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            FAILED_TESTS+=("ai (wrong exit code for unknown option)")
+            return 1
+        fi
+    fi
     
     log_info "ai integration test PASSED"
     TESTS_PASSED=$((TESTS_PASSED + 1))
