@@ -47,6 +47,35 @@ impl<P: LlmProvider> LlmDriver<P> {
         
         Ok(text)
     }
+
+    /// LLMにクエリを送信してレスポンスをストリーミング表示
+    /// 
+    /// # Arguments
+    /// * `query` - ユーザークエリ
+    /// * `system_instruction` - システム指示（オプション）
+    /// * `history` - 会話履歴（オプション）
+    /// * `callback` - テキストチャンクを受け取るコールバック関数
+    /// 
+    /// # Returns
+    /// * `Ok(())` - 成功
+    /// * `Err((String, i32))` - エラーメッセージと終了コード
+    pub fn query_streaming(
+        &self,
+        query: &str,
+        system_instruction: Option<&str>,
+        history: &[Message],
+        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)> {
+        // リクエストペイロードを生成
+        let payload = self.provider.make_request_payload(query, system_instruction, history)?;
+        
+        // JSON文字列に変換
+        let request_json = serde_json::to_string(&payload)
+            .map_err(|e| (format!("Failed to serialize request: {}", e), 74))?;
+        
+        // ストリーミングHTTPリクエストを実行
+        self.provider.make_http_streaming_request(&request_json, callback)
+    }
     
     /// プロバイダを取得
     pub fn provider(&self) -> &P {
@@ -97,6 +126,16 @@ mod tests {
                     "parts": [{"text": "test"}]
                 }]
             }))
+        }
+
+        fn make_http_streaming_request(
+            &self,
+            _request_json: &str,
+            callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+        ) -> Result<(), (String, i32)> {
+            callback("Hello, ")?;
+            callback("world!")?;
+            Ok(())
         }
     }
 
@@ -149,6 +188,25 @@ mod tests {
         let result = driver.query("test", Some("You are helpful"), &history);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Hello, world!");
+    }
+
+    #[test]
+    fn test_llm_driver_query_streaming() {
+        let provider = MockProvider;
+        let driver = LlmDriver::new(provider);
+        let response = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let response_clone = response.clone();
+        let result = driver.query_streaming(
+            "test",
+            None,
+            &[],
+            Box::new(move |chunk| {
+                response_clone.lock().unwrap().push_str(chunk);
+                Ok(())
+            }),
+        );
+        assert!(result.is_ok());
+        assert_eq!(*response.lock().unwrap(), "Hello, world!");
     }
 
     // エラーハンドリングのテスト用モックプロバイダ
@@ -208,6 +266,17 @@ mod tests {
                         "parts": [{"text": "test"}]
                     }]
                 })),
+            }
+        }
+
+        fn make_http_streaming_request(
+            &self,
+            _request_json: &str,
+            _callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+        ) -> Result<(), (String, i32)> {
+            match self.error_type {
+                ErrorType::HttpError => Err(("HTTP request failed".to_string(), 74)),
+                _ => Ok(()),
             }
         }
     }

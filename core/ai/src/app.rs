@@ -1,5 +1,6 @@
 use crate::args::Config;
 use common::llm::{ProviderType, create_driver};
+use std::io::{self, Write};
 
 pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
     if config.help {
@@ -32,11 +33,20 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
     // ドライバーを作成（デフォルトモデルを使用）
     let driver = create_driver(provider_type, None)?;
     
-    // LLMにクエリを送信
-    let response = driver.query(&query, None, &[])?;
+    // LLMにクエリを送信（ストリーミング表示）
+    driver.query_streaming(
+        &query,
+        None,
+        &[],
+        Box::new(|chunk| {
+            print!("{}", chunk);
+            io::stdout().flush().map_err(|e| (format!("Failed to flush stdout: {}", e), 74))?;
+            Ok(())
+        }),
+    )?;
     
-    // レスポンスを出力
-    println!("{}", response);
+    // 最後に改行を出力
+    println!();
     
     Ok(0)
 }

@@ -5,6 +5,9 @@
 
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
+use std::io::{self, Write};
+use std::thread;
+use std::time::Duration;
 
 /// Echoプロバイダ
 pub struct EchoProvider;
@@ -75,6 +78,23 @@ impl LlmProvider for EchoProvider {
         }
         
         Ok(payload)
+    }
+
+    fn make_http_streaming_request(
+        &self,
+        _request_json: &str,
+        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)> {
+        let text = "[Echo Provider] This is a simulated streaming response from the echo provider. It displays text chunk by chunk to demonstrate the streaming capability.";
+        
+        for word in text.split_whitespace() {
+            callback(word)?;
+            callback(" ")?;
+            io::stdout().flush().ok();
+            thread::sleep(Duration::from_millis(50));
+        }
+        
+        Ok(())
     }
 }
 

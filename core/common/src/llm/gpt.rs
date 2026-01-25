@@ -3,6 +3,7 @@
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::env;
+use std::io::{BufRead, BufReader};
 
 /// GPTプロバイダ
 pub struct GptProvider {
@@ -141,6 +142,65 @@ impl LlmProvider for GptProvider {
         });
         
         Ok(payload)
+    }
+
+    fn make_http_streaming_request(
+        &self,
+        request_json: &str,
+        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)> {
+        let url = "https://api.openai.com/v1/chat/completions";
+        
+        // request_jsonに"stream": trueを追加
+        let mut payload: Value = serde_json::from_str(request_json)
+            .map_err(|e| (format!("Failed to parse request JSON: {}", e), 74))?;
+        payload["stream"] = json!(true);
+        let streaming_request_json = serde_json::to_string(&payload)
+            .map_err(|e| (format!("Failed to serialize request: {}", e), 74))?;
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .body(streaming_request_json)
+            .send()
+            .map_err(|e| (format!("HTTP request failed: {}", e), 74))?;
+        
+        let status = response.status();
+        if !status.is_success() {
+            let response_text = response.text()
+                .map_err(|e| (format!("Failed to read response: {}", e), 74))?;
+            let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
+                v["error"]["message"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
+            } else {
+                format!("HTTP {}: {}", status, response_text)
+            };
+            return Err((format!("OpenAI API error: {}", error_msg), 74));
+        }
+        
+        let reader = BufReader::new(response);
+        for line_result in reader.lines() {
+            let line = line_result.map_err(|e| (format!("Failed to read stream line: {}", e), 74))?;
+            if line.starts_with("data: ") {
+                let data = &line["data: ".len()..];
+                if data == "[DONE]" {
+                    break;
+                }
+                
+                let v: Value = serde_json::from_str(data)
+                    .map_err(|e| (format!("Failed to parse stream JSON: {}", e), 74))?;
+                
+                if let Some(text) = v["choices"][0]["delta"]["content"].as_str() {
+                    callback(text)?;
+                }
+            }
+        }
+        
+        Ok(())
     }
 }
 

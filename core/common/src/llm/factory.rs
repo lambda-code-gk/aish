@@ -95,6 +95,18 @@ impl LlmProvider for AnyProvider {
             Self::Echo(p) => p.make_request_payload(query, system_instruction, history),
         }
     }
+
+    fn make_http_streaming_request(
+        &self,
+        request_json: &str,
+        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)> {
+        match self {
+            Self::Gemini(p) => p.make_http_streaming_request(request_json, callback),
+            Self::Gpt(p) => p.make_http_streaming_request(request_json, callback),
+            Self::Echo(p) => p.make_http_streaming_request(request_json, callback),
+        }
+    }
 }
 
 /// プロバイダを作成する

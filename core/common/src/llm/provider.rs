@@ -55,6 +55,21 @@ pub trait LlmProvider {
         system_instruction: Option<&str>,
         history: &[Message],
     ) -> Result<Value, (String, i32)>;
+
+    /// ストリーミングHTTPリクエストを実行
+    /// 
+    /// # Arguments
+    /// * `request_json` - リクエストJSON文字列
+    /// * `callback` - テキストチャンクを受け取るコールバック関数
+    /// 
+    /// # Returns
+    /// * `Ok(())` - 成功
+    /// * `Err((String, i32))` - エラーメッセージと終了コード
+    fn make_http_streaming_request(
+        &self,
+        request_json: &str,
+        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)>;
 }
 
 /// メッセージ構造体

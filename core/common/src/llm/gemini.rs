@@ -3,6 +3,7 @@
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::env;
+use std::io::{BufRead, BufReader};
 
 /// Gemini 3 Flashプロバイダ
 pub struct GeminiProvider {
@@ -140,6 +141,118 @@ impl LlmProvider for GeminiProvider {
         payload["contents"] = json!(contents);
         
         Ok(payload)
+    }
+
+    fn make_http_streaming_request(
+        &self,
+        request_json: &str,
+        callback: Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
+            self.model, self.api_key
+        );
+        
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .body(request_json.to_string())
+            .send()
+            .map_err(|e| (format!("HTTP request failed: {}", e), 74))?;
+        
+        let status = response.status();
+        if !status.is_success() {
+            let response_text = response.text()
+                .map_err(|e| (format!("Failed to read response: {}", e), 74))?;
+            let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
+                v["error"]["message"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
+            } else {
+                format!("HTTP {}: {}", status, response_text)
+            };
+            return Err((format!("Gemini API error: {}", error_msg), 74));
+        }
+        
+        // Gemini APIはJSON配列形式でストリーミングレスポンスを返す
+        // 形式: [ {JSON1} , {JSON2} , ... ]
+        // ブレースカウントで完全なJSONオブジェクトを検出
+        let reader = BufReader::new(response);
+        let mut json_buffer = String::new();
+        let mut brace_count = 0;
+        let mut in_object = false;
+        
+        for line_result in reader.lines() {
+            let line = line_result.map_err(|e| (format!("Failed to read stream line: {}", e), 74))?;
+            
+            for c in line.chars() {
+                match c {
+                    '{' => {
+                        if !in_object {
+                            in_object = true;
+                            json_buffer.clear();
+                        }
+                        brace_count += 1;
+                        json_buffer.push(c);
+                    }
+                    '}' => {
+                        if in_object {
+                            brace_count -= 1;
+                            json_buffer.push(c);
+                            
+                            if brace_count == 0 {
+                                // 完全なJSONオブジェクトを取得
+                                Self::handle_json_chunk(&json_buffer, &callback)?;
+                                json_buffer.clear();
+                                in_object = false;
+                            }
+                        }
+                    }
+                    _ => {
+                        if in_object {
+                            json_buffer.push(c);
+                        }
+                    }
+                }
+            }
+            
+            // 行の終わりに改行を追加（JSONの整形のため）
+            if in_object {
+                json_buffer.push('\n');
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+impl GeminiProvider {
+    /// JSONチャンクを処理してテキストを抽出
+    fn handle_json_chunk(
+        json_str: &str,
+        callback: &Box<dyn Fn(&str) -> Result<(), (String, i32)>>,
+    ) -> Result<(), (String, i32)> {
+        // JSONとしてパース
+        let v: Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return Ok(()), // パース失敗は無視（不完全なJSONの可能性）
+        };
+        
+        // テキストを抽出
+        if let Some(parts) = v["candidates"][0]["content"]["parts"].as_array() {
+            for part in parts {
+                if let Some(text) = part["text"].as_str() {
+                    if !text.is_empty() {
+                        callback(text)?;
+                    }
+                }
+            }
+        }
+        
+        Ok(())
     }
 }
 
