@@ -122,6 +122,13 @@ impl LlmProvider for GeminiProvider {
             });
         }
         
+        // グラウンディングを有効化（Google検索によるグラウンディング）
+        payload["tools"] = json!([
+            {
+                "googleSearch": {}
+            }
+        ]);
+        
         // 会話履歴とクエリをcontentsに追加
         let mut contents = Vec::new();
         
@@ -307,6 +314,21 @@ mod tests {
         let payload = provider.make_request_payload("How are you?", None, &history).unwrap();
         let contents = payload["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 3); // 履歴2つ + クエリ1つ
+    }
+
+    #[test]
+    fn test_make_request_payload_with_grounding() {
+        let provider = GeminiProvider {
+            model: "gemini-3-flash-preview".to_string(),
+            api_key: "test-key".to_string(),
+        };
+        
+        let payload = provider.make_request_payload("Hello", None, &[]).unwrap();
+        // グラウンディングが有効になっていることを確認
+        assert!(payload["tools"].is_array());
+        let tools = payload["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0]["googleSearch"].is_object());
     }
 }
 
