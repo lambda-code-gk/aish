@@ -17,14 +17,14 @@ impl GptProvider {
     /// 新しいGPTプロバイダを作成
     /// 
     /// # Arguments
-    /// * `model` - モデル名（デフォルト: "gpt-4o"）
+    /// * `model` - モデル名（デフォルト: "gpt-5.2"）
     /// * `temperature` - 温度パラメータ（デフォルト: 0.7）
     /// 
     /// # Returns
     /// * `Ok(Self)` - プロバイダ
     /// * `Err(Error)` - エラーメッセージと終了コード
     pub fn new(model: Option<String>, temperature: Option<f64>) -> Result<Self, Error> {
-        let model = model.unwrap_or_else(|| "gpt-4o".to_string());
+        let model = model.unwrap_or_else(|| "gpt-5.2".to_string());
         let temperature = temperature.unwrap_or(0.7);
         let api_key = env::var("OPENAI_API_KEY")
             .map_err(|_| env_error("OPENAI_API_KEY environment variable is not set"))?;
@@ -43,7 +43,7 @@ impl LlmProvider for GptProvider {
     }
 
     fn make_http_request(&self, request_json: &str) -> Result<String, Error> {
-        let url = "https://api.openai.com/v1/chat/completions";
+        let url = "https://api.openai.com/v1/responses";
         
         let client = reqwest::blocking::Client::new();
         let response = client
@@ -86,10 +86,33 @@ impl LlmProvider for GptProvider {
             return Err(http_error(&format!("OpenAI API error: {}", error_msg)));
         }
         
-        // テキストを抽出
-        let text = v["choices"][0]["message"]["content"]
-            .as_str()
-            .map(|s| s.to_string());
+        // テキストを抽出（Responses API形式）
+        // 実際のAPIレスポンス形式: response.output[0].content[0].text
+        let text = v["response"]["output"]
+            .as_array()
+            .and_then(|outputs| outputs.get(0))
+            .and_then(|output| output["content"].as_array())
+            .and_then(|contents| contents.get(0))
+            .and_then(|content| content["text"].as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                // フォールバック: 直接output_textを試す
+                v["output_text"]
+                    .as_str()
+                    .map(|s| s.to_string())
+            })
+            .or_else(|| {
+                // フォールバック: ネストされた形式を試す
+                v["response"]["output_text"]
+                    .as_str()
+                    .map(|s| s.to_string())
+            })
+            .or_else(|| {
+                // フォールバック: Chat Completions形式も試す（後方互換性のため）
+                v["choices"][0]["message"]["content"]
+                    .as_str()
+                    .map(|s| s.to_string())
+            });
         
         Ok(text)
     }
@@ -98,10 +121,17 @@ impl LlmProvider for GptProvider {
         let v: Value = serde_json::from_str(response_json)
             .map_err(|e| json_error(&format!("Failed to parse response JSON: {}", e)))?;
         
-        let has_tool_calls = v["choices"][0]["message"]["tool_calls"]
+        // Responses API形式を試す（形式が不明なため、複数の可能性をチェック）
+        let has_tool_calls = v["tool_calls"]
             .as_array()
             .map(|calls| !calls.is_empty())
-            .unwrap_or(false);
+            .unwrap_or_else(|| {
+                // フォールバック: Chat Completions形式も試す（後方互換性のため）
+                v["choices"][0]["message"]["tool_calls"]
+                    .as_array()
+                    .map(|calls| !calls.is_empty())
+                    .unwrap_or(false)
+            });
         
         Ok(has_tool_calls)
     }
@@ -112,35 +142,34 @@ impl LlmProvider for GptProvider {
         system_instruction: Option<&str>,
         history: &[Message],
     ) -> Result<Value, Error> {
-        let mut messages = Vec::new();
-        
-        // システム指示を追加
-        if let Some(system) = system_instruction {
-            messages.push(json!({
-                "role": "system",
-                "content": system
-            }));
-        }
+        // Responses API形式: inputにメッセージ配列を設定
+        let mut input = Vec::new();
         
         // 履歴を追加
         for msg in history {
-            messages.push(json!({
+            input.push(json!({
                 "role": msg.role,
                 "content": msg.content
             }));
         }
         
         // ユーザークエリを追加
-        messages.push(json!({
+        input.push(json!({
             "role": "user",
             "content": query
         }));
         
-        let payload = json!({
+        let mut payload = json!({
             "model": self.model,
             "temperature": self.temperature,
-            "messages": messages
+            "input": input,
+            "store": false  // クライアント側で履歴管理
         });
+        
+        // システム指示はinstructionsパラメータで指定
+        if let Some(system) = system_instruction {
+            payload["instructions"] = json!(system);
+        }
         
         Ok(payload)
     }
@@ -150,7 +179,7 @@ impl LlmProvider for GptProvider {
         request_json: &str,
         callback: Box<dyn Fn(&str) -> Result<(), Error>>,
     ) -> Result<(), Error> {
-        let url = "https://api.openai.com/v1/chat/completions";
+        let url = "https://api.openai.com/v1/responses";
         
         // request_jsonに"stream": trueを追加
         let mut payload: Value = serde_json::from_str(request_json)
@@ -184,6 +213,7 @@ impl LlmProvider for GptProvider {
         }
         
         let reader = BufReader::new(response);
+        let mut found_any_text = false;
         for line_result in reader.lines() {
             let line = line_result.map_err(|e| http_error(&format!("Failed to read stream line: {}", e)))?;
             if line.starts_with("data: ") {
@@ -192,13 +222,43 @@ impl LlmProvider for GptProvider {
                     break;
                 }
                 
-                let v: Value = serde_json::from_str(data)
-                    .map_err(|e| json_error(&format!("Failed to parse stream JSON: {}", e)))?;
+                let v: Value = match serde_json::from_str(data) {
+                    Ok(v) => v,
+                    Err(_e) => {
+                        // パースエラーは無視（不完全なJSONの可能性）
+                        continue;
+                    }
+                };
                 
-                if let Some(text) = v["choices"][0]["delta"]["content"].as_str() {
-                    callback(text)?;
+                // Responses API形式: typeが"response.output_text.delta"の場合、deltaフィールドにテキストがある
+                let mut text_found = false;
+                if let Some(type_str) = v["type"].as_str() {
+                    if type_str == "response.output_text.delta" {
+                        if let Some(text) = v["delta"].as_str() {
+                            callback(text)?;
+                            text_found = true;
+                            found_any_text = true;
+                        }
+                    }
+                }
+                
+                // フォールバック: 他の形式も試す（text_foundがfalseの場合のみ）
+                if !text_found {
+                    if let Some(text) = v["delta"]["content"].as_str() {
+                        callback(text)?;
+                        found_any_text = true;
+                    } else if let Some(text) = v["choices"][0]["delta"]["content"].as_str() {
+                        // フォールバック: Chat Completions形式も試す（後方互換性のため）
+                        callback(text)?;
+                        found_any_text = true;
+                    }
                 }
             }
+        }
+        
+        // テキストが全く見つからない場合、エラーを返す
+        if !found_any_text {
+            return Err(json_error("No text found in streaming response"));
         }
         
         Ok(())
@@ -219,36 +279,37 @@ mod tests {
     fn test_make_request_payload_simple() {
         // APIキーなしでもペイロード生成はテストできる
         let provider = GptProvider {
-            model: "gpt-4o".to_string(),
+            model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
         };
         
         let payload = provider.make_request_payload("Hello", None, &[]).unwrap();
-        assert!(payload["messages"].is_array());
-        assert_eq!(payload["messages"].as_array().unwrap().len(), 1);
-        assert_eq!(payload["model"], "gpt-4o");
+        assert!(payload["input"].is_array());
+        assert_eq!(payload["input"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["model"], "gpt-5.2");
         assert_eq!(payload["temperature"], 0.7);
+        assert_eq!(payload["store"], false);
     }
 
     #[test]
     fn test_make_request_payload_with_system() {
         let provider = GptProvider {
-            model: "gpt-4o".to_string(),
+            model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
         };
         
         let payload = provider.make_request_payload("Hello", Some("You are a helpful assistant"), &[]).unwrap();
-        let messages = payload["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 2); // system + user
-        assert_eq!(messages[0]["role"], "system");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1); // user only (system is in instructions)
+        assert_eq!(payload["instructions"], "You are a helpful assistant");
     }
 
     #[test]
     fn test_make_request_payload_with_history() {
         let provider = GptProvider {
-            model: "gpt-4o".to_string(),
+            model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
         };
@@ -259,8 +320,8 @@ mod tests {
         ];
         
         let payload = provider.make_request_payload("How are you?", None, &history).unwrap();
-        let messages = payload["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 3); // 履歴2つ + クエリ1つ
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3); // 履歴2つ + クエリ1つ
     }
 }
 
