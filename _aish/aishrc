@@ -1,0 +1,16 @@
+# コマンド終了時に自動でpartファイルを作成
+if [ -n "$AISH_PID" ]; then
+    # 既存のPROMPT_COMMANDを保持しつつ、SIGUSR1を送信
+    if [ -n "$PROMPT_COMMAND" ]; then
+        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; $PROMPT_COMMAND"
+    else
+        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null"
+    fi
+fi
+
+# zshの場合
+if [ -n "$AISH_PID" ] && [ -n "$ZSH_VERSION" ]; then
+    precmd() {
+        kill -usr1 $AISH_PID 2>/dev/null
+    }
+fi

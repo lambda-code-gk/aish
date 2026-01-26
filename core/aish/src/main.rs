@@ -1,6 +1,8 @@
 mod args;
 mod app;
 mod shell;
+mod terminal;
+mod platform;
 
 use std::process;
 use common::error::Error;
