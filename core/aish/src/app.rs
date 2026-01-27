@@ -38,8 +38,8 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
 fn print_help() {
     println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] <command> [args...]");
     println!("  -h                    Display this help message.");
-    println!("  -s, --session-dir      Specify a directory for the session.");
     println!("  -d, --home-dir         Specify a home directory (sets AISH_HOME environment variable).");
+    println!("  -s, --session-dir      Specify a directory for the session.");
     println!("  <command>     Command to execute (e.g., ls, start, stop).");
     println!("  [args...]     Arguments for the command.");
     println!("");

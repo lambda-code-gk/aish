@@ -170,10 +170,11 @@ test_aish_binary() {
     local test_home_dir="$TEST_DIR/aish_home"
     mkdir -p "$test_home_dir"
     
-    # テスト1: バイナリが実行できること（パイプで入力を与えてシェルが動作することを確認）
+    # テスト1: バイナリが実行できること（パイプで入力を与えてシェルが動作し、正常終了することを確認）
     log_info "Test 1: Binary execution with pipe input"
     local test_output
-    if test_output=$(echo 'echo test' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test1.stderr"); then
+    # シェルが終了するように、最後にexitを送る
+    if test_output=$(printf 'echo test\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test1.stderr"); then
         local exit_code=$?
         if echo "$test_output" | grep -q "test"; then
             log_info "✓ Binary executed successfully and shell output is correct (exit code: $exit_code)"

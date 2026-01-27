@@ -279,7 +279,7 @@ cargo test
 ./build.sh --debug
 ```
 
-このスクリプトは以下のバイナリをビルドし、`_aish/bin/`に配置します：
+このスクリプトは以下のバイナリをビルドし、`home/bin/`に配置します：
 - `tools/aish-capture`
 - `tools/aish-render`
 - `tools/aish-script`

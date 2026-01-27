@@ -17,8 +17,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 
-# binフォルダを作成
-BIN_DIR="$PROJECT_ROOT/_aish/bin"
+# binフォルダを作成（新レイアウト: home/bin）
+BIN_DIR="$PROJECT_ROOT/home/bin"
 mkdir -p "$BIN_DIR"
 
 # ビルドコマンドを決定
@@ -59,7 +59,7 @@ cd "$PROJECT_ROOT/core/aish"
 $BUILD_CMD
 
 # ビルド成果物をbinフォルダにコピー
-echo "Deploying binaries to _aish/bin/..."
+echo "Deploying binaries to home/bin/..."
 # 使用中のバイナリを上書きできるよう、一度削除してからコピーする
 rm -f "$BIN_DIR/aish-capture" "$BIN_DIR/aish-render" "$BIN_DIR/aish-script" "$BIN_DIR/leakscan" "$BIN_DIR/ai" "$BIN_DIR/aish"
 cp "$PROJECT_ROOT/tools/aish-capture/target/$TARGET_DIR/aish-capture" "$BIN_DIR/"
