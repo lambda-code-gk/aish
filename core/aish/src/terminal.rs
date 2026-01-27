@@ -397,6 +397,9 @@ impl TerminalBuffer {
                         self.cursor.col = 0;
                         self.ensure_line(self.cursor.row);
                         i += 1;
+                    } else if data[i] == b'\t' {
+                        self.insert_char('\t');
+                        i += 1;
                     } else if data[i] == 0x07 || data[i] == 0x00 {
                         i += 1;
                     } else {
@@ -454,6 +457,9 @@ impl TerminalBuffer {
                     self.cursor.row += 1;
                     self.cursor.col = 0;
                     self.ensure_line(self.cursor.row);
+                } else if ch == '\t' {
+                    // タブ文字を挿入
+                    self.insert_char('\t');
                 } else if ch == '\x07' || ch == '\x00' {
                     // ベル文字、ヌル文字は無視
                 } else if ch.is_control() {
@@ -478,6 +484,26 @@ impl TerminalBuffer {
         self.lines.clear();
         self.lines.push(String::new());
         self.cursor.set_position(0, 0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tab_char_preservation() {
+        let mut buffer = TerminalBuffer::new();
+        buffer.process_data(b"a\tb");
+        assert_eq!(buffer.output(), "a\tb");
+    }
+
+    #[test]
+    fn test_control_chars_removal() {
+        let mut buffer = TerminalBuffer::new();
+        // ベル(0x07)やヌル(0x00)は除去され、タブは保持されるべき
+        buffer.process_data(b"a\x07\tb\x00c");
+        assert_eq!(buffer.output(), "a\tbc");
     }
 }
 
