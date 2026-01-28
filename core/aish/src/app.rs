@@ -132,45 +132,32 @@ fn dirs_home() -> Option<PathBuf> {
 
 /// セッションディレクトリ名を生成する
 ///
-/// 形式: YYYYMMDD_HHMMSS_mmm
+/// 形式: base64urlエンコードされた48bit時刻（ミリ秒）8文字
 fn generate_session_dirname() -> String {
-    unsafe {
-        use libc::{time, localtime, tm};
-        let mut now: libc::time_t = 0;
-        time(&mut now);
-        let tm_ptr = localtime(&now);
-        if tm_ptr.is_null() {
-            // フォールバック: SystemTime ベースの秒＋ミリ秒
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let dur = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
-            let secs = dur.as_secs();
-            let millis = (dur.subsec_nanos() / 1_000_000) as u32;
-            return format!("{}_{}", secs, format!("{:03}", millis));
-        }
-        let tm: &tm = &*tm_ptr;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-        // ミリ秒を取得
-        use libc::{clock_gettime, CLOCK_REALTIME, timespec};
-        let mut ts: timespec = std::mem::zeroed();
-        let millis = if clock_gettime(CLOCK_REALTIME, &mut ts) == 0 {
-            (ts.tv_nsec / 1_000_000) as u32
-        } else {
-            0
-        };
+    // base64url 文字テーブル
+    const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-        format!(
-            "{:04}{:02}{:02}_{:02}{:02}{:02}_{:03}",
-            tm.tm_year + 1900,
-            tm.tm_mon + 1,
-            tm.tm_mday,
-            tm.tm_hour,
-            tm.tm_min,
-            tm.tm_sec,
-            millis
-        )
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+
+    // ミリ秒単位に変換（u64にキャスト）
+    let ms_since_epoch = dur.as_millis() as u64;
+
+    // 下位48bitのみを使用
+    let ts48 = ms_since_epoch & ((1u64 << 48) - 1);
+
+    // 48bit = 6bit * 8文字 → 8文字固定長
+    let mut buf = [0u8; 8];
+    for i in 0..8 {
+        let shift = 6 * (7 - i);
+        let index = ((ts48 >> shift) & 0x3F) as usize;
+        buf[i] = BASE64URL[index];
     }
+
+    String::from_utf8_lossy(&buf).to_string()
 }
 
 #[cfg(test)]
@@ -247,10 +234,23 @@ mod path_tests {
         let home_dir = resolve_home_dir(&config).unwrap();
 
         let session = resolve_session_dir(&config, &home_dir).unwrap();
-        assert!(session.starts_with("/tmp/aish_cli_home3/state/session/"));
-        // タイムスタンプ部分が何らかの非空文字列であることを確認
-        let suffix = session.trim_start_matches("/tmp/aish_cli_home3/state/session/");
-        assert!(!suffix.is_empty());
+        let prefix = "/tmp/aish_cli_home3/state/session/";
+        assert!(session.starts_with(prefix));
+
+        // 末尾8文字が base64url のセッションIDであることを確認
+        let suffix = &session[prefix.len()..];
+        assert_eq!(suffix.len(), 8);
+        for c in suffix.chars() {
+            assert!(
+                ('A'..='Z').contains(&c)
+                    || ('a'..='z').contains(&c)
+                    || ('0'..='9').contains(&c)
+                    || c == '-'
+                    || c == '_',
+                "invalid base64url char in session id: {}",
+                c
+            );
+        }
     }
 
     #[test]
@@ -265,6 +265,26 @@ mod path_tests {
                 assert_eq!(session, "/tmp/xdg_state/aish/session");
             });
         });
+    }
+
+    #[test]
+    fn test_generate_session_dirname_format() {
+        let name = generate_session_dirname();
+        // 長さは8文字固定
+        assert_eq!(name.len(), 8);
+
+        // base64url 文字のみで構成されていること
+        for c in name.chars() {
+            assert!(
+                ('A'..='Z').contains(&c)
+                    || ('a'..='z').contains(&c)
+                    || ('0'..='9').contains(&c)
+                    || c == '-'
+                    || c == '_',
+                "invalid base64url char in session dirname: {}",
+                c
+            );
+        }
     }
 }
 

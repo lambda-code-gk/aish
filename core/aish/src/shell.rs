@@ -9,44 +9,33 @@ use crate::platform::*;
 use libc;
 
 // タイムスタンプ付きのpartファイル名を生成
-// 形式: part_YYYYMMDD_HHMMSS_mmm_user.txt
+// 形式: part_<base64urlエンコードされた48bit時刻(ミリ秒)8文字>_user.txt
 fn generate_part_filename() -> String {
-    unsafe {
-        use libc::{time, localtime, tm};
-        let mut now: libc::time_t = 0;
-        time(&mut now);
-        let tm_ptr = localtime(&now);
-        if tm_ptr.is_null() {
-            // フォールバック: 現在時刻を秒単位で使用
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            return format!("part_{}_000_user.txt", timestamp);
-        }
-        let tm: &tm = &*tm_ptr;
-        
-        // ミリ秒を取得
-        use libc::{clock_gettime, CLOCK_REALTIME, timespec};
-        let mut ts: timespec = std::mem::zeroed();
-        let millis = if clock_gettime(CLOCK_REALTIME, &mut ts) == 0 {
-            (ts.tv_nsec / 1_000_000) as u32
-        } else {
-            0
-        };
-        
-        format!(
-            "part_{:04}{:02}{:02}_{:02}{:02}{:02}_{:03}_user.txt",
-            tm.tm_year + 1900,
-            tm.tm_mon + 1,
-            tm.tm_mday,
-            tm.tm_hour,
-            tm.tm_min,
-            tm.tm_sec,
-            millis
-        )
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // base64url 文字テーブル
+    const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+
+    // ミリ秒単位に変換（u64にキャスト）
+    let ms_since_epoch = dur.as_millis() as u64;
+
+    // 下位48bitのみを使用
+    let ts48 = ms_since_epoch & ((1u64 << 48) - 1);
+
+    // 48bit = 6bit * 8文字 → 8文字固定長
+    let mut id_buf = [0u8; 8];
+    for i in 0..8 {
+        let shift = 6 * (7 - i);
+        let index = ((ts48 >> shift) & 0x3F) as usize;
+        id_buf[i] = BASE64URL[index];
     }
+
+    let id = String::from_utf8_lossy(&id_buf);
+    format!("part_{}_user.txt", id)
 }
 
 // ログファイルをフラッシュしてpartファイルにリネームし、console.txtをトランケート
@@ -436,5 +425,32 @@ mod tests {
         assert_eq!(cmd_sh, vec!["/bin/sh".to_string()]);
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_generate_part_filename_format() {
+        let name = generate_part_filename();
+        assert!(name.starts_with("part_"));
+        assert!(name.ends_with("_user.txt"));
+
+        let prefix = "part_";
+        let suffix = "_user.txt";
+        let core = &name[prefix.len()..name.len() - suffix.len()];
+
+        // コア部分は8文字固定
+        assert_eq!(core.len(), 8);
+
+        // base64url 文字のみで構成されていること
+        for c in core.chars() {
+            assert!(
+                ('A'..='Z').contains(&c)
+                    || ('a'..='z').contains(&c)
+                    || ('0'..='9').contains(&c)
+                    || c == '-'
+                    || c == '_',
+                "invalid base64url char in part filename id: {}",
+                c
+            );
+        }
     }
 }
