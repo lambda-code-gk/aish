@@ -1,6 +1,7 @@
 use crate::args::Config;
+use crate::task::run_task_if_exists;
 use common::error::{Error, invalid_argument, io_error_default};
-use common::llm::{ProviderType, create_driver};
+use common::llm::{create_driver, ProviderType};
 use std::io::{self, Write};
 
 pub fn run_app(config: Config) -> Result<i32, Error> {
@@ -8,32 +9,45 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
         print_help();
         return Ok(0);
     }
-    
-    // クエリを構築（taskとmessage_argsを結合）
+
+    // まず task があれば、対応するタスクスクリプト/execute を探して実行する
+    if let Some(ref task_name) = config.task {
+        if let Some(code) = run_task_if_exists(task_name, &config.message_args)? {
+            return Ok(code);
+        }
+    }
+
+    // タスクが見つからなかった場合は、従来通りLLMクエリとして扱う
     let mut query_parts = Vec::new();
     if let Some(ref task) = config.task {
         query_parts.push(task.clone());
     }
     query_parts.extend_from_slice(&config.message_args);
-    
+
     if query_parts.is_empty() {
-        return Err(invalid_argument("No query provided. Please provide a message to send to the LLM."));
+        return Err(invalid_argument(
+            "No query provided. Please provide a message to send to the LLM.",
+        ));
     }
-    
+
     let query = query_parts.join(" ");
-    
+
     // プロバイダタイプを決定
     let provider_type = if let Some(ref provider_str) = config.provider {
-        ProviderType::from_str(provider_str)
-            .ok_or_else(|| invalid_argument(&format!("Unknown provider: {}. Supported providers: gemini, gpt, echo", provider_str)))?
+        ProviderType::from_str(provider_str).ok_or_else(|| {
+            invalid_argument(&format!(
+                "Unknown provider: {}. Supported providers: gemini, gpt, echo",
+                provider_str
+            ))
+        })?
     } else {
         // デフォルトはGemini
         ProviderType::Gemini
     };
-    
+
     // ドライバーを作成（デフォルトモデルを使用）
     let driver = create_driver(provider_type, None)?;
-    
+
     // LLMにクエリを送信（ストリーミング表示）
     driver.query_streaming(
         &query,
@@ -41,30 +55,38 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
         &[],
         Box::new(|chunk| {
             print!("{}", chunk);
-            io::stdout().flush().map_err(|e| io_error_default(&format!("Failed to flush stdout: {}", e)))?;
+            io::stdout()
+                .flush()
+                .map_err(|e| io_error_default(&format!("Failed to flush stdout: {}", e)))?;
             Ok(())
         }),
     )?;
-    
+
     // 最後に改行を出力
     println!();
-    
+
     Ok(0)
 }
 
 fn print_help() {
-    println!("Usage: ai [options] [message...]");
+    println!("Usage: ai [options] [task] [message...]");
     println!("Options:");
     println!("  -h, --help                    Show this help message");
     println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
-    println!("");
+    println!();
     println!("Description:");
     println!("  Send a message to the LLM and display the response.");
-    println!("");
+    println!("  If a matching task script exists, execute it instead of sending a query.");
+    println!();
+    println!("Task search paths:");
+    println!("  $AISH_HOME/config/task.d/");
+    println!("  $XDG_CONFIG_HOME/aish/task.d");
+    println!();
     println!("Examples:");
     println!("  ai Hello, how are you?");
     println!("  ai -p gpt What is Rust programming language?");
     println!("  ai --provider echo Explain quantum computing");
+    println!("  ai mytask do something");
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 mod args;
 mod app;
+mod task;
 
 use std::process;
 use common::error::Error;
