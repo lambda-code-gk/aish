@@ -1,7 +1,7 @@
 use std::env;
 use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use common::error::{Error, system_error, io_error};
 use common::session::Session;
 use crate::terminal::TerminalBuffer;
@@ -86,6 +86,32 @@ fn rollover_log_file(
     Ok(())
 }
 
+/// シェル起動コマンドを構築する
+///
+/// - 環境変数SHELLで指定されたシェルを基本とする
+/// - bashの場合、かつ `$AISH_HOME/config/aishrc` が存在する場合は
+///   `bash --rcfile <aishrc>` で起動し、aishrcを読み込ませる
+fn build_shell_command(shell_path: &str, aish_home: &Path) -> Vec<String> {
+    let shell = shell_path.to_string();
+    let shell_name = Path::new(shell_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(shell_path);
+
+    // `$AISH_HOME/config/aishrc` を探す
+    let aishrc_path: PathBuf = aish_home.join("config").join("aishrc");
+
+    if shell_name == "bash" && aishrc_path.is_file() {
+        vec![
+            shell,
+            "--rcfile".to_string(),
+            aishrc_path.to_string_lossy().to_string(),
+        ]
+    } else {
+        vec![shell]
+    }
+}
+
 pub fn run_shell(session: &Session) -> Result<i32, Error> {
     // ログファイルのパスを決定（セッションディレクトリ内に配置、プレーンテキスト）
     let log_file_path = session.session_dir().join("console.txt");
@@ -131,9 +157,9 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
     env_vars.push(("AISH_HOME".to_string(), session.aish_home().to_string_lossy().to_string()));
     env_vars.push(("AISH_PID".to_string(), aish_pid.to_string()));
     
-    // シェルコマンドを準備
+    // シェルコマンドを準備（bashの場合はaishrcを読み込む）
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let cmd = vec![shell.clone()];
+    let cmd = build_shell_command(&shell, session.aish_home());
     
     // 現在の作業ディレクトリを取得
     let cwd = std::env::current_dir()
@@ -356,6 +382,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_shell_detection() {
@@ -363,5 +390,51 @@ mod tests {
         // ここでは基本的な構造のテストのみ
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         assert!(!shell.is_empty());
+    }
+
+    #[test]
+    fn test_build_shell_command_uses_aishrc_for_bash() {
+        let temp_dir = std::env::temp_dir().join("aish_test_aishrc_bash");
+        let config_dir = temp_dir.join("config");
+        let aishrc = config_dir.join("aishrc");
+
+        if aishrc.exists() {
+            let _ = fs::remove_file(&aishrc);
+        }
+        if config_dir.exists() {
+            let _ = fs::remove_dir_all(&config_dir);
+        }
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(&aishrc, b"# test aishrc").unwrap();
+
+        let cmd = build_shell_command("/bin/bash", &temp_dir);
+        assert_eq!(cmd.len(), 3);
+        assert_eq!(cmd[0], "/bin/bash");
+        assert_eq!(cmd[1], "--rcfile");
+        assert_eq!(Path::new(&cmd[2]), aishrc.as_path());
+
+        let _ = fs::remove_file(&aishrc);
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_build_shell_command_without_aishrc_falls_back() {
+        let temp_dir = std::env::temp_dir().join("aish_test_no_aishrc");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let cmd = build_shell_command("/bin/bash", &temp_dir);
+        assert_eq!(cmd, vec!["/bin/bash".to_string()]);
+
+        let cmd_sh = build_shell_command("/bin/sh", &temp_dir);
+        assert_eq!(cmd_sh, vec!["/bin/sh".to_string()]);
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

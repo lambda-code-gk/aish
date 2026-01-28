@@ -1,10 +1,53 @@
-# コマンド終了時に自動でpartファイルを作成
+#!/usr/bin/env bash
+
+# 既定のbash設定を読み込んで、色付きプロンプトやエイリアスを有効にする
+if [ -f /etc/bash.bashrc ]; then
+    . /etc/bash.bashrc
+fi
+
+if [ -f "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+
+# partファイルサイズを計算して表示用の文字列を返す
+__aish_calc_part_size() {
+    # セッションが無い場合
+    if [ -z "$AISH_SESSION" ]; then
+        echo -n "---"
+        return
+    fi
+
+    # ミュート中はサイズを表示しない（旧実装互換）
+    if [ -f "$AISH_SESSION/mute" ]; then
+        echo -n "---"
+        return
+    fi
+
+    # partファイルが無い場合
+    local parts
+    parts=$(ls "$AISH_SESSION"/part_* 2>/dev/null || true)
+    if [ -z "$parts" ]; then
+        echo -n "0B"
+        return
+    fi
+
+    # du --apparent-size -ch の total 行だけを取り出して末尾の " total" を削る
+    env LANG=C du --apparent-size -ch $parts 2>/dev/null | \
+        grep 'total$' | sed -e 's/[ \t]\+total$//'
+}
+
+# コマンド終了時に自動でpartファイルを作成しつつ、プロンプトにサイズを表示
 if [ -n "$AISH_PID" ]; then
-    # 既存のPROMPT_COMMANDを保持しつつ、SIGUSR1を送信
+    # 元のPS1を保存（多重定義を避ける）
+    if [ -z "$AISH_PS1_ORG" ]; then
+        export AISH_PS1_ORG="$PS1"
+    fi
+
+    # 既存のPROMPT_COMMANDを保持しつつ、SIGUSR1送信とPS1更新を行う
     if [ -n "$PROMPT_COMMAND" ]; then
-        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; $PROMPT_COMMAND"
+        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; PS1=\"(aish:\$(__aish_calc_part_size))$AISH_PS1_ORG\"; $PROMPT_COMMAND"
     else
-        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null"
+        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; PS1=\"(aish:\$(__aish_calc_part_size))$AISH_PS1_ORG\""
     fi
 fi
 
