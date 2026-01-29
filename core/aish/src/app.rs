@@ -1,6 +1,6 @@
 use crate::args::Config;
 use crate::shell::run_shell;
-use common::error::Error;
+use common::error::{Error, io_error};
 use common::session::Session;
 use std::env;
 use std::path::PathBuf;
@@ -20,14 +20,59 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
     // セッション管理を初期化（ホームディレクトリとセッションディレクトリを指定）
     let session = Session::new(&session_path, &home_dir)?;
     
-    // コマンドが指定されている場合は、将来的にコマンド処理を実装
-    if let Some(ref _command) = config.command {
-        // TODO: コマンド処理を実装
-        Ok(0)
+    // コマンドが指定されている場合はコマンドを処理
+    if let Some(ref command) = config.command {
+        match command.as_str() {
+            "truncate_console_log" => {
+                // AISH_PIDファイルを読んでSIGUSR2を送信
+                truncate_console_log(&session)
+            }
+            _ => {
+                // 未知のコマンド
+                Ok(0)
+            }
+        }
     } else {
         // 引数なしの場合はシェルを起動
         run_shell(&session)
     }
+}
+
+/// console.txtとメモリ上のバッファをトランケートする
+///
+/// aishのPIDファイルを読み、そのプロセスにSIGUSR2を送信することで、
+/// メモリ上のターミナルバッファとconsole.txtファイルをクリアする。
+/// これにより、aiコマンドのレスポンスがpart_*_user.txtとして重複保存されることを防ぐ。
+fn truncate_console_log(session: &Session) -> Result<i32, Error> {
+    use std::fs;
+    
+    // AISH_PIDファイルからPIDを読み取る
+    let pid_file_path = session.session_dir().join("AISH_PID");
+    
+    if !pid_file_path.exists() {
+        // PIDファイルが存在しない場合は何もしない（aishが実行中でない）
+        return Ok(0);
+    }
+    
+    let pid_str = fs::read_to_string(&pid_file_path)
+        .map_err(|e| io_error(&format!("Failed to read AISH_PID file: {}", e), 74))?;
+    
+    let pid: i32 = pid_str.trim().parse()
+        .map_err(|e| io_error(&format!("Invalid PID in AISH_PID file: {}", e), 74))?;
+    
+    // SIGUSR2を送信
+    unsafe {
+        let result = libc::kill(pid, libc::SIGUSR2);
+        if result != 0 {
+            let err = std::io::Error::last_os_error();
+            // ESRCH (No such process) の場合は無視
+            if err.raw_os_error() != Some(libc::ESRCH) {
+                return Err(io_error(&format!("Failed to send SIGUSR2 to aish process: {}", err), 74));
+            }
+        }
+    }
+    
+    Ok(0)
 }
 
 fn print_help() {
@@ -45,6 +90,7 @@ fn print_help() {
     println!("  clear                  Clear the console and part files.");
     println!("  ls                     List the part files.");
     println!("  rm_last                Remove the last part file.");
+    println!("  truncate_console_log   Truncate console buffer and log file (used by ai command).");
     println!("  memory                 Manage memories (--list, --show <id>, --revoke <id>).");
     println!("  models                 Manage models (--provider, --unsupported, --available).");
 }

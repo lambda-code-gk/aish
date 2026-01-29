@@ -133,9 +133,11 @@ impl LlmProvider for GeminiProvider {
         let mut contents = Vec::new();
         
         // 履歴を追加
+        // Gemini APIは "assistant" ではなく "model" というroleを使用する
         for msg in history {
+            let role = if msg.role == "assistant" { "model" } else { &msg.role };
             contents.push(json!({
-                "role": msg.role,
+                "role": role,
                 "parts": [{"text": msg.content}]
             }));
         }
@@ -314,6 +316,31 @@ mod tests {
         let payload = provider.make_request_payload("How are you?", None, &history).unwrap();
         let contents = payload["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 3); // 履歴2つ + クエリ1つ
+    }
+
+    #[test]
+    fn test_make_request_payload_converts_assistant_to_model() {
+        let provider = GeminiProvider {
+            model: "gemini-3-flash-preview".to_string(),
+            api_key: "test-key".to_string(),
+        };
+        
+        let history = vec![
+            Message::user("Hi"),
+            Message::assistant("Hello!"),
+            Message::user("How are you?"),
+            Message::assistant("I'm doing well!"),
+        ];
+        
+        let payload = provider.make_request_payload("What's your name?", None, &history).unwrap();
+        let contents = payload["contents"].as_array().unwrap();
+        
+        // Gemini APIでは "assistant" が "model" に変換される
+        assert_eq!(contents[0]["role"].as_str().unwrap(), "user");
+        assert_eq!(contents[1]["role"].as_str().unwrap(), "model");  // assistant -> model
+        assert_eq!(contents[2]["role"].as_str().unwrap(), "user");
+        assert_eq!(contents[3]["role"].as_str().unwrap(), "model");  // assistant -> model
+        assert_eq!(contents[4]["role"].as_str().unwrap(), "user");   // クエリ
     }
 
     #[test]

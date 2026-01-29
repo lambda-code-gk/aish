@@ -39,24 +39,37 @@ fn generate_part_filename() -> String {
 }
 
 // ログファイルをフラッシュしてpartファイルにリネームし、console.txtをトランケート
+// 空のファイルの場合はpartファイルを作成せず、トランケートのみ行う
 fn rollover_log_file(
     log_file_path: &Path,
     session_dir: &Path,
 ) -> Result<(), Error> {
     use std::fs;
     
-    // partファイル名を生成
-    let part_filename = generate_part_filename();
-    let part_file_path = session_dir.join(&part_filename);
-    
-    // console.txtをpartファイルにリネーム（ファイルは既に閉じられている前提）
+    // console.txtが存在し、かつ内容がある場合のみpartファイルにリネーム
     if log_file_path.exists() {
-        fs::rename(log_file_path, &part_file_path).map_err(|e| {
+        // ファイルサイズを確認
+        let metadata = fs::metadata(log_file_path).map_err(|e| {
             io_error(
-                &format!("Failed to rename log file to '{}': {}", part_file_path.display(), e),
+                &format!("Failed to get metadata for '{}': {}", log_file_path.display(), e),
                 74
             )
         })?;
+        
+        // ファイルが空でない場合のみpartファイルにリネーム
+        if metadata.len() > 0 {
+            // partファイル名を生成
+            let part_filename = generate_part_filename();
+            let part_file_path = session_dir.join(&part_filename);
+            
+            // console.txtをpartファイルにリネーム（ファイルは既に閉じられている前提）
+            fs::rename(log_file_path, &part_file_path).map_err(|e| {
+                io_error(
+                    &format!("Failed to rename log file to '{}': {}", part_file_path.display(), e),
+                    74
+                )
+            })?;
+        }
     }
     
     // console.txtを新しく作成（トランケート）
@@ -125,6 +138,10 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
     
     setup_sigusr1().map_err(|e| {
         system_error(&format!("Failed to setup SIGUSR1: {}", e))
+    })?;
+    
+    setup_sigusr2().map_err(|e| {
+        system_error(&format!("Failed to setup SIGUSR2: {}", e))
     })?;
     
     // aishのプロセスIDを取得
@@ -220,6 +237,43 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
                 // エラーは無視せず、ログに記録（ただし処理は続行）
                 eprintln!("Warning: Failed to rollover log file: {}", e.0);
             }
+            
+            // ログファイルを再オープン（追記モード）
+            log_file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .open(&log_file_path)
+                .map_err(|e| {
+                    io_error(
+                        &format!("Failed to reopen log file '{}': {}", log_file_path.display(), e),
+                        74
+                    )
+                })?;
+        }
+        
+        // SIGUSR2をチェック（バッファとconsole.txtをトランケート、partファイルは作成しない）
+        // aiコマンドがレスポンスを_assistant.txtとして保存した後に呼ばれ、
+        // 同じ内容が_user.txtとして重複保存されることを防ぐ
+        if check_sigusr2() {
+            // バッファをクリア
+            terminal_buffer.clear();
+            
+            // ログファイルを閉じてトランケート
+            drop(log_file);
+            
+            // console.txtをトランケート（空にする）
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&log_file_path)
+                .map_err(|e| {
+                    io_error(
+                        &format!("Failed to truncate log file '{}': {}", log_file_path.display(), e),
+                        74
+                    )
+                })?;
             
             // ログファイルを再オープン（追記モード）
             log_file = std::fs::OpenOptions::new()

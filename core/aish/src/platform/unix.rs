@@ -27,6 +27,7 @@ extern "C" {
 
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 static SIGUSR1_RECEIVED: AtomicBool = AtomicBool::new(false);
+static SIGUSR2_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn sigwinch_handler(_signum: c_int) {
     SIGWINCH_RECEIVED.store(true, Ordering::Relaxed);
@@ -34,6 +35,10 @@ extern "C" fn sigwinch_handler(_signum: c_int) {
 
 extern "C" fn sigusr1_handler(_signum: c_int) {
     SIGUSR1_RECEIVED.store(true, Ordering::Relaxed);
+}
+
+extern "C" fn sigusr2_handler(_signum: c_int) {
+    SIGUSR2_RECEIVED.store(true, Ordering::Relaxed);
 }
 
 pub struct Pty {
@@ -267,5 +272,20 @@ pub fn setup_sigusr1() -> io::Result<()> {
 
 pub fn check_sigusr1() -> bool {
     SIGUSR1_RECEIVED.swap(false, Ordering::Relaxed)
+}
+
+pub fn setup_sigusr2() -> io::Result<()> {
+    unsafe {
+        let handler_ptr = sigusr2_handler as usize;
+        let old_handler = libc::signal(libc::SIGUSR2, handler_ptr);
+        if old_handler == libc::SIG_ERR {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+pub fn check_sigusr2() -> bool {
+    SIGUSR2_RECEIVED.swap(false, Ordering::Relaxed)
 }
 

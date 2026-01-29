@@ -9,6 +9,10 @@ if [ -f "$HOME/.bashrc" ]; then
     . "$HOME/.bashrc"
 fi
 
+if [ -n "$AISH_HOME" ]; then
+    export PATH=$PATH":$AISH_HOME/bin"
+fi
+
 # partファイルサイズを計算して表示用の文字列を返す
 __aish_calc_part_size() {
     # セッションが無い場合
