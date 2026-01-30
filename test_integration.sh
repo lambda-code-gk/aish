@@ -213,6 +213,53 @@ test_aish_binary() {
             return 1
         fi
     fi
+
+    # テスト3: デフォルトで2回起動すると別セッションになる（同居しない）
+    log_info "Test 3: Two launches use different session dirs (no mixing)"
+    local session1 session2
+    session1=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3a.stderr" | tr -d '\r' | grep -E '^/' || true)
+    session2=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3b.stderr" | tr -d '\r' | grep -E '^/' || true)
+    if [ -z "$session1" ] || [ -z "$session2" ]; then
+        log_error "✗ Could not get AISH_SESSION from runs"
+        cat "$TEST_DIR/aish_test3.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("aish (session dir not printed)")
+        return 1
+    fi
+    if [ "$session1" = "$session2" ]; then
+        log_error "✗ Two launches shared the same session dir (expected unique): $session1"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("aish (sessions should not mix by default)")
+        return 1
+    fi
+    log_info "✓ Two launches used different session dirs"
+
+    # テスト4: -s 指定で同一セッションに入れる（再開）
+    log_info "Test 4: -s specifies same session dir (resume)"
+    local resume_dir="$test_home_dir/state/session/resume_test"
+    mkdir -p "$resume_dir"
+    local out4
+    out4=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" -s "$resume_dir" 2> "$TEST_DIR/aish_test4.stderr")
+    local got_session
+    got_session=$(echo "$out4" | tr -d '\r' | grep -E '^/' | head -1)
+    if [ -z "$got_session" ]; then
+        log_error "✗ Could not get AISH_SESSION with -s"
+        cat "$TEST_DIR/aish_test4.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("aish (-s session dir)")
+        return 1
+    fi
+    # 正規化して比較（got_session はセッションディレクトリのフルパス）
+    local want_canon got_canon
+    want_canon=$(cd "$resume_dir" && pwd)
+    got_canon=$(cd "$got_session" 2>/dev/null && pwd)
+    if [ -z "$got_canon" ] || [ "$got_canon" != "$want_canon" ]; then
+        log_error "✗ -s session dir mismatch: got $got_canon, want $want_canon"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("aish (-s should use specified dir)")
+        return 1
+    fi
+    log_info "✓ -s uses specified session dir for resume"
     
     log_info "aish integration test PASSED"
     TESTS_PASSED=$((TESTS_PASSED + 1))

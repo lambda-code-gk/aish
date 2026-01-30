@@ -79,7 +79,7 @@ fn print_help() {
     println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] <command> [args...]");
     println!("  -h                    Display this help message.");
     println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME environment variable).");
-    println!("  -s, --session-dir      Specify a directory for the session.");
+    println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
     println!("  <command>     Command to execute (e.g., ls, start, stop).");
     println!("  [args...]     Arguments for the command.");
     println!("");
@@ -127,21 +127,22 @@ fn resolve_home_dir(config: &Config) -> Result<String, Error> {
 /// セッションディレクトリを解決する
 ///
 /// 優先順位:
-/// 1. コマンドラインオプション -s/--session-dir
-/// 2. AISH_HOME が明示されている場合: その配下の state/session
-/// 3. XDG_STATE_HOME/aish/session （未設定時は ~/.local/state/aish/session）
+/// 1. コマンドラインオプション -s/--session-dir（指定ディレクトリをそのまま使用・再開用）
+/// 2. 環境変数 AISH_HOME が設定されている場合: その配下の state/session/{ユニークID}
+/// 3. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
+///
+/// デフォルト（-s 未指定）では毎回新しいユニークセッションIDを生成し、複数起動が同じ
+/// console/part に混ざらないようにする。-s 指定時のみ同一ディレクトリで再開できる。
 fn resolve_session_dir(config: &Config, home_dir: &str) -> Result<String, Error> {
-    // 1. CLI オプション
+    // 1. CLI オプション -s: 指定ディレクトリをそのまま使用（再開用）
     if let Some(ref session_dir) = config.session_dir {
         return Ok(session_dir.clone());
     }
 
-    // 2. AISH_HOME が CLI or 環境変数で明示されている場合は、
-    //    その配下の state/session/{YYYYMMDD_HHMMSS_mmm} を使う
-    //    ここでは「非 XDG デフォルト」のホームを判定するために、直接環境変数と CLI を見る
-    let cli_home = config.home_dir.as_ref();
-    let env_home = env::var("AISH_HOME").ok();
-    if cli_home.is_some() || env_home.is_some() {
+    // 2. AISH_HOME（または -d）が設定されている場合: その配下の state/session/{ユニークID}
+    //    home_dir は既に resolve_home_dir で解決済み（-d > AISH_HOME）
+    let env_home = env::var("AISH_HOME").ok().filter(|h| !h.is_empty());
+    if config.home_dir.is_some() || env_home.is_some() {
         let mut path = PathBuf::from(home_dir);
         path.push("state");
         path.push("session");
@@ -149,7 +150,7 @@ fn resolve_session_dir(config: &Config, home_dir: &str) -> Result<String, Error>
         return Ok(path.to_string_lossy().to_string());
     }
 
-    // 3. XDG_STATE_HOME/aish/session （デフォルトは ~/.local/state/aish/session）
+    // 3. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
     let xdg_state_home = env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
         let mut path = dirs_home().unwrap_or_else(|| PathBuf::from("~"));
         path.push(".local");
@@ -157,9 +158,10 @@ fn resolve_session_dir(config: &Config, home_dir: &str) -> Result<String, Error>
         path.to_string_lossy().to_string()
     });
 
-    let mut path = PathBuf::from(xdg_state_home);
+    let mut path = PathBuf::from(xdg_state_home.trim_end_matches('/'));
     path.push("aish");
     path.push("session");
+    path.push(generate_session_dirname());
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -305,10 +307,24 @@ mod path_tests {
 
         with_env_var("AISH_HOME", None, || {
             with_env_var("XDG_STATE_HOME", Some("/tmp/xdg_state"), || {
-                // home_dir は XDG_CONFIG_HOME 由来だが、ここでは値そのものは重要ではない
                 let home_dir = "/tmp/some_home".to_string();
                 let session = resolve_session_dir(&config, &home_dir).unwrap();
-                assert_eq!(session, "/tmp/xdg_state/aish/session");
+                // XDG 時もユニークセッションIDが付与される（同居防止）
+                let prefix = "/tmp/xdg_state/aish/session/";
+                assert!(session.starts_with(prefix), "session={}", session);
+                let suffix = &session[prefix.len()..];
+                assert_eq!(suffix.len(), 8);
+                for c in suffix.chars() {
+                    assert!(
+                        ('A'..='Z').contains(&c)
+                            || ('a'..='z').contains(&c)
+                            || ('0'..='9').contains(&c)
+                            || c == '-'
+                            || c == '_',
+                        "invalid base64url char in session id: {}",
+                        c
+                    );
+                }
             });
         });
     }
