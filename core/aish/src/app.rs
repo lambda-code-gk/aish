@@ -1,6 +1,6 @@
 use crate::args::Config;
 use crate::shell::run_shell;
-use common::error::{Error, invalid_argument, io_error};
+use common::error::Error;
 use common::session::Session;
 use std::env;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
                 truncate_console_log(&session)
             }
             _ => {
-                Err(invalid_argument(&format!(
+                Err(Error::invalid_argument(format!(
                     "Command '{}' is not implemented.",
                     command
                 )))
@@ -57,10 +57,12 @@ fn truncate_console_log(session: &Session) -> Result<i32, Error> {
     }
     
     let pid_str = fs::read_to_string(&pid_file_path)
-        .map_err(|e| io_error(&format!("Failed to read AISH_PID file: {}", e), 74))?;
+        .map_err(|e| Error::io_msg(format!("Failed to read AISH_PID file: {}", e)))?;
     
-    let pid: i32 = pid_str.trim().parse()
-        .map_err(|e| io_error(&format!("Invalid PID in AISH_PID file: {}", e), 74))?;
+    let pid: i32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|e| Error::io_msg(format!("Invalid PID in AISH_PID file: {}", e)))?;
     
     // SIGUSR2を送信
     unsafe {
@@ -69,7 +71,10 @@ fn truncate_console_log(session: &Session) -> Result<i32, Error> {
             let err = std::io::Error::last_os_error();
             // ESRCH (No such process) の場合は無視
             if err.raw_os_error() != Some(libc::ESRCH) {
-                return Err(io_error(&format!("Failed to send SIGUSR2 to aish process: {}", err), 74));
+                return Err(Error::io_msg(format!(
+                    "Failed to send SIGUSR2 to aish process: {}",
+                    err
+                )));
             }
         }
     }
@@ -384,9 +389,9 @@ mod app_tests {
         };
         let result = run_app(config);
         assert!(result.is_err(), "unimplemented command must return error");
-        let (msg, code) = result.unwrap_err();
-        assert!(msg.contains("not implemented"));
-        assert_eq!(code, 64);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not implemented"));
+        assert_eq!(err.exit_code(), 64);
         
         fs::remove_dir_all(&home_path).unwrap();
     }

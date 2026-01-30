@@ -19,7 +19,7 @@ impl Default for Config {
     }
 }
 
-use common::error::{Error, invalid_argument};
+use common::error::Error;
 
 pub fn parse_args() -> Result<Config, Error> {
     let args: Vec<String> = std::env::args().collect();
@@ -35,7 +35,7 @@ pub fn parse_args() -> Result<Config, Error> {
             "-s" | "--session-dir" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err(invalid_argument("Option -s/--session-dir requires an argument"));
+                    return Err(Error::invalid_argument("Option -s/--session-dir requires an argument"));
                 }
                 config.session_dir = Some(args[i].clone());
                 i += 1;
@@ -43,13 +43,13 @@ pub fn parse_args() -> Result<Config, Error> {
             "-d" | "--home-dir" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err(invalid_argument("Option -d/--home-dir requires an argument"));
+                    return Err(Error::invalid_argument("Option -d/--home-dir requires an argument"));
                 }
                 config.home_dir = Some(args[i].clone());
                 i += 1;
             }
             _ if args[i].starts_with('-') => {
-                return Err(invalid_argument(&format!("Unknown option: {}", args[i])));
+                return Err(Error::invalid_argument(format!("Unknown option: {}", args[i])));
             }
             _ => {
                 // 位置引数（コマンドとその引数）

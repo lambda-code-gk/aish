@@ -3,7 +3,7 @@
 //! セッションディレクトリの初期化と管理を提供します。
 
 use crate::domain::{HomeDir, SessionDir};
-use crate::error::io_error;
+use crate::error::Error;
 use std::path::PathBuf;
 
 /// 検証済みパス管理構造体（内部実装）
@@ -28,9 +28,9 @@ impl ValidatedPath {
         path: impl Into<PathBuf>,
         path_name: &str,
         missing_handler: F,
-    ) -> Result<Self, (String, i32)>
+    ) -> Result<Self, Error>
     where
-        F: FnOnce(&PathBuf, &str) -> Result<(), (String, i32)>,
+        F: FnOnce(&PathBuf, &str) -> Result<(), Error>,
     {
         let path = path.into();
         
@@ -38,18 +38,22 @@ impl ValidatedPath {
         if !path.exists() {
             missing_handler(&path, path_name)?;
         } else if !path.is_dir() {
-            return Err(io_error(
-                &format!("{} '{}' exists but is not a directory", path_name, path.display()),
-                74
-            ));
+            return Err(Error::io_msg(format!(
+                "{} '{}' exists but is not a directory",
+                path_name,
+                path.display()
+            )));
         }
         
         // フルパスに展開
-        let path = std::fs::canonicalize(&path)
-            .map_err(|e| io_error(
-                &format!("Failed to canonicalize {} '{}': {}", path_name, path.display(), e),
-                74
-            ))?;
+        let path = std::fs::canonicalize(&path).map_err(|e| {
+            Error::io_msg(format!(
+                "Failed to canonicalize {} '{}': {}",
+                path_name,
+                path.display(),
+                e
+            ))
+        })?;
         
         Ok(ValidatedPath { path })
     }
@@ -76,16 +80,19 @@ impl SessionPath {
     ///
     /// # Errors
     /// ディレクトリの作成や正規化に失敗した場合、エラーを返します。
-    pub fn new(path: impl Into<PathBuf>) -> Result<Self, (String, i32)> {
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self, Error> {
         let inner = ValidatedPath::new(
             path,
             "session directory",
             |path, path_name| {
-                std::fs::create_dir_all(path)
-                    .map_err(|e| io_error(
-                        &format!("Failed to create {} '{}': {}", path_name, path.display(), e),
-                        74
-                    ))?;
+                std::fs::create_dir_all(path).map_err(|e| {
+                    Error::io_msg(format!(
+                        "Failed to create {} '{}': {}",
+                        path_name,
+                        path.display(),
+                        e
+                    ))
+                })?;
                 Ok(())
             },
         )?;
@@ -114,15 +121,16 @@ impl HomePath {
     ///
     /// # Errors
     /// ディレクトリが存在しない場合や正規化に失敗した場合、エラーを返します。
-    pub fn new(path: impl Into<PathBuf>) -> Result<Self, (String, i32)> {
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self, Error> {
         let inner = ValidatedPath::new(
             path,
             "home directory",
             |path, path_name| {
-                Err(io_error(
-                    &format!("{} '{}' does not exist", path_name, path.display()),
-                    74
-                ))
+                Err(Error::io_msg(format!(
+                    "{} '{}' does not exist",
+                    path_name,
+                    path.display()
+                )))
             },
         )?;
         Ok(HomePath { inner })
@@ -152,7 +160,7 @@ impl Session {
     ///
     /// # Errors
     /// ディレクトリの作成に失敗した場合、エラーを返します。
-    pub fn new(session_dir: impl Into<PathBuf>, home_dir: impl Into<PathBuf>) -> Result<Self, (String, i32)> {
+    pub fn new(session_dir: impl Into<PathBuf>, home_dir: impl Into<PathBuf>) -> Result<Self, Error> {
         // セッションディレクトリを作成（存在しない場合は作成）
         let session_path = SessionPath::new(session_dir)?;
         let session_dir = SessionDir::new(session_path.path().clone());

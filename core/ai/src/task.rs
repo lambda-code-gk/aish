@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::error::{Error, io_error_default};
+use common::error::Error;
 
 /// タスクを解決して実行する
 ///
@@ -97,7 +97,7 @@ fn execute_task(task_path: &Path, args: &[String]) -> Result<i32, Error> {
             task_path.display(),
             io_error_to_string(&e)
         );
-        io_error_default(&msg)
+        Error::io_msg(msg)
     })?;
 
     Ok(status.code().unwrap_or(1))

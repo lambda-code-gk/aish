@@ -1,61 +1,114 @@
 //! エラーハンドリング
 //!
-//! プロジェクト全体で統一されたエラーハンドリングを提供します。
-//! エラーは`(エラーメッセージ, 終了コード)`の形式で統一されています。
+//! ドメイン・ユースケース層では `Result<T, Error>` を使い、
+//! CLI 境界（main）で `Error::exit_code()` により終了コードに変換する。
 
-/// エラー型
-/// 
-/// `(エラーメッセージ, 終了コード)`の形式で統一
-pub type Error = (String, i32);
+use std::io;
 
-/// エラーハンドリングのヘルパー関数
+/// アプリケーション統一エラー型（enum）
+///
+/// 失敗を型で表現し、`match` でハンドリング可能。
+/// 終了コードへの変換は CLI 境界でのみ行う。
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// 引数不正（終了コード 64）
+    #[error("{0}")]
+    InvalidArgument(String),
 
-/// I/Oエラーをエラー型に変換
-/// 
-/// # Arguments
-/// * `msg` - エラーメッセージ
-/// * `code` - 終了コード（デフォルト: 74）
-pub fn io_error(msg: &str, code: i32) -> Error {
-    (msg.to_string(), code)
+    /// I/O エラー（終了コード 74）
+    #[error("{message}")]
+    Io {
+        message: String,
+        #[source]
+        source: Option<io::Error>,
+    },
+
+    /// 環境変数未設定・不正（終了コード 64）
+    #[error("{0}")]
+    Env(String),
+
+    /// プロバイダ設定・不明プロバイダ（終了コード 64）
+    #[error("{0}")]
+    Provider(String),
+
+    /// HTTP / API 通信エラー（終了コード 74）
+    #[error("{0}")]
+    Http(String),
+
+    /// JSON 解析・プロトコルエラー（終了コード 74）
+    #[error("{0}")]
+    Json(String),
+
+    /// タスク未検出（終了コード 64）
+    #[error("{0}")]
+    TaskNotFound(String),
+
+    /// システム・シグナル等（終了コード 70）
+    #[error("{0}")]
+    System(String),
 }
 
-/// I/Oエラーをエラー型に変換（デフォルトの終了コード74を使用）
-pub fn io_error_default(msg: &str) -> Error {
-    io_error(msg, 74)
+impl Error {
+    /// CLI 境界で使用: 終了コードを返す（BSD exit codes を参考）
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Error::InvalidArgument(_) | Error::Env(_) | Error::Provider(_) | Error::TaskNotFound(_) => 64,
+            Error::System(_) => 70,
+            Error::Io { .. } | Error::Http(_) | Error::Json(_) => 74,
+        }
+    }
+
+    /// 用法表示すべきか（InvalidArgument / Env / Provider / TaskNotFound は true）
+    pub fn is_usage(&self) -> bool {
+        self.exit_code() == 64
+    }
+
+    // --- コンストラクタ（従来のヘルパー相当）---
+
+    pub fn invalid_argument(msg: impl Into<String>) -> Self {
+        Error::InvalidArgument(msg.into())
+    }
+
+    pub fn io_msg(msg: impl Into<String>) -> Self {
+        Error::Io {
+            message: msg.into(),
+            source: None,
+        }
+    }
+
+    pub fn env(msg: impl Into<String>) -> Self {
+        Error::Env(msg.into())
+    }
+
+    pub fn provider(msg: impl Into<String>) -> Self {
+        Error::Provider(msg.into())
+    }
+
+    pub fn http(msg: impl Into<String>) -> Self {
+        Error::Http(msg.into())
+    }
+
+    pub fn json(msg: impl Into<String>) -> Self {
+        Error::Json(msg.into())
+    }
+
+    pub fn task_not_found(msg: impl Into<String>) -> Self {
+        Error::TaskNotFound(msg.into())
+    }
+
+    pub fn system(msg: impl Into<String>) -> Self {
+        Error::System(msg.into())
+    }
 }
 
-/// 引数不正エラー（終了コード: 64）
-pub fn invalid_argument(msg: &str) -> Error {
-    (msg.to_string(), 64)
-}
-
-/// システムエラー（終了コード: 70）
-pub fn system_error(msg: &str) -> Error {
-    (msg.to_string(), 70)
-}
-
-/// HTTPエラー（終了コード: 74）
-pub fn http_error(msg: &str) -> Error {
-    (msg.to_string(), 74)
-}
-
-/// JSON解析エラー（終了コード: 74）
-pub fn json_error(msg: &str) -> Error {
-    (msg.to_string(), 74)
-}
-
-/// 環境変数エラー（終了コード: 64）
-pub fn env_error(msg: &str) -> Error {
-    (msg.to_string(), 64)
-}
-
-/// 汎用エラー作成関数
-/// 
-/// # Arguments
-/// * `msg` - エラーメッセージ
-/// * `code` - 終了コード
-pub fn error(msg: &str, code: i32) -> Error {
-    (msg.to_string(), code)
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        let message = e.to_string();
+        Error::Io {
+            message: message.clone(),
+            source: Some(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -63,14 +116,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_error_helpers() {
-        let err = invalid_argument("test");
-        assert_eq!(err.0, "test");
-        assert_eq!(err.1, 64);
-        
-        let err = system_error("test");
-        assert_eq!(err.0, "test");
-        assert_eq!(err.1, 70);
+    fn test_error_exit_codes() {
+        assert_eq!(Error::invalid_argument("test").exit_code(), 64);
+        assert_eq!(Error::io_msg("test").exit_code(), 74);
+        assert_eq!(Error::env("test").exit_code(), 64);
+        assert_eq!(Error::http("test").exit_code(), 74);
+        assert_eq!(Error::json("test").exit_code(), 74);
+        assert_eq!(Error::system("test").exit_code(), 70);
+    }
+
+    #[test]
+    fn test_is_usage() {
+        assert!(Error::invalid_argument("x").is_usage());
+        assert!(Error::env("x").is_usage());
+        assert!(!Error::io_msg("x").is_usage());
+        assert!(!Error::http("x").is_usage());
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let e = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let err: Error = e.into();
+        assert_eq!(err.exit_code(), 74);
     }
 }
-

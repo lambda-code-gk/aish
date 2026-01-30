@@ -19,7 +19,7 @@ impl Default for Config {
     }
 }
 
-use common::error::{Error, invalid_argument};
+use common::error::Error;
 
 pub fn parse_args() -> Result<Config, Error> {
     let args: Vec<String> = std::env::args().collect();
@@ -39,13 +39,13 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
             "-p" | "--provider" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err(invalid_argument("Option -p/--provider requires an argument"));
+                    return Err(Error::invalid_argument("Option -p/--provider requires an argument"));
                 }
                 config.provider = Some(ProviderName::new(args[i].clone()));
                 i += 1;
             }
             _ if args[i].starts_with('-') => {
-                return Err(invalid_argument(&format!("Unknown option: {}", args[i])));
+                return Err(Error::invalid_argument(format!("Unknown option: {}", args[i])));
             }
             _ => {
                 // 位置引数（タスク名とメッセージ引数）
@@ -119,9 +119,9 @@ mod tests {
         let args = vec!["ai".to_string(), "--unknown".to_string()];
         let result = parse_args_from(&args);
         assert!(result.is_err());
-        let (msg, code) = result.unwrap_err();
-        assert!(msg.contains("Unknown option"));
-        assert_eq!(code, 64);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Unknown option"));
+        assert_eq!(err.exit_code(), 64);
     }
 
     #[test]
@@ -129,9 +129,9 @@ mod tests {
         let args = vec!["ai".to_string(), "-x".to_string()];
         let result = parse_args_from(&args);
         assert!(result.is_err());
-        let (msg, code) = result.unwrap_err();
-        assert!(msg.contains("Unknown option"));
-        assert_eq!(code, 64);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Unknown option"));
+        assert_eq!(err.exit_code(), 64);
     }
 
     #[test]
@@ -200,9 +200,9 @@ mod tests {
         let args = vec!["ai".to_string(), "-p".to_string()];
         let result = parse_args_from(&args);
         assert!(result.is_err());
-        let (msg, code) = result.unwrap_err();
-        assert!(msg.contains("requires an argument"));
-        assert_eq!(code, 64);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("requires an argument"));
+        assert_eq!(err.exit_code(), 64);
     }
 
     #[test]

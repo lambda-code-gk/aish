@@ -40,7 +40,7 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 - **状態**: 実装済み。LLMドライバ・プロバイダ・セッション・Part IDを提供
 - **依存関係**: `serde_json`, `reqwest`（LLM API用。blocking, json, rustls-tls）
 - **提供機能**:
-  - **error**: 統一エラー型 `Error = (String, i32)` とヘルパ（invalid_argument, io_error_default 等）
+  - **error**: 統一エラー型 `Error`（thiserror による enum）。境界で `exit_code()` / `is_usage()` により終了コード・用法表示を決定
   - **session**: セッションディレクトリの解決・管理（AISH_HOME / XDG 準拠）
   - **llm**: LLMドライバとプロバイダ
     - **driver**: ストリーミング対応の共通ドライバ
@@ -166,10 +166,10 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
    - 依存関係を追加する前に、標準ライブラリで実装できないか検討する
 
 4. **エラーハンドリングの統一**
-   - エラーは `common::error::Error` 型で統一する（`type Error = (String, i32)`）
-   - 第1要素: エラーメッセージ（ユーザーフレンドリーな内容）
-   - 第2要素: 終了コード（64: 引数不正、74: I/O/HTTP、70: システムエラーなど。BSD exit codes を参考）
-   - ヘルパ: `invalid_argument`, `io_error_default`, `system_error`, `http_error` 等を利用する
+ - ドメイン・ユースケース層: `Result<T, common::error::Error>`（enum）。失敗を型で表現し、`match` でハンドリング可能
+ - CLI 境界（main）: `Error::exit_code()` で終了コードに変換し、`Error::is_usage()` で用法表示の要否を判定
+ - `Error` は thiserror で定義（InvalidArgument, Io, Env, Provider, Http, Json, TaskNotFound, System）。64: 用法/引数、74: I/O/HTTP、70: システム
+ - コンストラクタ: `Error::invalid_argument(msg)`, `Error::io_msg(msg)`, `Error::http(msg)` 等。`From<std::io::Error>` で `?` も利用可
 
 5. **テスト容易性（Testability）**
    - 各モジュールは独立してテスト可能な設計にする
@@ -238,7 +238,7 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 **引数解析の例**:
 ```rust
 // src/args.rs
-use common::error::{Error, invalid_argument};
+use common::error::Error;
 
 pub struct Config {
     pub profile: Option<String>,

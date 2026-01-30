@@ -2,7 +2,7 @@ use std::env;
 use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use common::error::{Error, system_error, io_error};
+use common::error::Error;
 use common::session::Session;
 use crate::terminal::TerminalBuffer;
 use crate::platform::*;
@@ -27,10 +27,11 @@ fn rollover_log_file(
     if log_file_path.exists() {
         // ファイルサイズを確認
         let metadata = fs::metadata(log_file_path).map_err(|e| {
-            io_error(
-                &format!("Failed to get metadata for '{}': {}", log_file_path.display(), e),
-                74
-            )
+            Error::io_msg(format!(
+                "Failed to get metadata for '{}': {}",
+                log_file_path.display(),
+                e
+            ))
         })?;
         
         // ファイルが空でない場合のみpartファイルにリネーム
@@ -41,10 +42,11 @@ fn rollover_log_file(
             
             // console.txtをpartファイルにリネーム（ファイルは既に閉じられている前提）
             fs::rename(log_file_path, &part_file_path).map_err(|e| {
-                io_error(
-                    &format!("Failed to rename log file to '{}': {}", part_file_path.display(), e),
-                    74
-                )
+                Error::io_msg(format!(
+                    "Failed to rename log file to '{}': {}",
+                    part_file_path.display(),
+                    e
+                ))
             })?;
         }
     }
@@ -56,10 +58,11 @@ fn rollover_log_file(
         .truncate(true)
         .open(log_file_path)
         .map_err(|e| {
-            io_error(
-                &format!("Failed to create new log file '{}': {}", log_file_path.display(), e),
-                74
-            )
+            Error::io_msg(format!(
+                "Failed to create new log file '{}': {}",
+                log_file_path.display(),
+                e
+            ))
         })?;
     
     Ok(())
@@ -102,23 +105,24 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
         .append(true)
         .open(&log_file_path)
         .map_err(|e| {
-            io_error(
-                &format!("Failed to open log file '{}': {}", log_file_path.display(), e),
-                74
-            )
+            Error::io_msg(format!(
+                "Failed to open log file '{}': {}",
+                log_file_path.display(),
+                e
+            ))
         })?;
     
     // シグナルハンドラを設定
     setup_sigwinch().map_err(|e| {
-        system_error(&format!("Failed to setup SIGWINCH: {}", e))
+        Error::system(format!("Failed to setup SIGWINCH: {}", e))
     })?;
     
     setup_sigusr1().map_err(|e| {
-        system_error(&format!("Failed to setup SIGUSR1: {}", e))
+        Error::system(format!("Failed to setup SIGUSR1: {}", e))
     })?;
     
     setup_sigusr2().map_err(|e| {
-        system_error(&format!("Failed to setup SIGUSR2: {}", e))
+        Error::system(format!("Failed to setup SIGUSR2: {}", e))
     })?;
     
     // aishのプロセスIDを取得
@@ -128,10 +132,11 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
     let pid_file_path = session.session_dir().join("AISH_PID");
     std::fs::write(&pid_file_path, aish_pid.to_string())
         .map_err(|e| {
-            io_error(
-                &format!("Failed to write AISH_PID file '{}': {}", pid_file_path.display(), e),
-                74
-            )
+            Error::io_msg(format!(
+                "Failed to write AISH_PID file '{}': {}",
+                pid_file_path.display(),
+                e
+            ))
         })?;
     
     // 環境変数を準備
@@ -155,9 +160,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
         Some(&cmd),
         Some(&cwd),
         &env_vars,
-    ).map_err(|e| {
-        system_error(&format!("Failed to create PTY: {}", e))
-    })?;
+    ).map_err(|e| Error::system(format!("Failed to create PTY: {}", e)))?;
     
     let master_fd = pty.master_fd();
     let _child_pid = pty.child_pid();
@@ -173,9 +176,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
     // ターミナルをrawモードに設定
     let stdin_fd = io::stdin().as_raw_fd();
     let _term_mode = TermMode::set_raw(stdin_fd)
-        .map_err(|e| {
-            io_error(&format!("Failed to set raw mode: {}", e), 74)
-        })?;
+        .map_err(|e| Error::io_msg(format!("Failed to set raw mode: {}", e)))?;
     
     // ターミナルバッファを初期化
     let mut terminal_buffer = TerminalBuffer::new();
@@ -220,10 +221,11 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
                 .append(true)
                 .open(&log_file_path)
                 .map_err(|e| {
-                    io_error(
-                        &format!("Failed to reopen log file '{}': {}", log_file_path.display(), e),
-                        74
-                    )
+                    Error::io_msg(format!(
+                        "Failed to reopen log file '{}': {}",
+                        log_file_path.display(),
+                        e
+                    ))
                 })?;
         }
         
@@ -244,10 +246,11 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
                 .truncate(true)
                 .open(&log_file_path)
                 .map_err(|e| {
-                    io_error(
-                        &format!("Failed to truncate log file '{}': {}", log_file_path.display(), e),
-                        74
-                    )
+                    Error::io_msg(format!(
+                        "Failed to truncate log file '{}': {}",
+                        log_file_path.display(),
+                        e
+                    ))
                 })?;
             
             // ログファイルを再オープン（追記モード）
@@ -257,10 +260,11 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
                 .append(true)
                 .open(&log_file_path)
                 .map_err(|e| {
-                    io_error(
-                        &format!("Failed to reopen log file '{}': {}", log_file_path.display(), e),
-                        74
-                    )
+                    Error::io_msg(format!(
+                        "Failed to reopen log file '{}': {}",
+                        log_file_path.display(),
+                        e
+                    ))
                 })?;
         }
         
@@ -285,7 +289,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
             Err(e) => {
                 // AISH_PIDファイルを削除
                 let _ = std::fs::remove_file(&pid_file_path);
-                return Err(io_error(&format!("waitpid failed: {}", e), 74));
+                return Err(Error::io_msg(format!("waitpid failed: {}", e)));
             }
         }
         
@@ -314,7 +318,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
             if err.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(io_error(&format!("poll failed: {}", err), 74));
+            return Err(Error::io_msg(format!("poll failed: {}", err)));
         }
         
         if n == 0 {

@@ -12,12 +12,12 @@ use app::run_app;
 fn main() {
     let exit_code = match run() {
         Ok(code) => code,
-        Err((msg, code)) => {
-            if code == 64 {
+        Err(e) => {
+            if e.is_usage() {
                 app::print_usage();
             }
-            eprintln!("aish: {}", msg);
-            code
+            eprintln!("aish: {}", e);
+            e.exit_code()
         }
     };
     process::exit(exit_code);

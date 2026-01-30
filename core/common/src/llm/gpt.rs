@@ -1,6 +1,6 @@
 //! GPTプロバイダの実装
 
-use crate::error::{Error, env_error, http_error, json_error};
+use crate::error::Error;
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::env;
@@ -27,7 +27,7 @@ impl GptProvider {
         let model = model.unwrap_or_else(|| "gpt-5.2".to_string());
         let temperature = temperature.unwrap_or(0.7);
         let api_key = env::var("OPENAI_API_KEY")
-            .map_err(|_| env_error("OPENAI_API_KEY environment variable is not set"))?;
+            .map_err(|_| Error::env("OPENAI_API_KEY environment variable is not set"))?;
         
         Ok(Self {
             model,
@@ -52,11 +52,12 @@ impl LlmProvider for GptProvider {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .body(request_json.to_string())
             .send()
-            .map_err(|e| http_error(&format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
         
         let status = response.status();
-        let response_text = response.text()
-            .map_err(|e| http_error(&format!("Failed to read response: {}", e)))?;
+        let response_text = response
+            .text()
+            .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
         
         if !status.is_success() {
             // エラーレスポンスを解析してメッセージを抽出
@@ -68,7 +69,7 @@ impl LlmProvider for GptProvider {
             } else {
                 format!("HTTP {}: {}", status, response_text)
             };
-            return Err(http_error(&format!("OpenAI API error: {}", error_msg)));
+            return Err(Error::http(format!("OpenAI API error: {}", error_msg)));
         }
         
         Ok(response_text)
@@ -76,14 +77,14 @@ impl LlmProvider for GptProvider {
 
     fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error> {
         let v: Value = serde_json::from_str(response_json)
-            .map_err(|e| json_error(&format!("Failed to parse response JSON: {}", e)))?;
+            .map_err(|e| Error::json(format!("Failed to parse response JSON: {}", e)))?;
         
         // エラーチェック
         if let Some(error) = v.get("error") {
             let error_msg = error["message"]
                 .as_str()
                 .unwrap_or("Unknown error");
-            return Err(http_error(&format!("OpenAI API error: {}", error_msg)));
+            return Err(Error::http(format!("OpenAI API error: {}", error_msg)));
         }
         
         // テキストを抽出（Responses API形式）
@@ -119,7 +120,7 @@ impl LlmProvider for GptProvider {
 
     fn check_tool_calls(&self, response_json: &str) -> Result<bool, Error> {
         let v: Value = serde_json::from_str(response_json)
-            .map_err(|e| json_error(&format!("Failed to parse response JSON: {}", e)))?;
+            .map_err(|e| Error::json(format!("Failed to parse response JSON: {}", e)))?;
         
         // Responses API形式を試す（形式が不明なため、複数の可能性をチェック）
         let has_tool_calls = v["tool_calls"]
@@ -183,10 +184,10 @@ impl LlmProvider for GptProvider {
         
         // request_jsonに"stream": trueを追加
         let mut payload: Value = serde_json::from_str(request_json)
-            .map_err(|e| json_error(&format!("Failed to parse request JSON: {}", e)))?;
+            .map_err(|e| Error::json(format!("Failed to parse request JSON: {}", e)))?;
         payload["stream"] = json!(true);
         let streaming_request_json = serde_json::to_string(&payload)
-            .map_err(|e| json_error(&format!("Failed to serialize request: {}", e)))?;
+            .map_err(|e| Error::json(format!("Failed to serialize request: {}", e)))?;
 
         let client = reqwest::blocking::Client::new();
         let response = client
@@ -195,12 +196,13 @@ impl LlmProvider for GptProvider {
             .header("Authorization", format!("Bearer {}", self.api_key))
             .body(streaming_request_json)
             .send()
-            .map_err(|e| http_error(&format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
         
         let status = response.status();
         if !status.is_success() {
-            let response_text = response.text()
-                .map_err(|e| http_error(&format!("Failed to read response: {}", e)))?;
+            let response_text = response
+                .text()
+                .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
             let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
                 v["error"]["message"]
                     .as_str()
@@ -209,13 +211,14 @@ impl LlmProvider for GptProvider {
             } else {
                 format!("HTTP {}: {}", status, response_text)
             };
-            return Err(http_error(&format!("OpenAI API error: {}", error_msg)));
+            return Err(Error::http(format!("OpenAI API error: {}", error_msg)));
         }
         
         let reader = BufReader::new(response);
         let mut found_any_text = false;
         for line_result in reader.lines() {
-            let line = line_result.map_err(|e| http_error(&format!("Failed to read stream line: {}", e)))?;
+            let line = line_result
+                .map_err(|e| Error::http(format!("Failed to read stream line: {}", e)))?;
             if line.starts_with("data: ") {
                 let data = &line["data: ".len()..];
                 if data == "[DONE]" {
@@ -258,7 +261,7 @@ impl LlmProvider for GptProvider {
         
         // テキストが全く見つからない場合、エラーを返す
         if !found_any_text {
-            return Err(json_error("No text found in streaming response"));
+            return Err(Error::json("No text found in streaming response"));
         }
         
         Ok(())

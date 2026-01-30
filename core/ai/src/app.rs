@@ -1,6 +1,6 @@
 use crate::args::Config;
 use crate::task::run_task_if_exists;
-use common::error::{Error, invalid_argument, io_error_default};
+use common::error::Error;
 use common::llm::{create_driver, ProviderType};
 use common::domain::PartId;
 use common::llm::provider::Message as LlmMessage;
@@ -103,11 +103,18 @@ impl Session {
         
         // part_* パターンのファイルを取得（セッションディレクトリ直下）
         let mut part_files = Vec::new();
-        let entries = fs::read_dir(session_dir)
-            .map_err(|e| io_error_default(&format!("Failed to read session directory '{}': {}", session_dir.display(), e)))?;
+        let entries = fs::read_dir(session_dir).map_err(|e| {
+            Error::io_msg(format!(
+                "Failed to read session directory '{}': {}",
+                session_dir.display(),
+                e
+            ))
+        })?;
         
         for entry in entries {
-            let entry = entry.map_err(|e| io_error_default(&format!("Failed to read directory entry: {}", e)))?;
+            let entry = entry.map_err(|e| {
+                Error::io_msg(format!("Failed to read directory entry: {}", e))
+            })?;
             let path = entry.path();
             
             // ファイル名がpart_で始まるファイルのみを対象
@@ -162,7 +169,7 @@ impl Session {
     pub fn save_response(&self, response: &str) -> Result<(), Error> {
         let session_dir = match self.dir() {
             Some(dir) => dir,
-            None => return Err(io_error_default("Session is not valid")),
+            None => return Err(Error::io_msg("Session is not valid")),
         };
         
         // 新しいIDを生成
@@ -173,8 +180,13 @@ impl Session {
         let file_path = session_dir.join(&filename);
         
         // ファイルに書き込み
-        fs::write(&file_path, response)
-            .map_err(|e| io_error_default(&format!("Failed to write response to '{}': {}", file_path.display(), e)))?;
+        fs::write(&file_path, response).map_err(|e| {
+            Error::io_msg(format!(
+                "Failed to write response to '{}': {}",
+                file_path.display(),
+                e
+            ))
+        })?;
         
         Ok(())
     }
@@ -247,7 +259,7 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
     query_parts.extend_from_slice(&config.message_args);
 
     if query_parts.is_empty() {
-        return Err(invalid_argument(
+        return Err(Error::invalid_argument(
             "No query provided. Please provide a message to send to the LLM.",
         ));
     }
@@ -267,7 +279,7 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
     // プロバイダタイプを決定
     let provider_type = if let Some(ref provider_name) = config.provider {
         ProviderType::from_str(&*provider_name).ok_or_else(|| {
-            invalid_argument(&format!(
+            Error::invalid_argument(format!(
                 "Unknown provider: {}. Supported providers: gemini, gpt, echo",
                 provider_name
             ))
@@ -300,7 +312,7 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
                 print!("{}", chunk);
                 io::stdout()
                     .flush()
-                    .map_err(|e| io_error_default(&format!("Failed to flush stdout: {}", e)))?;
+                    .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
                 
                 // バッファに蓄積
                 if let Some(ref buf) = buffer {
@@ -466,9 +478,9 @@ mod tests {
         let result = run_app(config);
         // クエリがない場合はエラー
         assert!(result.is_err());
-        let (msg, code) = result.unwrap_err();
-        assert!(msg.contains("No query provided"));
-        assert_eq!(code, 64);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No query provided"));
+        assert_eq!(err.exit_code(), 64);
     }
 
     #[test]
@@ -533,9 +545,9 @@ mod tests {
         };
         let result = run_app(config);
         assert!(result.is_err());
-        let (msg, code) = result.unwrap_err();
-        assert!(msg.contains("Unknown provider"));
-        assert_eq!(code, 64);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Unknown provider"));
+        assert_eq!(err.exit_code(), 64);
     }
 
 }
@@ -768,8 +780,8 @@ mod save_response_tests {
         let response = "This is a test response.";
         let result = session.save_response(response);
         assert!(result.is_err());
-        let (msg, _code) = result.unwrap_err();
-        assert!(msg.contains("not valid"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not valid"));
     }
 
 }
