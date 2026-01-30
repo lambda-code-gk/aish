@@ -194,6 +194,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
             }
         }
         
+        // ロール/トランケートは常に直列化: 同一イテレーション内で SIGUSR1(roll) → SIGUSR2(truncate) の順で処理し、同時実行しない。
         // SIGUSR1をチェック（ログファイルをフラッシュしてpartファイルにリネーム）
         if check_sigusr1() {
             // 現在のバッファの内容をログファイルに書き込む
@@ -209,11 +210,8 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
             // ログファイルを閉じる（リネームするために必要）
             drop(log_file);
             
-            // ログファイルをフラッシュしてpartファイルにリネーム
-            if let Err(e) = rollover_log_file(&log_file_path, session.session_dir()) {
-                // エラーは無視せず、ログに記録（ただし処理は続行）
-                eprintln!("Warning: Failed to rollover log file: {}", e.0);
-            }
+            // ログファイルをフラッシュしてpartファイルにリネーム（失敗時はエラーを返し成功扱いにしない）
+            rollover_log_file(&log_file_path, session.session_dir())?;
             
             // ログファイルを再オープン（追記モード）
             log_file = std::fs::OpenOptions::new()
@@ -229,7 +227,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
                 })?;
         }
         
-        // SIGUSR2をチェック（バッファとconsole.txtをトランケート、partファイルは作成しない）
+        // SIGUSR2をチェック（直列化のため roll の後に処理。バッファとconsole.txtをトランケート、partファイルは作成しない）
         // aiコマンドがレスポンスを_assistant.txtとして保存した後に呼ばれ、
         // 同じ内容が_user.txtとして重複保存されることを防ぐ
         if check_sigusr2() {
