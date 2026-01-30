@@ -188,6 +188,51 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
    └── task.rs      # タスク実行など（必要に応じて）
    ```
 
+
+### Rustらしい設計パラダイム（Transaction Script からの脱却）
+
+現状の実装は、`app.rs` に「引数解析 → パス解決 → I/O → プロセス起動 → シグナル → LLM → 永続化」が直列に積み上がる **トランザクションスクリプト** になりやすい。  
+今後は以下の方針で、Rustの強み（型・列挙型・境界の明確化・テスト容易性）を活かした構造へ寄せる。
+
+#### ルール（必須）
+
+1. **型で境界を作る（Newtype / Domain Types）**
+   - `String` / `PathBuf` を直接運ぶのを避け、意味のある型に包む。
+   - 例: `HomeDir`, `SessionDir`, `ConsolePath`, `TaskDir`, `PartId`, `ProviderName`, `UserInput`。
+   - コンストラクタで検証（存在確認/作成/正規化）を行い、以降の処理を安全にする。
+
+2. **ユースケースを `struct` にし、依存は注入する（Ports & Adapters）**
+   - `AiUseCase` / `AishUseCase` のように「やりたいこと」を表す `struct` を置く。
+   - OS/外部要因（FS、環境変数、時刻、PTY、シグナル、HTTP/LLM）は trait（ポート）に閉じ込め、実装（アダプタ）を差し替え可能にする。
+   - `main.rs`/`app.rs` は **配線（wiring）だけ**にし、ロジックは usecase 側へ寄せる。
+
+3. **コマンドは `enum` 化して `match` でディスパッチする（Command Pattern）**
+   - 引数解析の結果は `enum Command` に落とし、`match` で分岐する。
+   - 「未実装」は `match` の分岐として明示し、曖昧な `if/else` の増殖を避ける。
+
+4. **セッション/ログは状態機械としてモデル化する（Signals → Events）**
+   - SIGUSR1/2, SIGWINCH などのシグナルは “イベント” に変換し、`Session::handle(event)` に集約する。
+   - `console.txt` の flush / rollover / truncate の責務を1箇所へ集め、二重保存・順序バグを防ぐ。
+
+5. **ストリーミングは「生成」と「消費（表示/保存）」を分離する**
+   - `Chunk` 列（Iterator / Stream）として扱い、`StdoutSink` / `FileSink` のように複数 sink に fan-out できる設計にする。
+   - “受信しながら表示し、最後に永続化する” でも、責務は別コンポーネントに分ける。
+
+6. **エラーはドメイン `enum` を基本にし、終了コードは境界で付与する**
+   - 原則: usecase 内は `Result<T, DomainError>`（enum）で表現し、**CLI境界で exit code に変換**する。
+   - 現状は `type Error = (String, i32)` を使用しているが、今後の拡張（原因別ハンドリング/テスト）を考え、段階的に enum へ移行する。
+   - 依存追加は最小化するが、`thiserror` 等は「可読性/保守性が大きく上がる」場合のみ採用してよい（採用時は理由をAGENTS.mdへ追記）。
+
+7. **モジュールは “層” で分ける（`common` をゴミ箱にしない）**
+   - 例:
+     - `domain/` : 型と不変条件（Newtype、enum、ルール）
+     - `usecase/`: アプリケーションの手続き（Ai/Aishの実行）
+     - `adapter/`: OS/HTTP/FS/PTY/Signal/LLM の具体実装
+     - `cli/` : 引数解析、表示、exit code
+   - `common` は “本当に共有される安定要素” のみを置く。
+
+
+
 #### 実装例
 
 **引数解析の例**:
