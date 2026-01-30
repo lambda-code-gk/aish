@@ -335,6 +335,11 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
     Ok(0)
 }
 
+/// 引数不正時に stderr へ出力する usage 行（main から呼ぶ）
+pub fn print_usage() {
+    eprintln!("Usage: ai [options] [task] [message...]");
+}
+
 fn print_help() {
     println!("Usage: ai [options] [task] [message...]");
     println!("Options:");

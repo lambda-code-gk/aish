@@ -1,6 +1,6 @@
 use crate::args::Config;
 use crate::shell::run_shell;
-use common::error::{Error, io_error};
+use common::error::{Error, invalid_argument, io_error};
 use common::session::Session;
 use std::env;
 use std::path::PathBuf;
@@ -28,8 +28,10 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
                 truncate_console_log(&session)
             }
             _ => {
-                // 未知のコマンド
-                Ok(0)
+                Err(invalid_argument(&format!(
+                    "Command '{}' is not implemented.",
+                    command
+                )))
             }
         }
     } else {
@@ -76,23 +78,22 @@ fn truncate_console_log(session: &Session) -> Result<i32, Error> {
 }
 
 fn print_help() {
-    println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] <command> [args...]");
+    println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
     println!("  -h                    Display this help message.");
     println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME environment variable).");
     println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
-    println!("  <command>     Command to execute (e.g., ls, start, stop).");
-    println!("  [args...]     Arguments for the command.");
+    println!("  <command>             Command to execute. Omit to start the interactive shell.");
+    println!("  [args...]             Arguments for the command.");
     println!("");
-    println!("Available commands:");
-    println!("  resume [id]            Resume a session (default: latest).");
-    println!("  sessions               List available sessions.");
-    println!("  rollout                Write the terminal log to the part file.");
-    println!("  clear                  Clear the console and part files.");
-    println!("  ls                     List the part files.");
-    println!("  rm_last                Remove the last part file.");
+    println!("Implemented commands:");
     println!("  truncate_console_log   Truncate console buffer and log file (used by ai command).");
-    println!("  memory                 Manage memories (--list, --show <id>, --revoke <id>).");
-    println!("  models                 Manage models (--provider, --unsupported, --available).");
+    println!("");
+    println!("Not yet implemented: resume, sessions, rollout, clear, ls, rm_last, memory, models.");
+}
+
+/// 引数不正時に stderr へ出力する usage 行（main から呼ぶ）
+pub fn print_usage() {
+    eprintln!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
 }
 
 /// ホームディレクトリ（論理的な AISH_HOME）を解決する
@@ -366,12 +367,11 @@ mod app_tests {
     }
 
     #[test]
-    fn test_run_app_with_command() {
+    fn test_run_app_with_unimplemented_command() {
         use std::fs;
         let temp_dir = std::env::temp_dir();
-        let home_path = temp_dir.join("aish_test_home_command");
+        let home_path = temp_dir.join("aish_test_home_unimpl");
         
-        // ホームディレクトリを作成
         if home_path.exists() {
             fs::remove_dir_all(&home_path).unwrap();
         }
@@ -383,10 +383,34 @@ mod app_tests {
             ..Default::default()
         };
         let result = run_app(config);
-        // コマンド処理は未実装のため、現時点では成功を返す
-        assert!(result.is_ok());
+        assert!(result.is_err(), "unimplemented command must return error");
+        let (msg, code) = result.unwrap_err();
+        assert!(msg.contains("not implemented"));
+        assert_eq!(code, 64);
         
-        // クリーンアップ
+        fs::remove_dir_all(&home_path).unwrap();
+    }
+
+    #[test]
+    fn test_run_app_with_truncate_console_log() {
+        use std::fs;
+        let temp_dir = std::env::temp_dir();
+        let home_path = temp_dir.join("aish_test_home_truncate");
+        
+        if home_path.exists() {
+            fs::remove_dir_all(&home_path).unwrap();
+        }
+        fs::create_dir_all(&home_path).unwrap();
+        
+        let config = Config {
+            command: Some("truncate_console_log".to_string()),
+            home_dir: Some(home_path.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        let result = run_app(config);
+        assert!(result.is_ok(), "truncate_console_log (no PID file) should succeed");
+        assert_eq!(result.unwrap(), 0);
+        
         fs::remove_dir_all(&home_path).unwrap();
     }
 }

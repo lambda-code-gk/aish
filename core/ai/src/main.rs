@@ -11,6 +11,9 @@ fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err((msg, code)) => {
+            if code == 64 {
+                app::print_usage();
+            }
             eprintln!("ai: {}", msg);
             code
         }

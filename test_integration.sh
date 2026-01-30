@@ -214,8 +214,28 @@ test_aish_binary() {
         fi
     fi
 
-    # テスト3: デフォルトで2回起動すると別セッションになる（同居しない）
-    log_info "Test 3: Two launches use different session dirs (no mixing)"
+    # テスト3: 未実装コマンドは非0で終了すること
+    log_info "Test 3: Unimplemented command exits non-zero"
+    if "$binary_path" -d "$test_home_dir" resume 2> "$TEST_DIR/aish_test_unimpl.stderr"; then
+        log_error "✗ Unimplemented command 'resume' should exit non-zero"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("aish (unimplemented command should fail)")
+        return 1
+    else
+        local exit_code=$?
+        if [ $exit_code -eq 64 ]; then
+            log_info "✓ Unimplemented command correctly failed (exit code: $exit_code)"
+        else
+            log_error "✗ Wrong exit code for unimplemented command: expected 64, got $exit_code"
+            cat "$TEST_DIR/aish_test_unimpl.stderr"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            FAILED_TESTS+=("aish (unimplemented command exit code)")
+            return 1
+        fi
+    fi
+
+    # テスト4: デフォルトで2回起動すると別セッションになる（同居しない）
+    log_info "Test 4: Two launches use different session dirs (no mixing)"
     local session1 session2
     session1=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3a.stderr" | tr -d '\r' | grep -E '^/' || true)
     session2=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3b.stderr" | tr -d '\r' | grep -E '^/' || true)
@@ -234,8 +254,8 @@ test_aish_binary() {
     fi
     log_info "✓ Two launches used different session dirs"
 
-    # テスト4: -s 指定で同一セッションに入れる（再開）
-    log_info "Test 4: -s specifies same session dir (resume)"
+    # テスト5: -s 指定で同一セッションに入れる（再開）
+    log_info "Test 5: -s specifies same session dir (resume)"
     local resume_dir="$test_home_dir/state/session/resume_test"
     mkdir -p "$resume_dir"
     local out4
