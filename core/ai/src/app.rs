@@ -2,6 +2,7 @@ use crate::args::Config;
 use crate::task::run_task_if_exists;
 use common::error::{Error, invalid_argument, io_error_default};
 use common::llm::{create_driver, ProviderType};
+use common::part_id;
 use common::llm::provider::Message as LlmMessage;
 use std::io::{self, Write};
 use std::env;
@@ -165,7 +166,7 @@ impl Session {
         };
         
         // 新しいIDを生成
-        let id = self.generate_part_id();
+        let id = part_id::generate_part_id();
         
         // ファイル名を生成: part_<ID>_assistant.txt
         let filename = format!("part_{}_assistant.txt", id);
@@ -221,33 +222,6 @@ impl Session {
         Ok(())
     }
 
-    /// base64urlエンコードされた48bit時刻（ミリ秒）8文字のIDを生成
-    fn generate_part_id(&self) -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        // base64url 文字テーブル
-        const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-        let dur = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-
-        // ミリ秒単位に変換（u64にキャスト）
-        let ms_since_epoch = dur.as_millis() as u64;
-
-        // 下位48bitのみを使用
-        let ts48 = ms_since_epoch & ((1u64 << 48) - 1);
-
-        // 48bit = 6bit * 8文字 → 8文字固定長
-        let mut id_buf = [0u8; 8];
-        for i in 0..8 {
-            let shift = 6 * (7 - i);
-            let index = ((ts48 >> shift) & 0x3F) as usize;
-            id_buf[i] = BASE64URL[index];
-        }
-
-        String::from_utf8_lossy(&id_buf).to_string()
-    }
 }
 
 pub fn run_app(config: Config) -> Result<i32, Error> {

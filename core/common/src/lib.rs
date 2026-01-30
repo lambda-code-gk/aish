@@ -10,3 +10,6 @@ pub mod session;
 
 /// LLMドライバーとプロバイダ
 pub mod llm;
+
+/// Part ID生成（固定長・辞書順＝時系列）
+pub mod part_id;
