@@ -2,6 +2,9 @@
 //!
 //! `ai`と`aish`コマンドで共有される機能を提供します。
 
+/// ドメイン型（Newtype）
+pub mod domain;
+
 /// エラーハンドリング
 pub mod error;
 

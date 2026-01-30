@@ -2,7 +2,7 @@ use crate::args::Config;
 use crate::task::run_task_if_exists;
 use common::error::{Error, invalid_argument, io_error_default};
 use common::llm::{create_driver, ProviderType};
-use common::part_id;
+use common::domain::PartId;
 use common::llm::provider::Message as LlmMessage;
 use std::io::{self, Write};
 use std::env;
@@ -166,7 +166,7 @@ impl Session {
         };
         
         // 新しいIDを生成
-        let id = part_id::generate_part_id();
+        let id = PartId::generate();
         
         // ファイル名を生成: part_<ID>_assistant.txt
         let filename = format!("part_{}_assistant.txt", id);
@@ -265,11 +265,11 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
     };
 
     // プロバイダタイプを決定
-    let provider_type = if let Some(ref provider_str) = config.provider {
-        ProviderType::from_str(provider_str).ok_or_else(|| {
+    let provider_type = if let Some(ref provider_name) = config.provider {
+        ProviderType::from_str(&*provider_name).ok_or_else(|| {
             invalid_argument(&format!(
                 "Unknown provider: {}. Supported providers: gemini, gpt, echo",
-                provider_str
+                provider_name
             ))
         })?
     } else {
@@ -447,6 +447,7 @@ mod session_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::domain::ProviderName;
 
     #[test]
     fn test_run_app_with_help() {
@@ -514,7 +515,7 @@ mod tests {
     fn test_run_app_with_provider() {
         // 環境変数が設定されていない場合はエラーになるが、基本的な構造はテストできる
         let config = Config {
-            provider: Some("echo".to_string()),
+            provider: Some(ProviderName::new("echo")),
             message_args: vec!["Hello".to_string()],
             ..Default::default()
         };
@@ -526,7 +527,7 @@ mod tests {
     #[test]
     fn test_run_app_with_unknown_provider() {
         let config = Config {
-            provider: Some("unknown".to_string()),
+            provider: Some(ProviderName::new("unknown")),
             message_args: vec!["Hello".to_string()],
             ..Default::default()
         };

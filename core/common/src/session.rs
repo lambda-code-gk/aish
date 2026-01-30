@@ -2,6 +2,7 @@
 //!
 //! セッションディレクトリの初期化と管理を提供します。
 
+use crate::domain::{HomeDir, SessionDir};
 use crate::error::io_error;
 use std::path::PathBuf;
 
@@ -135,8 +136,8 @@ impl HomePath {
 
 /// セッション管理構造体
 pub struct Session {
-    session_dir: PathBuf,
-    home_dir: PathBuf,
+    session_dir: SessionDir,
+    home_dir: HomeDir,
 }
 
 impl Session {
@@ -154,24 +155,24 @@ impl Session {
     pub fn new(session_dir: impl Into<PathBuf>, home_dir: impl Into<PathBuf>) -> Result<Self, (String, i32)> {
         // セッションディレクトリを作成（存在しない場合は作成）
         let session_path = SessionPath::new(session_dir)?;
-        let session_dir = session_path.path().clone();
+        let session_dir = SessionDir::new(session_path.path().clone());
         
         // ホームディレクトリを検証（存在しない場合はエラー）
         let home_path = HomePath::new(home_dir.into())?;
-        let home_dir = home_path.path().clone();
+        let home_dir = HomeDir::new(home_path.path().clone());
 
         Ok(Session { session_dir, home_dir })
     }
     
-    /// セッションディレクトリのパスを取得
-    pub fn session_dir(&self) -> &PathBuf {
+    /// セッションディレクトリを取得
+    pub fn session_dir(&self) -> &SessionDir {
         &self.session_dir
     }
     
     /// AISH_HOME環境変数の値を取得
     ///
     /// ホームディレクトリのパスを返す。
-    pub fn aish_home(&self) -> &PathBuf {
+    pub fn aish_home(&self) -> &HomeDir {
         &self.home_dir
     }
 }
@@ -252,7 +253,7 @@ mod tests {
         fs::create_dir_all(&home_path).unwrap();
         
         let session = Session::new(&test_path, &home_path).unwrap();
-        assert_eq!(session.session_dir(), &test_path);
+        assert_eq!(session.session_dir().as_ref(), test_path.as_path());
         
         // クリーンアップ
         fs::remove_dir_all(&test_path).unwrap();
@@ -324,7 +325,7 @@ mod tests {
         
         // フルパスに展開されているため、canonicalizeしたパスと比較
         let canonical_home = std::fs::canonicalize(&home_path).unwrap();
-        assert_eq!(session.aish_home(), &canonical_home);
+        assert_eq!(session.aish_home().as_ref(), canonical_home.as_path());
         
         // クリーンアップ
         fs::remove_dir_all(&test_path).unwrap();
@@ -352,7 +353,7 @@ mod tests {
         let session = Session::new(&test_path, &home_path).unwrap();
         // フルパスに展開されているため、canonicalizeしたパスと比較
         let canonical_home = std::fs::canonicalize(&home_path).unwrap();
-        assert_eq!(session.aish_home(), &canonical_home);
+        assert_eq!(session.aish_home().as_ref(), canonical_home.as_path());
         
         // クリーンアップ
         fs::remove_dir_all(&test_path).unwrap();

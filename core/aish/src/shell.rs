@@ -11,7 +11,7 @@ use libc;
 // partファイル名を生成（common::part_id 使用: 固定長18文字・辞書順＝時系列）
 // 形式: part_<ID>_user.txt
 fn generate_part_filename() -> String {
-    let id = common::part_id::generate_part_id();
+    let id = common::domain::PartId::generate();
     format!("part_{}_user.txt", id)
 }
 
@@ -142,7 +142,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
     
     // シェルコマンドを準備（bashの場合はaishrcを読み込む）
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let cmd = build_shell_command(&shell, session.aish_home());
+    let cmd = build_shell_command(&shell, session.aish_home().as_ref());
     
     // 現在の作業ディレクトリを取得
     let cwd = std::env::current_dir()
@@ -211,7 +211,7 @@ pub fn run_shell(session: &Session) -> Result<i32, Error> {
             drop(log_file);
             
             // ログファイルをフラッシュしてpartファイルにリネーム（失敗時はエラーを返し成功扱いにしない）
-            rollover_log_file(&log_file_path, session.session_dir())?;
+            rollover_log_file(&log_file_path, session.session_dir().as_ref())?;
             
             // ログファイルを再オープン（追記モード）
             log_file = std::fs::OpenOptions::new()

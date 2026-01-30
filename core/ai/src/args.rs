@@ -1,7 +1,9 @@
+use common::domain::ProviderName;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub help: bool,
-    pub provider: Option<String>,
+    pub provider: Option<ProviderName>,
     pub task: Option<String>,
     pub message_args: Vec<String>,
 }
@@ -39,7 +41,7 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
                 if i >= args.len() {
                     return Err(invalid_argument("Option -p/--provider requires an argument"));
                 }
-                config.provider = Some(args[i].clone());
+                config.provider = Some(ProviderName::new(args[i].clone()));
                 i += 1;
             }
             _ if args[i].starts_with('-') => {
@@ -69,9 +71,9 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.help, false);
-        assert_eq!(config.provider, None);
-        assert_eq!(config.task, None);
+        assert!(!config.help);
+        assert!(config.provider.is_none());
+        assert!(config.task.is_none());
         assert_eq!(config.message_args.len(), 0);
     }
 
@@ -183,14 +185,14 @@ mod tests {
     fn test_parse_args_provider() {
         let args = vec!["ai".to_string(), "-p".to_string(), "gemini".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.provider, Some("gemini".to_string()));
+        assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("gemini"));
     }
 
     #[test]
     fn test_parse_args_provider_long() {
         let args = vec!["ai".to_string(), "--provider".to_string(), "gpt".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.provider, Some("gpt".to_string()));
+        assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("gpt"));
     }
 
     #[test]
@@ -211,7 +213,7 @@ mod tests {
             "Hello".to_string(),
         ];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.provider, Some("echo".to_string()));
+        assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("echo"));
         assert_eq!(config.task, Some("Hello".to_string()));
     }
 }

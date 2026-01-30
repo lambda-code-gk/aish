@@ -6,6 +6,7 @@
 //! 互換: 旧形式（base64url 8文字等）と混在してもファイル名順ソートは安定するが、
 //! 辞書順が時系列に一致するのは新形式のみ。混在時は時系列順を保証しない。
 
+use crate::domain::PartId;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static LAST_ID: AtomicU64 = AtomicU64::new(0);
@@ -20,25 +21,27 @@ const MAX_VAL: u64 = BASE.pow(WIDTH as u32) - 1;
 /// 0-9, A-Z, a-z の順で辞書順＝数値順になるbase62
 const ALPHABET: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// 新規Part IDを1つ生成する。辞書順ソートが生成順（時系列）になる固定長8文字ASCII。
-pub fn generate_part_id() -> String {
-    let ms = now_ms_u64();
-    let ms_rel = ms.saturating_sub(EPOCH_MS);
-    let base = (ms_rel << SEQ_BITS).min(MAX_VAL);
+impl PartId {
+    /// 新規Part IDを1つ生成する。辞書順ソートが生成順（時系列）になる固定長8文字ASCII。
+    pub fn generate() -> Self {
+        let ms = now_ms_u64();
+        let ms_rel = ms.saturating_sub(EPOCH_MS);
+        let base = (ms_rel << SEQ_BITS).min(MAX_VAL);
 
-    loop {
-        let prev = LAST_ID.load(Ordering::SeqCst);
-        let next = if (prev >> SEQ_BITS) < ms_rel {
-            base
-        } else {
-            let seq = (prev & SEQ_MASK) + 1;
-            if seq > SEQ_MASK {
-                continue; // 同一msでseq枯渇、次のmsまでリトライ
+        loop {
+            let prev = LAST_ID.load(Ordering::SeqCst);
+            let next = if (prev >> SEQ_BITS) < ms_rel {
+                base
+            } else {
+                let seq = (prev & SEQ_MASK) + 1;
+                if seq > SEQ_MASK {
+                    continue; // 同一msでseq枯渇、次のmsまでリトライ
+                }
+                (prev + 1).min(MAX_VAL)
+            };
+            if LAST_ID.compare_exchange(prev, next, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                return PartId::new(to_base62(next));
             }
-            (prev + 1).min(MAX_VAL)
-        };
-        if LAST_ID.compare_exchange(prev, next, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-            return to_base62(next);
         }
     }
 }
@@ -65,24 +68,24 @@ mod tests {
 
     #[test]
     fn part_id_fixed_length_ascii() {
-        let id = generate_part_id();
+        let id = PartId::generate();
         assert_eq!(id.len(), 8);
         assert!(id.chars().all(|c| c.is_ascii_alphanumeric()));
     }
 
     #[test]
     fn part_id_lexicographic_monotonic_consecutive() {
-        let ids: Vec<String> = (0..10).map(|_| generate_part_id()).collect();
+        let ids: Vec<PartId> = (0..10).map(|_| PartId::generate()).collect();
         let mut sorted = ids.clone();
-        sorted.sort();
+        sorted.sort_by(|a, b| (**a).cmp(&**b));
         assert_eq!(ids, sorted, "sort() must preserve generation order");
     }
 
     #[test]
     fn part_id_same_ms_monotonic() {
-        let ids: Vec<String> = (0..50).map(|_| generate_part_id()).collect();
+        let ids: Vec<PartId> = (0..50).map(|_| PartId::generate()).collect();
         let mut sorted = ids.clone();
-        sorted.sort();
+        sorted.sort_by(|a, b| (**a).cmp(&**b));
         assert_eq!(ids, sorted, "rapid-fire IDs must be lexicographically monotonic");
     }
 }
