@@ -26,40 +26,68 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 
 - **メインプロジェクト**: AISH（AISH is a CUI automation framework powered by LLMs）
 - **プロジェクトルート**: git worktree等で複数箇所に展開されます。pwdで確認して下さい。
-- **現在の状態**: シェルスクリプトからRustへの刷新作業中
+- **現在の状態**: シェルスクリプトからRustへの刷新作業中。`core/ai` と `core/aish` は主要機能の実装が進んでおり、LLM連携・タスク実行・セッション・対話シェルなどが動作する。
 
 ## プロジェクト構造
 
-### コア実装（Rust刷新中）
+### コア実装（Rust）
 
 #### `core/common/`
 - **目的**: `ai`と`aish`コマンドの共通処理を提供するライブラリ
 - **ディレクトリ**: `core/common/`
 - **ビルド方法**: `cd core/common && cargo build --release`
 - **テスト実行**: `cd core/common && cargo test`
-- **状態**: 初期プロジェクト作成済み
+- **状態**: 実装済み。LLMドライバ・プロバイダ・セッション・Part IDを提供
+- **依存関係**: `serde_json`, `reqwest`（LLM API用。blocking, json, rustls-tls）
 - **提供機能**:
-  - エラーハンドリング（`error`モジュール）
-  - 共通ユーティリティ（`util`モジュール）
+  - **error**: 統一エラー型 `Error = (String, i32)` とヘルパ（invalid_argument, io_error_default 等）
+  - **session**: セッションディレクトリの解決・管理（AISH_HOME / XDG 準拠）
+  - **llm**: LLMドライバとプロバイダ
+    - **driver**: ストリーミング対応の共通ドライバ
+    - **provider**: メッセージ型・プロバイダトレイト
+    - **gemini**: Gemini API（Google Search grounding 対応）
+    - **gpt**: OpenAI Responses API
+    - **echo**: クエリをそのまま返すテスト用
+    - **factory**: ProviderType（Gemini / Gpt / Echo）、create_provider / create_driver
+  - **part_id**: 8文字 base62 のPart ID生成。辞書順＝時系列。同一ms内はシーケンスで単調増加
 
 #### `core/ai/`
-- **目的**: `ai`コマンドのRust実装
+- **目的**: `ai`コマンドのRust実装（LLM対話・タスク実行）
 - **ディレクトリ**: `core/ai/`
 - **ビルド方法**: `cd core/ai && cargo build --release`
 - **テスト実行**: `cd core/ai && cargo test`
-- **依存関係**: `core/common`
-- **状態**: 初期プロジェクト作成済み、実装待ち
+- **依存関係**: `core/common` のみ（標準ライブラリで引数解析）
+- **状態**: 実装済み。クエリ対話・プロバイダ指定・タスク実行・セッション履歴の読み書きが動作
+- **モジュール**:
+  - **main.rs**: エントリーポイント、エラーハンドリング、usage表示
+  - **args.rs**: 引数解析（`Config`: help, provider, task, message_args）
+  - **app.rs**: メインロジック（履歴読み込み、LLM呼び出し、履歴保存、ストリーミング表示）
+  - **task.rs**: タスク解決・実行（`task.d` 探索と実行）
+- **CLI**: `-h`/`--help`, `-p`/`--provider <name>`, 位置引数は「タスク名」または「クエリ＋メッセージ」として解釈
+- **タスク**: `AISH_HOME/config/task.d/` を最優先、次に `XDG_CONFIG_HOME/aish/task.d/`。`task_name.sh` または `task_name/execute` を実行
+- **セッション**: 環境変数 `AISH_SESSION` でセッションディレクトリを指定。part ファイルから履歴を読み込み、応答を part ファイルに追記
 
 #### `core/aish/`
-- **目的**: `aish`コマンドのRust実装
+- **目的**: `aish`コマンドのRust実装（対話シェル・セッション・ログ）
 - **ディレクトリ**: `core/aish/`
 - **ビルド方法**: `cd core/aish && cargo build --release`
 - **テスト実行**: `cd core/aish && cargo test`
-- **依存関係**: `core/common`
-- **状態**: 初期プロジェクト作成済み、実装待ち
+- **依存関係**: `core/common`, `libc`, `base64`, `serde_json`
+- **状態**: 一部実装済み。対話シェル・セッション管理・ログロールオーバー・未実装コマンドのエラー処理が動作。resume/memory/models 等は未実装
+- **モジュール**:
+  - **main.rs**: エントリーポイント、エラーハンドリング
+  - **args.rs**: 引数解析（`Config`: help, session_dir, home_dir, command, command_args）
+  - **app.rs**: コマンド振り分け、usage、未実装コマンドは 64 で終了
+  - **logfmt.rs**: ログフォーマット（logfmt 等）
+  - **shell.rs**: 対話シェル起動、PTY、ログ記録
+  - **terminal.rs**: ターミナルバッファエミュレーション（ログ用）
+  - **platform/**: プラットフォーム抽象（Unix: シグナル、SIGUSR2 等）
+- **CLI**: `-h`/`--help`, `-s`/`--session-dir <dir>`, `-d`/`--home-dir <dir>`, 位置引数でコマンドと引数
+- **実装済みコマンド**: なし（対話シェル）、`truncate_console_log`（コンソールバッファ・ログのロールオーバー）
+- **未実装コマンド**: resume, sessions, rollout, clear, ls, rm_last, memory, models（いずれも 64 で終了し usage に記載）
 - **セッション解決**: セッションディレクトリの優先順位は次のとおり。デフォルト（`-s` 未指定）では毎回ユニークなセッションIDを生成し、複数起動が同じ console/part に混ざらないようにする。`-s` 指定時のみ同一ディレクトリで再開できる。
   1. **CLI `-s/--session-dir`**: 指定ディレクトリをそのまま使用（再開用）
-  2. **環境変数 AISH_HOME**: 設定時はその配下の `state/session/{ユニークID}`
+  2. **環境変数 AISH_HOME / `-d/--home-dir`**: その配下の `state/session/{ユニークID}` を生成
   3. **XDG_STATE_HOME**: 未設定時は `~/.local/state` の `aish/session/{ユニークID}`
 
 ### 既存ツール（Rust実装済み）
@@ -75,10 +103,13 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 #### `tools/aish-render/`
 - **目的**: ターミナル出力のレンダリングツール（Rust実装）
 
+#### `tools/leakscan/`
+- **目的**: 機密情報検出（Gitleaks風）。検出理由の表示など。
+
 ### 旧実装（参考用）
 
 - **ディレクトリ**: `old_impl/`
-- **内容**: シェルスクリプトベースの旧実装（参考用として保持）
+- **内容**: シェルスクリプトベースの旧実装（参考用として保持）。開発時は `AISH_HOME` を `old_impl/_aish` に設定して利用可能。
 
 ## 開発方針
 
@@ -131,16 +162,14 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
    - 外部ライブラリは必要最小限に保つ
    - 標準ライブラリ（`std`）で実装可能な機能は外部ライブラリを使わない
    - 既存ツール（`aish-capture`、`aish-script`）と同じパターンに従う
-   - 例: 引数解析は`clap`を使わず`std::env::args()`を使用、JSON解析が必要な場合のみ`serde_json`を使用
+   - 例: 引数解析は`clap`を使わず`std::env::args()`を使用。JSON解析・HTTPは common で `serde_json`・`reqwest` を使用
    - 依存関係を追加する前に、標準ライブラリで実装できないか検討する
 
 4. **エラーハンドリングの統一**
-   - エラーは`Result<T, (String, i32)>`形式で統一する
-     - `T`: 成功時の戻り値（関数によって異なる）
-     - `String`: エラーメッセージ（ユーザーフレンドリーな内容）
-     - `i32`: 終了コード（64: 引数不正、74: I/Oエラー、70: システムエラーなど）
-   - エラーメッセージは明確で、問題の原因と解決方法を示す
-   - 終了コードは標準的な値を使用する（BSD exit codesを参考）
+   - エラーは `common::error::Error` 型で統一する（`type Error = (String, i32)`）
+   - 第1要素: エラーメッセージ（ユーザーフレンドリーな内容）
+   - 第2要素: 終了コード（64: 引数不正、74: I/O/HTTP、70: システムエラーなど。BSD exit codes を参考）
+   - ヘルパ: `invalid_argument`, `io_error_default`, `system_error`, `http_error` 等を利用する
 
 5. **テスト容易性（Testability）**
    - 各モジュールは独立してテスト可能な設計にする
@@ -155,7 +184,8 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
    ├── main.rs      # エントリーポイント、エラーハンドリング
    ├── args.rs      # 引数解析（必要に応じて）
    ├── config.rs    # 設定管理（必要に応じて）
-   └── app.rs        # メインロジック
+   ├── app.rs       # メインロジック
+   └── task.rs      # タスク実行など（必要に応じて）
    ```
 
 #### 実装例
@@ -163,6 +193,8 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 **引数解析の例**:
 ```rust
 // src/args.rs
+use common::error::{Error, invalid_argument};
+
 pub struct Config {
     pub profile: Option<String>,
     pub help: bool,
@@ -177,7 +209,7 @@ impl Default for Config {
     }
 }
 
-pub fn parse_args() -> Result<Config, (String, i32)> {
+pub fn parse_args() -> Result<Config, Error> {
     let args: Vec<String> = std::env::args().collect();
     let mut config = Config::default();
     // 引数解析ロジック
@@ -190,10 +222,11 @@ pub fn parse_args() -> Result<Config, (String, i32)> {
 // src/main.rs
 mod args;
 mod app;
+use common::error::Error;
 use args::parse_args;
 use app::run_app;
 
-pub fn run() -> Result<i32, (String, i32)> {
+pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
     run_app(config)
 }
@@ -202,8 +235,9 @@ pub fn run() -> Result<i32, (String, i32)> {
 ```rust
 // src/app.rs
 use crate::args::Config;
+use common::error::Error;
 
-pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
+pub fn run_app(config: Config) -> Result<i32, Error> {
     // メインロジック
     Ok(0)
 }
@@ -229,9 +263,9 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
 ```
 
 結合テストスクリプト（`test_integration.sh`）は以下を実行します：
-- `core/ai`と`core/aish`のバイナリをビルド
-- ビルドしたバイナリが正常に実行できることを確認
-- 基本的な動作確認
+- `core/ai` と `core/aish` のバイナリをビルド
+- ai: 引数なし・不正オプションで終了コード 64 になることを確認
+- aish: パイプ入力でシェルが動作すること、不正オプション・未実装コマンドで 64、デフォルトで毎回別セッション、`-s` で指定セッションになることを確認
 
 ### プロジェクト全体の単体テスト
 
@@ -241,8 +275,10 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
 ```
 
 このスクリプトは以下のテストを実行します：
-- `core/ai`のRustテスト（`cargo test`）
-- `core/aish`のRustテスト（`cargo test`）
+- `core/ai` の Rust テスト（`cargo test`）
+- `core/aish` の Rust テスト（`cargo test`）
+
+（`core/common` は単体では実行されず、ai / aish の依存としてそのテスト内で利用される）
 
 ### 結合テスト
 
@@ -254,19 +290,18 @@ pub fn run_app(config: Config) -> Result<i32, (String, i32)> {
 BUILD_MODE=debug ./test_integration.sh
 ```
 
-結合テストは以下を確認します：
-- バイナリが正常にビルドできること
-- ビルドしたバイナリが実行できること
-- 基本的な動作が正常であること
-
 ### 個別プロジェクトのテスト
 
 ```bash
-# aiプロジェクト
+# common ライブラリ
+cd core/common
+cargo test
+
+# ai コマンド
 cd core/ai
 cargo test
 
-# aishプロジェクト
+# aish コマンド
 cd core/aish
 cargo test
 ```
@@ -283,7 +318,7 @@ cargo test
 ./build.sh --debug
 ```
 
-このスクリプトは以下のバイナリをビルドし、`home/bin/`に配置します：
+このスクリプトは以下のバイナリをビルドし、`home/bin/` に配置します：
 - `tools/aish-capture`
 - `tools/aish-render`
 - `tools/aish-script`
@@ -294,23 +329,30 @@ cargo test
 ### コア実装（Rust）の個別ビルド
 
 ```bash
-# aiコマンド
+# ai コマンド
 cd core/ai
 cargo build --release
 
-# aishコマンド
+# aish コマンド
 cd core/aish
 cargo build --release
 ```
 
 ## デバッグ方法
 
-開発用のディレクトリで作業している際は以下の手順で実行すると開発環境のファイルを参照するようになります。
+- **Rust の aish を開発環境で使う**: `-d` でホームディレクトリを指定する。
+  ```bash
+  ./home/bin/aish -d "$PROJECT_ROOT/home"
+  ```
+- **旧実装（シェル）でデバッグする場合**:
+  ```bash
+  export AISH_HOME="$PROJECT_ROOT/old_impl/_aish"
+  ./old_impl/aish
+  ```
 
-```bash
-export AISH_HOME="$PROJECT_ROOT/old_impl/_aish"
-./old_impl/aish
-```
+## 既知の課題（バグ）
+
+プロジェクトルートの `BUGS.md` に未解決のバグを記載している。主に `core/aish` のターミナルバッファ・ログ周り（長いテキストの端折り、カーソル移動の再現不備など）。
 
 ## 禁止事項
 
@@ -328,10 +370,21 @@ export AISH_HOME="$PROJECT_ROOT/old_impl/_aish"
 ## プロジェクト全体のドキュメント
 
 - **プロジェクトREADME**: [`README.md`](README.md)
+- **既知のバグ**: [`BUGS.md`](BUGS.md)
 - **設計ドキュメント**: `plan/*.md`（該当する場合）
 
 ## 更新履歴
 
+- **2026年1月**: AGENTS.md を現状に合わせて全面見直し
+  - `core/common`: 提供機能を詳細化（error, session, llm, part_id）。LLM プロバイダ（Gemini / GPT / Echo）、factory、part_id の仕様を追記
+  - `core/ai`: 状態を「実装済み」に更新。モジュール構成（args, app, task）、CLI・タスク・セッションの仕様を追記
+  - `core/aish`: 状態を「一部実装済み」に更新。モジュール構成（logfmt, shell, terminal, platform）、実装済み/未実装コマンド、セッション解決を追記
+  - エラーハンドリングを `common::error::Error` に統一する旨を明記
+  - `tools/leakscan` をビルド一覧に追加
+  - 結合テストの内容（ai / aish の検証項目）を具体化
+  - デバッグ方法に Rust aish の `-d` を追加
+  - BUGS.md への参照と「既知の課題」セクションを追加
+  - 更新履歴に上記を記録
 - **2025年1月**: プロジェクトルートにAGENTS.mdを作成
   - `core/ai`と`core/aish`のRustプロジェクト作成
   - `src/`ディレクトリを`core/`にリネーム
@@ -341,4 +394,3 @@ export AISH_HOME="$PROJECT_ROOT/old_impl/_aish"
   - 結合テストスクリプト（`test_integration.sh`）作成
   - 作業前後の確認手順を明記
   - Rust実装の設計原則を一般化してルールとして追加（関心の分離、設定の構造化、依存関係の最小化、エラーハンドリングの統一、テスト容易性）
-
