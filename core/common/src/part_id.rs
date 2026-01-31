@@ -5,9 +5,13 @@
 //!
 //! 互換: 旧形式（base64url 8文字等）と混在してもファイル名順ソートは安定するが、
 //! 辞書順が時系列に一致するのは新形式のみ。混在時は時系列順を保証しない。
+//!
+//! usecase は IdGenerator を注入し、テストでは固定 ID を返す実装を渡せる。
 
+use crate::adapter::Clock;
 use crate::domain::PartId;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 static LAST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -21,10 +25,25 @@ const MAX_VAL: u64 = BASE.pow(WIDTH as u32) - 1;
 /// 0-9, A-Z, a-z の順で辞書順＝数値順になるbase62
 const ALPHABET: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-impl PartId {
-    /// 新規Part IDを1つ生成する。辞書順ソートが生成順（時系列）になる固定長8文字ASCII。
-    pub fn generate() -> Self {
-        let ms = now_ms_u64();
+/// PartId を生成する抽象（テストでは固定 ID を返す実装を注入可能）
+pub trait IdGenerator: Send + Sync {
+    fn next_id(&self) -> PartId;
+}
+
+/// Clock + グローバルシーケンスで PartId を生成する標準実装
+pub struct StdIdGenerator {
+    clock: Arc<dyn Clock>,
+}
+
+impl StdIdGenerator {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
+    }
+}
+
+impl IdGenerator for StdIdGenerator {
+    fn next_id(&self) -> PartId {
+        let ms = self.clock.now_ms();
         let ms_rel = ms.saturating_sub(EPOCH_MS);
         let base = (ms_rel << SEQ_BITS).min(MAX_VAL);
 
@@ -35,7 +54,7 @@ impl PartId {
             } else {
                 let seq = (prev & SEQ_MASK) + 1;
                 if seq > SEQ_MASK {
-                    continue; // 同一msでseq枯渇、次のmsまでリトライ
+                    continue;
                 }
                 (prev + 1).min(MAX_VAL)
             };
@@ -55,11 +74,11 @@ fn to_base62(mut n: u64) -> String {
     std::str::from_utf8(&buf).unwrap().to_string()
 }
 
-fn now_ms_u64() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+impl PartId {
+    /// 新規Part IDを1つ生成する（デフォルトの StdIdGenerator を使用）
+    pub fn generate() -> Self {
+        StdIdGenerator::new(Arc::new(crate::adapter::StdClock)).next_id()
+    }
 }
 
 #[cfg(test)]

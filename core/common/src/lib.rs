@@ -2,6 +2,9 @@
 //!
 //! `ai`と`aish`コマンドで共有される機能を提供します。
 
+/// アダプター（外界 I/O の trait と標準実装）
+pub mod adapter;
+
 /// ドメイン型（Newtype）
 pub mod domain;
 

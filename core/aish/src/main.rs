@@ -1,3 +1,4 @@
+mod adapter;
 mod args;
 mod app;
 mod shell;

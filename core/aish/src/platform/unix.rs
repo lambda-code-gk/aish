@@ -142,6 +142,7 @@ impl Pty {
         self.master_fd
     }
     
+    #[allow(dead_code)]
     pub fn child_pid(&self) -> pid_t {
         self.child_pid
     }

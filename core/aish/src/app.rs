@@ -1,84 +1,114 @@
+use crate::adapter::{UnixPtySpawn, UnixSignal};
 use crate::args::Config;
 use crate::shell::run_shell;
+use common::adapter::{FileSystem, PtySpawn, Signal};
 use common::error::Error;
+use common::part_id::IdGenerator;
 use common::session::Session;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-pub fn run_app(config: Config) -> Result<i32, Error> {
-    if config.help {
-        print_help();
-        return Ok(0);
+/// aish のユースケース（アダプター経由で I/O を行う）
+#[cfg(unix)]
+pub struct AishUseCase {
+    pub fs: Arc<dyn FileSystem>,
+    pub id_gen: Arc<dyn IdGenerator>,
+    pub signal: Arc<dyn Signal>,
+    pub pty_spawn: Arc<dyn PtySpawn>,
+}
+
+#[cfg(unix)]
+impl AishUseCase {
+    pub fn new(
+        fs: Arc<dyn FileSystem>,
+        id_gen: Arc<dyn IdGenerator>,
+        signal: Arc<dyn Signal>,
+        pty_spawn: Arc<dyn PtySpawn>,
+    ) -> Self {
+        Self {
+            fs,
+            id_gen,
+            signal,
+            pty_spawn,
+        }
     }
 
-    // ホームディレクトリ（論理的な AISH_HOME）を解決
-    let home_dir = resolve_home_dir(&config)?;
+    pub fn run(&self, config: Config) -> Result<i32, Error> {
+        if config.help {
+            print_help();
+            return Ok(0);
+        }
 
-    // セッションディレクトリを決定
-    let session_path = resolve_session_dir(&config, &home_dir)?;
+        let home_dir = resolve_home_dir(&config)?;
+        let session_path = resolve_session_dir(&config, &home_dir)?;
+        let session = Session::new(&session_path, &home_dir)?;
 
-    // セッション管理を初期化（ホームディレクトリとセッションディレクトリを指定）
-    let session = Session::new(&session_path, &home_dir)?;
-    
-    // コマンドが指定されている場合はコマンドを処理
-    if let Some(ref command) = config.command {
-        match command.as_str() {
-            "truncate_console_log" => {
-                // AISH_PIDファイルを読んでSIGUSR2を送信
-                truncate_console_log(&session)
-            }
-            _ => {
-                Err(Error::invalid_argument(format!(
+        if let Some(ref command) = config.command {
+            match command.as_str() {
+                "truncate_console_log" => truncate_console_log(
+                    session.session_dir().as_ref(),
+                    self.fs.as_ref(),
+                    self.signal.as_ref(),
+                ),
+                _ => Err(Error::invalid_argument(format!(
                     "Command '{}' is not implemented.",
                     command
-                )))
+                ))),
             }
+        } else {
+            run_shell(
+                session.session_dir().as_ref(),
+                session.aish_home().as_ref(),
+                self.fs.as_ref(),
+                self.id_gen.as_ref(),
+                self.signal.as_ref(),
+                self.pty_spawn.as_ref(),
+            )
         }
-    } else {
-        // 引数なしの場合はシェルを起動
-        run_shell(&session)
     }
 }
 
-/// console.txtとメモリ上のバッファをトランケートする
-///
-/// aishのPIDファイルを読み、そのプロセスにSIGUSR2を送信することで、
-/// メモリ上のターミナルバッファとconsole.txtファイルをクリアする。
-/// これにより、aiコマンドのレスポンスがpart_*_user.txtとして重複保存されることを防ぐ。
-fn truncate_console_log(session: &Session) -> Result<i32, Error> {
-    use std::fs;
-    
-    // AISH_PIDファイルからPIDを読み取る
-    let pid_file_path = session.session_dir().join("AISH_PID");
-    
-    if !pid_file_path.exists() {
-        // PIDファイルが存在しない場合は何もしない（aishが実行中でない）
+/// 標準アダプターで AishUseCase を組み立てて run する
+#[cfg(unix)]
+pub fn run_app(config: Config) -> Result<i32, Error> {
+    let fs = Arc::new(common::adapter::StdFileSystem);
+    let id_gen = Arc::new(common::part_id::StdIdGenerator::new(Arc::new(
+        common::adapter::StdClock,
+    )));
+    let signal = Arc::new(UnixSignal);
+    let pty_spawn = Arc::new(UnixPtySpawn);
+    let use_case = AishUseCase::new(fs, id_gen, signal, pty_spawn);
+    use_case.run(config)
+}
+
+/// run_app の非 Unix 用ダミー（aish は Unix 専用のため通常は使わない）
+#[cfg(not(unix))]
+pub fn run_app(config: Config) -> Result<i32, Error> {
+    let _ = config;
+    Err(Error::system("aish is only supported on Unix"))
+}
+
+/// console.txtとメモリ上のバッファをトランケートする（アダプター経由）
+#[cfg(unix)]
+fn truncate_console_log<F: FileSystem + ?Sized, S: Signal + ?Sized>(
+    session_dir: &Path,
+    fs: &F,
+    signal: &S,
+) -> Result<i32, Error> {
+    let pid_file_path = session_dir.join("AISH_PID");
+
+    if !fs.exists(&pid_file_path) {
         return Ok(0);
     }
-    
-    let pid_str = fs::read_to_string(&pid_file_path)
-        .map_err(|e| Error::io_msg(format!("Failed to read AISH_PID file: {}", e)))?;
-    
+
+    let pid_str = fs.read_to_string(&pid_file_path)?;
     let pid: i32 = pid_str
         .trim()
         .parse()
         .map_err(|e| Error::io_msg(format!("Invalid PID in AISH_PID file: {}", e)))?;
-    
-    // SIGUSR2を送信
-    unsafe {
-        let result = libc::kill(pid, libc::SIGUSR2);
-        if result != 0 {
-            let err = std::io::Error::last_os_error();
-            // ESRCH (No such process) の場合は無視
-            if err.raw_os_error() != Some(libc::ESRCH) {
-                return Err(Error::io_msg(format!(
-                    "Failed to send SIGUSR2 to aish process: {}",
-                    err
-                )));
-            }
-        }
-    }
-    
+
+    signal.send_signal(pid, libc::SIGUSR2)?;
     Ok(0)
 }
 
