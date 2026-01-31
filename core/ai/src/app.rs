@@ -486,29 +486,28 @@ mod tests {
 
     #[test]
     fn test_run_app_with_message() {
-        // 環境変数が設定されていない場合はエラーになるが、基本的な構造はテストできる
+        // echoプロバイダを使用してネットワーク不要で高速に実行
+        // （provider未指定だとGeminiが使われ、APIキー欠如でHTTPタイムアウトまで数秒かかる）
         let config = Config {
+            provider: Some(ProviderName::new("echo")),
             message_args: vec!["Hello".to_string()],
             ..Default::default()
         };
-        // APIキーがない場合はエラーになるが、引数解析は正常
-        let _result = run_app(config);
-        // 環境変数がない場合はエラーになる
-        // 実際の動作確認は統合テストで行う
+        let result = run_app(config);
+        assert!(result.is_ok(), "echo provider should succeed without API key");
     }
 
     #[test]
     fn test_run_app_with_task_and_message() {
-        // 環境変数が設定されていない場合はエラーになるが、基本的な構造はテストできる
+        // echoプロバイダを使用（agentタスクは存在しない想定なのでLLMパスに入る）
         let config = Config {
+            provider: Some(ProviderName::new("echo")),
             task: Some("agent".to_string()),
             message_args: vec!["hello".to_string(), "world".to_string()],
             ..Default::default()
         };
-        // APIキーがない場合はエラーになるが、引数解析は正常
-        let _result = run_app(config);
-        // 環境変数がない場合はエラーになる
-        // 実際の動作確認は統合テストで行う
+        let result = run_app(config);
+        assert!(result.is_ok(), "echo provider should succeed without API key");
     }
 
     #[test]
