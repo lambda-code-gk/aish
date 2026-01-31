@@ -5,32 +5,11 @@ use std::path::{Path, PathBuf};
 use common::adapter::{FileSystem, PtyProcessStatus, PtySpawn, Signal, Winsize};
 use common::error::Error;
 use common::part_id::IdGenerator;
+use crate::adapter::console_handler::ConsoleLogHandler;
 use crate::adapter::platform::{get_winsize, TermMode};
 use crate::adapter::terminal::TerminalBuffer;
+use crate::domain::SessionEvent;
 use libc;
-
-fn part_filename_from_id(id: &common::domain::PartId) -> String {
-    format!("part_{}_user.txt", id)
-}
-
-/// ログファイルをフラッシュしてpartファイルにリネームし、console.txtをトランケート（アダプター経由）
-fn rollover_log_file<F: FileSystem + ?Sized, I: IdGenerator + ?Sized>(
-    log_file_path: &Path,
-    session_dir: &Path,
-    fs: &F,
-    id_gen: &I,
-) -> Result<(), Error> {
-    if fs.exists(log_file_path) {
-        let metadata = fs.metadata(log_file_path)?;
-        if metadata.len() > 0 {
-            let part_filename = part_filename_from_id(&id_gen.next_id());
-            let part_file_path = session_dir.join(&part_filename);
-            fs.rename(log_file_path, &part_file_path)?;
-        }
-    }
-    fs.truncate_file(log_file_path)?;
-    Ok(())
-}
 
 /// シェル起動コマンドを構築（aishrc の有無は fs で判定）
 fn build_shell_command<F: FileSystem + ?Sized>(
@@ -122,6 +101,9 @@ pub fn run_shell(
     
     // ターミナルバッファを初期化
     let mut terminal_buffer = TerminalBuffer::new();
+
+    // イベントハンドラ（flush / rollover / truncate を集約）
+    let handler = ConsoleLogHandler::new(&log_file_path, session_dir, fs, id_gen);
     
     // メインループ用のバッファ
     const MAX_CHUNK: usize = 32768;
@@ -130,30 +112,30 @@ pub fn run_shell(
     let mut stdin_eof = false;
     
     loop {
-        if signal.check_sigwinch() {
-            if let Ok(ws) = get_winsize(stdin_fd) {
-                let common_ws = libc_winsize_to_common(ws);
-                let _ = pty.set_winsize(&common_ws);
-            }
-        }
+        // シグナルをイベントに変換してハンドラに渡す
+        let events: Vec<SessionEvent> = [
+            (signal.check_sigwinch(), SessionEvent::SigWinch),
+            (signal.check_sigusr1(), SessionEvent::SigUsr1),
+            (signal.check_sigusr2(), SessionEvent::SigUsr2),
+        ]
+        .into_iter()
+        .filter_map(|(triggered, ev)| if triggered { Some(ev) } else { None })
+        .collect();
 
-        if signal.check_sigusr1() {
-            let output = terminal_buffer.output();
-            if !output.is_empty() {
-                let _ = log_file.write_all(output.as_bytes());
-                let _ = log_file.flush();
+        for event in events {
+            match event {
+                SessionEvent::SigWinch => {
+                    if let Ok(ws) = get_winsize(stdin_fd) {
+                        let common_ws = libc_winsize_to_common(ws);
+                        let _ = pty.set_winsize(&common_ws);
+                    }
+                }
+                SessionEvent::SigUsr1 | SessionEvent::SigUsr2 => {
+                    let output = terminal_buffer.output();
+                    terminal_buffer.clear();
+                    log_file = handler.handle(event, &output, log_file)?;
+                }
             }
-            terminal_buffer.clear();
-            drop(log_file);
-            rollover_log_file(&log_file_path, session_dir, fs, id_gen)?;
-            log_file = fs.open_append(&log_file_path)?;
-        }
-
-        if signal.check_sigusr2() {
-            terminal_buffer.clear();
-            drop(log_file);
-            fs.truncate_file(&log_file_path)?;
-            log_file = fs.open_append(&log_file_path)?;
         }
 
         match pty.wait_nonblocking() {
@@ -282,6 +264,7 @@ pub fn run_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapter::console_handler::part_filename_from_id;
     use common::adapter::StdFileSystem;
     use common::domain::PartId;
     use std::fs;
@@ -351,6 +334,6 @@ mod tests {
         let suffix = "_user.txt";
         let core = &name[prefix.len()..name.len() - suffix.len()];
         assert_eq!(core.len(), 8);
-        assert!(core.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert!(core.chars().all(|c: char| c.is_ascii_alphanumeric()));
     }
 }

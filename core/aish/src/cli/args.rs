@@ -1,9 +1,11 @@
+use crate::domain::command::Command;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub help: bool,
     pub session_dir: Option<String>,
     pub home_dir: Option<String>,
-    pub command: Option<String>,
+    pub command: Command,
     pub command_args: Vec<String>,
 }
 
@@ -13,7 +15,7 @@ impl Default for Config {
             help: false,
             session_dir: None,
             home_dir: None,
-            command: None,
+            command: Command::Shell,
             command_args: Vec::new(),
         }
     }
@@ -53,7 +55,7 @@ pub fn parse_args() -> Result<Config, Error> {
             }
             _ => {
                 // 位置引数（コマンドとその引数）
-                config.command = Some(args[i].clone());
+                config.command = Command::parse(&args[i]);
                 i += 1;
                 // 残りの引数はコマンドの引数として扱う
                 while i < args.len() {
@@ -64,7 +66,7 @@ pub fn parse_args() -> Result<Config, Error> {
             }
         }
     }
-    
+
     Ok(config)
 }
 
@@ -86,7 +88,7 @@ mod tests {
         assert_eq!(config.help, false);
         assert_eq!(config.session_dir, None);
         assert_eq!(config.home_dir, None);
-        assert_eq!(config.command, None);
+        assert_eq!(config.command, Command::Shell);
         assert_eq!(config.command_args.len(), 0);
     }
 }

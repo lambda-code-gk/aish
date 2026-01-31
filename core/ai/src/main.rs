@@ -6,7 +6,7 @@ mod usecase;
 use std::process;
 use common::error::Error;
 use cli::parse_args;
-use usecase::run_app;
+use usecase::wire_ai;
 
 fn main() {
     let exit_code = match run() {
@@ -24,7 +24,8 @@ fn main() {
 
 pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
-    run_app(config)
+    let use_case = wire_ai();
+    use_case.run(config)
 }
 
 #[cfg(test)]

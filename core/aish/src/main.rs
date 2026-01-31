@@ -1,11 +1,13 @@
 mod adapter;
 mod cli;
+mod domain;
 mod usecase;
 
 use std::process;
+#[cfg(unix)]
+use usecase::wire_aish;
 use common::error::Error;
 use cli::parse_args;
-use usecase::run_app;
 
 fn main() {
     let exit_code = match run() {
@@ -23,7 +25,16 @@ fn main() {
 
 pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
-    run_app(config)
+    #[cfg(unix)]
+    {
+        let use_case = wire_aish();
+        use_case.run(config)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = config;
+        Err(Error::system("aish is only supported on Unix"))
+    }
 }
 
 #[cfg(test)]

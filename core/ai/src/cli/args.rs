@@ -1,10 +1,11 @@
+use crate::domain::{AiCommand, TaskName};
 use common::domain::ProviderName;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub help: bool,
     pub provider: Option<ProviderName>,
-    pub task: Option<String>,
+    pub task: Option<TaskName>,
     pub message_args: Vec<String>,
 }
 
@@ -49,7 +50,7 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
             }
             _ => {
                 // 位置引数（タスク名とメッセージ引数）
-                config.task = Some(args[i].clone());
+                config.task = Some(TaskName::new(args[i].clone()));
                 i += 1;
                 // 残りの引数はメッセージ引数として扱う
                 while i < args.len() {
@@ -62,6 +63,29 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
     }
     
     Ok(config)
+}
+
+/// Config を AiCommand に変換する
+pub fn config_to_command(config: Config) -> AiCommand {
+    if config.help {
+        return AiCommand::Help;
+    }
+
+    if let Some(task) = config.task {
+        let args = config.message_args;
+        let provider = config.provider;
+        return AiCommand::Task {
+            name: task,
+            args,
+            provider,
+        };
+    }
+
+    let query = config.message_args.join(" ");
+    AiCommand::Query {
+        provider: config.provider,
+        query,
+    }
 }
 
 #[cfg(test)]
@@ -80,9 +104,9 @@ mod tests {
     #[test]
     fn test_config_with_task() {
         let mut config = Config::default();
-        config.task = Some("agent".to_string());
+        config.task = Some(TaskName::new("agent"));
         config.message_args.push("hello".to_string());
-        assert_eq!(config.task, Some("agent".to_string()));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 1);
         assert_eq!(config.message_args[0], "hello");
     }
@@ -139,7 +163,7 @@ mod tests {
         let args = vec!["ai".to_string(), "agent".to_string()];
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.help, false);
-        assert_eq!(config.task, Some("agent".to_string()));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 0);
     }
 
@@ -148,7 +172,7 @@ mod tests {
         let args = vec!["ai".to_string(), "agent".to_string(), "hello".to_string()];
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.help, false);
-        assert_eq!(config.task, Some("agent".to_string()));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 1);
         assert_eq!(config.message_args[0], "hello");
     }
@@ -164,7 +188,7 @@ mod tests {
         ];
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.help, false);
-        assert_eq!(config.task, Some("agent".to_string()));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 3);
         assert_eq!(config.message_args[0], "hello");
         assert_eq!(config.message_args[1], "world");
@@ -214,7 +238,7 @@ mod tests {
         ];
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("echo"));
-        assert_eq!(config.task, Some("Hello".to_string()));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("Hello"));
     }
 }
 

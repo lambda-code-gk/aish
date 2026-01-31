@@ -1,3 +1,4 @@
+pub(crate) mod env;
 pub(crate) mod sinks;
 pub(crate) mod task;
 pub(crate) use sinks::StdoutSink;

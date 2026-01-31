@@ -1,5 +1,7 @@
 pub(crate) mod aish_adapter;
+pub(crate) mod console_handler;
 pub(crate) mod logfmt;
+pub(crate) mod path_resolver;
 pub(crate) mod platform;
 pub(crate) mod shell;
 pub(crate) mod terminal;

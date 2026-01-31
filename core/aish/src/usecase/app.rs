@@ -1,11 +1,11 @@
-use crate::adapter::{run_shell, UnixPtySpawn, UnixSignal};
+use crate::adapter::{path_resolver, run_shell, UnixPtySpawn, UnixSignal};
 use crate::cli::Config;
+use crate::domain::command::Command;
 use common::adapter::{FileSystem, PtySpawn, Signal};
 use common::error::Error;
 use common::part_id::IdGenerator;
 use common::session::Session;
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 /// aish のユースケース（アダプター経由で I/O を行う）
@@ -39,46 +39,64 @@ impl AishUseCase {
             return Ok(0);
         }
 
-        let home_dir = resolve_home_dir(&config)?;
-        let session_path = resolve_session_dir(&config, &home_dir)?;
+        let path_input = path_resolver::PathResolverInput {
+            home_dir: config.home_dir.clone(),
+            session_dir: config.session_dir.clone(),
+        };
+        let home_dir = path_resolver::resolve_home_dir(&path_input)?;
+        let session_path = path_resolver::resolve_session_dir(&path_input, &home_dir)?;
         let session = Session::new(&session_path, &home_dir)?;
 
-        if let Some(ref command) = config.command {
-            match command.as_str() {
-                "truncate_console_log" => truncate_console_log(
-                    session.session_dir().as_ref(),
-                    self.fs.as_ref(),
-                    self.signal.as_ref(),
-                ),
-                _ => Err(Error::invalid_argument(format!(
-                    "Command '{}' is not implemented.",
-                    command
-                ))),
-            }
-        } else {
-            run_shell(
+        match &config.command {
+            Command::Shell => run_shell(
                 session.session_dir().as_ref(),
                 session.aish_home().as_ref(),
                 self.fs.as_ref(),
                 self.id_gen.as_ref(),
                 self.signal.as_ref(),
                 self.pty_spawn.as_ref(),
-            )
+            ),
+            Command::TruncateConsoleLog => truncate_console_log(
+                session.session_dir().as_ref(),
+                self.fs.as_ref(),
+                self.signal.as_ref(),
+            ),
+            Command::Resume
+            | Command::Sessions
+            | Command::Rollout
+            | Command::Clear
+            | Command::Ls
+            | Command::RmLast
+            | Command::Memory
+            | Command::Models => Err(Error::invalid_argument(format!(
+                "Command '{}' is not implemented.",
+                config.command.as_str()
+            ))),
+            Command::Unknown(name) => Err(Error::invalid_argument(format!(
+                "Command '{}' is not implemented.",
+                name
+            ))),
         }
     }
 }
 
-/// 標準アダプターで AishUseCase を組み立てて run する
+/// 配線: 標準アダプタで AishUseCase を組み立てる（Unix 専用）
 #[cfg(unix)]
-pub fn run_app(config: Config) -> Result<i32, Error> {
+pub fn wire_aish() -> AishUseCase {
     let fs = Arc::new(common::adapter::StdFileSystem);
     let id_gen = Arc::new(common::part_id::StdIdGenerator::new(Arc::new(
         common::adapter::StdClock,
     )));
     let signal = Arc::new(UnixSignal);
     let pty_spawn = Arc::new(UnixPtySpawn);
-    let use_case = AishUseCase::new(fs, id_gen, signal, pty_spawn);
-    use_case.run(config)
+    AishUseCase::new(fs, id_gen, signal, pty_spawn)
+}
+
+/// 標準アダプターで AishUseCase を組み立てて run する（テスト用の入口）
+#[cfg(unix)]
+#[allow(dead_code)] // テストで使用
+pub fn run_app(config: Config) -> Result<i32, Error> {
+    wire_aish().run(config)
 }
 
 /// run_app の非 Unix 用ダミー（aish は Unix 専用のため通常は使わない）
@@ -130,261 +148,6 @@ pub fn print_usage() {
     eprintln!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
 }
 
-/// ホームディレクトリ（論理的な AISH_HOME）を解決する
-///
-/// 優先順位:
-/// 1. コマンドラインオプション -d/--home-dir
-/// 2. 環境変数 AISH_HOME
-/// 3. XDG_CONFIG_HOME/aish （未設定時は ~/.config/aish）
-fn resolve_home_dir(config: &Config) -> Result<String, Error> {
-    // 1. CLI オプション
-    if let Some(ref home) = config.home_dir {
-        return Ok(home.clone());
-    }
-
-    // 2. 環境変数 AISH_HOME
-    if let Ok(env_home) = env::var("AISH_HOME") {
-        if !env_home.is_empty() {
-            return Ok(env_home);
-        }
-    }
-
-    // 3. XDG_CONFIG_HOME/aish （デフォルトは ~/.config/aish）
-    let xdg_config_home = env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-        let mut path = dirs_home().unwrap_or_else(|| PathBuf::from("~"));
-        path.push(".config");
-        path.to_string_lossy().to_string()
-    });
-
-    Ok(format!("{}/aish", xdg_config_home.trim_end_matches('/')))
-}
-
-/// セッションディレクトリを解決する
-///
-/// 優先順位:
-/// 1. コマンドラインオプション -s/--session-dir（指定ディレクトリをそのまま使用・再開用）
-/// 2. 環境変数 AISH_HOME が設定されている場合: その配下の state/session/{ユニークID}
-/// 3. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
-///
-/// デフォルト（-s 未指定）では毎回新しいユニークセッションIDを生成し、複数起動が同じ
-/// console/part に混ざらないようにする。-s 指定時のみ同一ディレクトリで再開できる。
-fn resolve_session_dir(config: &Config, home_dir: &str) -> Result<String, Error> {
-    // 1. CLI オプション -s: 指定ディレクトリをそのまま使用（再開用）
-    if let Some(ref session_dir) = config.session_dir {
-        return Ok(session_dir.clone());
-    }
-
-    // 2. AISH_HOME（または -d）が設定されている場合: その配下の state/session/{ユニークID}
-    //    home_dir は既に resolve_home_dir で解決済み（-d > AISH_HOME）
-    let env_home = env::var("AISH_HOME").ok().filter(|h| !h.is_empty());
-    if config.home_dir.is_some() || env_home.is_some() {
-        let mut path = PathBuf::from(home_dir);
-        path.push("state");
-        path.push("session");
-        path.push(generate_session_dirname());
-        return Ok(path.to_string_lossy().to_string());
-    }
-
-    // 3. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
-    let xdg_state_home = env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
-        let mut path = dirs_home().unwrap_or_else(|| PathBuf::from("~"));
-        path.push(".local");
-        path.push("state");
-        path.to_string_lossy().to_string()
-    });
-
-    let mut path = PathBuf::from(xdg_state_home.trim_end_matches('/'));
-    path.push("aish");
-    path.push("session");
-    path.push(generate_session_dirname());
-
-    Ok(path.to_string_lossy().to_string())
-}
-
-/// ホームディレクトリ (~) を取得する簡易ヘルパ
-///
-/// 標準ライブラリのみで実装するため、$HOME 環境変数に依存する。
-fn dirs_home() -> Option<PathBuf> {
-    if let Ok(home) = env::var("HOME") {
-        if !home.is_empty() {
-            return Some(PathBuf::from(home));
-        }
-    }
-    None
-}
-
-/// セッションディレクトリ名を生成する
-///
-/// 形式: base64urlエンコードされた48bit時刻（ミリ秒）8文字
-fn generate_session_dirname() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    // base64url 文字テーブル
-    const BASE64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-
-    // ミリ秒単位に変換（u64にキャスト）
-    let ms_since_epoch = dur.as_millis() as u64;
-
-    // 下位48bitのみを使用
-    let ts48 = ms_since_epoch & ((1u64 << 48) - 1);
-
-    // 48bit = 6bit * 8文字 → 8文字固定長
-    let mut buf = [0u8; 8];
-    for i in 0..8 {
-        let shift = 6 * (7 - i);
-        let index = ((ts48 >> shift) & 0x3F) as usize;
-        buf[i] = BASE64URL[index];
-    }
-
-    String::from_utf8_lossy(&buf).to_string()
-}
-
-#[cfg(test)]
-mod path_tests {
-    use super::*;
-
-    fn with_env_var<F: FnOnce()>(key: &str, value: Option<&str>, f: F) {
-        let original = env::var(key).ok();
-        match value {
-            Some(v) => env::set_var(key, v),
-            None => env::remove_var(key),
-        }
-        f();
-        match original {
-            Some(v) => env::set_var(key, v),
-            None => env::remove_var(key),
-        }
-    }
-
-    #[test]
-    fn test_resolve_home_dir_prefers_cli() {
-        let config = Config {
-            home_dir: Some("/tmp/aish_cli_home".to_string()),
-            ..Default::default()
-        };
-
-        // AISH_HOME が設定されていても CLI が優先されること
-        with_env_var("AISH_HOME", Some("/tmp/aish_env_home"), || {
-            let home = resolve_home_dir(&config).unwrap();
-            assert_eq!(home, "/tmp/aish_cli_home");
-        });
-    }
-
-    #[test]
-    fn test_resolve_home_dir_uses_aish_home_env() {
-        let config = Config::default();
-
-        with_env_var("AISH_HOME", Some("/tmp/aish_env_home2"), || {
-            let home = resolve_home_dir(&config).unwrap();
-            assert_eq!(home, "/tmp/aish_env_home2");
-        });
-    }
-
-    #[test]
-    fn test_resolve_home_dir_uses_xdg_config_home() {
-        let config = Config::default();
-
-        with_env_var("AISH_HOME", None, || {
-            with_env_var("XDG_CONFIG_HOME", Some("/tmp/xdg_config"), || {
-                let home = resolve_home_dir(&config).unwrap();
-                assert_eq!(home, "/tmp/xdg_config/aish");
-            });
-        });
-    }
-
-    #[test]
-    fn test_resolve_session_dir_prefers_cli() {
-        let config = Config {
-            session_dir: Some("/tmp/aish_session_cli".to_string()),
-            ..Default::default()
-        };
-        let home_dir = "/tmp/aish_home_any".to_string();
-
-        let session = resolve_session_dir(&config, &home_dir).unwrap();
-        assert_eq!(session, "/tmp/aish_session_cli");
-    }
-
-    #[test]
-    fn test_resolve_session_dir_under_explicit_home() {
-        let config = Config {
-            home_dir: Some("/tmp/aish_cli_home3".to_string()),
-            ..Default::default()
-        };
-        let home_dir = resolve_home_dir(&config).unwrap();
-
-        let session = resolve_session_dir(&config, &home_dir).unwrap();
-        let prefix = "/tmp/aish_cli_home3/state/session/";
-        assert!(session.starts_with(prefix));
-
-        // 末尾8文字が base64url のセッションIDであることを確認
-        let suffix = &session[prefix.len()..];
-        assert_eq!(suffix.len(), 8);
-        for c in suffix.chars() {
-            assert!(
-                ('A'..='Z').contains(&c)
-                    || ('a'..='z').contains(&c)
-                    || ('0'..='9').contains(&c)
-                    || c == '-'
-                    || c == '_',
-                "invalid base64url char in session id: {}",
-                c
-            );
-        }
-    }
-
-    #[test]
-    fn test_resolve_session_dir_uses_xdg_state_home() {
-        let config = Config::default();
-
-        with_env_var("AISH_HOME", None, || {
-            with_env_var("XDG_STATE_HOME", Some("/tmp/xdg_state"), || {
-                let home_dir = "/tmp/some_home".to_string();
-                let session = resolve_session_dir(&config, &home_dir).unwrap();
-                // XDG 時もユニークセッションIDが付与される（同居防止）
-                let prefix = "/tmp/xdg_state/aish/session/";
-                assert!(session.starts_with(prefix), "session={}", session);
-                let suffix = &session[prefix.len()..];
-                assert_eq!(suffix.len(), 8);
-                for c in suffix.chars() {
-                    assert!(
-                        ('A'..='Z').contains(&c)
-                            || ('a'..='z').contains(&c)
-                            || ('0'..='9').contains(&c)
-                            || c == '-'
-                            || c == '_',
-                        "invalid base64url char in session id: {}",
-                        c
-                    );
-                }
-            });
-        });
-    }
-
-    #[test]
-    fn test_generate_session_dirname_format() {
-        let name = generate_session_dirname();
-        // 長さは8文字固定
-        assert_eq!(name.len(), 8);
-
-        // base64url 文字のみで構成されていること
-        for c in name.chars() {
-            assert!(
-                ('A'..='Z').contains(&c)
-                    || ('a'..='z').contains(&c)
-                    || ('0'..='9').contains(&c)
-                    || c == '-'
-                    || c == '_',
-                "invalid base64url char in session dirname: {}",
-                c
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod app_tests {
     use super::*;
@@ -412,7 +175,7 @@ mod app_tests {
         fs::create_dir_all(&home_path).unwrap();
         
         let config = Config {
-            command: Some("sessions".to_string()),
+            command: Command::Sessions,
             home_dir: Some(home_path.to_string_lossy().to_string()),
             ..Default::default()
         };
@@ -437,7 +200,7 @@ mod app_tests {
         fs::create_dir_all(&home_path).unwrap();
         
         let config = Config {
-            command: Some("truncate_console_log".to_string()),
+            command: Command::TruncateConsoleLog,
             home_dir: Some(home_path.to_string_lossy().to_string()),
             ..Default::default()
         };

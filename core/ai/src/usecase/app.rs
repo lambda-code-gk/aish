@@ -1,6 +1,6 @@
-use crate::adapter::{run_task_if_exists, StdoutSink};
-use crate::cli::Config;
-use crate::domain::History;
+use crate::adapter::{env, run_task_if_exists, StdoutSink};
+use crate::cli::{config_to_command, Config};
+use crate::domain::{AiCommand, History};
 use crate::usecase::agent_loop::{AgentLoop, LlmEventStream};
 use common::adapter::{FileSystem, Process};
 use common::error::Error;
@@ -9,15 +9,10 @@ use common::llm::{create_driver, LlmDriver, ProviderType};
 use common::llm::provider::Message as LlmMessage;
 use common::msg::Msg;
 use common::part_id::IdGenerator;
+use common::domain::SessionDir;
 use common::tool::{ToolContext, ToolRegistry};
-use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-/// セッションディレクトリを環境変数から取得
-fn session_dir_from_env() -> Option<PathBuf> {
-    env::var("AISH_SESSION").ok().map(PathBuf::from)
-}
 
 /// ドライバを LlmEventStream として使うアダプタ
 struct DriverLlmStream<'a>(&'a LlmDriver<AnyProvider>);
@@ -66,21 +61,21 @@ impl AiUseCase {
         Self { fs, id_gen, process }
     }
 
-    fn session_is_valid(&self, session_dir: &Option<PathBuf>) -> bool {
+    fn session_is_valid(&self, session_dir: &Option<SessionDir>) -> bool {
         if let Some(ref dir) = session_dir {
-            self.fs.exists(dir) && self.fs.metadata(dir).map(|m| m.is_dir()).unwrap_or(false)
+            self.fs.exists(dir.as_ref()) && self.fs.metadata(dir.as_ref()).map(|m| m.is_dir()).unwrap_or(false)
         } else {
             false
         }
     }
 
-    pub(crate) fn load_history(&self, session_dir: &PathBuf) -> Result<History, Error> {
-        if !self.fs.exists(session_dir) {
+    pub(crate) fn load_history(&self, session_dir: &SessionDir) -> Result<History, Error> {
+        if !self.fs.exists(session_dir.as_ref()) {
             return Ok(History::new());
         }
         if self
             .fs
-            .metadata(session_dir)
+            .metadata(session_dir.as_ref())
             .map(|m| !m.is_dir())
             .unwrap_or(true)
         {
@@ -88,7 +83,7 @@ impl AiUseCase {
         }
         let mut part_files: Vec<PathBuf> = self
             .fs
-            .read_dir(session_dir)?
+            .read_dir(session_dir.as_ref())?
             .into_iter()
             .filter(|path| {
                 path.file_name()
@@ -121,11 +116,11 @@ impl AiUseCase {
         Ok(history)
     }
 
-    pub(crate) fn save_response(&self, session_dir: &PathBuf, response: &str) -> Result<(), Error> {
-        if !self.fs.exists(session_dir)
+    pub(crate) fn save_response(&self, session_dir: &SessionDir, response: &str) -> Result<(), Error> {
+        if !self.fs.exists(session_dir.as_ref())
             || !self
                 .fs
-                .metadata(session_dir)
+                .metadata(session_dir.as_ref())
                 .map(|m| m.is_dir())
                 .unwrap_or(false)
         {
@@ -133,14 +128,14 @@ impl AiUseCase {
         }
         let id = self.id_gen.next_id();
         let filename = format!("part_{}_assistant.txt", id);
-        let file_path = session_dir.join(&filename);
+        let file_path = session_dir.as_path().join(&filename);
         self.fs.write(&file_path, response)
     }
 
-    fn truncate_console_log(&self, session_dir: &PathBuf) -> Result<(), Error> {
+    fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {
         let args = vec![
             "-s".to_string(),
-            session_dir.display().to_string(),
+            session_dir.as_path().display().to_string(),
             "truncate_console_log".to_string(),
         ];
         let _ = self.process.run(std::path::Path::new("aish"), &args);
@@ -148,39 +143,57 @@ impl AiUseCase {
     }
 
     pub fn run(&self, config: Config) -> Result<i32, Error> {
-        let session_dir = session_dir_from_env();
-        if config.help {
-            print_help();
-            return Ok(0);
-        }
+        let session_dir = env::session_dir_from_env();
+        let cmd = config_to_command(config);
 
-        if let Some(ref task_name) = config.task {
-            if let Some(code) = run_task_if_exists(
-                self.fs.as_ref(),
-                self.process.as_ref(),
-                task_name,
-                &config.message_args,
-            )? {
-                return Ok(code);
+        match cmd {
+            AiCommand::Help => {
+                print_help();
+                return Ok(0);
+            }
+            AiCommand::Task {
+                name,
+                args,
+                provider,
+            } => {
+                if let Some(code) = run_task_if_exists(
+                    self.fs.as_ref(),
+                    self.process.as_ref(),
+                    name.as_ref(),
+                    &args,
+                )? {
+                    return Ok(code);
+                }
+                // タスクが見つからなかった -> Query として扱う
+                let mut query_parts = vec![name.as_ref().to_string()];
+                query_parts.extend(args);
+                let query = query_parts.join(" ");
+                if query.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Please provide a message to send to the LLM.",
+                    ));
+                }
+                self.run_query(session_dir, provider, &query)
+            }
+            AiCommand::Query { provider, query } => {
+                if query.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Please provide a message to send to the LLM.",
+                    ));
+                }
+                self.run_query(session_dir, provider, &query)
             }
         }
+    }
 
-        let mut query_parts = Vec::new();
-        if let Some(ref task) = config.task {
-            query_parts.push(task.clone());
-        }
-        query_parts.extend_from_slice(&config.message_args);
-
-        if query_parts.is_empty() {
-            return Err(Error::invalid_argument(
-                "No query provided. Please provide a message to send to the LLM.",
-            ));
-        }
-
-        let query = query_parts.join(" ");
-
+    fn run_query(
+        &self,
+        session_dir: Option<common::domain::SessionDir>,
+        provider: Option<common::domain::ProviderName>,
+        query: &str,
+    ) -> Result<i32, Error> {
         let history_messages = if self.session_is_valid(&session_dir) {
-            let dir = session_dir.as_ref().unwrap();
+            let dir = session_dir.as_ref().expect("session_dir is Some");
             self.load_history(dir)
                 .ok()
                 .map(|h| h.messages().to_vec())
@@ -189,7 +202,7 @@ impl AiUseCase {
             Vec::new()
         };
 
-        let provider_type = if let Some(ref provider_name) = config.provider {
+        let provider_type = if let Some(ref provider_name) = provider {
             ProviderType::from_str(provider_name.as_ref()).ok_or_else(|| {
                 Error::invalid_argument(format!(
                     "Unknown provider: {}. Supported providers: gemini, gpt, echo",
@@ -206,7 +219,7 @@ impl AiUseCase {
             vec![Box::new(StdoutSink::new())];
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(common::tool::EchoTool::new()));
-        let tool_context = ToolContext::new(session_dir.as_ref().map(|p| p.clone()));
+        let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()));
         let messages = build_messages(&history_messages, &query);
         let mut agent_loop =
             AgentLoop::new(stream, registry, tool_context, sinks);
@@ -217,7 +230,7 @@ impl AiUseCase {
         println!();
 
         if self.session_is_valid(&session_dir) && !assistant_text.trim().is_empty() {
-            let dir = session_dir.as_ref().unwrap();
+            let dir = session_dir.as_ref().expect("session_dir is Some");
             self.save_response(dir, &assistant_text)?;
             self.truncate_console_log(dir)?;
         }
@@ -226,15 +239,20 @@ impl AiUseCase {
     }
 }
 
-/// 標準アダプターで AiUseCase を組み立てて run する（従来の run_app の入口）
-pub fn run_app(config: Config) -> Result<i32, Error> {
+/// 配線: 標準アダプタで AiUseCase を組み立てる
+pub fn wire_ai() -> AiUseCase {
     let fs = Arc::new(common::adapter::StdFileSystem);
     let id_gen = Arc::new(common::part_id::StdIdGenerator::new(Arc::new(
         common::adapter::StdClock,
     )));
     let process = Arc::new(common::adapter::StdProcess);
-    let use_case = AiUseCase::new(fs, id_gen, process);
-    use_case.run(config)
+    AiUseCase::new(fs, id_gen, process)
+}
+
+/// 標準アダプターで AiUseCase を組み立てて run する（テスト用の入口）
+#[allow(dead_code)] // テストで使用
+pub fn run_app(config: Config) -> Result<i32, Error> {
+    wire_ai().run(config)
 }
 
 /// 引数不正時に stderr へ出力する usage 行（main から呼ぶ）
@@ -266,6 +284,8 @@ fn print_help() {
 #[cfg(test)]
 mod session_tests {
     use super::*;
+    use crate::adapter::env as adapter_env;
+    use std::env;
     use std::fs;
     use std::sync::Arc;
 
@@ -284,7 +304,7 @@ mod session_tests {
         let original = env::var("AISH_SESSION").ok();
         env::remove_var("AISH_SESSION");
 
-        let session_dir = session_dir_from_env();
+        let session_dir = adapter_env::session_dir_from_env();
         assert!(session_dir.is_none());
 
         let uc = use_case();
@@ -308,10 +328,10 @@ mod session_tests {
         let original = env::var("AISH_SESSION").ok();
         env::set_var("AISH_SESSION", session_dir.to_str().unwrap());
 
-        let session_dir_opt = session_dir_from_env();
+        let session_dir_opt = adapter_env::session_dir_from_env();
         let uc = use_case();
         assert!(uc.session_is_valid(&session_dir_opt));
-        assert_eq!(session_dir_opt.as_ref().unwrap(), &session_dir);
+        assert_eq!(session_dir_opt.as_ref().unwrap().as_path(), session_dir.as_path());
 
         if let Some(val) = original {
             env::set_var("AISH_SESSION", val);
@@ -333,7 +353,7 @@ mod session_tests {
         let original = env::var("AISH_SESSION").ok();
         env::set_var("AISH_SESSION", session_dir.to_str().unwrap());
 
-        let session_dir_opt = session_dir_from_env();
+        let session_dir_opt = adapter_env::session_dir_from_env();
         let uc = use_case();
         assert!(!uc.session_is_valid(&session_dir_opt));
 
@@ -348,6 +368,7 @@ mod session_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::TaskName;
     use common::domain::ProviderName;
 
     #[test]
@@ -390,7 +411,7 @@ mod tests {
         // echoプロバイダを使用（agentタスクは存在しない想定なのでLLMパスに入る）
         let config = Config {
             provider: Some(ProviderName::new("echo")),
-            task: Some("agent".to_string()),
+            task: Some(TaskName::new("agent")),
             message_args: vec!["hello".to_string(), "world".to_string()],
             ..Default::default()
         };
@@ -402,7 +423,7 @@ mod tests {
     fn test_run_app_help_takes_precedence() {
         let config = Config {
             help: true,
-            task: Some("agent".to_string()),
+            task: Some(TaskName::new("agent")),
             message_args: vec!["hello".to_string()],
             ..Default::default()
         };
@@ -443,6 +464,7 @@ mod tests {
 #[cfg(test)]
 mod session_history_tests {
     use super::*;
+    use common::domain::SessionDir;
     use std::fs;
     use std::sync::Arc;
 
@@ -460,9 +482,10 @@ mod session_history_tests {
     fn test_load_history_no_directory() {
         let temp_dir = std::env::temp_dir();
         let non_existent_dir = temp_dir.join("aish_test_nonexistent_session");
+        let session_dir = SessionDir::new(non_existent_dir);
 
         let uc = use_case();
-        let result = uc.load_history(&non_existent_dir);
+        let result = uc.load_history(&session_dir);
         assert!(result.is_ok());
         let history = result.unwrap();
         assert!(history.is_empty());
@@ -471,12 +494,13 @@ mod session_history_tests {
     #[test]
     fn test_load_history_empty_session_dir() {
         let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("aish_test_empty_session");
+        let session_path = temp_dir.join("aish_test_empty_session");
 
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir).unwrap();
+        if session_path.exists() {
+            fs::remove_dir_all(&session_path).unwrap();
         }
-        fs::create_dir_all(&session_dir).unwrap();
+        fs::create_dir_all(&session_path).unwrap();
+        let session_dir = SessionDir::new(session_path.clone());
 
         let uc = use_case();
         let result = uc.load_history(&session_dir);
@@ -484,22 +508,23 @@ mod session_history_tests {
         let history = result.unwrap();
         assert!(history.is_empty());
 
-        fs::remove_dir_all(&session_dir).unwrap();
+        fs::remove_dir_all(&session_path).unwrap();
     }
 
     #[test]
     fn test_load_history_with_files() {
         let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("aish_test_session_with_files");
+        let session_path = temp_dir.join("aish_test_session_with_files");
 
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir).unwrap();
+        if session_path.exists() {
+            fs::remove_dir_all(&session_path).unwrap();
         }
-        fs::create_dir_all(&session_dir).unwrap();
+        fs::create_dir_all(&session_path).unwrap();
+        let session_dir = SessionDir::new(session_path.clone());
 
-        let part1 = session_dir.join("part_20240101_120000_user.txt");
-        let part2 = session_dir.join("part_20240102_120000_assistant.txt");
-        let part3 = session_dir.join("part_20240103_120000_user.txt");
+        let part1 = session_path.join("part_20240101_120000_user.txt");
+        let part2 = session_path.join("part_20240102_120000_assistant.txt");
+        let part3 = session_path.join("part_20240103_120000_user.txt");
 
         fs::write(&part1, "First part content").unwrap();
         fs::write(&part2, "Second part content").unwrap();
@@ -518,21 +543,22 @@ mod session_history_tests {
         assert_eq!(history.messages()[2].role, "user");
         assert_eq!(history.messages()[2].content, "Third part content");
 
-        fs::remove_dir_all(&session_dir).unwrap();
+        fs::remove_dir_all(&session_path).unwrap();
     }
 
     #[test]
     fn test_load_history_ignores_non_part_files() {
         let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("aish_test_session_ignore_files");
+        let session_path = temp_dir.join("aish_test_session_ignore_files");
 
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir).unwrap();
+        if session_path.exists() {
+            fs::remove_dir_all(&session_path).unwrap();
         }
-        fs::create_dir_all(&session_dir).unwrap();
+        fs::create_dir_all(&session_path).unwrap();
+        let session_dir = SessionDir::new(session_path.clone());
 
-        let part_file = session_dir.join("part_20240101_120000_user.txt");
-        let other_file = session_dir.join("other_file.txt");
+        let part_file = session_path.join("part_20240101_120000_user.txt");
+        let other_file = session_path.join("other_file.txt");
 
         fs::write(&part_file, "Part content").unwrap();
         fs::write(&other_file, "Other content").unwrap();
@@ -546,13 +572,14 @@ mod session_history_tests {
         assert_eq!(history.messages()[0].role, "user");
         assert_eq!(history.messages()[0].content, "Part content");
 
-        fs::remove_dir_all(&session_dir).unwrap();
+        fs::remove_dir_all(&session_path).unwrap();
     }
 }
 
 #[cfg(test)]
 mod save_response_tests {
     use super::*;
+    use common::domain::SessionDir;
     use std::fs;
     use std::sync::Arc;
 
@@ -569,12 +596,13 @@ mod save_response_tests {
     #[test]
     fn test_save_response() {
         let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("aish_test_save_response");
+        let session_path = temp_dir.join("aish_test_save_response");
 
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir).unwrap();
+        if session_path.exists() {
+            fs::remove_dir_all(&session_path).unwrap();
         }
-        fs::create_dir_all(&session_dir).unwrap();
+        fs::create_dir_all(&session_path).unwrap();
+        let session_dir = SessionDir::new(session_path.clone());
 
         let uc = use_case();
         let response = "This is a test response from the assistant.";
@@ -595,21 +623,22 @@ mod save_response_tests {
         let content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, response);
 
-        fs::remove_dir_all(&session_dir).unwrap();
+        fs::remove_dir_all(&session_path).unwrap();
     }
 
     #[test]
     fn test_save_response_with_user_part() {
         let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("aish_test_save_response_with_user");
+        let session_path = temp_dir.join("aish_test_save_response_with_user");
 
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir).unwrap();
+        if session_path.exists() {
+            fs::remove_dir_all(&session_path).unwrap();
         }
-        fs::create_dir_all(&session_dir).unwrap();
+        fs::create_dir_all(&session_path).unwrap();
+        let session_dir = SessionDir::new(session_path.clone());
 
         let user_part_id = "AZwJxha3";
-        let user_part_file = session_dir.join(format!("part_{}_user.txt", user_part_id));
+        let user_part_file = session_path.join(format!("part_{}_user.txt", user_part_id));
         fs::write(&user_part_file, "User message").unwrap();
 
         let uc = use_case();
@@ -631,17 +660,18 @@ mod save_response_tests {
         let content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, response);
 
-        fs::remove_dir_all(&session_dir).unwrap();
+        fs::remove_dir_all(&session_path).unwrap();
     }
 
     #[test]
     fn test_save_response_nonexistent_session() {
         let temp_dir = std::env::temp_dir();
-        let session_dir = temp_dir.join("aish_test_nonexistent_save");
+        let session_path = temp_dir.join("aish_test_nonexistent_save");
 
-        if session_dir.exists() {
-            fs::remove_dir_all(&session_dir).unwrap();
+        if session_path.exists() {
+            fs::remove_dir_all(&session_path).unwrap();
         }
+        let session_dir = SessionDir::new(session_path);
 
         let uc = use_case();
         let response = "This is a test response.";
