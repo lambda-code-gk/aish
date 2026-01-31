@@ -36,6 +36,7 @@ impl History {
         &self.messages
     }
     
+    #[allow(dead_code)] // テストで使用。公開APIとして保持
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }

@@ -237,11 +237,13 @@ test_aish_binary() {
     # テスト4: デフォルトで2回起動すると別セッションになる（同居しない）
     log_info "Test 4: Two launches use different session dirs (no mixing)"
     local session1 session2
-    session1=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3a.stderr" | tr -d '\r' | grep -E '^/' || true)
-    session2=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3b.stderr" | tr -d '\r' | grep -E '^/' || true)
+    # state/session/ を含むパスを抽出（プロンプトや改行の有無に依存しない）
+    session1=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3a.stderr" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1 || true)
+    session2=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3b.stderr" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1 || true)
     if [ -z "$session1" ] || [ -z "$session2" ]; then
         log_error "✗ Could not get AISH_SESSION from runs"
-        cat "$TEST_DIR/aish_test3.stderr"
+        [ -f "$TEST_DIR/aish_test3a.stderr" ] && log_error "Run 1 stderr:" && cat "$TEST_DIR/aish_test3a.stderr"
+        [ -f "$TEST_DIR/aish_test3b.stderr" ] && log_error "Run 2 stderr:" && cat "$TEST_DIR/aish_test3b.stderr"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         FAILED_TESTS+=("aish (session dir not printed)")
         return 1
@@ -261,7 +263,7 @@ test_aish_binary() {
     local out4
     out4=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" -s "$resume_dir" 2> "$TEST_DIR/aish_test4.stderr")
     local got_session
-    got_session=$(echo "$out4" | tr -d '\r' | grep -E '^/' | head -1)
+    got_session=$(echo "$out4" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1)
     if [ -z "$got_session" ]; then
         log_error "✗ Could not get AISH_SESSION with -s"
         cat "$TEST_DIR/aish_test4.stderr"
