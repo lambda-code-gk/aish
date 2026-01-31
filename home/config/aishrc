@@ -61,3 +61,10 @@ if [ -n "$AISH_PID" ] && [ -n "$ZSH_VERSION" ]; then
         kill -usr1 $AISH_PID 2>/dev/null
     }
 fi
+
+# Ctrl+L: 画面クリア + aish clear（partファイル削除）
+__aish_ctrl_l() {
+    clear
+    aish clear 2>/dev/null
+}
+bind -x '"\C-l": __aish_ctrl_l'

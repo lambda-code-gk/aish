@@ -237,9 +237,10 @@ test_aish_binary() {
     # テスト4: デフォルトで2回起動すると別セッションになる（同居しない）
     log_info "Test 4: Two launches use different session dirs (no mixing)"
     local session1 session2
+    # AISH_SESSION と AISH_HOME をクリアして、-d オプションのみで動作確認
     # state/session/ を含むパスを抽出（プロンプトや改行の有無に依存しない）
-    session1=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3a.stderr" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1 || true)
-    session2=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3b.stderr" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1 || true)
+    session1=$(printf 'echo "$AISH_SESSION"\nexit\n' | env -u AISH_SESSION -u AISH_HOME "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3a.stderr" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1 || true)
+    session2=$(printf 'echo "$AISH_SESSION"\nexit\n' | env -u AISH_SESSION -u AISH_HOME "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test3b.stderr" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1 || true)
     if [ -z "$session1" ] || [ -z "$session2" ]; then
         log_error "✗ Could not get AISH_SESSION from runs"
         [ -f "$TEST_DIR/aish_test3a.stderr" ] && log_error "Run 1 stderr:" && cat "$TEST_DIR/aish_test3a.stderr"
@@ -261,7 +262,8 @@ test_aish_binary() {
     local resume_dir="$test_home_dir/state/session/resume_test"
     mkdir -p "$resume_dir"
     local out4
-    out4=$(printf 'echo "$AISH_SESSION"\nexit\n' | "$binary_path" -d "$test_home_dir" -s "$resume_dir" 2> "$TEST_DIR/aish_test4.stderr")
+    # AISH_SESSION と AISH_HOME をクリアして、-s オプションで動作確認
+    out4=$(printf 'echo "$AISH_SESSION"\nexit\n' | env -u AISH_SESSION -u AISH_HOME "$binary_path" -d "$test_home_dir" -s "$resume_dir" 2> "$TEST_DIR/aish_test4.stderr")
     local got_session
     got_session=$(echo "$out4" | tr -d '\r' | grep -oE '/[^[:space:]]*state/session/[^[:space:]]+' | head -1)
     if [ -z "$got_session" ]; then

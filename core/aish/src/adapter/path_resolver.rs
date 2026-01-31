@@ -44,16 +44,26 @@ pub fn resolve_home_dir(input: &PathResolverInput) -> Result<String, Error> {
 ///
 /// 優先順位:
 /// 1. コマンドラインオプション -s/--session-dir（指定ディレクトリをそのまま使用・再開用）
-/// 2. 環境変数 AISH_HOME が設定されている場合: その配下の state/session/{ユニークID}
-/// 3. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
+/// 2. 環境変数 AISH_SESSION（既存セッションを参照する場合）
+/// 3. 環境変数 AISH_HOME が設定されている場合: その配下の state/session/{ユニークID}
+/// 4. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
 pub fn resolve_session_dir(
     input: &PathResolverInput,
     home_dir: &str,
 ) -> Result<String, Error> {
+    // 1. CLI オプション -s/--session-dir が最優先
     if let Some(ref session_dir) = input.session_dir {
         return Ok(session_dir.clone());
     }
 
+    // 2. 環境変数 AISH_SESSION
+    if let Ok(env_session) = env::var("AISH_SESSION") {
+        if !env_session.is_empty() {
+            return Ok(env_session);
+        }
+    }
+
+    // 3. AISH_HOME または -d が設定されている場合: その配下に新規セッション生成
     let env_home = env::var("AISH_HOME").ok().filter(|h| !h.is_empty());
     if input.home_dir.is_some() || env_home.is_some() {
         let mut path = PathBuf::from(home_dir);
@@ -63,6 +73,7 @@ pub fn resolve_session_dir(
         return Ok(path.to_string_lossy().to_string());
     }
 
+    // 4. XDG_STATE_HOME フォールバック
     let xdg_state_home = env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
         let mut path = dirs_home().unwrap_or_else(|| PathBuf::from("~"));
         path.push(".local");
@@ -186,48 +197,53 @@ mod tests {
         };
         let home_dir = resolve_home_dir(&input).unwrap();
 
-        let session = resolve_session_dir(&input, &home_dir).unwrap();
-        let prefix = "/tmp/aish_cli_home3/state/session/";
-        assert!(session.starts_with(prefix));
+        // AISH_SESSION をクリアして、-d による新規セッション生成をテスト
+        with_env_var("AISH_SESSION", None, || {
+            let session = resolve_session_dir(&input, &home_dir).unwrap();
+            let prefix = "/tmp/aish_cli_home3/state/session/";
+            assert!(session.starts_with(prefix));
 
-        let suffix = &session[prefix.len()..];
-        assert_eq!(suffix.len(), 8);
-        for c in suffix.chars() {
-            assert!(
-                ('A'..='Z').contains(&c)
-                    || ('a'..='z').contains(&c)
-                    || ('0'..='9').contains(&c)
-                    || c == '-'
-                    || c == '_',
-                "invalid base64url char in session id: {}",
-                c
-            );
-        }
+            let suffix = &session[prefix.len()..];
+            assert_eq!(suffix.len(), 8);
+            for c in suffix.chars() {
+                assert!(
+                    ('A'..='Z').contains(&c)
+                        || ('a'..='z').contains(&c)
+                        || ('0'..='9').contains(&c)
+                        || c == '-'
+                        || c == '_',
+                    "invalid base64url char in session id: {}",
+                    c
+                );
+            }
+        });
     }
 
     #[test]
     fn test_resolve_session_dir_uses_xdg_state_home() {
         let input = PathResolverInput::default();
 
-        with_env_var("AISH_HOME", None, || {
-            with_env_var("XDG_STATE_HOME", Some("/tmp/xdg_state"), || {
-                let home_dir = "/tmp/some_home".to_string();
-                let session = resolve_session_dir(&input, &home_dir).unwrap();
-                let prefix = "/tmp/xdg_state/aish/session/";
-                assert!(session.starts_with(prefix), "session={}", session);
-                let suffix = &session[prefix.len()..];
-                assert_eq!(suffix.len(), 8);
-                for c in suffix.chars() {
-                    assert!(
-                        ('A'..='Z').contains(&c)
-                            || ('a'..='z').contains(&c)
-                            || ('0'..='9').contains(&c)
-                            || c == '-'
-                            || c == '_',
-                        "invalid base64url char in session id: {}",
-                        c
-                    );
-                }
+        with_env_var("AISH_SESSION", None, || {
+            with_env_var("AISH_HOME", None, || {
+                with_env_var("XDG_STATE_HOME", Some("/tmp/xdg_state"), || {
+                    let home_dir = "/tmp/some_home".to_string();
+                    let session = resolve_session_dir(&input, &home_dir).unwrap();
+                    let prefix = "/tmp/xdg_state/aish/session/";
+                    assert!(session.starts_with(prefix), "session={}", session);
+                    let suffix = &session[prefix.len()..];
+                    assert_eq!(suffix.len(), 8);
+                    for c in suffix.chars() {
+                        assert!(
+                            ('A'..='Z').contains(&c)
+                                || ('a'..='z').contains(&c)
+                                || ('0'..='9').contains(&c)
+                                || c == '-'
+                                || c == '_',
+                            "invalid base64url char in session id: {}",
+                            c
+                        );
+                    }
+                });
             });
         });
     }
@@ -248,5 +264,33 @@ mod tests {
                 c
             );
         }
+    }
+
+    #[test]
+    fn test_resolve_session_dir_uses_aish_session_env() {
+        let input = PathResolverInput::default();
+        let home_dir = "/tmp/some_home".to_string();
+
+        with_env_var("AISH_SESSION", Some("/tmp/aish_session_from_env"), || {
+            with_env_var("AISH_HOME", None, || {
+                let session = resolve_session_dir(&input, &home_dir).unwrap();
+                assert_eq!(session, "/tmp/aish_session_from_env");
+            });
+        });
+    }
+
+    #[test]
+    fn test_resolve_session_dir_cli_overrides_aish_session_env() {
+        let input = PathResolverInput {
+            session_dir: Some("/tmp/aish_session_cli".to_string()),
+            ..Default::default()
+        };
+        let home_dir = "/tmp/some_home".to_string();
+
+        with_env_var("AISH_SESSION", Some("/tmp/aish_session_from_env"), || {
+            let session = resolve_session_dir(&input, &home_dir).unwrap();
+            // CLI が優先される
+            assert_eq!(session, "/tmp/aish_session_cli");
+        });
     }
 }

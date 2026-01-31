@@ -61,7 +61,6 @@ impl Command {
             Command::Resume
                 | Command::Sessions
                 | Command::Rollout
-                | Command::Clear
                 | Command::Ls
                 | Command::RmLast
                 | Command::Memory
@@ -72,7 +71,7 @@ impl Command {
     /// 実装済みかどうか
     #[allow(dead_code)] // 将来のディスパッチ簡略化で使用
     pub fn is_implemented(&self) -> bool {
-        matches!(self, Command::TruncateConsoleLog)
+        matches!(self, Command::TruncateConsoleLog | Command::Clear)
     }
 
     /// エラーメッセージ用の名前
