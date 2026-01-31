@@ -8,6 +8,7 @@ use crate::llm::gemini::GeminiProvider;
 use crate::llm::gpt::GptProvider;
 use crate::llm::echo::EchoProvider;
 use crate::llm::provider::{LlmProvider, Message};
+use crate::tool::ToolDef;
 use serde_json::Value;
 
 /// プロバイダタイプ
@@ -89,11 +90,12 @@ impl LlmProvider for AnyProvider {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
+        tools: Option<&[ToolDef]>,
     ) -> Result<Value, Error> {
         match self {
-            Self::Gemini(p) => p.make_request_payload(query, system_instruction, history),
-            Self::Gpt(p) => p.make_request_payload(query, system_instruction, history),
-            Self::Echo(p) => p.make_request_payload(query, system_instruction, history),
+            Self::Gemini(p) => p.make_request_payload(query, system_instruction, history, tools),
+            Self::Gpt(p) => p.make_request_payload(query, system_instruction, history, tools),
+            Self::Echo(p) => p.make_request_payload(query, system_instruction, history, tools),
         }
     }
 
@@ -112,12 +114,13 @@ impl LlmProvider for AnyProvider {
     fn stream_events(
         &self,
         request_json: &str,
+        tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(crate::llm::events::LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error> {
         match self {
-            Self::Gemini(p) => p.stream_events(request_json, callback),
-            Self::Gpt(p) => p.stream_events(request_json, callback),
-            Self::Echo(p) => p.stream_events(request_json, callback),
+            Self::Gemini(p) => p.stream_events(request_json, tools, callback),
+            Self::Gpt(p) => p.stream_events(request_json, tools, callback),
+            Self::Echo(p) => p.stream_events(request_json, tools, callback),
         }
     }
 }

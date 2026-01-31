@@ -26,6 +26,8 @@ pub enum LlmEvent {
     ToolCallBegin {
         call_id: String,
         name: String,
+        /// Gemini 3 で必須の thought_signature（関数呼び出しの文脈を保持）
+        thought_signature: Option<String>,
     },
     /// ツール引数（JSON断片）の増分
     ToolCallArgsDelta {
@@ -61,8 +63,9 @@ mod tests {
         let ev = LlmEvent::ToolCallBegin {
             call_id: "call_1".to_string(),
             name: "run_shell".to_string(),
+            thought_signature: Some("sig123".to_string()),
         };
-        assert!(matches!(ev, LlmEvent::ToolCallBegin { call_id, name } if call_id == "call_1" && name == "run_shell"));
+        assert!(matches!(ev, LlmEvent::ToolCallBegin { call_id, name, thought_signature } if call_id == "call_1" && name == "run_shell" && thought_signature == Some("sig123".to_string())));
     }
 
     #[test]

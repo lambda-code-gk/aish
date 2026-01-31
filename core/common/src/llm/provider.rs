@@ -2,6 +2,7 @@
 
 use crate::error::Error;
 use crate::llm::events::LlmEvent;
+use crate::tool::ToolDef;
 use serde_json::Value;
 
 /// LLMプロバイダのトレイト
@@ -47,6 +48,7 @@ pub trait LlmProvider {
     /// * `query` - ユーザークエリ
     /// * `system_instruction` - システム指示（オプション）
     /// * `history` - 会話履歴（オプション）
+    /// * `tools` - ツール定義一覧（オプション。LLM がツール呼び出しを行う場合に渡す）
     /// 
     /// # Returns
     /// * `Ok(Value)` - リクエストJSON
@@ -56,6 +58,7 @@ pub trait LlmProvider {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
+        tools: Option<&[ToolDef]>,
     ) -> Result<Value, Error>;
 
     /// ストリーミングHTTPリクエストを実行
@@ -77,6 +80,7 @@ pub trait LlmProvider {
     fn stream_events(
         &self,
         request_json: &str,
+        tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error>;
 }
@@ -87,6 +91,8 @@ pub struct ToolCallSpec {
     pub id: String,
     pub name: String,
     pub args: Value,
+    /// Gemini 3 で必須の thought_signature
+    pub thought_signature: Option<String>,
 }
 
 /// メッセージ構造体（user / assistant / tool と tool_calls 対応）
@@ -98,6 +104,8 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCallSpec>>,
     /// role が "tool" のとき、どの call_id への返答か
     pub tool_call_id: Option<String>,
+    /// role が "tool" のとき、関数名（Gemini などで必須）
+    pub tool_name: Option<String>,
 }
 
 impl Message {
@@ -107,6 +115,7 @@ impl Message {
             content: content.into(),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         }
     }
 
@@ -118,10 +127,11 @@ impl Message {
         Self::new("assistant", content)
     }
 
-    /// ツール呼び出し付き assistant（content は空でも可）
+    /// ツール結果付き assistant（content は空でも可）
+    /// tool_calls: Vec<(id, name, args, thought_signature)>
     pub fn assistant_with_tool_calls(
         content: impl Into<String>,
-        tool_calls: Vec<(String, String, Value)>,
+        tool_calls: Vec<(String, String, Value, Option<String>)>,
     ) -> Self {
         Self {
             role: "assistant".to_string(),
@@ -129,20 +139,22 @@ impl Message {
             tool_calls: Some(
                 tool_calls
                     .into_iter()
-                    .map(|(id, name, args)| ToolCallSpec { id, name, args })
+                    .map(|(id, name, args, thought_signature)| ToolCallSpec { id, name, args, thought_signature })
                     .collect(),
             ),
             tool_call_id: None,
+            tool_name: None,
         }
     }
 
     /// ツール結果（role = "tool"）
-    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn tool_result(call_id: impl Into<String>, name: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: "tool".to_string(),
             content: content.into(),
             tool_calls: None,
             tool_call_id: Some(call_id.into()),
+            tool_name: Some(name.into()),
         }
     }
 }

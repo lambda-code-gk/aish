@@ -23,24 +23,34 @@ impl LlmEventStream for DriverLlmStream<'_> {
         query: &str,
         system_instruction: Option<&str>,
         history: &[LlmMessage],
+        tools: Option<&[common::tool::ToolDef]>,
         callback: &mut dyn FnMut(common::llm::events::LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        self.0.query_stream_events(query, system_instruction, history, callback)
+        self.0.query_stream_events(query, system_instruction, history, tools, callback)
     }
 }
 
 /// 履歴 (Message) とクエリから Vec<Msg> を構築
 fn build_messages(history_messages: &[LlmMessage], query: &str) -> Vec<Msg> {
-    let mut msgs: Vec<Msg> = history_messages
-        .iter()
-        .map(|m| {
-            if m.role == "user" {
-                Msg::user(&m.content)
-            } else {
-                Msg::assistant(&m.content)
+    let mut msgs: Vec<Msg> = Vec::new();
+    for m in history_messages {
+        if m.role == "user" {
+            msgs.push(Msg::user(&m.content));
+        } else if m.role == "tool" {
+            if let Some(ref call_id) = m.tool_call_id {
+                let name = m.tool_name.as_deref().unwrap_or("");
+                msgs.push(Msg::tool_result(call_id, name, serde_json::from_str(&m.content).unwrap_or(serde_json::json!({}))));
             }
-        })
-        .collect();
+        } else {
+            // assistant
+            msgs.push(Msg::assistant(&m.content));
+            if let Some(ref tool_calls) = m.tool_calls {
+                for tc in tool_calls {
+                    msgs.push(Msg::tool_call(&tc.id, &tc.name, tc.args.clone(), tc.thought_signature.clone()));
+                }
+            }
+        }
+    }
     msgs.push(Msg::user(query));
     msgs
 }
@@ -217,6 +227,7 @@ impl AiUseCase {
         let stream = DriverLlmStream(&driver);
         let sinks: Vec<Box<dyn common::sink::EventSink>> =
             vec![Box::new(StdoutSink::new())];
+        // ツール追加: common に impl Tool を追加し、ここで registry.register(Arc::new(MyTool::new())) するだけ
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(common::tool::EchoTool::new()));
         let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()));

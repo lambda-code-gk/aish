@@ -8,7 +8,7 @@ use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
 use common::msg::Msg;
 use common::sink::{AgentEvent, EventSink};
-use common::tool::{ToolContext, ToolRegistry};
+use common::tool::{ToolContext, ToolDef, ToolRegistry};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -34,6 +34,7 @@ pub trait LlmEventStream: Send {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
+        tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error>;
 }
@@ -45,12 +46,12 @@ pub fn msgs_to_provider(msgs: &[Msg]) -> (Option<String>, String, Vec<Message>) 
     let mut list: Vec<Message> = Vec::new();
     let mut last_user: Option<String> = None;
     let mut pending_assistant: Option<String> = None;
-    let mut pending_tool_calls: Vec<(String, String, Value)> = Vec::new();
+    let mut pending_tool_calls: Vec<(String, String, Value, Option<String>)> = Vec::new();
 
     fn flush_assistant_with_tool_calls(
         list: &mut Vec<Message>,
         pending_assistant: &mut Option<String>,
-        pending_tool_calls: &mut Vec<(String, String, Value)>,
+        pending_tool_calls: &mut Vec<(String, String, Value, Option<String>)>,
     ) {
         if pending_assistant.is_some() || !pending_tool_calls.is_empty() {
             let content = pending_assistant.take().unwrap_or_default();
@@ -75,16 +76,16 @@ pub fn msgs_to_provider(msgs: &[Msg]) -> (Option<String>, String, Vec<Message>) 
                 flush_assistant_with_tool_calls(&mut list, &mut pending_assistant, &mut pending_tool_calls);
                 pending_assistant = Some(s.clone());
             }
-            Msg::ToolCall { call_id, name, args } => {
+            Msg::ToolCall { call_id, name, args, thought_signature } => {
                 if pending_assistant.is_none() {
                     pending_assistant = Some(String::new());
                 }
-                pending_tool_calls.push((call_id.clone(), name.clone(), args.clone()));
+                pending_tool_calls.push((call_id.clone(), name.clone(), args.clone(), thought_signature.clone()));
             }
-            Msg::ToolResult { call_id, result, .. } => {
+            Msg::ToolResult { call_id, name, result } => {
                 flush_assistant_with_tool_calls(&mut list, &mut pending_assistant, &mut pending_tool_calls);
                 let content = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
-                list.push(Message::tool_result(call_id.clone(), content));
+                list.push(Message::tool_result(call_id.clone(), name.clone(), content));
             }
         }
     }
@@ -102,13 +103,14 @@ pub fn msgs_to_provider(msgs: &[Msg]) -> (Option<String>, String, Vec<Message>) 
     (system, query, history)
 }
 
-/// ストリーム中に蓄積するツール呼び出し（call_id -> (name, args_json_fragments)）
+/// ストリーム中に蓄積するツール呼び出し（call_id -> (name, args_json_fragments, thought_signature)）
 #[allow(dead_code)] // completed は将来の複数ツール蓄積用
 struct ToolCallAccumulator {
     current_id: Option<String>,
     current_name: Option<String>,
+    current_thought_signature: Option<String>,
     args_fragments: String,
-    completed: Vec<(String, String, Value)>,
+    completed: Vec<(String, String, Value, Option<String>)>,
 }
 
 impl ToolCallAccumulator {
@@ -116,14 +118,16 @@ impl ToolCallAccumulator {
         Self {
             current_id: None,
             current_name: None,
+            current_thought_signature: None,
             args_fragments: String::new(),
             completed: Vec::new(),
         }
     }
 
-    fn on_begin(&mut self, call_id: String, name: String) {
+    fn on_begin(&mut self, call_id: String, name: String, thought_signature: Option<String>) {
         self.current_id = Some(call_id);
         self.current_name = Some(name);
+        self.current_thought_signature = thought_signature;
         self.args_fragments.clear();
     }
 
@@ -131,8 +135,9 @@ impl ToolCallAccumulator {
         self.args_fragments.push_str(&fragment);
     }
 
-    fn on_end(&mut self, call_id: String) -> Result<Option<(String, String, Value)>, Error> {
+    fn on_end(&mut self, call_id: String) -> Result<Option<(String, String, Value, Option<String>)>, Error> {
         let name = self.current_name.take().unwrap_or_default();
+        let thought_signature = self.current_thought_signature.take();
         self.current_id = None;
         let args = if self.args_fragments.trim().is_empty() {
             Value::Object(serde_json::Map::new())
@@ -141,7 +146,7 @@ impl ToolCallAccumulator {
                 .map_err(|e| Error::json(format!("Invalid tool args JSON: {}", e)))?
         };
         self.args_fragments.clear();
-        Ok(Some((call_id, name, args)))
+        Ok(Some((call_id, name, args, thought_signature)))
     }
 }
 
@@ -191,6 +196,12 @@ impl<S: LlmEventStream> AgentLoop<S> {
     ) -> Result<(Vec<Msg>, RunState, String), Error> {
         let (system_opt, query, history) = msgs_to_provider(messages);
         let system_instruction = system_opt.as_deref();
+        let tool_defs = self.tool_registry.list_definitions();
+        let tools_ref = if tool_defs.is_empty() {
+            None
+        } else {
+            Some(tool_defs.as_slice())
+        };
         let collected: Rc<RefCell<Vec<LlmEvent>>> = Rc::new(RefCell::new(Vec::new()));
         let collected_inner = collected.clone();
         let sinks = &mut self.sinks;
@@ -202,18 +213,18 @@ impl<S: LlmEventStream> AgentLoop<S> {
             Ok(())
         };
         self.stream
-            .stream_events(&query, system_instruction, &history, &mut cb)?;
+            .stream_events(&query, system_instruction, &history, tools_ref, &mut cb)?;
 
         let mut assistant_text = String::new();
         let mut accumulator = ToolCallAccumulator::new();
-        let mut pending_tool_calls: Vec<(String, String, Value)> = Vec::new();
+        let mut pending_tool_calls: Vec<(String, String, Value, Option<String>)> = Vec::new();
         let mut run_state = RunState::StreamingModel;
 
         for ev in collected.borrow().iter() {
             match ev {
                 LlmEvent::TextDelta(s) => assistant_text.push_str(s),
-                LlmEvent::ToolCallBegin { call_id, name } => {
-                    accumulator.on_begin(call_id.clone(), name.clone());
+                LlmEvent::ToolCallBegin { call_id, name, thought_signature } => {
+                    accumulator.on_begin(call_id.clone(), name.clone(), thought_signature.clone());
                 }
                 LlmEvent::ToolCallArgsDelta { json_fragment, .. } => {
                     accumulator.on_args_delta(json_fragment.clone());
@@ -234,12 +245,16 @@ impl<S: LlmEventStream> AgentLoop<S> {
         }
 
         let mut new_messages = messages.to_vec();
-        if !assistant_text.is_empty() {
+        // ツール呼び出しがあった場合は、その前のテキストも含めて一つの Assistant ターンとして扱う
+        if !assistant_text.is_empty() || !pending_tool_calls.is_empty() {
             new_messages.push(Msg::assistant(assistant_text.clone()));
         }
 
         if run_state == RunState::ExecutingTools && !pending_tool_calls.is_empty() {
-            for (call_id, name, args) in pending_tool_calls {
+            for (call_id, name, args, thought_signature) in pending_tool_calls {
+                // 履歴にツール呼び出し自体を記録（直前の assistant メッセージに紐付く）
+                new_messages.push(Msg::tool_call(call_id.clone(), name.clone(), args.clone(), thought_signature.clone()));
+
                 match self.tool_registry.call(name.as_str(), args.clone(), &self.tool_context) {
                     Ok(result) => {
                         self.emit(&AgentEvent::ToolResult {
@@ -326,6 +341,7 @@ impl LlmEventStream for StubLlm {
         _query: &str,
         _system_instruction: Option<&str>,
         _history: &[Message],
+        _tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error> {
         for ev in &self.events {
@@ -370,6 +386,7 @@ mod tests {
                 call_id: "c1".to_string(),
                 name: "run".to_string(),
                 args: serde_json::json!({"cmd": "ls"}),
+                thought_signature: Some("sig123".to_string()),
             },
             Msg::ToolResult {
                 call_id: "c1".to_string(),
@@ -384,6 +401,7 @@ mod tests {
         assert_eq!(history[1].role, "assistant");
         assert!(history[1].tool_calls.is_some());
         assert_eq!(history[1].tool_calls.as_ref().unwrap().len(), 1);
+        assert_eq!(history[1].tool_calls.as_ref().unwrap()[0].thought_signature.as_deref(), Some("sig123"));
         assert_eq!(history[2].role, "tool");
         assert!(history[2].tool_call_id.as_deref() == Some("c1"));
     }
@@ -392,7 +410,7 @@ mod tests {
     fn test_stub_llm_text_only() {
         let stub = StubLlm::text_only("hello");
         let mut received = Vec::new();
-        stub.stream_events("q", None, &[], &mut |ev| {
+        stub.stream_events("q", None, &[], None, &mut |ev| {
             received.push(ev);
             Ok(())
         })
@@ -418,16 +436,37 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_loop_run_until_done_one_turn() {
-        let stub = StubLlm::text_only("done");
-        let registry = ToolRegistry::new();
+    fn test_agent_loop_run_once_with_tool_call() {
+        let stub = StubLlm::new(vec![
+            LlmEvent::ToolCallBegin {
+                call_id: "c1".to_string(),
+                name: "echo".to_string(),
+                thought_signature: Some("test_signature".to_string()),
+            },
+            LlmEvent::ToolCallArgsDelta {
+                call_id: "c1".to_string(),
+                json_fragment: r#"{"message": "hello"}"#.to_string(),
+            },
+            LlmEvent::ToolCallEnd {
+                call_id: "c1".to_string(),
+            },
+            LlmEvent::Completed {
+                finish: FinishReason::ToolCalls,
+            },
+        ]);
+        let mut registry = ToolRegistry::new();
+        registry.register(std::sync::Arc::new(common::tool::EchoTool::new()));
         let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(crate::adapter::StdoutSink::new())];
+        let sinks: Vec<Box<dyn EventSink>> = vec![];
         let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks);
-        let messages = vec![Msg::user("Hi")];
-        let (final_msgs, assistant_text) = loop_.run_until_done(&messages, 4).unwrap();
-        assert_eq!(assistant_text, "done");
-        assert_eq!(final_msgs.len(), 2);
-        assert!(matches!(&final_msgs[1], Msg::Assistant(s) if s == "done"));
+        let messages = vec![Msg::user("echo hello")];
+        let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
+
+        assert_eq!(state, RunState::ExecutingTools);
+        // user, (empty) assistant, tool_call, tool_result
+        assert_eq!(new_msgs.len(), 4);
+        assert!(matches!(&new_msgs[1], Msg::Assistant(s) if s.is_empty()));
+        assert!(matches!(new_msgs[2], Msg::ToolCall { ref name, ref thought_signature, .. } if name == "echo" && thought_signature == &Some("test_signature".to_string())));
+        assert!(matches!(new_msgs[3], Msg::ToolResult { ref name, .. } if name == "echo"));
     }
 }

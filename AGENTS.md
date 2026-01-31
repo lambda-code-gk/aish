@@ -53,7 +53,7 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
     - **factory**: ProviderType（Gemini / Gpt / Echo）、create_provider / create_driver
   - **part_id**: 8文字 base62 のPart ID生成。辞書順＝時系列。同一ms内はシーケンスで単調増加
   - **msg**: 型付きメッセージ履歴（Msg）
-  - **tool**: ツール実行（Ports & Adapters）
+  - **tool**: ツール実行（Ports & Adapters）。`Tool` トレイト（name / description / parameters_schema / call）、`ToolRegistry`（register / list_definitions / call）、`ToolDef`（LLM API 用の name・description・parameters）。ツール追加時は common に `impl Tool` を追加し、ai の `run_query` 内で `registry.register(Arc::new(MyTool::new()))` するだけ。
   - **sink**: イベント Sink（表示・保存の分離）
 
 #### `core/ai/`
@@ -71,6 +71,7 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 - **CLI**: `-h`/`--help`, `-p`/`--provider <name>`, 位置引数は「タスク名」または「クエリ＋メッセージ」として解釈
 - **タスク**: `AISH_HOME/config/task.d/` を最優先、次に `XDG_CONFIG_HOME/aish/task.d/`。`task_name.sh` または `task_name/execute` を実行
 - **セッション**: 環境変数 `AISH_SESSION` でセッションディレクトリを指定。part ファイルから履歴を読み込み、応答を part ファイルに追記
+- **エージェント・ツール**: LLM がツールを呼び出せる。Gemini / GPT にはツール定義（ToolDef）をペイロードで渡し、ストリームで ToolCall イベントを受けて `ToolRegistry::call` で実行し、結果を履歴に載せて再呼び出し。Echo プロバイダは「call:ツール名」や「call:ツール名 {...}」でツール呼び出しをシミュレート。新規ツール追加は「common に Tool 実装を追加 → ai の run_query で registry.register」のみ。
 
 #### `core/aish/`
 - **目的**: `aish`コマンドのRust実装（対話シェル・セッション・ログ）

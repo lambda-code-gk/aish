@@ -5,6 +5,7 @@
 use crate::error::Error;
 use crate::llm::events::LlmEvent;
 use crate::llm::provider::{LlmProvider, Message};
+use crate::tool::ToolDef;
 
 /// LLMドライバー
 pub struct LlmDriver<P: LlmProvider> {
@@ -33,8 +34,9 @@ impl<P: LlmProvider> LlmDriver<P> {
         system_instruction: Option<&str>,
         history: &[Message],
     ) -> Result<String, Error> {
-        // リクエストペイロードを生成
-        let payload = self.provider.make_request_payload(query, system_instruction, history)?;
+        // リクエストペイロードを生成（ツールなし）
+        let payload =
+            self.provider.make_request_payload(query, system_instruction, history, None)?;
         
         // JSON文字列に変換
         let request_json = serde_json::to_string(&payload)
@@ -68,8 +70,9 @@ impl<P: LlmProvider> LlmDriver<P> {
         history: &[Message],
         callback: Box<dyn Fn(&str) -> Result<(), Error>>,
     ) -> Result<(), Error> {
-        // リクエストペイロードを生成
-        let payload = self.provider.make_request_payload(query, system_instruction, history)?;
+        // リクエストペイロードを生成（ツールなし）
+        let payload =
+            self.provider.make_request_payload(query, system_instruction, history, None)?;
         
         // JSON文字列に変換
         let request_json = serde_json::to_string(&payload)
@@ -85,12 +88,14 @@ impl<P: LlmProvider> LlmDriver<P> {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
+        tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let payload = self.provider.make_request_payload(query, system_instruction, history)?;
+        let payload =
+            self.provider.make_request_payload(query, system_instruction, history, tools)?;
         let request_json = serde_json::to_string(&payload)
             .map_err(|e| Error::json(format!("Failed to serialize request: {}", e)))?;
-        self.provider.stream_events(&request_json, callback)
+        self.provider.stream_events(&request_json, tools, callback)
     }
     
     /// プロバイダを取得
@@ -102,7 +107,9 @@ impl<P: LlmProvider> LlmDriver<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::events::{FinishReason, LlmEvent};
     use crate::llm::provider::LlmProvider;
+    use crate::tool::ToolDef;
     use serde_json::Value;
 
     // モックプロバイダ
@@ -135,6 +142,7 @@ mod tests {
             _query: &str,
             _system_instruction: Option<&str>,
             _history: &[Message],
+            _tools: Option<&[ToolDef]>,
         ) -> Result<Value, Error> {
             Ok(serde_json::json!({
                 "contents": [{
@@ -151,6 +159,19 @@ mod tests {
         ) -> Result<(), Error> {
             callback("Hello, ")?;
             callback("world!")?;
+            Ok(())
+        }
+
+        fn stream_events(
+            &self,
+            _request_json: &str,
+            _tools: Option<&[ToolDef]>,
+            callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+        ) -> Result<(), Error> {
+            callback(LlmEvent::TextDelta("Hello, world!".to_string()))?;
+            callback(LlmEvent::Completed {
+                finish: FinishReason::Stop,
+            })?;
             Ok(())
         }
     }
@@ -273,6 +294,7 @@ mod tests {
             _query: &str,
             _system_instruction: Option<&str>,
             _history: &[Message],
+            _tools: Option<&[ToolDef]>,
         ) -> Result<Value, Error> {
             match self.error_type {
                 ErrorType::PayloadError => Err(Error::json("Failed to create payload")),
@@ -294,6 +316,15 @@ mod tests {
                 ErrorType::HttpError => Err(Error::http("HTTP request failed")),
                 _ => Ok(()),
             }
+        }
+
+        fn stream_events(
+            &self,
+            _request_json: &str,
+            _tools: Option<&[ToolDef]>,
+            _callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+        ) -> Result<(), Error> {
+            Ok(())
         }
     }
 

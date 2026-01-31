@@ -1,10 +1,19 @@
 //! ツール実行の Ports & Adapters（trait で副作用隔離）
 //!
 //! ToolRegistry で name -> Box<dyn Tool> を解決し、ToolContext は session dir / fs / process / clock 等の port を束ねる。
+//! LLM に渡すツール定義は ToolDef（name, description, parameters）で、Tool トレイトの description / parameters_schema から構築する。
 
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// LLM API に渡すツール定義（名前・説明・パラメータスキーマ）
+#[derive(Debug, Clone)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
 
 /// ツール実行エラー（ドメイン層）
 #[derive(Debug, Clone, thiserror::Error)]
@@ -34,6 +43,14 @@ impl ToolContext {
 pub trait Tool: Send + Sync {
     /// ツール名（API の name と一致させる）
     fn name(&self) -> &'static str;
+    /// LLM 用の説明（空でも可）
+    fn description(&self) -> &'static str {
+        ""
+    }
+    /// パラメータの JSON Schema（None の場合は空オブジェクトを API に渡す）
+    fn parameters_schema(&self) -> Option<Value> {
+        None
+    }
     /// 引数とコンテキストで実行し、JSON 結果を返す
     fn call(&self, args: Value, ctx: &ToolContext) -> Result<Value, ToolError>;
 }
@@ -57,6 +74,20 @@ impl ToolRegistry {
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.get(name).cloned()
+    }
+
+    /// 登録済みツールの定義一覧（LLM の make_request_payload に渡す用）
+    pub fn list_definitions(&self) -> Vec<ToolDef> {
+        self.tools
+            .values()
+            .map(|t| ToolDef {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                parameters: t
+                    .parameters_schema()
+                    .unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
+            })
+            .collect()
     }
 
     pub fn call(
@@ -98,8 +129,28 @@ impl Tool for EchoTool {
     fn name(&self) -> &'static str {
         "echo"
     }
+    fn description(&self) -> &'static str {
+        "Echo back the given input as JSON. Use for testing or passing through data."
+    }
+    fn parameters_schema(&self) -> Option<Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message": { "type": "string", "description": "Message to echo back" },
+                "input": { "type": "string", "description": "Input to echo (alias for message)" }
+            }
+        }))
+    }
     fn call(&self, args: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
-        Ok(serde_json::json!({ "output": args }))
+        let mut wrapped_args = args.clone();
+        if let Some(obj) = wrapped_args.as_object_mut() {
+            for (_, val) in obj.iter_mut() {
+                if let Some(s) = val.as_str() {
+                    *val = serde_json::json!(format!("[[[ {} ]]]", s));
+                }
+            }
+        }
+        Ok(serde_json::json!({ "output": wrapped_args }))
     }
 }
 
@@ -150,6 +201,22 @@ mod tests {
         assert_eq!(echo.name(), "echo");
         let ctx = ToolContext::new(None);
         let r = echo.call(serde_json::json!({"msg": "hi"}), &ctx).unwrap();
-        assert_eq!(r["output"]["msg"].as_str(), Some("hi"));
+        // EchoTool wraps string values with [[[ and ]]]
+        assert_eq!(r["output"]["msg"].as_str(), Some("[[[ hi ]]]"));
+    }
+
+    #[test]
+    fn test_list_definitions() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Arc::new(EchoTool::new()));
+        reg.register(Arc::new(StubTool));
+        let defs = reg.list_definitions();
+        assert_eq!(defs.len(), 2);
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"echo"));
+        assert!(names.contains(&"stub"));
+        let echo_def = defs.iter().find(|d| d.name == "echo").unwrap();
+        assert!(!echo_def.description.is_empty());
+        assert!(echo_def.parameters.get("properties").is_some());
     }
 }

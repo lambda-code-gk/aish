@@ -3,6 +3,7 @@
 use crate::error::Error;
 use crate::llm::events::{FinishReason, LlmEvent};
 use crate::llm::provider::{LlmProvider, Message};
+use crate::tool::ToolDef;
 use serde_json::{json, Value};
 use std::env;
 use std::io::{BufRead, BufReader};
@@ -114,6 +115,7 @@ impl LlmProvider for GeminiProvider {
         query: &str,
         system_instruction: Option<&str>,
         history: &[Message],
+        tools: Option<&[ToolDef]>,
     ) -> Result<Value, Error> {
         let mut payload = json!({});
         
@@ -124,12 +126,32 @@ impl LlmProvider for GeminiProvider {
             });
         }
         
-        // グラウンディングを有効化（Google検索によるグラウンディング）
-        payload["tools"] = json!([
-            {
-                "googleSearch": {}
+        // ツール: グラウンディング（Google検索）+ 関数宣言（渡された場合）
+        // 注意: 現在の Gemini 3 Flash Preview では googleSearch と functionDeclarations の併用が制限されている可能性があるため、
+        // 関数宣言がある場合は googleSearch を含めないようにする。
+        let mut tools_array = Vec::new();
+        if let Some(defs) = tools {
+            if !defs.is_empty() {
+                let declarations: Vec<Value> = defs
+                    .iter()
+                    .map(|d| {
+                        json!({
+                            "name": d.name,
+                            "description": d.description,
+                            "parameters": d.parameters
+                        })
+                    })
+                    .collect();
+                tools_array.push(json!({ "functionDeclarations": declarations }));
             }
-        ]);
+        }
+        
+        // ツールが空（関数宣言がない）場合のみ Google Search を追加
+        if tools_array.is_empty() {
+            tools_array.push(json!({ "googleSearch": {} }));
+        }
+        
+        payload["tools"] = json!(tools_array);
         
         // 会話履歴とクエリをcontentsに追加
         let mut contents = Vec::new();
@@ -139,10 +161,21 @@ impl LlmProvider for GeminiProvider {
         for msg in history {
             if msg.role == "tool" {
                 // ツール結果: user ターンで functionResponse を返す
-                let response = serde_json::json!({ "result": msg.content });
+                // Gemini API では functionResponse に "name" フィールドが必須
+                let name = msg.tool_name.as_deref().unwrap_or("unknown");
+
+                // msg.content は JSON 文字列なので、Value に戻して response にセットする
+                let response_json: Value = serde_json::from_str(&msg.content)
+                    .unwrap_or_else(|_| serde_json::json!({ "result": msg.content }));
+
                 contents.push(json!({
                     "role": "user",
-                    "parts": [{"functionResponse": {"response": response}}]
+                    "parts": [{
+                        "functionResponse": {
+                            "name": name,
+                            "response": response_json
+                        }
+                    }]
                 }));
                 continue;
             }
@@ -153,12 +186,17 @@ impl LlmProvider for GeminiProvider {
             }
             if let Some(ref tool_calls) = msg.tool_calls {
                 for tc in tool_calls {
-                    parts.push(json!({
+                    let mut fc_obj = json!({
                         "functionCall": {
                             "name": tc.name,
                             "args": tc.args
                         }
-                    }));
+                    });
+                    // Gemini 3 では thoughtSignature を含める必要がある
+                    if let Some(ref sig) = tc.thought_signature {
+                        fc_obj["thoughtSignature"] = json!(sig);
+                    }
+                    parts.push(fc_obj);
                 }
             }
             if parts.is_empty() {
@@ -168,10 +206,15 @@ impl LlmProvider for GeminiProvider {
         }
         
         // ユーザークエリを追加
-        contents.push(json!({
-            "role": "user",
-            "parts": [{"text": query}]
-        }));
+        // query が空でない場合、または履歴が空の場合のみ追加する。
+        // ツール実行直後の継続呼び出しでは query が空になり、history に functionResponse (role: user) が含まれているため、
+        // 重複して空の user メッセージを送るのを避ける。
+        if !query.is_empty() || contents.is_empty() {
+            contents.push(json!({
+                "role": "user",
+                "parts": [{"text": query}]
+            }));
+        }
         
         payload["contents"] = json!(contents);
         
@@ -269,6 +312,7 @@ impl LlmProvider for GeminiProvider {
     fn stream_events(
         &self,
         request_json: &str,
+        _tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let url = format!(
@@ -375,9 +419,12 @@ impl GeminiProvider {
                     let call_id = fc.get("id").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| format!("call_{}", name));
                     let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
                     let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                    // Gemini 3 では thoughtSignature が最初の functionCall part に含まれる
+                    let thought_signature = part["thoughtSignature"].as_str().map(String::from);
                     callback(LlmEvent::ToolCallBegin {
                         call_id: call_id.clone(),
                         name: name.clone(),
+                        thought_signature,
                     })?;
                     if !args_str.is_empty() && args_str != "{}" {
                         callback(LlmEvent::ToolCallArgsDelta {
@@ -436,7 +483,7 @@ mod tests {
             api_key: "test-key".to_string(),
         };
         
-        let payload = provider.make_request_payload("Hello", None, &[]).unwrap();
+        let payload = provider.make_request_payload("Hello", None, &[], None).unwrap();
         assert!(payload["contents"].is_array());
         assert_eq!(payload["contents"].as_array().unwrap().len(), 1);
     }
@@ -448,7 +495,7 @@ mod tests {
             api_key: "test-key".to_string(),
         };
         
-        let payload = provider.make_request_payload("Hello", Some("You are a helpful assistant"), &[]).unwrap();
+        let payload = provider.make_request_payload("Hello", Some("You are a helpful assistant"), &[], None).unwrap();
         assert!(payload["systemInstruction"].is_object());
         assert!(payload["contents"].is_array());
     }
@@ -465,7 +512,7 @@ mod tests {
             Message::assistant("Hello!"),
         ];
         
-        let payload = provider.make_request_payload("How are you?", None, &history).unwrap();
+        let payload = provider.make_request_payload("How are you?", None, &history, None).unwrap();
         let contents = payload["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 3); // 履歴2つ + クエリ1つ
     }
@@ -484,7 +531,7 @@ mod tests {
             Message::assistant("I'm doing well!"),
         ];
         
-        let payload = provider.make_request_payload("What's your name?", None, &history).unwrap();
+        let payload = provider.make_request_payload("What's your name?", None, &history, None).unwrap();
         let contents = payload["contents"].as_array().unwrap();
         
         // Gemini APIでは "assistant" が "model" に変換される
@@ -502,7 +549,7 @@ mod tests {
             api_key: "test-key".to_string(),
         };
         
-        let payload = provider.make_request_payload("Hello", None, &[]).unwrap();
+        let payload = provider.make_request_payload("Hello", None, &[], None).unwrap();
         // グラウンディングが有効になっていることを確認
         assert!(payload["tools"].is_array());
         let tools = payload["tools"].as_array().unwrap();
