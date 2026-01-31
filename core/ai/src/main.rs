@@ -1,5 +1,7 @@
+mod agent_loop;
 mod args;
 mod app;
+mod sinks;
 mod task;
 
 use std::process;

@@ -1,6 +1,7 @@
 //! GPTプロバイダの実装
 
 use crate::error::Error;
+use crate::llm::events::{FinishReason, LlmEvent};
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::env;
@@ -146,8 +147,19 @@ impl LlmProvider for GptProvider {
         // Responses API形式: inputにメッセージ配列を設定
         let mut input = Vec::new();
         
-        // 履歴を追加
+        // Responses API: input[] に tool_calls は入れない（未知パラメータで弾かれる）。
+        // ツール結果は input item の type "tool_result" で送る（role "tool" ではない）。
         for msg in history {
+            if msg.role == "tool" {
+                if let Some(ref call_id) = msg.tool_call_id {
+                    input.push(json!({
+                        "type": "tool_result",
+                        "tool_call_id": call_id,
+                        "output": msg.content
+                    }));
+                }
+                continue;
+            }
             input.push(json!({
                 "role": msg.role,
                 "content": msg.content
@@ -264,6 +276,92 @@ impl LlmProvider for GptProvider {
             return Err(Error::json("No text found in streaming response"));
         }
         
+        Ok(())
+    }
+
+    /// ストリームを LlmEvent に正規化し、チャンク受信ごとに即コールバック（ストリーミング表示）
+    fn stream_events(
+        &self,
+        request_json: &str,
+        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let url = "https://api.openai.com/v1/responses";
+        let mut payload: Value = serde_json::from_str(request_json)
+            .map_err(|e| Error::json(format!("Failed to parse request JSON: {}", e)))?;
+        payload["stream"] = json!(true);
+        let streaming_request_json = serde_json::to_string(&payload)
+            .map_err(|e| Error::json(format!("Failed to serialize request: {}", e)))?;
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .body(streaming_request_json)
+            .send()
+            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let response_text = response
+                .text()
+                .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
+            let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
+                v["error"]["message"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
+            } else {
+                format!("HTTP {}: {}", status, response_text)
+            };
+            return Err(Error::http(format!("OpenAI API error: {}", error_msg)));
+        }
+
+        let reader = BufReader::new(response);
+        let mut found_any_text = false;
+        for line_result in reader.lines() {
+            let line = line_result
+                .map_err(|e| Error::http(format!("Failed to read stream line: {}", e)))?;
+            if line.starts_with("data: ") {
+                let data = &line["data: ".len()..];
+                if data == "[DONE]" {
+                    break;
+                }
+
+                let v: Value = match serde_json::from_str(data) {
+                    Ok(v) => v,
+                    Err(_e) => continue,
+                };
+
+                let mut text_found = false;
+                if let Some(type_str) = v["type"].as_str() {
+                    if type_str == "response.output_text.delta" {
+                        if let Some(text) = v["delta"].as_str() {
+                            callback(LlmEvent::TextDelta(text.to_string()))?;
+                            text_found = true;
+                            found_any_text = true;
+                        }
+                    }
+                }
+                if !text_found {
+                    if let Some(text) = v["delta"]["content"].as_str() {
+                        callback(LlmEvent::TextDelta(text.to_string()))?;
+                        found_any_text = true;
+                    } else if let Some(text) = v["choices"][0]["delta"]["content"].as_str() {
+                        callback(LlmEvent::TextDelta(text.to_string()))?;
+                        found_any_text = true;
+                    }
+                }
+            }
+        }
+
+        if !found_any_text {
+            return Err(Error::json("No text found in streaming response"));
+        }
+
+        callback(LlmEvent::Completed {
+            finish: FinishReason::Stop,
+        })?;
         Ok(())
     }
 }

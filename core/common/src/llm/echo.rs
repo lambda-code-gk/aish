@@ -4,6 +4,7 @@
 //! デバッグやテスト用に使用します。
 
 use crate::error::Error;
+use crate::llm::events::{FinishReason, LlmEvent};
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::io::{self, Write};
@@ -95,6 +96,25 @@ impl LlmProvider for EchoProvider {
             thread::sleep(Duration::from_millis(50));
         }
         
+        Ok(())
+    }
+
+    /// ストリームを LlmEvent に正規化し、チャンク受信ごとに即コールバック（ストリーミング表示）
+    fn stream_events(
+        &self,
+        _request_json: &str,
+        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let text = "[Echo Provider] This is a simulated streaming response from the echo provider. It displays text chunk by chunk to demonstrate the streaming capability.";
+        for word in text.split_whitespace() {
+            callback(LlmEvent::TextDelta(word.to_string()))?;
+            callback(LlmEvent::TextDelta(" ".to_string()))?;
+            io::stdout().flush().ok();
+            thread::sleep(Duration::from_millis(50));
+        }
+        callback(LlmEvent::Completed {
+            finish: FinishReason::Stop,
+        })?;
         Ok(())
     }
 }

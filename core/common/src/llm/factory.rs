@@ -108,6 +108,18 @@ impl LlmProvider for AnyProvider {
             Self::Echo(p) => p.make_http_streaming_request(request_json, callback),
         }
     }
+
+    fn stream_events(
+        &self,
+        request_json: &str,
+        callback: &mut dyn FnMut(crate::llm::events::LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        match self {
+            Self::Gemini(p) => p.stream_events(request_json, callback),
+            Self::Gpt(p) => p.stream_events(request_json, callback),
+            Self::Echo(p) => p.stream_events(request_json, callback),
+        }
+    }
 }
 
 /// プロバイダを作成する

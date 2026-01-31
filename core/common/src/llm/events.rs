@@ -1,0 +1,75 @@
+//! LLMストリームの共通イベント型
+//!
+//! プロバイダごとの差異をadapter層で吸収し、共通のイベント列に正規化する。
+
+use serde::{Deserialize, Serialize};
+
+/// ストリーム終了理由
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FinishReason {
+    /// 通常終了
+    Stop,
+    /// ツール呼び出しあり
+    ToolCalls,
+    /// 長さ制限
+    Length,
+    /// その他（プロバイダ固有）
+    Other(String),
+}
+
+/// LLMストリームから来る正規化済みイベント
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LlmEvent {
+    /// アシスタントテキストの増分
+    TextDelta(String),
+    /// ツール呼び出し開始
+    ToolCallBegin {
+        call_id: String,
+        name: String,
+    },
+    /// ツール引数（JSON断片）の増分
+    ToolCallArgsDelta {
+        call_id: String,
+        json_fragment: String,
+    },
+    /// ツール呼び出し終了（この時点でargsをJSONとして解釈可能）
+    ToolCallEnd { call_id: String },
+    /// ストリーム完了
+    Completed { finish: FinishReason },
+    /// ストリーム失敗
+    Failed { message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_finish_reason_stop() {
+        let r = FinishReason::Stop;
+        assert_eq!(r, FinishReason::Stop);
+    }
+
+    #[test]
+    fn test_llm_event_text_delta() {
+        let ev = LlmEvent::TextDelta("hello".to_string());
+        assert!(matches!(ev, LlmEvent::TextDelta(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_llm_event_tool_call_begin() {
+        let ev = LlmEvent::ToolCallBegin {
+            call_id: "call_1".to_string(),
+            name: "run_shell".to_string(),
+        };
+        assert!(matches!(ev, LlmEvent::ToolCallBegin { call_id, name } if call_id == "call_1" && name == "run_shell"));
+    }
+
+    #[test]
+    fn test_llm_event_completed() {
+        let ev = LlmEvent::Completed {
+            finish: FinishReason::Stop,
+        };
+        assert!(matches!(ev, LlmEvent::Completed { finish: FinishReason::Stop }));
+    }
+}

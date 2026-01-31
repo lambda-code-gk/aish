@@ -1,6 +1,7 @@
 //! Gemini 3 Flashプロバイダの実装
 
 use crate::error::Error;
+use crate::llm::events::{FinishReason, LlmEvent};
 use crate::llm::provider::{LlmProvider, Message};
 use serde_json::{json, Value};
 use std::env;
@@ -136,11 +137,34 @@ impl LlmProvider for GeminiProvider {
         // 履歴を追加
         // Gemini APIは "assistant" ではなく "model" というroleを使用する
         for msg in history {
+            if msg.role == "tool" {
+                // ツール結果: user ターンで functionResponse を返す
+                let response = serde_json::json!({ "result": msg.content });
+                contents.push(json!({
+                    "role": "user",
+                    "parts": [{"functionResponse": {"response": response}}]
+                }));
+                continue;
+            }
             let role = if msg.role == "assistant" { "model" } else { &msg.role };
-            contents.push(json!({
-                "role": role,
-                "parts": [{"text": msg.content}]
-            }));
+            let mut parts: Vec<Value> = Vec::new();
+            if !msg.content.is_empty() {
+                parts.push(json!({"text": msg.content}));
+            }
+            if let Some(ref tool_calls) = msg.tool_calls {
+                for tc in tool_calls {
+                    parts.push(json!({
+                        "functionCall": {
+                            "name": tc.name,
+                            "args": tc.args
+                        }
+                    }));
+                }
+            }
+            if parts.is_empty() {
+                parts.push(json!({"text": ""}));
+            }
+            contents.push(json!({ "role": role, "parts": parts }));
         }
         
         // ユーザークエリを追加
@@ -240,9 +264,134 @@ impl LlmProvider for GeminiProvider {
         
         Ok(())
     }
+
+    /// ストリームを LlmEvent に正規化（テキスト + functionCall 対応）
+    fn stream_events(
+        &self,
+        request_json: &str,
+        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
+            self.model, self.api_key
+        );
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .body(request_json.to_string())
+            .send()
+            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
+        let status = response.status();
+        if !status.is_success() {
+            let response_text = response
+                .text()
+                .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
+            let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
+                v["error"]["message"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
+            } else {
+                format!("HTTP {}: {}", status, response_text)
+            };
+            return Err(Error::http(format!("Gemini API error: {}", error_msg)));
+        }
+        let reader = BufReader::new(response);
+        let mut json_buffer = String::new();
+        let mut brace_count = 0;
+        let mut in_object = false;
+        let mut had_tool_calls = false;
+        for line_result in reader.lines() {
+            let line = line_result
+                .map_err(|e| Error::http(format!("Failed to read stream line: {}", e)))?;
+            for c in line.chars() {
+                match c {
+                    '{' => {
+                        if !in_object {
+                            in_object = true;
+                            json_buffer.clear();
+                        }
+                        brace_count += 1;
+                        json_buffer.push(c);
+                    }
+                    '}' => {
+                        if in_object {
+                            brace_count -= 1;
+                            json_buffer.push(c);
+                            if brace_count == 0 {
+                                let h = Self::handle_json_chunk_events(&json_buffer, callback)?;
+                                if h {
+                                    had_tool_calls = true;
+                                }
+                                json_buffer.clear();
+                                in_object = false;
+                            }
+                        }
+                    }
+                    _ => {
+                        if in_object {
+                            json_buffer.push(c);
+                        }
+                    }
+                }
+            }
+            if in_object {
+                json_buffer.push('\n');
+            }
+        }
+        let finish = if had_tool_calls {
+            FinishReason::ToolCalls
+        } else {
+            FinishReason::Stop
+        };
+        callback(LlmEvent::Completed { finish })?;
+        Ok(())
+    }
 }
 
 impl GeminiProvider {
+    /// JSONチャンクを LlmEvent に変換（text / functionCall 対応）
+    fn handle_json_chunk_events(
+        json_str: &str,
+        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+    ) -> Result<bool, Error> {
+        let v: Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        let mut had_tool_calls = false;
+        if let Some(parts) = v["candidates"][0]["content"]["parts"].as_array() {
+            for part in parts {
+                if let Some(text) = part["text"].as_str() {
+                    if !text.is_empty() {
+                        callback(LlmEvent::TextDelta(text.to_string()))?;
+                    }
+                }
+                if let Some(fc) = part["functionCall"].as_object() {
+                    had_tool_calls = true;
+                    let name = fc["name"].as_str().unwrap_or("").to_string();
+                    let call_id = fc.get("id").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| format!("call_{}", name));
+                    let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
+                    let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                    callback(LlmEvent::ToolCallBegin {
+                        call_id: call_id.clone(),
+                        name: name.clone(),
+                    })?;
+                    if !args_str.is_empty() && args_str != "{}" {
+                        callback(LlmEvent::ToolCallArgsDelta {
+                            call_id: call_id.clone(),
+                            json_fragment: args_str,
+                        })?;
+                    }
+                    callback(LlmEvent::ToolCallEnd { call_id })?;
+                }
+            }
+        }
+        Ok(had_tool_calls)
+    }
+
     /// JSONチャンクを処理してテキストを抽出
     fn handle_json_chunk(
         json_str: &str,

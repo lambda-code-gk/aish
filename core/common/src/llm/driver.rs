@@ -3,6 +3,7 @@
 //! プロバイダに依存しない共通処理を提供します。
 
 use crate::error::Error;
+use crate::llm::events::LlmEvent;
 use crate::llm::provider::{LlmProvider, Message};
 
 /// LLMドライバー
@@ -76,6 +77,20 @@ impl<P: LlmProvider> LlmDriver<P> {
         
         // ストリーミングHTTPリクエストを実行
         self.provider.make_http_streaming_request(&request_json, callback)
+    }
+
+    /// LLMにクエリを送信し、ストリームを LlmEvent 列に正規化してコールバックに渡す
+    pub fn query_stream_events(
+        &self,
+        query: &str,
+        system_instruction: Option<&str>,
+        history: &[Message],
+        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let payload = self.provider.make_request_payload(query, system_instruction, history)?;
+        let request_json = serde_json::to_string(&payload)
+            .map_err(|e| Error::json(format!("Failed to serialize request: {}", e)))?;
+        self.provider.stream_events(&request_json, callback)
     }
     
     /// プロバイダを取得

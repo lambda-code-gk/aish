@@ -1,6 +1,7 @@
 //! LLMプロバイダのトレイト定義
 
 use crate::error::Error;
+use crate::llm::events::LlmEvent;
 use serde_json::Value;
 
 /// LLMプロバイダのトレイト
@@ -71,13 +72,32 @@ pub trait LlmProvider {
         request_json: &str,
         callback: Box<dyn Fn(&str) -> Result<(), Error>>,
     ) -> Result<(), Error>;
+
+    /// ストリームを LlmEvent 列に正規化してコールバックに渡す（デフォルト実装はテキストのみ TextDelta + Completed、チャンク受信ごとに即コールバック）
+    fn stream_events(
+        &self,
+        request_json: &str,
+        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error>;
 }
 
-/// メッセージ構造体
+/// ツール呼び出し1件（assistant が model に返す用）
+#[derive(Debug, Clone)]
+pub struct ToolCallSpec {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+}
+
+/// メッセージ構造体（user / assistant / tool と tool_calls 対応）
 #[derive(Debug, Clone)]
 pub struct Message {
     pub role: String,
     pub content: String,
+    /// assistant がツールを呼んだ場合
+    pub tool_calls: Option<Vec<ToolCallSpec>>,
+    /// role が "tool" のとき、どの call_id への返答か
+    pub tool_call_id: Option<String>,
 }
 
 impl Message {
@@ -85,15 +105,45 @@ impl Message {
         Self {
             role: role.into(),
             content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
-    
+
     pub fn user(content: impl Into<String>) -> Self {
         Self::new("user", content)
     }
-    
+
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::new("assistant", content)
+    }
+
+    /// ツール呼び出し付き assistant（content は空でも可）
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<(String, String, Value)>,
+    ) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+            tool_calls: Some(
+                tool_calls
+                    .into_iter()
+                    .map(|(id, name, args)| ToolCallSpec { id, name, args })
+                    .collect(),
+            ),
+            tool_call_id: None,
+        }
+    }
+
+    /// ツール結果（role = "tool"）
+    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: Some(call_id.into()),
+        }
     }
 }
 

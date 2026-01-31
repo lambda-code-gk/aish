@@ -1,16 +1,18 @@
+use crate::agent_loop::{AgentLoop, LlmEventStream};
 use crate::args::Config;
+use crate::sinks::StdoutSink;
 use crate::task::run_task_if_exists;
 use common::adapter::{FileSystem, Process};
 use common::error::Error;
-use common::llm::{create_driver, ProviderType};
+use common::llm::factory::AnyProvider;
+use common::llm::{create_driver, LlmDriver, ProviderType};
 use common::llm::provider::Message as LlmMessage;
+use common::msg::Msg;
 use common::part_id::IdGenerator;
-use std::io::{self, Write};
+use common::tool::{ToolContext, ToolRegistry};
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 /// セッションヒストリー
 #[derive(Debug, Clone)]
@@ -52,6 +54,37 @@ impl Default for History {
 /// セッションディレクトリを環境変数から取得
 fn session_dir_from_env() -> Option<PathBuf> {
     env::var("AISH_SESSION").ok().map(PathBuf::from)
+}
+
+/// ドライバを LlmEventStream として使うアダプタ
+struct DriverLlmStream<'a>(&'a LlmDriver<AnyProvider>);
+
+impl LlmEventStream for DriverLlmStream<'_> {
+    fn stream_events(
+        &self,
+        query: &str,
+        system_instruction: Option<&str>,
+        history: &[LlmMessage],
+        callback: &mut dyn FnMut(common::llm::events::LlmEvent) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.0.query_stream_events(query, system_instruction, history, callback)
+    }
+}
+
+/// 履歴 (Message) とクエリから Vec<Msg> を構築
+fn build_messages(history_messages: &[LlmMessage], query: &str) -> Vec<Msg> {
+    let mut msgs: Vec<Msg> = history_messages
+        .iter()
+        .map(|m| {
+            if m.role == "user" {
+                Msg::user(&m.content)
+            } else {
+                Msg::assistant(&m.content)
+            }
+        })
+        .collect();
+    msgs.push(Msg::user(query));
+    msgs
 }
 
 /// ai のユースケース（アダプター経由で I/O を行う）
@@ -205,46 +238,25 @@ impl AiUseCase {
         };
 
         let driver = create_driver(provider_type, None)?;
-
-        let response_buffer = if self.session_is_valid(&session_dir) {
-            Some(Rc::new(RefCell::new(String::new())))
-        } else {
-            None
-        };
-
-        driver.query_streaming(
-            &query,
-            None,
-            &history_messages,
-            {
-                let buffer = response_buffer.clone();
-                Box::new(move |chunk| {
-                    print!("{}", chunk);
-                    io::stdout()
-                        .flush()
-                        .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
-                    if let Some(ref buf) = buffer {
-                        buf.borrow_mut().push_str(chunk);
-                    }
-                    Ok(())
-                })
-            },
-        )?;
+        let stream = DriverLlmStream(&driver);
+        let sinks: Vec<Box<dyn common::sink::EventSink>> =
+            vec![Box::new(StdoutSink::new())];
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(common::tool::EchoTool::new()));
+        let tool_context = ToolContext::new(session_dir.as_ref().map(|p| p.clone()));
+        let messages = build_messages(&history_messages, &query);
+        let mut agent_loop =
+            AgentLoop::new(stream, registry, tool_context, sinks);
+        const MAX_TURNS: usize = 16;
+        let (_final_messages, assistant_text) =
+            agent_loop.run_until_done(&messages, MAX_TURNS)?;
 
         println!();
 
-        if self.session_is_valid(&session_dir) {
-            if let Some(buffer) = response_buffer {
-                let response = match Rc::try_unwrap(buffer) {
-                    Ok(cell) => cell.into_inner(),
-                    Err(rc) => rc.borrow().clone(),
-                };
-                if !response.trim().is_empty() {
-                    let dir = session_dir.as_ref().unwrap();
-                    self.save_response(dir, &response)?;
-                    self.truncate_console_log(dir)?;
-                }
-            }
+        if self.session_is_valid(&session_dir) && !assistant_text.trim().is_empty() {
+            let dir = session_dir.as_ref().unwrap();
+            self.save_response(dir, &assistant_text)?;
+            self.truncate_console_log(dir)?;
         }
 
         Ok(0)
