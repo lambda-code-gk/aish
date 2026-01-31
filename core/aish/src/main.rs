@@ -1,21 +1,18 @@
 mod adapter;
-mod args;
-mod app;
-mod shell;
-mod terminal;
-mod platform;
+mod cli;
+mod usecase;
 
 use std::process;
 use common::error::Error;
-use args::parse_args;
-use app::run_app;
+use cli::parse_args;
+use usecase::run_app;
 
 fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err(e) => {
             if e.is_usage() {
-                app::print_usage();
+                usecase::print_usage();
             }
             eprintln!("aish: {}", e);
             e.exit_code()
@@ -34,4 +31,3 @@ mod tests {
     // 実際の引数解析は環境変数に依存するため、
     // 統合テストで確認する
 }
-

@@ -39,9 +39,11 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 - **テスト実行**: `cd core/common && cargo test`
 - **状態**: 実装済み。LLMドライバ・プロバイダ・セッション・Part IDを提供
 - **依存関係**: `serde_json`, `reqwest`（LLM API用。blocking, json, rustls-tls）
-- **提供機能**:
+- **提供機能**（層: domain / adapter / llm / msg / tool / sink 等）:
   - **error**: 統一エラー型 `Error`（thiserror による enum）。境界で `exit_code()` / `is_usage()` により終了コード・用法表示を決定
-  - **session**: セッションディレクトリの解決・管理（AISH_HOME / XDG 準拠）
+  - **domain**: ドメイン型（Newtype 等）
+  - **session**: セッションディレクトリの解決・管理（AISH_HOME / XDG 準拠）。OS/env/fs 依存のため adapter 寄りだが共通のため common に配置
+  - **adapter**: Port trait（FileSystem, Process, Clock, Pty, Signal 等）と標準実装（Std*）
   - **llm**: LLMドライバとプロバイダ
     - **driver**: ストリーミング対応の共通ドライバ
     - **provider**: メッセージ型・プロバイダトレイト
@@ -50,6 +52,9 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
     - **echo**: クエリをそのまま返すテスト用
     - **factory**: ProviderType（Gemini / Gpt / Echo）、create_provider / create_driver
   - **part_id**: 8文字 base62 のPart ID生成。辞書順＝時系列。同一ms内はシーケンスで単調増加
+  - **msg**: 型付きメッセージ履歴（Msg）
+  - **tool**: ツール実行（Ports & Adapters）
+  - **sink**: イベント Sink（表示・保存の分離）
 
 #### `core/ai/`
 - **目的**: `ai`コマンドのRust実装（LLM対話・タスク実行）
@@ -58,11 +63,11 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 - **テスト実行**: `cd core/ai && cargo test`
 - **依存関係**: `core/common` のみ（標準ライブラリで引数解析）
 - **状態**: 実装済み。クエリ対話・プロバイダ指定・タスク実行・セッション履歴の読み書きが動作
-- **モジュール**:
-  - **main.rs**: エントリーポイント、エラーハンドリング、usage表示
-  - **args.rs**: 引数解析（`Config`: help, provider, task, message_args）
-  - **app.rs**: メインロジック（履歴読み込み、LLM呼び出し、履歴保存、ストリーミング表示）
-  - **task.rs**: タスク解決・実行（`task.d` 探索と実行）
+- **モジュール（層分割）**:
+  - **main.rs**: CLI境界（薄い）。エントリーポイント、エラーハンドリング、usage表示
+  - **cli/**: 引数解析。`args.rs`（`Config`: help, provider, task, message_args）
+  - **usecase/**: アプリ用ユースケース。`app.rs`（AiUseCase, run_app）、`agent_loop.rs`（状態機械, msgs_to_provider）
+  - **adapter/**: 具体実装。`sinks.rs`（StdoutSink 等）、`task.rs`（task.d 解決・実行）
 - **CLI**: `-h`/`--help`, `-p`/`--provider <name>`, 位置引数は「タスク名」または「クエリ＋メッセージ」として解釈
 - **タスク**: `AISH_HOME/config/task.d/` を最優先、次に `XDG_CONFIG_HOME/aish/task.d/`。`task_name.sh` または `task_name/execute` を実行
 - **セッション**: 環境変数 `AISH_SESSION` でセッションディレクトリを指定。part ファイルから履歴を読み込み、応答を part ファイルに追記
@@ -74,14 +79,11 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 - **テスト実行**: `cd core/aish && cargo test`
 - **依存関係**: `core/common`, `libc`, `base64`, `serde_json`
 - **状態**: 一部実装済み。対話シェル・セッション管理・ログロールオーバー・未実装コマンドのエラー処理が動作。resume/memory/models 等は未実装
-- **モジュール**:
-  - **main.rs**: エントリーポイント、エラーハンドリング
-  - **args.rs**: 引数解析（`Config`: help, session_dir, home_dir, command, command_args）
-  - **app.rs**: コマンド振り分け、usage、未実装コマンドは 64 で終了
-  - **logfmt.rs**: ログフォーマット（logfmt 等）
-  - **shell.rs**: 対話シェル起動、PTY、ログ記録
-  - **terminal.rs**: ターミナルバッファエミュレーション（ログ用）
-  - **platform/**: プラットフォーム抽象（Unix: シグナル、SIGUSR2 等）
+- **モジュール（層分割）**:
+  - **main.rs**: CLI境界（薄い）。エントリーポイント、エラーハンドリング
+  - **cli/**: 引数解析。`args.rs`（`Config`: help, session_dir, home_dir, command, command_args）
+  - **usecase/**: コマンド振り分け・usage。`app.rs`（run_app、未実装コマンドは 64 で終了）
+  - **adapter/**: 具体実装。`aish_adapter.rs`（platform の Pty/Signal を common にラップ）、`shell.rs`、`terminal.rs`、`logfmt.rs`、`platform/`（Unix: シグナル、SIGUSR2 等）
 - **CLI**: `-h`/`--help`, `-s`/`--session-dir <dir>`, `-d`/`--home-dir <dir>`, 位置引数でコマンドと引数
 - **実装済みコマンド**: なし（対話シェル）、`truncate_console_log`（コンソールバッファ・ログのロールオーバー）
 - **未実装コマンド**: resume, sessions, rollout, clear, ls, rm_last, memory, models（いずれも 64 で終了し usage に記載）
@@ -230,6 +232,12 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
      - `adapter/`: OS/HTTP/FS/PTY/Signal/LLM の具体実装
      - `cli/` : 引数解析、表示、exit code
    - `common` は “本当に共有される安定要素” のみを置く。
+
+   **common 肥大化防止（絶対ルール）**
+   - **common に入れて良いもの**: 2つ以上の crate（ai / aish / tools）が確実に共有し、かつ安定しているもの。ドメイン型（Newtype）、汎用エラー、イベント（LlmEvent / AgentEvent）、Msg、PartId 生成、Port trait（FileSystem / Process / Clock / Pty / Signal / Tool 等）と標準実装（std_*）、LLM provider 実装（gemini / gpt / echo）。
+   - **common に入れてはいけないもの**: ai だけ / aish だけにしか意味がないユースケース、CLI の都合、コマンド解釈。“近いから” という理由での util 追加（まずは core/ai または core/aish の adapter / usecase に置く）。
+   - **迷ったら**: まず各バイナリ側（core/ai または core/aish）に置く。後から共有が確定したら common に昇格（逆は極力しない）。
+   - **session**: 共通だが OS/env/fs に依存するため common に置くのは許可。ai/aish のユースケースロジックは common に入れない。
 
 
 
