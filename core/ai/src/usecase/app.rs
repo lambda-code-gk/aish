@@ -1,6 +1,6 @@
-use crate::adapter::{env, run_task_if_exists, StdoutSink};
+use crate::adapter::{env, run_task_if_exists, CliToolApproval, StdoutSink};
 use crate::cli::{config_to_command, Config};
-use crate::domain::{AiCommand, History};
+use crate::domain::{AiCommand, History, ToolApproval};
 use crate::usecase::agent_loop::{AgentLoop, LlmEventStream};
 use common::adapter::{FileSystem, Process};
 use common::error::Error;
@@ -227,35 +227,20 @@ impl AiUseCase {
         let stream = DriverLlmStream(&driver);
         let sinks: Vec<Box<dyn common::sink::EventSink>> =
             vec![Box::new(StdoutSink::new())];
-        // ツール追加: common に impl Tool を追加し、ここで registry.register(Arc::new(MyTool::new())) するだけ
+        // ツール追加: Tool 実装を追加し、ここで registry.register(Arc::new(MyTool::new())) するだけ
+        // ShellTool は OS 副作用を伴うため adapter 層に配置
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(common::tool::EchoTool::new()));
-        registry.register(Arc::new(common::tool::ShellTool::new()));
+        registry.register(Arc::new(crate::adapter::ShellTool::new()));
 
         let messages = build_messages(&history_messages, &query);
-        let home_dir = common::domain::HomeDir::new(
-            std::env::var("AISH_HOME")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    let mut p = std::env::var("XDG_CONFIG_HOME")
-                        .ok()
-                        .filter(|s| !s.is_empty())
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| {
-                            let home = std::env::var("HOME").expect("HOME is not set");
-                            PathBuf::from(home).join(".config")
-                        });
-                    p.push("aish");
-                    p
-                }),
-        );
+        let home_dir = env::resolve_home_dir();
         let allow_rules = crate::adapter::load_command_allow_rules(&home_dir);
         let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()))
             .with_command_allow_rules(allow_rules);
+        let approver: Arc<dyn ToolApproval> = Arc::new(CliToolApproval::new());
         let mut agent_loop =
-            AgentLoop::new(stream, registry, tool_context, sinks);
+            AgentLoop::new(stream, registry, tool_context, sinks, approver);
         const MAX_TURNS: usize = 16;
         let (_final_messages, assistant_text) =
             agent_loop.run_until_done(&messages, MAX_TURNS)?;

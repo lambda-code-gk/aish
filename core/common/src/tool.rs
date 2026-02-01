@@ -25,15 +25,21 @@ pub enum ToolError {
     InvalidArgs(String),
     #[error("Execution failed: {0}")]
     ExecutionFailed(String),
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
 }
 
 /// ツール実行コンテキスト（session dir / fs / process / clock 等の port を束ねる）
 /// 最小限でよい。必要に応じて adapter を追加する。
+#[derive(Clone)]
 pub struct ToolContext {
     /// セッションディレクトリ（オプション）
     pub session_dir: Option<std::path::PathBuf>,
     /// 実行を許可するコマンドのルールリスト
     pub command_allow_rules: Vec<CommandAllowRule>,
+    /// 危険操作を許可するフラグ（承認済みの場合に true）
+    /// デフォルトは false。usecase が承認を得た後に with_allow_unsafe(true) で複製する。
+    pub allow_unsafe: bool,
 }
 
 /// コマンド実行許可ルール
@@ -54,11 +60,18 @@ impl ToolContext {
         Self {
             session_dir,
             command_allow_rules: Vec::new(),
+            allow_unsafe: false,
         }
     }
 
     pub fn with_command_allow_rules(mut self, rules: Vec<CommandAllowRule>) -> Self {
         self.command_allow_rules = rules;
+        self
+    }
+
+    /// 危険操作を許可するコンテキストを返す（承認済みの場合に使用）
+    pub fn with_allow_unsafe(mut self, allow: bool) -> Self {
+        self.allow_unsafe = allow;
         self
     }
 }
@@ -178,83 +191,28 @@ impl Tool for EchoTool {
     }
 }
 
-/// シェルコマンド実行ツール（API 名 "run_shell"）
-/// 実行は ai 側でユーザー確認後に呼ばれる想定。
-pub struct ShellTool;
-
-impl ShellTool {
-    pub const NAME: &'static str = "run_shell";
-
-    pub fn new() -> Self {
-        Self
+/// コマンドが許可リストにマッチするか判定する（純粋関数）
+///
+/// denylist（NotRegex/NotPrefix）が先に評価され、一致すれば即座に false。
+/// 次に allowlist（Regex/Prefix）のいずれかに一致すれば true。
+/// どちらにも一致しなければ false。
+pub fn is_command_allowed(command: &str, rules: &[CommandAllowRule]) -> bool {
+    // 否定ルールが一つでもマッチしたら即座に不許可
+    let denied = rules.iter().any(|rule| match rule {
+        CommandAllowRule::NotRegex(re) => re.is_match(command),
+        CommandAllowRule::NotPrefix(prefix) => command.starts_with(prefix),
+        _ => false,
+    });
+    if denied {
+        return false;
     }
 
-    /// コマンドが許可リストにマッチするか判定する
-    pub fn is_allowed(&self, command: &str, ctx: &ToolContext) -> bool {
-        // 否定ルールが一つでもマッチしたら即座に不許可
-        let denied = ctx.command_allow_rules.iter().any(|rule| match rule {
-            CommandAllowRule::NotRegex(re) => re.is_match(command),
-            CommandAllowRule::NotPrefix(prefix) => command.starts_with(prefix),
-            _ => false,
-        });
-        if denied {
-            return false;
-        }
-
-        // 肯定ルールのいずれかにマッチすれば許可
-        ctx.command_allow_rules.iter().any(|rule| match rule {
-            CommandAllowRule::Regex(re) => re.is_match(command),
-            CommandAllowRule::Prefix(prefix) => command.starts_with(prefix),
-            _ => false,
-        })
-    }
-}
-
-impl Default for ShellTool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Tool for ShellTool {
-    fn name(&self) -> &'static str {
-        Self::NAME
-    }
-    fn description(&self) -> &'static str {
-        "Execute a shell command. Use when you need to run a command on the user's machine (e.g. list files, run a script). Pass a single string 'command' to run via sh -c."
-    }
-    fn parameters_schema(&self) -> Option<Value> {
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "command": { "type": "string", "description": "Shell command to execute (run with sh -c)" }
-            },
-            "required": ["command"]
-        }))
-    }
-    fn call(&self, args: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
-        let command = args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidArgs("missing 'command'".to_string()))?
-            .to_string();
-        if command.trim().is_empty() {
-            return Err(ToolError::InvalidArgs("command must not be empty".to_string()));
-        }
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&command)
-            .output()
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let exit_code = output.status.code().unwrap_or(1);
-        Ok(serde_json::json!({
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": exit_code
-        }))
-    }
+    // 肯定ルールのいずれかにマッチすれば許可
+    rules.iter().any(|rule| match rule {
+        CommandAllowRule::Regex(re) => re.is_match(command),
+        CommandAllowRule::Prefix(prefix) => command.starts_with(prefix),
+        _ => false,
+    })
 }
 
 #[cfg(test)]
@@ -324,38 +282,38 @@ mod tests {
     }
 
     #[test]
-    fn test_shell_tool() {
-        let shell = ShellTool::new();
-        assert_eq!(shell.name(), ShellTool::NAME);
-        let ctx = ToolContext::new(None);
-        let r = shell
-            .call(serde_json::json!({ "command": "echo hello" }), &ctx)
-            .unwrap();
-        assert_eq!(r["stdout"].as_str(), Some("hello\n"));
-        assert_eq!(r["exit_code"].as_i64(), Some(0));
-        let r = shell.call(serde_json::json!({}), &ctx);
-        assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
-        let r = shell.call(serde_json::json!({ "command": "" }), &ctx);
-        assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
-    }
-
-    #[test]
-    fn test_shell_tool_is_allowed() {
-        let shell = ShellTool::new();
-        let ctx = ToolContext::new(None).with_command_allow_rules(vec![
+    fn test_is_command_allowed() {
+        let rules = vec![
             CommandAllowRule::Regex(Regex::new(r"^echo .*").unwrap()),
             CommandAllowRule::Prefix("ls".to_string()),
             CommandAllowRule::Prefix("sed".to_string()),
             CommandAllowRule::NotRegex(Regex::new(r"sed .*-i ").unwrap()),
-        ]);
+        ];
 
-        assert!(shell.is_allowed("echo hello", &ctx));
-        assert!(shell.is_allowed("ls", &ctx));
-        assert!(shell.is_allowed("ls -la", &ctx));
-        assert!(shell.is_allowed("sed 's/a/b/' file", &ctx));
-        assert!(!shell.is_allowed("sed -i 's/a/b/' file", &ctx));
-        // assert!(!shell.is_allowed("sed --in-place 's/a/b/' file", &ctx)); // Regex matches "sed .*-i "
-        assert!(!shell.is_allowed("rm -rf /", &ctx));
-        assert!(shell.is_allowed("lss", &ctx));
+        assert!(is_command_allowed("echo hello", &rules));
+        assert!(is_command_allowed("ls", &rules));
+        assert!(is_command_allowed("ls -la", &rules));
+        assert!(is_command_allowed("sed 's/a/b/' file", &rules));
+        assert!(!is_command_allowed("sed -i 's/a/b/' file", &rules));
+        // sed --in-place は "sed .*-i " にマッチしないので許可される
+        assert!(!is_command_allowed("rm -rf /", &rules));
+        assert!(is_command_allowed("lss", &rules));
+    }
+
+    #[test]
+    fn test_is_command_allowed_empty_rules() {
+        let rules: Vec<CommandAllowRule> = vec![];
+        // ルールがない場合は全て不許可
+        assert!(!is_command_allowed("echo hello", &rules));
+        assert!(!is_command_allowed("ls", &rules));
+    }
+
+    #[test]
+    fn test_tool_context_clone() {
+        let ctx = ToolContext::new(Some("/tmp".into()))
+            .with_command_allow_rules(vec![CommandAllowRule::Prefix("ls".to_string())]);
+        let ctx2 = ctx.clone().with_allow_unsafe(true);
+        assert!(!ctx.allow_unsafe);
+        assert!(ctx2.allow_unsafe);
     }
 }

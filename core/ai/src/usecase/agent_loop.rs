@@ -3,16 +3,18 @@
 //! 直列の transaction script をやめ、RunState で遷移する。
 //! LLM から ToolCallEnd が来たら tool 実行フェーズへ遷移し、結果を messages に注入する。
 
+use crate::adapter::ShellTool;
+use crate::domain::{Approval, ToolApproval};
 use common::error::Error;
 use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
 use common::msg::Msg;
 use common::sink::{AgentEvent, EventSink};
-use common::tool::{ShellTool, ToolContext, ToolDef, ToolRegistry};
+use common::tool::{ToolContext, ToolDef, ToolRegistry};
 use serde_json::Value;
 use std::cell::RefCell;
-use std::io::{self, Write};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// 実行状態
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +159,7 @@ pub struct AgentLoop<S: LlmEventStream> {
     tool_registry: ToolRegistry,
     tool_context: ToolContext,
     sinks: Vec<Box<dyn EventSink>>,
+    approver: Arc<dyn ToolApproval>,
 }
 
 impl<S: LlmEventStream> AgentLoop<S> {
@@ -165,12 +168,14 @@ impl<S: LlmEventStream> AgentLoop<S> {
         tool_registry: ToolRegistry,
         tool_context: ToolContext,
         sinks: Vec<Box<dyn EventSink>>,
+        approver: Arc<dyn ToolApproval>,
     ) -> Self {
         Self {
             stream,
             tool_registry,
             tool_context,
             sinks,
+            approver,
         }
     }
 
@@ -256,20 +261,44 @@ impl<S: LlmEventStream> AgentLoop<S> {
                 // 履歴にツール呼び出し自体を記録（直前の assistant メッセージに紐付く）
                 new_messages.push(Msg::tool_call(call_id.clone(), name.clone(), args.clone(), thought_signature.clone()));
 
-                // run_shell の場合は実行前にユーザー確認（Enter で実行）
-                if name == ShellTool::NAME {
+                // run_shell の場合は allowlist 判定と承認を行う
+                let effective_ctx = if name == ShellTool::NAME {
                     let command = args.get("command").and_then(Value::as_str).unwrap_or("");
                     let shell_tool = ShellTool::new();
-                    if !shell_tool.is_allowed(command, &self.tool_context) {
-                        eprintln!("\n次のコマンドを実行します: {}", command);
-                        eprint!("実行してよいですか？ [Enter] ");
-                        let _ = io::stderr().flush();
-                        let mut line = String::new();
-                        let _ = io::stdin().read_line(&mut line);
+                    if shell_tool.is_allowed(command, &self.tool_context) {
+                        // allowlist に一致 → 通常の context で実行
+                        self.tool_context.clone()
+                    } else {
+                        // allowlist 不一致 → 承認を求める
+                        match self.approver.approve_unsafe_shell(command) {
+                            Approval::Approved => {
+                                // 承認された → allow_unsafe=true の context で実行
+                                self.tool_context.clone().with_allow_unsafe(true)
+                            }
+                            Approval::Denied => {
+                                // 拒否された → ツールを実行せず ToolError として履歴に積む
+                                let msg = "denied by user".to_string();
+                                self.emit(&AgentEvent::ToolError {
+                                    call_id: call_id.clone(),
+                                    name: name.clone(),
+                                    args: args.clone(),
+                                    message: msg.clone(),
+                                })?;
+                                new_messages.push(Msg::tool_result(
+                                    &call_id,
+                                    &name,
+                                    serde_json::json!({ "error": msg }),
+                                ));
+                                continue; // 次のツールへ
+                            }
+                        }
                     }
-                }
+                } else {
+                    // run_shell 以外はそのまま実行
+                    self.tool_context.clone()
+                };
 
-                match self.tool_registry.call(name.as_str(), args.clone(), &self.tool_context) {
+                match self.tool_registry.call(name.as_str(), args.clone(), &effective_ctx) {
                     Ok(result) => {
                         self.emit(&AgentEvent::ToolResult {
                             call_id: call_id.clone(),
@@ -370,6 +399,7 @@ impl LlmEventStream for StubLlm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::approval::StubApproval;
     use common::llm::events::LlmEvent;
 
     #[test]
@@ -442,7 +472,8 @@ mod tests {
         let registry = ToolRegistry::new();
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(crate::adapter::StdoutSink::new())];
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks);
+        let approver = Arc::new(StubApproval::approved());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
         let messages = vec![Msg::user("Hi")];
         let (new_msgs, state, assistant_text) = loop_.run_once(&messages).unwrap();
         assert_eq!(state, RunState::Done);
@@ -471,10 +502,11 @@ mod tests {
             },
         ]);
         let mut registry = ToolRegistry::new();
-        registry.register(std::sync::Arc::new(common::tool::EchoTool::new()));
+        registry.register(Arc::new(common::tool::EchoTool::new()));
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![];
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks);
+        let approver = Arc::new(StubApproval::approved());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
         let messages = vec![Msg::user("echo hello")];
         let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
 
@@ -484,5 +516,87 @@ mod tests {
         assert!(matches!(&new_msgs[1], Msg::Assistant(s) if s.is_empty()));
         assert!(matches!(new_msgs[2], Msg::ToolCall { ref name, ref thought_signature, .. } if name == "echo" && thought_signature == &Some("test_signature".to_string())));
         assert!(matches!(new_msgs[3], Msg::ToolResult { ref name, .. } if name == "echo"));
+    }
+
+    #[test]
+    fn test_agent_loop_shell_tool_denied() {
+        // allowlist 不一致かつ Denied の場合、ツールは実行されない
+        let stub = StubLlm::new(vec![
+            LlmEvent::ToolCallBegin {
+                call_id: "c1".to_string(),
+                name: "run_shell".to_string(),
+                thought_signature: None,
+            },
+            LlmEvent::ToolCallArgsDelta {
+                call_id: "c1".to_string(),
+                json_fragment: r#"{"command": "rm -rf /"}"#.to_string(),
+            },
+            LlmEvent::ToolCallEnd {
+                call_id: "c1".to_string(),
+            },
+            LlmEvent::Completed {
+                finish: FinishReason::ToolCalls,
+            },
+        ]);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(ShellTool::new()));
+        let ctx = ToolContext::new(None); // allowlist 空
+        let sinks: Vec<Box<dyn EventSink>> = vec![];
+        let approver = Arc::new(StubApproval::denied());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
+        let messages = vec![Msg::user("run it")];
+        let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
+
+        assert_eq!(state, RunState::ExecutingTools);
+        // user, (empty) assistant, tool_call, tool_result (error)
+        assert_eq!(new_msgs.len(), 4);
+        // ツール結果はエラー
+        if let Msg::ToolResult { result, .. } = &new_msgs[3] {
+            assert!(result.get("error").is_some());
+            assert!(result["error"].as_str().unwrap().contains("denied"));
+        } else {
+            panic!("Expected ToolResult");
+        }
+    }
+
+    #[test]
+    fn test_agent_loop_shell_tool_approved() {
+        // allowlist 不一致でも Approved の場合、ツールは実行される
+        let stub = StubLlm::new(vec![
+            LlmEvent::ToolCallBegin {
+                call_id: "c1".to_string(),
+                name: "run_shell".to_string(),
+                thought_signature: None,
+            },
+            LlmEvent::ToolCallArgsDelta {
+                call_id: "c1".to_string(),
+                json_fragment: r#"{"command": "echo approved"}"#.to_string(),
+            },
+            LlmEvent::ToolCallEnd {
+                call_id: "c1".to_string(),
+            },
+            LlmEvent::Completed {
+                finish: FinishReason::ToolCalls,
+            },
+        ]);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(ShellTool::new()));
+        let ctx = ToolContext::new(None); // allowlist 空
+        let sinks: Vec<Box<dyn EventSink>> = vec![];
+        let approver = Arc::new(StubApproval::approved());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
+        let messages = vec![Msg::user("run it")];
+        let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
+
+        assert_eq!(state, RunState::ExecutingTools);
+        // user, (empty) assistant, tool_call, tool_result (success)
+        assert_eq!(new_msgs.len(), 4);
+        // ツール結果は成功
+        if let Msg::ToolResult { result, .. } = &new_msgs[3] {
+            assert!(result.get("stdout").is_some());
+            assert_eq!(result["stdout"].as_str(), Some("approved\n"));
+        } else {
+            panic!("Expected ToolResult");
+        }
     }
 }

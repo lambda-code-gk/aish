@@ -209,6 +209,14 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
    - OS/外部要因（FS、環境変数、時刻、PTY、シグナル、HTTP/LLM）は trait（ポート）に閉じ込め、実装（アダプタ）を差し替え可能にする。
    - `main.rs`/`app.rs` は **配線（wiring）だけ**にし、ロジックは usecase 側へ寄せる。
 
+  **副作用隔離の追加ルール**
+   - **usecase 層では標準入出力（stdin/stdout/stderr）を扱わない。** `println!/eprintln!/stdin.read_line` 等は禁止。表示や対話は `cli/` または `adapter/` の責務。
+   - **usecase 層では環境変数・カレントディレクトリ・OS情報の読み取りをしない。** `std::env::*` は `adapter/env.rs` 等へ集約し、usecase には値を注入する。
+   - **「ユーザー確認が必要な処理（例: 禁止コマンドの実行確認）」は Port として抽象化する。**
+     - 例: `trait ToolApproval { fn approve(&self, prompt: &str) -> Approval; }`
+     - CLI 実装（adapter）が対話を担当し、usecase は `Approval` の結果だけを使う。
+
+
 3. **コマンドは `enum` 化して `match` でディスパッチする（Command Pattern）**
    - 引数解析の結果は `enum Command` に落とし、`match` で分岐する。
    - 「未実装」は `match` の分岐として明示し、曖昧な `if/else` の増殖を避ける。
@@ -220,6 +228,18 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
 5. **ストリーミングは「生成」と「消費（表示/保存）」を分離する**
    - `Chunk` 列（Iterator / Stream）として扱い、`StdoutSink` / `FileSink` のように複数 sink に fan-out できる設計にする。
    - “受信しながら表示し、最後に永続化する” でも、責務は別コンポーネントに分ける。
+
+
+  **ツール呼び出しと表示のルール（安全 & 再現性）**
+   - **ツール引数（JSON args）はデフォルトで表示しない。** パス/トークン/秘密情報が混ざり得るため。表示は `--debug-tools` 等の明示フラグがある場合のみ。
+   - ツール開始/終了は `Running tool: <name>...` のような短いステータスを表示してよい。
+   - tool 実行の結果（stdout/stderr）は、基本はログに保存し、表示は必要最小限（または debug のみ）。
+
+
+
+   - **危険操作の承認（B案: 対話）**は `cli/` または `adapter/` に実装し、usecase には `Approval` の結果だけを渡す。
+   - 禁止（allowlist 非一致）の場合は、(a) ユーザーが承認したときだけ実行、(b) 拒否されたら **ツールは実行せず** `ToolError::PermissionDenied` 相当の結果を履歴へ積む。
+   - 承認が必要な判定（allowlist/denylist）は **単一箇所（ToolRunner など）に集約**し、バイパス経路を作らない。
 
 6. **エラーはドメイン `enum` を基本にし、終了コードは境界で付与する**
    - 原則: usecase 内は `Result<T, DomainError>`（enum）で表現し、**CLI境界で exit code に変換**する。
@@ -237,6 +257,7 @@ Cursor AIやその他のAI開発エージェントは、このプロジェクト
    **common 肥大化防止（絶対ルール）**
    - **common に入れて良いもの**: 2つ以上の crate（ai / aish / tools）が確実に共有し、かつ安定しているもの。ドメイン型（Newtype）、汎用エラー、イベント（LlmEvent / AgentEvent）、Msg、PartId 生成、Port trait（FileSystem / Process / Clock / Pty / Signal / Tool 等）と標準実装（std_*）、LLM provider 実装（gemini / gpt / echo）。
    - **common に入れてはいけないもの**: ai だけ / aish だけにしか意味がないユースケース、CLI の都合、コマンド解釈。“近いから” という理由での util 追加（まずは core/ai または core/aish の adapter / usecase に置く）。
+   - **OS 副作用のある実装を common に混ぜない**: `run_shell` のような「プロセス起動・ファイル操作・ネットワーク」などの具象ツール実装は `core/*/adapter/` に置く。`common` は Tool trait / ToolDef / Port trait のような境界型に限定する。
    - **迷ったら**: まず各バイナリ側（core/ai または core/aish）に置く。後から共有が確定したら common に昇格（逆は極力しない）。
    - **session**: 共通だが OS/env/fs に依存するため common に置くのは許可。ai/aish のユースケースロジックは common に入れない。
 

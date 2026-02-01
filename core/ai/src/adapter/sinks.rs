@@ -1,6 +1,6 @@
 //! ストリーミングの「消費」実装（表示・保存の分離）
 //!
-//! StdoutSink: assistant text 表示、tool は "Running tool: <name>..." のみ
+//! StdoutSink: assistant text 表示、tool は "Running tool: <name>..." と args を表示
 //! JsonlLogSink: AgentEvent を JSONL で追記
 //! PartFileSink: 完了時に assistant テキストを part_*_assistant.txt に保存
 
@@ -10,7 +10,12 @@ use common::sink::{AgentEvent, EventSink};
 use std::io::{self, Write};
 use std::path::Path;
 
-/// 標準出力へ表示（TextDelta のみ表示、tool args は表示しない）
+/// ANSI: ダークグレー（bright black）
+const DARK_GREY: &str = "\x1b[90m";
+/// ANSI: リセット
+const RESET: &str = "\x1b[0m";
+
+/// 標準出力へ表示（TextDelta と tool の args を表示）
 pub struct StdoutSink;
 
 impl StdoutSink {
@@ -35,14 +40,13 @@ impl EventSink for StdoutSink {
                     .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
             }
             AgentEvent::Llm(LlmEvent::ToolCallBegin { name, .. }) => {
-                // ここでは名前のみ。引数は ToolResult/ToolError 時に表示する。
-                eprintln!("\nRunning tool: {}...", name);
+                eprintln!("{}\nRunning tool: {}...{}", DARK_GREY, name, RESET);
             }
             AgentEvent::ToolResult { name, args, .. } => {
-                eprintln!("Tool {} args: {}", name, args);
+                eprintln!("{}Tool {} args: {}{}", DARK_GREY, name, args, RESET);
             }
             AgentEvent::ToolError { name, args, message, .. } => {
-                eprintln!("Tool {} args: {} failed: {}", name, args, message);
+                eprintln!("{}Tool {} args: {} failed: {}{}", DARK_GREY, name, args, message, RESET);
             }
             _ => {}
         }

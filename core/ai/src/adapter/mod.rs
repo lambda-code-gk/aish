@@ -1,7 +1,11 @@
+pub(crate) mod approval;
+pub(crate) mod config;
 pub(crate) mod env;
 pub(crate) mod sinks;
 pub(crate) mod task;
-pub(crate) mod config;
+pub(crate) mod tools;
+pub(crate) use approval::CliToolApproval;
+pub(crate) use config::load_command_allow_rules;
 pub(crate) use sinks::StdoutSink;
 pub(crate) use task::run_task_if_exists;
-pub(crate) use config::load_command_allow_rules;
+pub(crate) use tools::ShellTool;

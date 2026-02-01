@@ -495,4 +495,3 @@ mod clear_parts_tests {
         fs::remove_dir_all(&session_path).unwrap();
     }
 }
-
