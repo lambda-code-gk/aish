@@ -43,6 +43,10 @@ pub enum CommandAllowRule {
     Regex(Regex),
     /// 前方一致（リテラル）
     Prefix(String),
+    /// 否定マッチ（正規表現）
+    NotRegex(Regex),
+    /// 否定マッチ（前方一致）
+    NotPrefix(String),
 }
 
 impl ToolContext {
@@ -187,9 +191,21 @@ impl ShellTool {
 
     /// コマンドが許可リストにマッチするか判定する
     pub fn is_allowed(&self, command: &str, ctx: &ToolContext) -> bool {
+        // 否定ルールが一つでもマッチしたら即座に不許可
+        let denied = ctx.command_allow_rules.iter().any(|rule| match rule {
+            CommandAllowRule::NotRegex(re) => re.is_match(command),
+            CommandAllowRule::NotPrefix(prefix) => command.starts_with(prefix),
+            _ => false,
+        });
+        if denied {
+            return false;
+        }
+
+        // 肯定ルールのいずれかにマッチすれば許可
         ctx.command_allow_rules.iter().any(|rule| match rule {
             CommandAllowRule::Regex(re) => re.is_match(command),
             CommandAllowRule::Prefix(prefix) => command.starts_with(prefix),
+            _ => false,
         })
     }
 }
@@ -329,13 +345,17 @@ mod tests {
         let ctx = ToolContext::new(None).with_command_allow_rules(vec![
             CommandAllowRule::Regex(Regex::new(r"^echo .*").unwrap()),
             CommandAllowRule::Prefix("ls".to_string()),
+            CommandAllowRule::Prefix("sed".to_string()),
+            CommandAllowRule::NotRegex(Regex::new(r"sed .*-i ").unwrap()),
         ]);
 
         assert!(shell.is_allowed("echo hello", &ctx));
         assert!(shell.is_allowed("ls", &ctx));
         assert!(shell.is_allowed("ls -la", &ctx));
+        assert!(shell.is_allowed("sed 's/a/b/' file", &ctx));
+        assert!(!shell.is_allowed("sed -i 's/a/b/' file", &ctx));
+        // assert!(!shell.is_allowed("sed --in-place 's/a/b/' file", &ctx)); // Regex matches "sed .*-i "
         assert!(!shell.is_allowed("rm -rf /", &ctx));
-        // Prefix "ls" matches "lss" in starts_with logic.
         assert!(shell.is_allowed("lss", &ctx));
     }
 }

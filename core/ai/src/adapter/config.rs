@@ -33,17 +33,33 @@ fn read_rules_from_file(path: &Path) -> Result<Vec<CommandAllowRule>, Error> {
             continue;
         }
 
+        let (is_negative, pattern) = if line.starts_with('!') {
+            (true, line[1..].trim())
+        } else {
+            (false, line)
+        };
+
         // /.../ で囲まれている場合は正規表現、それ以外は前方一致
-        if line.starts_with('/') && line.ends_with('/') && line.len() > 2 {
-            let pattern = &line[1..line.len() - 1];
-            match Regex::new(pattern) {
-                Ok(re) => rules.push(CommandAllowRule::Regex(re)),
+        if pattern.starts_with('/') && pattern.ends_with('/') && pattern.len() > 2 {
+            let regex_str = &pattern[1..pattern.len() - 1];
+            match Regex::new(regex_str) {
+                Ok(re) => {
+                    if is_negative {
+                        rules.push(CommandAllowRule::NotRegex(re));
+                    } else {
+                        rules.push(CommandAllowRule::Regex(re));
+                    }
+                }
                 Err(e) => {
-                    eprintln!("Warning: Invalid regex in command_rules.txt: '{}' ({})", pattern, e);
+                    eprintln!("Warning: Invalid regex in command_rules.txt: '{}' ({})", regex_str, e);
                 }
             }
         } else {
-            rules.push(CommandAllowRule::Prefix(line.to_string()));
+            if is_negative {
+                rules.push(CommandAllowRule::NotPrefix(pattern.to_string()));
+            } else {
+                rules.push(CommandAllowRule::Prefix(pattern.to_string()));
+            }
         }
     }
 
@@ -66,9 +82,11 @@ mod tests {
         writeln!(file, "").unwrap();
         writeln!(file, "/^echo .*/").unwrap();
         writeln!(file, "cat /var/log/").unwrap();
+        writeln!(file, "!/sed .*-i /").unwrap();
+        writeln!(file, "!rm -rf").unwrap();
 
         let rules = read_rules_from_file(&file_path).unwrap();
-        assert_eq!(rules.len(), 3);
+        assert_eq!(rules.len(), 5);
         
         // ls (Prefix)
         match &rules[0] {
@@ -86,6 +104,18 @@ mod tests {
         match &rules[2] {
             CommandAllowRule::Prefix(p) => assert_eq!(p, "cat /var/log/"),
             _ => panic!("Expected Prefix"),
+        }
+
+        // !/sed .*-i / (NotRegex)
+        match &rules[3] {
+            CommandAllowRule::NotRegex(re) => assert!(re.is_match("sed -i 's/a/b/'")),
+            _ => panic!("Expected NotRegex"),
+        }
+
+        // !rm -rf (NotPrefix)
+        match &rules[4] {
+            CommandAllowRule::NotPrefix(p) => assert_eq!(p, "rm -rf"),
+            _ => panic!("Expected NotPrefix"),
         }
     }
 }

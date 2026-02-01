@@ -5,6 +5,10 @@ ls
 dir
 pwd
 
+# sed (破壊的な -i オプションは禁止)
+sed
+!/sed .*-i /
+
 # ファイル内容の閲覧
 cat
 head
