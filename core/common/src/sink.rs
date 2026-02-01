@@ -15,12 +15,14 @@ pub enum AgentEvent {
     ToolResult {
         call_id: String,
         name: String,
+        args: Value,
         result: Value,
     },
     /// ツール実行エラー
     ToolError {
         call_id: String,
         name: String,
+        args: Value,
         message: String,
     },
 }
@@ -51,6 +53,7 @@ mod tests {
         let ev = AgentEvent::ToolResult {
             call_id: "c1".to_string(),
             name: "run".to_string(),
+            args: serde_json::json!({"cmd": "ls"}),
             result: serde_json::json!({"ok": true}),
         };
         assert!(matches!(ev, AgentEvent::ToolResult { call_id, name, .. } if call_id == "c1" && name == "run"));

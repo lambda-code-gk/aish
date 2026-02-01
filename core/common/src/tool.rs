@@ -6,6 +6,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use regex::Regex;
 
 /// LLM API に渡すツール定義（名前・説明・パラメータスキーマ）
 #[derive(Debug, Clone)]
@@ -31,11 +32,30 @@ pub enum ToolError {
 pub struct ToolContext {
     /// セッションディレクトリ（オプション）
     pub session_dir: Option<std::path::PathBuf>,
+    /// 実行を許可するコマンドのルールリスト
+    pub command_allow_rules: Vec<CommandAllowRule>,
+}
+
+/// コマンド実行許可ルール
+#[derive(Debug, Clone)]
+pub enum CommandAllowRule {
+    /// 正規表現マッチ
+    Regex(Regex),
+    /// 前方一致（リテラル）
+    Prefix(String),
 }
 
 impl ToolContext {
     pub fn new(session_dir: Option<std::path::PathBuf>) -> Self {
-        Self { session_dir }
+        Self {
+            session_dir,
+            command_allow_rules: Vec::new(),
+        }
+    }
+
+    pub fn with_command_allow_rules(mut self, rules: Vec<CommandAllowRule>) -> Self {
+        self.command_allow_rules = rules;
+        self
     }
 }
 
@@ -154,6 +174,73 @@ impl Tool for EchoTool {
     }
 }
 
+/// シェルコマンド実行ツール（API 名 "run_shell"）
+/// 実行は ai 側でユーザー確認後に呼ばれる想定。
+pub struct ShellTool;
+
+impl ShellTool {
+    pub const NAME: &'static str = "run_shell";
+
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// コマンドが許可リストにマッチするか判定する
+    pub fn is_allowed(&self, command: &str, ctx: &ToolContext) -> bool {
+        ctx.command_allow_rules.iter().any(|rule| match rule {
+            CommandAllowRule::Regex(re) => re.is_match(command),
+            CommandAllowRule::Prefix(prefix) => command.starts_with(prefix),
+        })
+    }
+}
+
+impl Default for ShellTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Tool for ShellTool {
+    fn name(&self) -> &'static str {
+        Self::NAME
+    }
+    fn description(&self) -> &'static str {
+        "Execute a shell command. Use when you need to run a command on the user's machine (e.g. list files, run a script). Pass a single string 'command' to run via sh -c."
+    }
+    fn parameters_schema(&self) -> Option<Value> {
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "Shell command to execute (run with sh -c)" }
+            },
+            "required": ["command"]
+        }))
+    }
+    fn call(&self, args: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidArgs("missing 'command'".to_string()))?
+            .to_string();
+        if command.trim().is_empty() {
+            return Err(ToolError::InvalidArgs("command must not be empty".to_string()));
+        }
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .output()
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(1);
+        Ok(serde_json::json!({
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +305,37 @@ mod tests {
         let echo_def = defs.iter().find(|d| d.name == "echo").unwrap();
         assert!(!echo_def.description.is_empty());
         assert!(echo_def.parameters.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_shell_tool() {
+        let shell = ShellTool::new();
+        assert_eq!(shell.name(), ShellTool::NAME);
+        let ctx = ToolContext::new(None);
+        let r = shell
+            .call(serde_json::json!({ "command": "echo hello" }), &ctx)
+            .unwrap();
+        assert_eq!(r["stdout"].as_str(), Some("hello\n"));
+        assert_eq!(r["exit_code"].as_i64(), Some(0));
+        let r = shell.call(serde_json::json!({}), &ctx);
+        assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
+        let r = shell.call(serde_json::json!({ "command": "" }), &ctx);
+        assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
+    }
+
+    #[test]
+    fn test_shell_tool_is_allowed() {
+        let shell = ShellTool::new();
+        let ctx = ToolContext::new(None).with_command_allow_rules(vec![
+            CommandAllowRule::Regex(Regex::new(r"^echo .*").unwrap()),
+            CommandAllowRule::Prefix("ls".to_string()),
+        ]);
+
+        assert!(shell.is_allowed("echo hello", &ctx));
+        assert!(shell.is_allowed("ls", &ctx));
+        assert!(shell.is_allowed("ls -la", &ctx));
+        assert!(!shell.is_allowed("rm -rf /", &ctx));
+        // Prefix "ls" matches "lss" in starts_with logic.
+        assert!(shell.is_allowed("lss", &ctx));
     }
 }

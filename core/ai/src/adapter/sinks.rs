@@ -35,10 +35,14 @@ impl EventSink for StdoutSink {
                     .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
             }
             AgentEvent::Llm(LlmEvent::ToolCallBegin { name, .. }) => {
+                // ここでは名前のみ。引数は ToolResult/ToolError 時に表示する。
                 eprintln!("\nRunning tool: {}...", name);
             }
-            AgentEvent::ToolResult { name: _, .. } | AgentEvent::ToolError { name: _, .. } => {
-                // 短く表示（tool 結果の詳細は表示しない）
+            AgentEvent::ToolResult { name, args, .. } => {
+                eprintln!("Tool {} args: {}", name, args);
+            }
+            AgentEvent::ToolError { name, args, message, .. } => {
+                eprintln!("Tool {} args: {} failed: {}", name, args, message);
             }
             _ => {}
         }

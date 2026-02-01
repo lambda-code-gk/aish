@@ -8,9 +8,10 @@ use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
 use common::msg::Msg;
 use common::sink::{AgentEvent, EventSink};
-use common::tool::{ToolContext, ToolDef, ToolRegistry};
+use common::tool::{ShellTool, ToolContext, ToolDef, ToolRegistry};
 use serde_json::Value;
 use std::cell::RefCell;
+use std::io::{self, Write};
 use std::rc::Rc;
 
 /// 実行状態
@@ -255,11 +256,25 @@ impl<S: LlmEventStream> AgentLoop<S> {
                 // 履歴にツール呼び出し自体を記録（直前の assistant メッセージに紐付く）
                 new_messages.push(Msg::tool_call(call_id.clone(), name.clone(), args.clone(), thought_signature.clone()));
 
+                // run_shell の場合は実行前にユーザー確認（Enter で実行）
+                if name == ShellTool::NAME {
+                    let command = args.get("command").and_then(Value::as_str).unwrap_or("");
+                    let shell_tool = ShellTool::new();
+                    if !shell_tool.is_allowed(command, &self.tool_context) {
+                        eprintln!("\n次のコマンドを実行します: {}", command);
+                        eprint!("実行してよいですか？ [Enter] ");
+                        let _ = io::stderr().flush();
+                        let mut line = String::new();
+                        let _ = io::stdin().read_line(&mut line);
+                    }
+                }
+
                 match self.tool_registry.call(name.as_str(), args.clone(), &self.tool_context) {
                     Ok(result) => {
                         self.emit(&AgentEvent::ToolResult {
                             call_id: call_id.clone(),
                             name: name.clone(),
+                            args: args.clone(),
                             result: result.clone(),
                         })?;
                         new_messages.push(Msg::tool_result(&call_id, &name, result));
@@ -269,6 +284,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
                         self.emit(&AgentEvent::ToolError {
                             call_id: call_id.clone(),
                             name: name.clone(),
+                            args: args.clone(),
                             message: msg.clone(),
                         })?;
                         new_messages.push(Msg::tool_result(

@@ -230,8 +230,30 @@ impl AiUseCase {
         // ツール追加: common に impl Tool を追加し、ここで registry.register(Arc::new(MyTool::new())) するだけ
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(common::tool::EchoTool::new()));
-        let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()));
+        registry.register(Arc::new(common::tool::ShellTool::new()));
+
         let messages = build_messages(&history_messages, &query);
+        let home_dir = common::domain::HomeDir::new(
+            std::env::var("AISH_HOME")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    let mut p = std::env::var("XDG_CONFIG_HOME")
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| {
+                            let home = std::env::var("HOME").expect("HOME is not set");
+                            PathBuf::from(home).join(".config")
+                        });
+                    p.push("aish");
+                    p
+                }),
+        );
+        let allow_rules = crate::adapter::load_command_allow_rules(&home_dir);
+        let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()))
+            .with_command_allow_rules(allow_rules);
         let mut agent_loop =
             AgentLoop::new(stream, registry, tool_context, sinks);
         const MAX_TURNS: usize = 16;
