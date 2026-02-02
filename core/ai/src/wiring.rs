@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use common::adapter::{StdClock, StdFileSystem, StdProcess};
+use common::adapter::{StdClock, StdEnvResolver, StdFileSystem, StdProcess};
 use common::part_id::StdIdGenerator;
 
 use crate::usecase::app::AiUseCase;
@@ -11,6 +11,7 @@ use crate::usecase::app::AiUseCase;
 pub fn wire_ai() -> AiUseCase {
     let fs = Arc::new(StdFileSystem);
     let id_gen = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
+    let env_resolver = Arc::new(StdEnvResolver);
     let process = Arc::new(StdProcess);
-    AiUseCase::new(fs, id_gen, process)
+    AiUseCase::new(fs, id_gen, env_resolver, process)
 }

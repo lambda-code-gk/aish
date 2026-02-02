@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use common::adapter::{StdClock, StdFileSystem};
+use common::adapter::{StdClock, StdFileSystem, StdPathResolver};
 use common::part_id::StdIdGenerator;
 
 use crate::adapter::{UnixPtySpawn, UnixSignal};
@@ -13,7 +13,8 @@ use crate::usecase::app::AishUseCase;
 pub fn wire_aish() -> AishUseCase {
     let fs = Arc::new(StdFileSystem);
     let id_gen = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
+    let path_resolver = Arc::new(StdPathResolver);
     let signal = Arc::new(UnixSignal);
     let pty_spawn = Arc::new(UnixPtySpawn);
-    AishUseCase::new(fs, id_gen, signal, pty_spawn)
+    AishUseCase::new(fs, id_gen, path_resolver, signal, pty_spawn)
 }

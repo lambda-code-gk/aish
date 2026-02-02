@@ -5,6 +5,9 @@ mod ports;
 mod usecase;
 mod wiring;
 
+#[cfg(test)]
+mod tests;
+
 use std::process;
 use common::error::Error;
 use cli::parse_args;
@@ -29,10 +32,4 @@ pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
     let use_case = wire_ai();
     use_case.run(config)
-}
-
-#[cfg(test)]
-mod tests {
-    // 実際の引数解析は環境変数に依存するため、
-    // 統合テストで確認する
 }

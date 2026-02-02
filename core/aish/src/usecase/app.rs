@@ -1,8 +1,8 @@
-use crate::adapter::{path_resolver, run_shell};
+use crate::adapter::run_shell;
 use crate::cli::Config;
 use crate::domain::command::Command;
 use crate::ports::inbound::RunAishApp;
-use common::adapter::{FileSystem, PtySpawn, Signal};
+use common::ports::outbound::{PathResolver, PathResolverInput, PtySpawn, Signal, FileSystem};
 use common::error::Error;
 use common::part_id::IdGenerator;
 use common::session::Session;
@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct AishUseCase {
     pub fs: Arc<dyn FileSystem>,
     pub id_gen: Arc<dyn IdGenerator>,
+    pub path_resolver: Arc<dyn PathResolver>,
     pub signal: Arc<dyn Signal>,
     pub pty_spawn: Arc<dyn PtySpawn>,
 }
@@ -23,17 +24,18 @@ impl AishUseCase {
     pub fn new(
         fs: Arc<dyn FileSystem>,
         id_gen: Arc<dyn IdGenerator>,
+        path_resolver: Arc<dyn PathResolver>,
         signal: Arc<dyn Signal>,
         pty_spawn: Arc<dyn PtySpawn>,
     ) -> Self {
         Self {
             fs,
             id_gen,
+            path_resolver,
             signal,
             pty_spawn,
         }
     }
-
 }
 
 #[cfg(unix)]
@@ -54,12 +56,12 @@ impl RunAishApp for AishUseCase {
             }
         }
 
-        let path_input = path_resolver::PathResolverInput {
+        let path_input = PathResolverInput {
             home_dir: config.home_dir.clone(),
             session_dir: config.session_dir.clone(),
         };
-        let home_dir = path_resolver::resolve_home_dir(&path_input)?;
-        let session_path = path_resolver::resolve_session_dir(&path_input, &home_dir)?;
+        let home_dir = self.path_resolver.resolve_home_dir(&path_input)?;
+        let session_path = self.path_resolver.resolve_session_dir(&path_input, &home_dir)?;
         let session = Session::new(&session_path, &home_dir)?;
 
         match &config.command {
