@@ -28,7 +28,7 @@ impl ToolApproval for CliToolApproval {
     fn approve_unsafe_shell(&self, command: &str) -> Approval {
         eprintln!("============ Approval =============");
         eprintln!("  {}", command);
-        eprint!("Execute? [Enter/other]: ");
+        eprint!("Execute? [Enter/No(other)]: ");
         let _ = io::stderr().flush();
 
         let stdin = io::stdin();

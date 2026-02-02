@@ -53,7 +53,7 @@ wget --spider
 # 開発ツール (情報表示)
 git status
 git log
-git diff --name-only
+git diff
 git branch
 rustc --version
 cargo --version
