@@ -1,12 +1,14 @@
 mod adapter;
 mod cli;
 mod domain;
+mod ports;
 mod usecase;
 mod wiring;
 
 use std::process;
 use common::error::Error;
 use cli::parse_args;
+use ports::inbound::RunAiApp;
 use wiring::wire_ai;
 
 fn main() {

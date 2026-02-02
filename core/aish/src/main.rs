@@ -1,14 +1,17 @@
 mod adapter;
 mod cli;
 mod domain;
+mod ports;
 mod usecase;
 mod wiring;
 
 use std::process;
-#[cfg(unix)]
-use wiring::wire_aish;
 use common::error::Error;
 use cli::parse_args;
+#[cfg(unix)]
+use ports::inbound::RunAishApp;
+#[cfg(unix)]
+use wiring::wire_aish;
 
 fn main() {
     let exit_code = match run() {

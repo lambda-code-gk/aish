@@ -1,6 +1,7 @@
 use crate::adapter::{path_resolver, run_shell};
 use crate::cli::Config;
 use crate::domain::command::Command;
+use crate::ports::inbound::RunAishApp;
 use common::adapter::{FileSystem, PtySpawn, Signal};
 use common::error::Error;
 use common::part_id::IdGenerator;
@@ -33,7 +34,11 @@ impl AishUseCase {
         }
     }
 
-    pub fn run(&self, config: Config) -> Result<i32, Error> {
+}
+
+#[cfg(unix)]
+impl RunAishApp for AishUseCase {
+    fn run(&self, config: Config) -> Result<i32, Error> {
         if config.help {
             print_help();
             return Ok(0);

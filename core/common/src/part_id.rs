@@ -8,10 +8,12 @@
 //!
 //! usecase は IdGenerator を注入し、テストでは固定 ID を返す実装を渡せる。
 
-use crate::adapter::Clock;
 use crate::domain::PartId;
+use crate::ports::outbound::Clock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+pub use crate::ports::outbound::IdGenerator;
 
 static LAST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -24,11 +26,6 @@ const MAX_VAL: u64 = BASE.pow(WIDTH as u32) - 1;
 
 /// 0-9, A-Z, a-z の順で辞書順＝数値順になるbase62
 const ALPHABET: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
-/// PartId を生成する抽象（テストでは固定 ID を返す実装を注入可能）
-pub trait IdGenerator: Send + Sync {
-    fn next_id(&self) -> PartId;
-}
 
 /// Clock + グローバルシーケンスで PartId を生成する標準実装
 pub struct StdIdGenerator {

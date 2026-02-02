@@ -1,12 +1,12 @@
 //! ツール実行の Ports & Adapters（trait で副作用隔離）
 //!
 //! ToolRegistry で name -> Box<dyn Tool> を解決し、ToolContext は session dir / fs / process / clock 等の port を束ねる。
-//! LLM に渡すツール定義は ToolDef（name, description, parameters）で、Tool トレイトの description / parameters_schema から構築する。
+//! Tool trait は Outbound ポートとして ports/outbound からも re-export される。
 
+use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use regex::Regex;
 
 /// LLM API に渡すツール定義（名前・説明・パラメータスキーマ）
 #[derive(Debug, Clone)]
@@ -76,7 +76,7 @@ impl ToolContext {
     }
 }
 
-/// ツールのトレイト
+/// ツールのトレイト（Outbound ポート）
 pub trait Tool: Send + Sync {
     /// ツール名（API の name と一致させる）
     fn name(&self) -> &'static str;

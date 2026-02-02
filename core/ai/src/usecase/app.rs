@@ -1,7 +1,9 @@
 use crate::adapter::{env, run_task_if_exists, CliToolApproval, StdoutSink};
 use crate::cli::{config_to_command, Config};
-use crate::domain::{AiCommand, History, ToolApproval};
-use crate::usecase::agent_loop::{AgentLoop, LlmEventStream};
+use crate::domain::{AiCommand, History};
+use crate::ports::inbound::RunAiApp;
+use crate::ports::outbound::{LlmEventStream, ToolApproval};
+use crate::usecase::agent_loop::AgentLoop;
 use common::adapter::{FileSystem, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
@@ -152,50 +154,6 @@ impl AiUseCase {
         Ok(())
     }
 
-    pub fn run(&self, config: Config) -> Result<i32, Error> {
-        let session_dir = env::session_dir_from_env();
-        let cmd = config_to_command(config);
-
-        match cmd {
-            AiCommand::Help => {
-                print_help();
-                return Ok(0);
-            }
-            AiCommand::Task {
-                name,
-                args,
-                provider,
-            } => {
-                if let Some(code) = run_task_if_exists(
-                    self.fs.as_ref(),
-                    self.process.as_ref(),
-                    name.as_ref(),
-                    &args,
-                )? {
-                    return Ok(code);
-                }
-                // タスクが見つからなかった -> Query として扱う
-                let mut query_parts = vec![name.as_ref().to_string()];
-                query_parts.extend(args);
-                let query = query_parts.join(" ");
-                if query.trim().is_empty() {
-                    return Err(Error::invalid_argument(
-                        "No query provided. Please provide a message to send to the LLM.",
-                    ));
-                }
-                self.run_query(session_dir, provider, &query)
-            }
-            AiCommand::Query { provider, query } => {
-                if query.trim().is_empty() {
-                    return Err(Error::invalid_argument(
-                        "No query provided. Please provide a message to send to the LLM.",
-                    ));
-                }
-                self.run_query(session_dir, provider, &query)
-            }
-        }
-    }
-
     fn run_query(
         &self,
         session_dir: Option<common::domain::SessionDir>,
@@ -254,6 +212,52 @@ impl AiUseCase {
         }
 
         Ok(0)
+    }
+}
+
+impl RunAiApp for AiUseCase {
+    fn run(&self, config: Config) -> Result<i32, Error> {
+        let session_dir = env::session_dir_from_env();
+        let cmd = config_to_command(config);
+
+        match cmd {
+            AiCommand::Help => {
+                print_help();
+                return Ok(0);
+            }
+            AiCommand::Task {
+                name,
+                args,
+                provider,
+            } => {
+                if let Some(code) = run_task_if_exists(
+                    self.fs.as_ref(),
+                    self.process.as_ref(),
+                    name.as_ref(),
+                    &args,
+                )? {
+                    return Ok(code);
+                }
+                // タスクが見つからなかった -> Query として扱う
+                let mut query_parts = vec![name.as_ref().to_string()];
+                query_parts.extend(args);
+                let query = query_parts.join(" ");
+                if query.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Please provide a message to send to the LLM.",
+                    ));
+                }
+                self.run_query(session_dir, provider, &query)
+            }
+            AiCommand::Query { provider, query } => {
+                if query.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Please provide a message to send to the LLM.",
+                    ));
+                }
+                self.run_query(session_dir, provider, &query)
+            }
+        }
     }
 }
 

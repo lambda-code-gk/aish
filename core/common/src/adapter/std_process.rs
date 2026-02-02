@@ -1,6 +1,6 @@
 //! 標準サブプロセス実行（std::process::Command を委譲）
 
-use super::process::Process;
+use crate::ports::outbound::Process;
 use crate::error::Error;
 use std::path::Path;
 

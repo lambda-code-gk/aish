@@ -4,7 +4,7 @@
 //! LLM から ToolCallEnd が来たら tool 実行フェーズへ遷移し、結果を messages に注入する。
 
 use crate::adapter::ShellTool;
-use crate::domain::{Approval, ToolApproval};
+use crate::ports::outbound::{Approval, LlmEventStream, ToolApproval};
 use common::error::Error;
 use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
@@ -28,18 +28,6 @@ pub enum RunState {
     /// エラー終了（将来の LlmEvent::Failed 処理で使用）
     #[allow(dead_code)]
     Error,
-}
-
-/// LLM ストリームを LlmEvent 列で受け取るポート（テストでは StubLlm で差し替え）
-pub trait LlmEventStream: Send {
-    fn stream_events(
-        &self,
-        query: &str,
-        system_instruction: Option<&str>,
-        history: &[Message],
-        tools: Option<&[ToolDef]>,
-        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
-    ) -> Result<(), Error>;
 }
 
 /// Vec<Msg> をドライバ用 (system_instruction, query, history) に変換

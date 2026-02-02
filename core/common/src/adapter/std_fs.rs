@@ -1,6 +1,6 @@
 //! 標準ファイルシステム実装（std::fs を委譲）
 
-use super::fs::{FileMetadata, FileSystem};
+use crate::ports::outbound::fs::{FileMetadata, FileSystem};
 use crate::error::Error;
 use std::path::{Path, PathBuf};
 
