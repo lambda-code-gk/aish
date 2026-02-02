@@ -257,20 +257,10 @@ impl AiUseCase {
     }
 }
 
-/// 配線: 標準アダプタで AiUseCase を組み立てる
-pub fn wire_ai() -> AiUseCase {
-    let fs = Arc::new(common::adapter::StdFileSystem);
-    let id_gen = Arc::new(common::part_id::StdIdGenerator::new(Arc::new(
-        common::adapter::StdClock,
-    )));
-    let process = Arc::new(common::adapter::StdProcess);
-    AiUseCase::new(fs, id_gen, process)
-}
-
 /// 標準アダプターで AiUseCase を組み立てて run する（テスト用の入口）
 #[allow(dead_code)] // テストで使用
 pub fn run_app(config: Config) -> Result<i32, Error> {
-    wire_ai().run(config)
+    crate::wiring::wire_ai().run(config)
 }
 
 /// 引数不正時に stderr へ出力する usage 行（main から呼ぶ）

@@ -1,4 +1,4 @@
-use crate::adapter::{path_resolver, run_shell, UnixPtySpawn, UnixSignal};
+use crate::adapter::{path_resolver, run_shell};
 use crate::cli::Config;
 use crate::domain::command::Command;
 use common::adapter::{FileSystem, PtySpawn, Signal};
@@ -118,23 +118,11 @@ fn is_session_explicitly_specified(config: &Config) -> bool {
     false
 }
 
-/// 配線: 標準アダプタで AishUseCase を組み立てる（Unix 専用）
-#[cfg(unix)]
-pub fn wire_aish() -> AishUseCase {
-    let fs = Arc::new(common::adapter::StdFileSystem);
-    let id_gen = Arc::new(common::part_id::StdIdGenerator::new(Arc::new(
-        common::adapter::StdClock,
-    )));
-    let signal = Arc::new(UnixSignal);
-    let pty_spawn = Arc::new(UnixPtySpawn);
-    AishUseCase::new(fs, id_gen, signal, pty_spawn)
-}
-
 /// 標準アダプターで AishUseCase を組み立てて run する（テスト用の入口）
 #[cfg(unix)]
 #[allow(dead_code)] // テストで使用
 pub fn run_app(config: Config) -> Result<i32, Error> {
-    wire_aish().run(config)
+    crate::wiring::wire_aish().run(config)
 }
 
 /// run_app の非 Unix 用ダミー（aish は Unix 専用のため通常は使わない）

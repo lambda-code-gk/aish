@@ -2,10 +2,11 @@ mod adapter;
 mod cli;
 mod domain;
 mod usecase;
+mod wiring;
 
 use std::process;
 #[cfg(unix)]
-use usecase::wire_aish;
+use wiring::wire_aish;
 use common::error::Error;
 use cli::parse_args;
 

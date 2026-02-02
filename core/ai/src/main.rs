@@ -2,11 +2,12 @@ mod adapter;
 mod cli;
 mod domain;
 mod usecase;
+mod wiring;
 
 use std::process;
 use common::error::Error;
 use cli::parse_args;
-use usecase::wire_ai;
+use wiring::wire_ai;
 
 fn main() {
     let exit_code = match run() {
