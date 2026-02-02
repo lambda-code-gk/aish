@@ -2,6 +2,7 @@ use std::env;
 use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use common::adapter::{FileSystem, PtyProcessStatus, PtySpawn, Signal, Winsize};
 use common::error::Error;
 use common::part_id::IdGenerator;
@@ -9,7 +10,48 @@ use crate::adapter::console_handler::ConsoleLogHandler;
 use crate::adapter::platform::{get_winsize, TermMode};
 use crate::adapter::terminal::TerminalBuffer;
 use crate::domain::SessionEvent;
+use crate::ports::outbound::ShellRunner;
 use libc;
+
+/// ShellRunner の標準実装（run_shell をラップ）
+#[cfg(unix)]
+pub struct StdShellRunner {
+    fs: Arc<dyn FileSystem>,
+    id_gen: Arc<dyn IdGenerator>,
+    signal: Arc<dyn Signal>,
+    pty_spawn: Arc<dyn PtySpawn>,
+}
+
+#[cfg(unix)]
+impl StdShellRunner {
+    pub fn new(
+        fs: Arc<dyn FileSystem>,
+        id_gen: Arc<dyn IdGenerator>,
+        signal: Arc<dyn Signal>,
+        pty_spawn: Arc<dyn PtySpawn>,
+    ) -> Self {
+        Self {
+            fs,
+            id_gen,
+            signal,
+            pty_spawn,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ShellRunner for StdShellRunner {
+    fn run(&self, session_dir: &Path, home_dir: &Path) -> Result<i32, Error> {
+        run_shell(
+            session_dir,
+            home_dir,
+            self.fs.as_ref(),
+            self.id_gen.as_ref(),
+            self.signal.as_ref(),
+            self.pty_spawn.as_ref(),
+        )
+    }
+}
 
 /// シェル起動コマンドを構築（aishrc の有無は fs で判定）
 fn build_shell_command<F: FileSystem + ?Sized>(

@@ -3,7 +3,9 @@
 //! StdoutSink: assistant text 表示、tool は "Running tool: <name>..." と args を表示
 //! JsonlLogSink: AgentEvent を JSONL で追記
 //! PartFileSink: 完了時に assistant テキストを part_*_assistant.txt に保存
+//! StdEventSinkFactory: EventSinkFactory の標準実装（StdoutSink のみ）
 
+use crate::ports::outbound::EventSinkFactory;
 use common::error::Error;
 use common::llm::events::LlmEvent;
 use common::sink::{AgentEvent, EventSink};
@@ -27,6 +29,15 @@ impl StdoutSink {
 impl Default for StdoutSink {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// EventSinkFactory の標準実装（StdoutSink のみを返す）
+pub struct StdEventSinkFactory;
+
+impl EventSinkFactory for StdEventSinkFactory {
+    fn create_sinks(&self) -> Vec<Box<dyn EventSink>> {
+        vec![Box::new(StdoutSink::new())]
     }
 }
 
@@ -56,18 +67,18 @@ impl EventSink for StdoutSink {
 
 /// JSONL ログへ追記（デバッグ・永続化用）
 #[allow(dead_code)] // 将来のログ永続化で使用
-pub struct JsonlLogSink<W: Write + Send> {
+pub struct JsonlLogSink<W: Write + Send + Sync> {
     writer: W,
 }
 
-impl<W: Write + Send> JsonlLogSink<W> {
+impl<W: Write + Send + Sync> JsonlLogSink<W> {
     #[allow(dead_code)]
     pub fn new(writer: W) -> Self {
         Self { writer }
     }
 }
 
-impl<W: Write + Send> EventSink for JsonlLogSink<W> {
+impl<W: Write + Send + Sync> EventSink for JsonlLogSink<W> {
     fn on_event(&mut self, ev: &AgentEvent) -> Result<(), Error> {
         // AgentEvent を簡易 JSON 化（LlmEvent 等は enum なので手動で line を書くか、serde で Serialize にする）
         let line = format!("{:?}\n", ev);

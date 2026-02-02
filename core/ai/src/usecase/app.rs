@@ -1,11 +1,10 @@
-use crate::adapter::{load_command_allow_rules, run_task_if_exists, CliToolApproval, ShellTool, StdoutSink};
 use crate::cli::{config_to_command, Config};
 use crate::domain::{AiCommand, History};
 use crate::ports::inbound::RunAiApp;
-use crate::ports::outbound::{LlmEventStream, ToolApproval};
+use crate::ports::outbound::{CommandAllowRulesLoader, EventSinkFactory, LlmEventStream, TaskRunner, ToolApproval};
 use crate::usecase::agent_loop::AgentLoop;
 use common::ports::outbound::EnvResolver;
-use common::{adapter::FileSystem, adapter::Process};
+use common::ports::outbound::{FileSystem, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
 use common::llm::{create_driver, LlmDriver, ProviderType};
@@ -13,7 +12,7 @@ use common::llm::provider::Message as LlmMessage;
 use common::msg::Msg;
 use common::part_id::IdGenerator;
 use common::domain::SessionDir;
-use common::tool::{ToolContext, ToolRegistry};
+use common::tool::{Tool, ToolContext, ToolRegistry};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -64,20 +63,36 @@ pub struct AiUseCase {
     pub id_gen: Arc<dyn IdGenerator>,
     pub env_resolver: Arc<dyn EnvResolver>,
     pub process: Arc<dyn Process>,
+    pub task_runner: Arc<dyn TaskRunner>,
+    pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
+    pub sink_factory: Arc<dyn EventSinkFactory>,
+    pub tools: Vec<Arc<dyn Tool>>,
+    pub approver: Arc<dyn ToolApproval>,
 }
 
 impl AiUseCase {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         fs: Arc<dyn FileSystem>,
         id_gen: Arc<dyn IdGenerator>,
         env_resolver: Arc<dyn EnvResolver>,
         process: Arc<dyn Process>,
+        task_runner: Arc<dyn TaskRunner>,
+        command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
+        sink_factory: Arc<dyn EventSinkFactory>,
+        tools: Vec<Arc<dyn Tool>>,
+        approver: Arc<dyn ToolApproval>,
     ) -> Self {
         Self {
             fs,
             id_gen,
             env_resolver,
             process,
+            task_runner,
+            command_allow_rules_loader,
+            sink_factory,
+            tools,
+            approver,
         }
     }
 
@@ -191,22 +206,19 @@ impl AiUseCase {
 
         let driver = create_driver(provider_type, None)?;
         let stream = DriverLlmStream(&driver);
-        let sinks: Vec<Box<dyn common::sink::EventSink>> =
-            vec![Box::new(StdoutSink::new())];
-        // ツール追加: Tool 実装を追加し、ここで registry.register(Arc::new(MyTool::new())) するだけ
-        // ShellTool は OS 副作用を伴うため adapter 層に配置
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(common::tool::EchoTool::new()));
-        registry.register(Arc::new(ShellTool::new()));
+        for t in &self.tools {
+            registry.register(Arc::clone(t));
+        }
 
         let messages = build_messages(&history_messages, &query);
         let home_dir = self.env_resolver.resolve_home_dir()?;
-        let allow_rules = load_command_allow_rules(&home_dir);
+        let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
         let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()))
             .with_command_allow_rules(allow_rules);
-        let approver: Arc<dyn ToolApproval> = Arc::new(CliToolApproval::new());
+        let sinks = self.sink_factory.create_sinks();
         let mut agent_loop =
-            AgentLoop::new(stream, registry, tool_context, sinks, approver);
+            AgentLoop::new(stream, registry, tool_context, sinks, Arc::clone(&self.approver), Some("run_shell"));
         const MAX_TURNS: usize = 16;
         let (_final_messages, assistant_text) =
             agent_loop.run_until_done(&messages, MAX_TURNS)?;
@@ -238,12 +250,7 @@ impl RunAiApp for AiUseCase {
                 args,
                 provider,
             } => {
-                if let Some(code) = run_task_if_exists(
-                    self.fs.as_ref(),
-                    self.process.as_ref(),
-                    name.as_ref(),
-                    &args,
-                )? {
+                if let Some(code) = self.task_runner.run_if_exists(name.as_ref(), &args)? {
                     return Ok(code);
                 }
                 // タスクが見つからなかった -> Query として扱う

@@ -28,7 +28,7 @@ pub enum AgentEvent {
 }
 
 /// イベントを受け取る Sink（Outbound ポート）
-pub trait EventSink: Send {
+pub trait EventSink: Send + Sync {
     /// 1 イベントを処理（表示 or 永続化）
     fn on_event(&mut self, ev: &AgentEvent) -> Result<(), Error>;
     /// ストリーム終了時（オプションで flush 等）

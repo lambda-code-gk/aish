@@ -1,11 +1,22 @@
 //! 許可コマンド設定の読み込み（adapter 層）
 
-use common::error::Error;
 use common::domain::HomeDir;
+use common::error::Error;
 use common::tool::CommandAllowRule;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+
+use crate::ports::outbound::CommandAllowRulesLoader;
+
+/// CommandAllowRulesLoader の標準実装（load_command_allow_rules をラップ）
+pub struct StdCommandAllowRulesLoader;
+
+impl CommandAllowRulesLoader for StdCommandAllowRulesLoader {
+    fn load_rules(&self, home_dir: &HomeDir) -> Vec<CommandAllowRule> {
+        load_command_allow_rules(home_dir)
+    }
+}
 
 /// 許可コマンドのルールリストを AISH_HOME/config/command_rules.txt から読み込む
 pub fn load_command_allow_rules(home_dir: &HomeDir) -> Vec<CommandAllowRule> {

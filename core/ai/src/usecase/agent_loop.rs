@@ -3,14 +3,13 @@
 //! 直列の transaction script をやめ、RunState で遷移する。
 //! LLM から ToolCallEnd が来たら tool 実行フェーズへ遷移し、結果を messages に注入する。
 
-use crate::adapter::ShellTool;
 use crate::ports::outbound::{Approval, LlmEventStream, ToolApproval};
 use common::error::Error;
 use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
 use common::msg::Msg;
 use common::sink::{AgentEvent, EventSink};
-use common::tool::{ToolContext, ToolDef, ToolRegistry};
+use common::tool::{is_command_allowed, ToolContext, ToolDef, ToolRegistry};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -148,6 +147,8 @@ pub struct AgentLoop<S: LlmEventStream> {
     tool_context: ToolContext,
     sinks: Vec<Box<dyn EventSink>>,
     approver: Arc<dyn ToolApproval>,
+    /// シェル系ツールの名前（allowlist 不一致時に承認を求める）。例: "run_shell"
+    shell_tool_name: Option<&'static str>,
 }
 
 impl<S: LlmEventStream> AgentLoop<S> {
@@ -157,6 +158,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
         tool_context: ToolContext,
         sinks: Vec<Box<dyn EventSink>>,
         approver: Arc<dyn ToolApproval>,
+        shell_tool_name: Option<&'static str>,
     ) -> Self {
         Self {
             stream,
@@ -164,6 +166,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
             tool_context,
             sinks,
             approver,
+            shell_tool_name,
         }
     }
 
@@ -249,11 +252,10 @@ impl<S: LlmEventStream> AgentLoop<S> {
                 // 履歴にツール呼び出し自体を記録（直前の assistant メッセージに紐付く）
                 new_messages.push(Msg::tool_call(call_id.clone(), name.clone(), args.clone(), thought_signature.clone()));
 
-                // run_shell の場合は allowlist 判定と承認を行う
-                let effective_ctx = if name == ShellTool::NAME {
+                // シェル系ツールの場合は allowlist 判定と承認を行う
+                let effective_ctx = if self.shell_tool_name.map_or(false, |s| s == name.as_str()) {
                     let command = args.get("command").and_then(Value::as_str).unwrap_or("");
-                    let shell_tool = ShellTool::new();
-                    if shell_tool.is_allowed(command, &self.tool_context) {
+                    if is_command_allowed(command, &self.tool_context.command_allow_rules) {
                         // allowlist に一致 → 通常の context で実行
                         self.tool_context.clone()
                     } else {
@@ -282,7 +284,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
                         }
                     }
                 } else {
-                    // run_shell 以外はそのまま実行
+                    // シェル系以外はそのまま実行
                     self.tool_context.clone()
                 };
 
@@ -389,6 +391,44 @@ mod tests {
     use super::*;
     use crate::domain::approval::StubApproval;
     use common::llm::events::LlmEvent;
+    use common::tool::{Tool, ToolError};
+
+    /// テスト用: 何も出力しない EventSink
+    struct StubEventSink;
+    impl StubEventSink {
+        fn new() -> Self {
+            Self
+        }
+    }
+    impl EventSink for StubEventSink {
+        fn on_event(&mut self, _ev: &AgentEvent) -> Result<(), Error> {
+            Ok(())
+        }
+        fn on_end(&mut self) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    /// テスト用: name "run_shell" の Tool
+    struct RunShellStubTool;
+    impl RunShellStubTool {
+        fn new() -> Self {
+            Self
+        }
+    }
+    impl Tool for RunShellStubTool {
+        fn name(&self) -> &'static str {
+            "run_shell"
+        }
+        fn call(&self, args: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
+            let command = args.get("command").and_then(Value::as_str).unwrap_or("");
+            Ok(serde_json::json!({
+                "stdout": format!("{}\n", command),
+                "stderr": "",
+                "exit_code": 0
+            }))
+        }
+    }
 
     #[test]
     fn test_msgs_to_provider_simple() {
@@ -459,9 +499,9 @@ mod tests {
         let stub = StubLlm::text_only("world");
         let registry = ToolRegistry::new();
         let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(crate::adapter::StdoutSink::new())];
+        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
         let messages = vec![Msg::user("Hi")];
         let (new_msgs, state, assistant_text) = loop_.run_once(&messages).unwrap();
         assert_eq!(state, RunState::Done);
@@ -494,7 +534,7 @@ mod tests {
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
         let messages = vec![Msg::user("echo hello")];
         let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
 
@@ -527,11 +567,11 @@ mod tests {
             },
         ]);
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(ShellTool::new()));
+        registry.register(Arc::new(RunShellStubTool::new()));
         let ctx = ToolContext::new(None); // allowlist 空
         let sinks: Vec<Box<dyn EventSink>> = vec![];
         let approver = Arc::new(StubApproval::denied());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
         let messages = vec![Msg::user("run it")];
         let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
 
@@ -568,21 +608,21 @@ mod tests {
             },
         ]);
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(ShellTool::new()));
+        registry.register(Arc::new(RunShellStubTool::new()));
         let ctx = ToolContext::new(None); // allowlist 空
         let sinks: Vec<Box<dyn EventSink>> = vec![];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver);
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
         let messages = vec![Msg::user("run it")];
         let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
 
         assert_eq!(state, RunState::ExecutingTools);
         // user, (empty) assistant, tool_call, tool_result (success)
         assert_eq!(new_msgs.len(), 4);
-        // ツール結果は成功
+        // ツール結果は成功（Stub は command を stdout に echo する）
         if let Msg::ToolResult { result, .. } = &new_msgs[3] {
             assert!(result.get("stdout").is_some());
-            assert_eq!(result["stdout"].as_str(), Some("approved\n"));
+            assert_eq!(result["stdout"].as_str(), Some("echo approved\n"));
         } else {
             panic!("Expected ToolResult");
         }

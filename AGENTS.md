@@ -434,6 +434,7 @@ cargo build --release
 - テストを省略して実装を進めること
 - 既存のコード構造を理解せずに変更すること
 - このAGENTS.mdを読まずに作業を開始すること
+- **usecase 層から adapter を参照すること**（Ports & Adapters の原則）。usecase はポート（trait）経由のみに依存し、具象は wiring で注入する。確認方法: `grep adapter core/**/src/usecase/*`でヒットしたらまだ adapter への依存が残っている証拠なので修正する。
 
 ## サブプロジェクトの詳細ドキュメント
 

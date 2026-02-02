@@ -1,17 +1,10 @@
 use crate::usecase::app::AiUseCase;
+use crate::wiring::wire_ai;
 use std::env;
 use std::fs;
-use std::sync::Arc;
 
 fn use_case() -> AiUseCase {
-    AiUseCase::new(
-        Arc::new(common::adapter::StdFileSystem),
-        Arc::new(common::part_id::StdIdGenerator::new(Arc::new(
-            common::adapter::StdClock,
-        ))),
-        Arc::new(common::adapter::StdEnvResolver),
-        Arc::new(common::adapter::StdProcess),
-    )
+    wire_ai()
 }
 
 #[test]

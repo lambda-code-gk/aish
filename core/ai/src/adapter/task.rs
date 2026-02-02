@@ -1,8 +1,29 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use common::adapter::{FileSystem, Process};
 use common::error::Error;
+
+use crate::ports::outbound::TaskRunner;
+
+/// TaskRunner の標準実装（run_task_if_exists をラップ）
+pub struct StdTaskRunner {
+    fs: Arc<dyn FileSystem>,
+    process: Arc<dyn Process>,
+}
+
+impl StdTaskRunner {
+    pub fn new(fs: Arc<dyn FileSystem>, process: Arc<dyn Process>) -> Self {
+        Self { fs, process }
+    }
+}
+
+impl TaskRunner for StdTaskRunner {
+    fn run_if_exists(&self, task_name: &str, args: &[String]) -> Result<Option<i32>, Error> {
+        run_task_if_exists(self.fs.as_ref(), self.process.as_ref(), task_name, args)
+    }
+}
 
 /// タスクを解決して実行する（アダプター経由）
 ///
