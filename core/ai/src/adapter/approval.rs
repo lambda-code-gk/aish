@@ -9,7 +9,7 @@ use std::io::{self, BufRead, Write};
 /// CLI 対話による承認実装
 ///
 /// allowlist に一致しないコマンドの実行前にユーザーに確認を求める。
-/// デフォルトは Denied（Enter のみ、または y/yes 以外は拒否）。
+/// Cursorに習い、Enter のみで承認とする。
 pub struct CliToolApproval;
 
 impl CliToolApproval {
