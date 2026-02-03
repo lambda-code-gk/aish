@@ -10,16 +10,54 @@ mod tests;
 
 use std::process;
 use common::error::Error;
-use cli::parse_args;
-use ports::inbound::RunAiApp;
-use wiring::wire_ai;
+use cli::{config_to_command, parse_args, Config};
+use domain::AiCommand;
+use ports::inbound::UseCaseRunner;
+use wiring::{wire_ai, App};
+
+/// Command をディスパッチする Runner（match は main レイヤーに集約）
+struct Runner {
+    app: App,
+}
+
+impl UseCaseRunner for Runner {
+    fn run(&self, config: Config) -> Result<i32, Error> {
+        let session_dir = self.app.env_resolver.session_dir_from_env();
+        let cmd = config_to_command(config);
+
+        match cmd {
+            AiCommand::Help => {
+                print_help();
+                Ok(0)
+            }
+            AiCommand::Task {
+                name,
+                args,
+                provider,
+            } => self
+                .app
+                .task_use_case
+                .run(session_dir, &name, &args, provider),
+            AiCommand::Query { provider, query } => {
+                if query.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Please provide a message to send to the LLM.",
+                    ));
+                }
+                self.app
+                    .run_query
+                    .run_query(session_dir, provider, &query)
+            }
+        }
+    }
+}
 
 fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err(e) => {
             if e.is_usage() {
-                usecase::print_usage();
+                print_usage();
             }
             eprintln!("ai: {}", e);
             e.exit_code()
@@ -30,6 +68,32 @@ fn main() {
 
 pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
-    let use_case = wire_ai();
-    use_case.run(config)
+    let app = wire_ai();
+    let runner = Runner { app };
+    runner.run(config)
+}
+
+fn print_usage() {
+    eprintln!("Usage: ai [options] [task] [message...]");
+}
+
+fn print_help() {
+    println!("Usage: ai [options] [task] [message...]");
+    println!("Options:");
+    println!("  -h, --help                    Show this help message");
+    println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
+    println!();
+    println!("Description:");
+    println!("  Send a message to the LLM and display the response.");
+    println!("  If a matching task script exists, execute it instead of sending a query.");
+    println!();
+    println!("Task search paths:");
+    println!("  $AISH_HOME/config/task.d/");
+    println!("  $XDG_CONFIG_HOME/aish/task.d");
+    println!();
+    println!("Examples:");
+    println!("  ai Hello, how are you?");
+    println!("  ai -p gpt What is Rust programming language?");
+    println!("  ai --provider echo Explain quantum computing");
+    println!("  ai mytask do something");
 }

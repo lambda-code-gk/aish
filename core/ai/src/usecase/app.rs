@@ -1,7 +1,5 @@
-use crate::cli::{config_to_command, Config};
-use crate::domain::{AiCommand, History};
-use crate::ports::inbound::RunAiApp;
-use crate::ports::outbound::{CommandAllowRulesLoader, EventSinkFactory, LlmEventStream, TaskRunner, ToolApproval};
+use crate::domain::History;
+use crate::ports::outbound::{CommandAllowRulesLoader, EventSinkFactory, LlmEventStream, RunQuery, ToolApproval};
 use crate::usecase::agent_loop::AgentLoop;
 use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{FileSystem, Process};
@@ -63,7 +61,6 @@ pub struct AiUseCase {
     pub id_gen: Arc<dyn IdGenerator>,
     pub env_resolver: Arc<dyn EnvResolver>,
     pub process: Arc<dyn Process>,
-    pub task_runner: Arc<dyn TaskRunner>,
     pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
     pub sink_factory: Arc<dyn EventSinkFactory>,
     pub tools: Vec<Arc<dyn Tool>>,
@@ -77,7 +74,6 @@ impl AiUseCase {
         id_gen: Arc<dyn IdGenerator>,
         env_resolver: Arc<dyn EnvResolver>,
         process: Arc<dyn Process>,
-        task_runner: Arc<dyn TaskRunner>,
         command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
         sink_factory: Arc<dyn EventSinkFactory>,
         tools: Vec<Arc<dyn Tool>>,
@@ -88,7 +84,6 @@ impl AiUseCase {
             id_gen,
             env_resolver,
             process,
-            task_runner,
             command_allow_rules_loader,
             sink_factory,
             tools,
@@ -177,7 +172,7 @@ impl AiUseCase {
         Ok(())
     }
 
-    fn run_query(
+    fn run_query_impl(
         &self,
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
@@ -235,71 +230,14 @@ impl AiUseCase {
     }
 }
 
-impl RunAiApp for AiUseCase {
-    fn run(&self, config: Config) -> Result<i32, Error> {
-        let session_dir = self.env_resolver.session_dir_from_env();
-        let cmd = config_to_command(config);
-
-        match cmd {
-            AiCommand::Help => {
-                print_help();
-                return Ok(0);
-            }
-            AiCommand::Task {
-                name,
-                args,
-                provider,
-            } => {
-                if let Some(code) = self.task_runner.run_if_exists(name.as_ref(), &args)? {
-                    return Ok(code);
-                }
-                // タスクが見つからなかった -> Query として扱う
-                let mut query_parts = vec![name.as_ref().to_string()];
-                query_parts.extend(args);
-                let query = query_parts.join(" ");
-                if query.trim().is_empty() {
-                    return Err(Error::invalid_argument(
-                        "No query provided. Please provide a message to send to the LLM.",
-                    ));
-                }
-                self.run_query(session_dir, provider, &query)
-            }
-            AiCommand::Query { provider, query } => {
-                if query.trim().is_empty() {
-                    return Err(Error::invalid_argument(
-                        "No query provided. Please provide a message to send to the LLM.",
-                    ));
-                }
-                self.run_query(session_dir, provider, &query)
-            }
-        }
+impl RunQuery for AiUseCase {
+    fn run_query(
+        &self,
+        session_dir: Option<common::domain::SessionDir>,
+        provider: Option<common::domain::ProviderName>,
+        query: &str,
+    ) -> Result<i32, Error> {
+        self.run_query_impl(session_dir, provider, query)
     }
 }
-
-/// 引数不正時に stderr へ出力する usage 行（main から呼ぶ）
-pub fn print_usage() {
-    eprintln!("Usage: ai [options] [task] [message...]");
-}
-
-fn print_help() {
-    println!("Usage: ai [options] [task] [message...]");
-    println!("Options:");
-    println!("  -h, --help                    Show this help message");
-    println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
-    println!();
-    println!("Description:");
-    println!("  Send a message to the LLM and display the response.");
-    println!("  If a matching task script exists, execute it instead of sending a query.");
-    println!();
-    println!("Task search paths:");
-    println!("  $AISH_HOME/config/task.d/");
-    println!("  $XDG_CONFIG_HOME/aish/task.d");
-    println!();
-    println!("Examples:");
-    println!("  ai Hello, how are you?");
-    println!("  ai -p gpt What is Rust programming language?");
-    println!("  ai --provider echo Explain quantum computing");
-    println!("  ai mytask do something");
-}
-
 

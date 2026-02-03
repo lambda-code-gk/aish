@@ -2,9 +2,10 @@ use crate::usecase::app::AiUseCase;
 use crate::wiring::wire_ai;
 use std::env;
 use std::fs;
+use std::sync::Arc;
 
-fn use_case() -> AiUseCase {
-    wire_ai()
+fn use_case() -> Arc<AiUseCase> {
+    wire_ai().ai_use_case
 }
 
 #[test]

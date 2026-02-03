@@ -1,10 +1,11 @@
 use crate::usecase::app::AiUseCase;
 use crate::wiring::wire_ai;
 use common::domain::SessionDir;
+use std::sync::Arc;
 use std::fs;
 
-fn use_case() -> AiUseCase {
-    wire_ai()
+fn use_case() -> Arc<AiUseCase> {
+    wire_ai().ai_use_case
 }
 
 #[test]

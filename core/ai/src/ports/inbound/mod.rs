@@ -3,9 +3,9 @@
 use crate::cli::Config;
 use common::error::Error;
 
-/// AI アプリケーションを実行する Inbound ポート
+/// ユースケースを実行する Inbound ポート（Command ディスパッチの入口）
 ///
-/// main/cli はこの trait を実装した型（AiUseCase）の run を呼び出す。
-pub trait RunAiApp: Send + Sync {
+/// main/cli はこの trait を実装した型（App 等）の run を呼び出す。
+pub trait UseCaseRunner: Send + Sync {
     fn run(&self, config: Config) -> Result<i32, Error>;
 }

@@ -1,13 +1,15 @@
 use crate::cli::Config;
 use crate::domain::TaskName;
-use crate::ports::inbound::RunAiApp;
+use crate::ports::inbound::UseCaseRunner;
 use crate::wiring;
 use common::domain::ProviderName;
 use common::error::Error;
 
-/// 標準アダプターで AiUseCase を組み立てて run する（テスト用の入口）
+/// 標準アダプターで App を組み立て、Runner で run する（テスト用の入口）
 fn run_app(config: Config) -> Result<i32, Error> {
-    wiring::wire_ai().run(config)
+    let app = wiring::wire_ai();
+    let runner = crate::Runner { app };
+    runner.run(config)
 }
 
 #[test]
