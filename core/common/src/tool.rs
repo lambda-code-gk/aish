@@ -191,16 +191,25 @@ impl Tool for EchoTool {
     }
 }
 
+/// 前方一致判定: ルール文字列の後ろにスペースを付けて判定する。
+/// これにより `ls` は `ls` または `ls ` にマッチするが `lss` にはマッチしない。
+fn prefix_matches(prefix: &str, command: &str) -> bool {
+    command == prefix || command.starts_with(&format!("{} ", prefix))
+}
+
 /// コマンドが許可リストにマッチするか判定する（純粋関数）
 ///
 /// denylist（NotRegex/NotPrefix）が先に評価され、一致すれば即座に false。
 /// 次に allowlist（Regex/Prefix）のいずれかに一致すれば true。
 /// どちらにも一致しなければ false。
+///
+/// Prefix/NotPrefix の前方一致は、ルール文字列の後ろにスペースを付けて判定する。
+/// 例: ルール `ls` はコマンド行が `ls` または `ls ` で始まる場合にマッチ（`lss` はマッチしない）。
 pub fn is_command_allowed(command: &str, rules: &[CommandAllowRule]) -> bool {
     // 否定ルールが一つでもマッチしたら即座に不許可
     let denied = rules.iter().any(|rule| match rule {
         CommandAllowRule::NotRegex(re) => re.is_match(command),
-        CommandAllowRule::NotPrefix(prefix) => command.starts_with(prefix),
+        CommandAllowRule::NotPrefix(prefix) => prefix_matches(prefix, command),
         _ => false,
     });
     if denied {
@@ -210,7 +219,7 @@ pub fn is_command_allowed(command: &str, rules: &[CommandAllowRule]) -> bool {
     // 肯定ルールのいずれかにマッチすれば許可
     rules.iter().any(|rule| match rule {
         CommandAllowRule::Regex(re) => re.is_match(command),
-        CommandAllowRule::Prefix(prefix) => command.starts_with(prefix),
+        CommandAllowRule::Prefix(prefix) => prefix_matches(prefix, command),
         _ => false,
     })
 }
@@ -297,7 +306,8 @@ mod tests {
         assert!(!is_command_allowed("sed -i 's/a/b/' file", &rules));
         // sed --in-place は "sed .*-i " にマッチしないので許可される
         assert!(!is_command_allowed("rm -rf /", &rules));
-        assert!(is_command_allowed("lss", &rules));
+        // 前方一致は「ルール+スペース」で判定するため、ls では lss はマッチしない
+        assert!(!is_command_allowed("lss", &rules));
     }
 
     #[test]

@@ -160,7 +160,8 @@ mod tests {
         assert!(shell.is_allowed("sed 's/a/b/' file", &ctx));
         assert!(!shell.is_allowed("sed -i 's/a/b/' file", &ctx));
         assert!(!shell.is_allowed("rm -rf /", &ctx));
-        assert!(shell.is_allowed("lss", &ctx));
+        // 前方一致は「ルール+スペース」で判定するため、ls では lss は許可されない
+        assert!(!shell.is_allowed("lss", &ctx));
     }
 
     #[test]
