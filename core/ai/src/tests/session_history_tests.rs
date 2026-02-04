@@ -1,11 +1,18 @@
-use crate::usecase::app::AiUseCase;
-use crate::wiring::wire_ai;
-use common::domain::SessionDir;
-use std::sync::Arc;
-use std::fs;
+//! SessionHistoryLoader（Part ファイル履歴読み込み）のテスト。adapter と port にのみ依存する。
 
-fn use_case() -> Arc<AiUseCase> {
-    wire_ai().ai_use_case
+use crate::adapter::PartSessionStorage;
+use crate::ports::outbound::SessionHistoryLoader;
+use common::adapter::{StdClock, StdFileSystem};
+use common::domain::SessionDir;
+use common::part_id::StdIdGenerator;
+use std::fs;
+use std::sync::Arc;
+
+fn history_loader() -> PartSessionStorage {
+    PartSessionStorage::new(
+        Arc::new(StdFileSystem),
+        Arc::new(StdIdGenerator::new(Arc::new(StdClock))),
+    )
 }
 
 #[test]
@@ -14,8 +21,8 @@ fn test_load_history_no_directory() {
     let non_existent_dir = temp_dir.join("aish_test_nonexistent_session");
     let session_dir = SessionDir::new(non_existent_dir);
 
-    let uc = use_case();
-    let result = uc.load_history(&session_dir);
+    let loader = history_loader();
+    let result = loader.load(&session_dir);
     assert!(result.is_ok());
     let history = result.unwrap();
     assert!(history.is_empty());
@@ -32,8 +39,8 @@ fn test_load_history_empty_session_dir() {
     fs::create_dir_all(&session_path).unwrap();
     let session_dir = SessionDir::new(session_path.clone());
 
-    let uc = use_case();
-    let result = uc.load_history(&session_dir);
+    let loader = history_loader();
+    let result = loader.load(&session_dir);
     assert!(result.is_ok());
     let history = result.unwrap();
     assert!(history.is_empty());
@@ -60,8 +67,8 @@ fn test_load_history_with_files() {
     fs::write(&part2, "Second part content").unwrap();
     fs::write(&part3, "Third part content").unwrap();
 
-    let uc = use_case();
-    let result = uc.load_history(&session_dir);
+    let loader = history_loader();
+    let result = loader.load(&session_dir);
     assert!(result.is_ok());
     let history = result.unwrap();
 
@@ -93,8 +100,8 @@ fn test_load_history_ignores_non_part_files() {
     fs::write(&part_file, "Part content").unwrap();
     fs::write(&other_file, "Other content").unwrap();
 
-    let uc = use_case();
-    let result = uc.load_history(&session_dir);
+    let loader = history_loader();
+    let result = loader.load(&session_dir);
     assert!(result.is_ok());
     let history = result.unwrap();
 

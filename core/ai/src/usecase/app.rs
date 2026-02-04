@@ -1,5 +1,7 @@
-use crate::domain::History;
-use crate::ports::outbound::{CommandAllowRulesLoader, EventSinkFactory, LlmEventStream, RunQuery, ToolApproval};
+use crate::ports::outbound::{
+    CommandAllowRulesLoader, EventSinkFactory, LlmEventStream, RunQuery, SessionHistoryLoader,
+    SessionResponseSaver, ToolApproval,
+};
 use crate::usecase::agent_loop::AgentLoop;
 use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{FileSystem, Process};
@@ -8,10 +10,8 @@ use common::llm::factory::AnyProvider;
 use common::llm::{create_driver, LlmDriver, ProviderType};
 use common::llm::provider::Message as LlmMessage;
 use common::msg::Msg;
-use common::part_id::IdGenerator;
 use common::domain::SessionDir;
 use common::tool::{Tool, ToolContext, ToolRegistry};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// ドライバを LlmEventStream として使うアダプタ
@@ -58,7 +58,8 @@ fn build_messages(history_messages: &[LlmMessage], query: &str) -> Vec<Msg> {
 /// ai のユースケース（アダプター経由で I/O を行う）
 pub struct AiUseCase {
     pub fs: Arc<dyn FileSystem>,
-    pub id_gen: Arc<dyn IdGenerator>,
+    pub history_loader: Arc<dyn SessionHistoryLoader>,
+    pub response_saver: Arc<dyn SessionResponseSaver>,
     pub env_resolver: Arc<dyn EnvResolver>,
     pub process: Arc<dyn Process>,
     pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
@@ -71,7 +72,8 @@ impl AiUseCase {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         fs: Arc<dyn FileSystem>,
-        id_gen: Arc<dyn IdGenerator>,
+        history_loader: Arc<dyn SessionHistoryLoader>,
+        response_saver: Arc<dyn SessionResponseSaver>,
         env_resolver: Arc<dyn EnvResolver>,
         process: Arc<dyn Process>,
         command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
@@ -81,7 +83,8 @@ impl AiUseCase {
     ) -> Self {
         Self {
             fs,
-            id_gen,
+            history_loader,
+            response_saver,
             env_resolver,
             process,
             command_allow_rules_loader,
@@ -97,69 +100,6 @@ impl AiUseCase {
         } else {
             false
         }
-    }
-
-    pub(crate) fn load_history(&self, session_dir: &SessionDir) -> Result<History, Error> {
-        if !self.fs.exists(session_dir.as_ref()) {
-            return Ok(History::new());
-        }
-        if self
-            .fs
-            .metadata(session_dir.as_ref())
-            .map(|m| !m.is_dir())
-            .unwrap_or(true)
-        {
-            return Ok(History::new());
-        }
-        let mut part_files: Vec<PathBuf> = self
-            .fs
-            .read_dir(session_dir.as_ref())?
-            .into_iter()
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .map_or(false, |s| s.starts_with("part_"))
-                    && self.fs.metadata(path).map(|m| m.is_file()).unwrap_or(false)
-            })
-            .collect();
-        part_files.sort();
-
-        let mut history = History::new();
-        for part_file in part_files {
-            match self.fs.read_to_string(&part_file) {
-                Ok(content) => {
-                    if let Some(name_str) = part_file.file_name().and_then(|n| n.to_str()) {
-                        if name_str.ends_with("_user.txt") {
-                            history.push_user(content);
-                        } else if name_str.ends_with("_assistant.txt") {
-                            history.push_assistant(content);
-                        } else {
-                            eprintln!("Warning: Unknown part file type: {}", name_str);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to read part file '{}': {}", part_file.display(), e);
-                }
-            }
-        }
-        Ok(history)
-    }
-
-    pub(crate) fn save_response(&self, session_dir: &SessionDir, response: &str) -> Result<(), Error> {
-        if !self.fs.exists(session_dir.as_ref())
-            || !self
-                .fs
-                .metadata(session_dir.as_ref())
-                .map(|m| m.is_dir())
-                .unwrap_or(false)
-        {
-            return Err(Error::io_msg("Session is not valid"));
-        }
-        let id = self.id_gen.next_id();
-        let filename = format!("part_{}_assistant.txt", id);
-        let file_path = session_dir.as_path().join(&filename);
-        self.fs.write(&file_path, response)
     }
 
     fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {
@@ -180,7 +120,8 @@ impl AiUseCase {
     ) -> Result<i32, Error> {
         let history_messages = if self.session_is_valid(&session_dir) {
             let dir = session_dir.as_ref().expect("session_dir is Some");
-            self.load_history(dir)
+            self.history_loader
+                .load(dir)
                 .ok()
                 .map(|h| h.messages().to_vec())
                 .unwrap_or_default()
@@ -222,7 +163,7 @@ impl AiUseCase {
 
         if self.session_is_valid(&session_dir) && !assistant_text.trim().is_empty() {
             let dir = session_dir.as_ref().expect("session_dir is Some");
-            self.save_response(dir, &assistant_text)?;
+            self.response_saver.save_assistant(dir, &assistant_text)?;
             self.truncate_console_log(dir)?;
         }
 

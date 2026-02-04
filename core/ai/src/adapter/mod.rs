@@ -1,10 +1,12 @@
 pub(crate) mod approval;
 pub(crate) mod config;
+pub(crate) mod part_session_storage;
 pub(crate) mod sinks;
 pub(crate) mod task;
 pub(crate) mod tools;
 pub(crate) use approval::CliToolApproval;
 pub(crate) use config::StdCommandAllowRulesLoader;
+pub(crate) use part_session_storage::PartSessionStorage;
 pub(crate) use sinks::StdEventSinkFactory;
 pub(crate) use task::StdTaskRunner;
 pub(crate) use tools::ShellTool;

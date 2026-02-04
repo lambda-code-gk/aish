@@ -1,11 +1,18 @@
-use crate::usecase::app::AiUseCase;
-use crate::wiring::wire_ai;
-use common::domain::SessionDir;
-use std::sync::Arc;
-use std::fs;
+//! SessionResponseSaver（Part ファイル保存）のテスト。adapter と port にのみ依存する。
 
-fn use_case() -> Arc<AiUseCase> {
-    wire_ai().ai_use_case
+use crate::adapter::PartSessionStorage;
+use crate::ports::outbound::SessionResponseSaver;
+use common::adapter::{StdClock, StdFileSystem};
+use common::domain::SessionDir;
+use common::part_id::StdIdGenerator;
+use std::fs;
+use std::sync::Arc;
+
+fn response_saver() -> PartSessionStorage {
+    PartSessionStorage::new(
+        Arc::new(StdFileSystem),
+        Arc::new(StdIdGenerator::new(Arc::new(StdClock))),
+    )
 }
 
 #[test]
@@ -19,9 +26,9 @@ fn test_save_response() {
     fs::create_dir_all(&session_path).unwrap();
     let session_dir = SessionDir::new(session_path.clone());
 
-    let uc = use_case();
+    let saver = response_saver();
     let response = "This is a test response from the assistant.";
-    let result = uc.save_response(&session_dir, response);
+    let result = saver.save_assistant(&session_dir, response);
     assert!(result.is_ok());
 
     let entries: Vec<_> = fs::read_dir(&session_dir)
@@ -56,9 +63,9 @@ fn test_save_response_with_user_part() {
     let user_part_file = session_path.join(format!("part_{}_user.txt", user_part_id));
     fs::write(&user_part_file, "User message").unwrap();
 
-    let uc = use_case();
+    let saver = response_saver();
     let response = "This is a test response from the assistant.";
-    let result = uc.save_response(&session_dir, response);
+    let result = saver.save_assistant(&session_dir, response);
     assert!(result.is_ok());
 
     let entries: Vec<_> = fs::read_dir(&session_dir)
@@ -88,9 +95,9 @@ fn test_save_response_nonexistent_session() {
     }
     let session_dir = SessionDir::new(session_path);
 
-    let uc = use_case();
+    let saver = response_saver();
     let response = "This is a test response.";
-    let result = uc.save_response(&session_dir, response);
+    let result = saver.save_assistant(&session_dir, response);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("not valid"));

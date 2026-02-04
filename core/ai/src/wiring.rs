@@ -7,8 +7,11 @@ use common::part_id::StdIdGenerator;
 use common::ports::outbound::EnvResolver;
 use common::tool::EchoTool;
 
-use crate::adapter::{CliToolApproval, StdCommandAllowRulesLoader, StdEventSinkFactory, StdTaskRunner, ShellTool};
-use crate::ports::outbound::{RunQuery, TaskRunner};
+use crate::adapter::{
+    CliToolApproval, PartSessionStorage, StdCommandAllowRulesLoader, StdEventSinkFactory,
+    StdTaskRunner, ShellTool,
+};
+use crate::ports::outbound::{RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner};
 use crate::usecase::app::AiUseCase;
 use crate::usecase::task::TaskUseCase;
 
@@ -39,6 +42,11 @@ pub struct App {
 pub fn wire_ai() -> App {
     let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
     let id_gen = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
+    let part_storage = Arc::new(PartSessionStorage::new(Arc::clone(&fs), id_gen));
+    let history_loader: Arc<dyn SessionHistoryLoader> =
+        Arc::clone(&part_storage) as Arc<dyn SessionHistoryLoader>;
+    let response_saver: Arc<dyn SessionResponseSaver> =
+        Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
     let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
     let process: Arc<dyn Process> = Arc::new(StdProcess);
     let task_runner: Arc<dyn TaskRunner> = Arc::new(StdTaskRunner::new(Arc::clone(&fs), Arc::clone(&process)));
@@ -51,7 +59,8 @@ pub fn wire_ai() -> App {
     let approver: Arc<dyn crate::ports::outbound::ToolApproval> = Arc::new(CliToolApproval::new());
     let ai_use_case = Arc::new(AiUseCase::new(
         fs,
-        id_gen,
+        history_loader,
+        response_saver,
         Arc::clone(&env_resolver),
         process,
         command_allow_rules_loader,
