@@ -3,10 +3,9 @@
 use crate::cli::Config;
 use common::error::Error;
 
-/// Aish アプリケーションを実行する Inbound ポート
+/// ユースケースを実行する Inbound ポート（Command ディスパッチの入口）
 ///
-/// main/cli はこの trait を実装した型（AishUseCase）の run を呼び出す。
-#[cfg(unix)]
-pub trait RunAishApp: Send + Sync {
+/// main/cli はこの trait を実装した型（Runner 等）の run を呼び出す。
+pub trait UseCaseRunner: Send + Sync {
     fn run(&self, config: Config) -> Result<i32, Error>;
 }

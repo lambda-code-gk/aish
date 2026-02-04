@@ -8,6 +8,9 @@
 /// コマンドなし = 対話シェル起動。それ以外は文字列から解析。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// ヘルプ表示
+    Help,
+
     /// 対話シェルを起動（コマンド未指定時）
     Shell,
 
@@ -77,6 +80,7 @@ impl Command {
     /// エラーメッセージ用の名前
     pub fn as_str(&self) -> &str {
         match self {
+            Command::Help => "(help)",
             Command::Shell => "(shell)",
             Command::TruncateConsoleLog => "truncate_console_log",
             Command::Resume => "resume",

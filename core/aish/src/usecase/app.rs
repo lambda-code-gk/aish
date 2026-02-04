@@ -1,95 +1,12 @@
+//! テスト用のエントリーポイント（run_app）
+//!
+//! 本番のコマンドディスパッチは main.rs の Runner が行う。
+//! このモジュールはテストで使用する run_app のみを提供する。
+
 use crate::cli::Config;
-use crate::domain::command::Command;
-use crate::ports::inbound::RunAishApp;
-use crate::ports::outbound::ShellRunner;
-use common::ports::outbound::{PathResolver, PathResolverInput, Signal, FileSystem};
 use common::error::Error;
-use common::session::Session;
-use std::path::Path;
-use std::sync::Arc;
 
-/// aish のユースケース（アダプター経由で I/O を行う）
-#[cfg(unix)]
-pub struct AishUseCase {
-    pub fs: Arc<dyn FileSystem>,
-    pub path_resolver: Arc<dyn PathResolver>,
-    pub signal: Arc<dyn Signal>,
-    pub shell_runner: Arc<dyn ShellRunner>,
-}
-
-#[cfg(unix)]
-impl AishUseCase {
-    pub fn new(
-        fs: Arc<dyn FileSystem>,
-        path_resolver: Arc<dyn PathResolver>,
-        signal: Arc<dyn Signal>,
-        shell_runner: Arc<dyn ShellRunner>,
-    ) -> Self {
-        Self {
-            fs,
-            path_resolver,
-            signal,
-            shell_runner,
-        }
-    }
-}
-
-#[cfg(unix)]
-impl RunAishApp for AishUseCase {
-    fn run(&self, config: Config) -> Result<i32, Error> {
-        if config.help {
-            print_help();
-            return Ok(0);
-        }
-
-        // clear コマンドはセッションが明示的に指定されている必要がある
-        if config.command == Command::Clear {
-            if !is_session_explicitly_specified(&config) {
-                return Err(Error::invalid_argument(
-                    "The 'clear' command requires a session to be specified. \
-                     Use -s/--session-dir, -d/--home-dir, or set AISH_SESSION environment variable.",
-                ));
-            }
-        }
-
-        let path_input = PathResolverInput {
-            home_dir: config.home_dir.clone(),
-            session_dir: config.session_dir.clone(),
-        };
-        let home_dir = self.path_resolver.resolve_home_dir(&path_input)?;
-        let session_path = self.path_resolver.resolve_session_dir(&path_input, &home_dir)?;
-        let session = Session::new(&session_path, &home_dir)?;
-
-        match &config.command {
-            Command::Shell => self.shell_runner.run(
-                session.session_dir().as_ref(),
-                session.aish_home().as_ref(),
-            ),
-            Command::TruncateConsoleLog => truncate_console_log(
-                session.session_dir().as_ref(),
-                self.fs.as_ref(),
-                self.signal.as_ref(),
-            ),
-            Command::Clear => clear_parts(session.session_dir().as_ref(), self.fs.as_ref()),
-            Command::Resume
-            | Command::Sessions
-            | Command::Rollout
-            | Command::Ls
-            | Command::RmLast
-            | Command::Memory
-            | Command::Models => Err(Error::invalid_argument(format!(
-                "Command '{}' is not implemented.",
-                config.command.as_str()
-            ))),
-            Command::Unknown(name) => Err(Error::invalid_argument(format!(
-                "Command '{}' is not implemented.",
-                name
-            ))),
-        }
-    }
-}
-
-/// セッションが明示的に指定されているかをチェック
+/// セッションが明示的に指定されているかをチェック（テスト用）
 ///
 /// 以下のいずれかが設定されていれば true:
 /// - `-s/--session-dir` オプション
@@ -117,11 +34,47 @@ fn is_session_explicitly_specified(config: &Config) -> bool {
     false
 }
 
-/// 標準アダプターで AishUseCase を組み立てて run する（テスト用の入口）
+/// 標準アダプターで App を組み立てて Config を実行する（テスト用の入口）
 #[cfg(unix)]
 #[allow(dead_code)] // テストで使用
 pub fn run_app(config: Config) -> Result<i32, Error> {
-    crate::wiring::wire_aish().run(config)
+    use crate::cli::config_to_command;
+    use crate::domain::command::Command;
+    use super::{ClearUseCase, ShellUseCase, TruncateConsoleLogUseCase};
+    
+    let app = crate::wiring::wire_aish();
+    let command = config_to_command(&config);
+    
+    match command {
+        Command::Help => Ok(0), // Help はテストでは単に成功とする
+        Command::Shell => {
+            let use_case = ShellUseCase::from_app(&app);
+            use_case.run(&config)
+        }
+        Command::TruncateConsoleLog => {
+            let use_case = TruncateConsoleLogUseCase::from_app(&app);
+            use_case.run(&config)
+        }
+        Command::Clear => {
+            let use_case = ClearUseCase::from_app(&app);
+            let session_explicitly_specified = is_session_explicitly_specified(&config);
+            use_case.run(&config, session_explicitly_specified)
+        }
+        Command::Resume
+        | Command::Sessions
+        | Command::Rollout
+        | Command::Ls
+        | Command::RmLast
+        | Command::Memory
+        | Command::Models => Err(Error::invalid_argument(format!(
+            "Command '{}' is not implemented.",
+            command.as_str()
+        ))),
+        Command::Unknown(name) => Err(Error::invalid_argument(format!(
+            "Command '{}' is not implemented.",
+            name
+        ))),
+    }
 }
 
 /// run_app の非 Unix 用ダミー（aish は Unix 専用のため通常は使わない）
@@ -129,74 +82,6 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
 pub fn run_app(config: Config) -> Result<i32, Error> {
     let _ = config;
     Err(Error::system("aish is only supported on Unix"))
-}
-
-/// console.txtとメモリ上のバッファをトランケートする（アダプター経由）
-#[cfg(unix)]
-fn truncate_console_log<F: FileSystem + ?Sized, S: Signal + ?Sized>(
-    session_dir: &Path,
-    fs: &F,
-    signal: &S,
-) -> Result<i32, Error> {
-    let pid_file_path = session_dir.join("AISH_PID");
-
-    if !fs.exists(&pid_file_path) {
-        return Ok(0);
-    }
-
-    let pid_str = fs.read_to_string(&pid_file_path)?;
-    let pid: i32 = pid_str
-        .trim()
-        .parse()
-        .map_err(|e| Error::io_msg(format!("Invalid PID in AISH_PID file: {}", e)))?;
-
-    signal.send_signal(pid, libc::SIGUSR2)?;
-    Ok(0)
-}
-
-/// セッションディレクトリ内のすべての part ファイルを削除する（アダプター経由）
-#[cfg(unix)]
-fn clear_parts<F: FileSystem + ?Sized>(session_dir: &Path, fs: &F) -> Result<i32, Error> {
-    if !fs.exists(session_dir) {
-        return Ok(0);
-    }
-
-    // ディレクトリ内のファイル一覧を取得
-    let entries = fs.read_dir(session_dir)?;
-
-    // part_ で始まるファイルを削除
-    for entry in entries {
-        if let Some(file_name) = entry.file_name().and_then(|n| n.to_str()) {
-            if file_name.starts_with("part_") {
-                // ファイルかどうか確認
-                if fs.metadata(&entry).map(|m| m.is_file()).unwrap_or(false) {
-                    fs.remove_file(&entry)?;
-                }
-            }
-        }
-    }
-
-    Ok(0)
-}
-
-fn print_help() {
-    println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
-    println!("  -h                    Display this help message.");
-    println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME environment variable).");
-    println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
-    println!("  <command>             Command to execute. Omit to start the interactive shell.");
-    println!("  [args...]             Arguments for the command.");
-    println!("");
-    println!("Implemented commands:");
-    println!("  clear                  Clear all part files in the session directory (delete conversation history).");
-    println!("  truncate_console_log   Truncate console buffer and log file (used by ai command).");
-    println!("");
-    println!("Not yet implemented: resume, sessions, rollout, ls, rm_last, memory, models.");
-}
-
-/// 引数不正時に stderr へ出力する usage 行（main から呼ぶ）
-pub fn print_usage() {
-    eprintln!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
 }
 
 #[cfg(test)]
@@ -226,7 +111,7 @@ mod app_tests {
         fs::create_dir_all(&home_path).unwrap();
         
         let config = Config {
-            command: Command::Sessions,
+            command_name: Some("sessions".to_string()),
             home_dir: Some(home_path.to_string_lossy().to_string()),
             ..Default::default()
         };
@@ -251,7 +136,7 @@ mod app_tests {
         fs::create_dir_all(&home_path).unwrap();
         
         let config = Config {
-            command: Command::TruncateConsoleLog,
+            command_name: Some("truncate_console_log".to_string()),
             home_dir: Some(home_path.to_string_lossy().to_string()),
             ..Default::default()
         };
@@ -296,7 +181,7 @@ mod clear_parts_tests {
         
         // clear コマンドを実行
         let config = Config {
-            command: Command::Clear,
+            command_name: Some("clear".to_string()),
             home_dir: Some(home_path.to_string_lossy().to_string()),
             session_dir: Some(session_path.to_string_lossy().to_string()),
             ..Default::default()
@@ -342,7 +227,7 @@ mod clear_parts_tests {
         
         // clear コマンドを実行
         let config = Config {
-            command: Command::Clear,
+            command_name: Some("clear".to_string()),
             home_dir: Some(home_path.to_string_lossy().to_string()),
             session_dir: Some(session_path.to_string_lossy().to_string()),
             ..Default::default()
@@ -379,7 +264,7 @@ mod clear_parts_tests {
         
         // clear コマンドを実行
         let config = Config {
-            command: Command::Clear,
+            command_name: Some("clear".to_string()),
             home_dir: Some(home_path.to_string_lossy().to_string()),
             session_dir: Some(session_path.to_string_lossy().to_string()),
             ..Default::default()
@@ -406,7 +291,7 @@ mod clear_parts_tests {
         
         // -s も -d も指定しない
         let config = Config {
-            command: Command::Clear,
+            command_name: Some("clear".to_string()),
             session_dir: None,
             home_dir: None,
             ..Default::default()
@@ -457,7 +342,7 @@ mod clear_parts_tests {
         
         // -s も -d も指定しないが、AISH_SESSION 環境変数がある
         let config = Config {
-            command: Command::Clear,
+            command_name: Some("clear".to_string()),
             session_dir: None,
             home_dir: None,
             ..Default::default()

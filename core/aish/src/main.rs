@@ -7,18 +7,95 @@ mod wiring;
 
 use std::process;
 use common::error::Error;
-use cli::parse_args;
+use cli::{config_to_command, parse_args, Config};
+use domain::command::Command;
+use ports::inbound::UseCaseRunner;
 #[cfg(unix)]
-use ports::inbound::RunAishApp;
+use usecase::{ClearUseCase, ShellUseCase, TruncateConsoleLogUseCase};
 #[cfg(unix)]
-use wiring::wire_aish;
+use wiring::{wire_aish, App};
+
+/// Command をディスパッチする Runner（match は main レイヤーに集約）
+#[cfg(unix)]
+struct Runner {
+    app: App,
+}
+
+#[cfg(unix)]
+impl UseCaseRunner for Runner {
+    fn run(&self, config: Config) -> Result<i32, Error> {
+        let command = config_to_command(&config);
+
+        match command {
+            Command::Help => {
+                print_help();
+                Ok(0)
+            }
+            Command::Shell => {
+                let use_case = ShellUseCase::from_app(&self.app);
+                use_case.run(&config)
+            }
+            Command::TruncateConsoleLog => {
+                let use_case = TruncateConsoleLogUseCase::from_app(&self.app);
+                use_case.run(&config)
+            }
+            Command::Clear => {
+                let use_case = ClearUseCase::from_app(&self.app);
+                let session_explicitly_specified = is_session_explicitly_specified(&config);
+                use_case.run(&config, session_explicitly_specified)
+            }
+            Command::Resume
+            | Command::Sessions
+            | Command::Rollout
+            | Command::Ls
+            | Command::RmLast
+            | Command::Memory
+            | Command::Models => Err(Error::invalid_argument(format!(
+                "Command '{}' is not implemented.",
+                command.as_str()
+            ))),
+            Command::Unknown(name) => Err(Error::invalid_argument(format!(
+                "Command '{}' is not implemented.",
+                name
+            ))),
+        }
+    }
+}
+
+/// セッションが明示的に指定されているかをチェック（CLI 境界）
+///
+/// 以下のいずれかが設定されていれば true:
+/// - `-s/--session-dir` オプション
+/// - `-d/--home-dir` オプション
+/// - `AISH_SESSION` 環境変数
+/// - `AISH_HOME` 環境変数
+#[cfg(unix)]
+fn is_session_explicitly_specified(config: &Config) -> bool {
+    if config.session_dir.is_some() || config.home_dir.is_some() {
+        return true;
+    }
+    
+    if let Ok(env_session) = std::env::var("AISH_SESSION") {
+        if !env_session.is_empty() {
+            return true;
+        }
+    }
+    
+    if let Ok(env_home) = std::env::var("AISH_HOME") {
+        if !env_home.is_empty() {
+            return true;
+        }
+    }
+    
+    false
+}
 
 fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err(e) => {
             if e.is_usage() {
-                usecase::print_usage();
+                print_usage();
             }
             eprintln!("aish: {}", e);
             e.exit_code()
@@ -27,12 +104,32 @@ fn main() {
     process::exit(exit_code);
 }
 
+fn print_usage() {
+    eprintln!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
+}
+
+fn print_help() {
+    println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
+    println!("  -h                    Display this help message.");
+    println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME environment variable).");
+    println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
+    println!("  <command>             Command to execute. Omit to start the interactive shell.");
+    println!("  [args...]             Arguments for the command.");
+    println!();
+    println!("Implemented commands:");
+    println!("  clear                  Clear all part files in the session directory (delete conversation history).");
+    println!("  truncate_console_log   Truncate console buffer and log file (used by ai command).");
+    println!();
+    println!("Not yet implemented: resume, sessions, rollout, ls, rm_last, memory, models.");
+}
+
 pub fn run() -> Result<i32, Error> {
     let config = parse_args()?;
     #[cfg(unix)]
     {
-        let use_case = wire_aish();
-        use_case.run(config)
+        let app = wire_aish();
+        let runner = Runner { app };
+        runner.run(config)
     }
     #[cfg(not(unix))]
     {
