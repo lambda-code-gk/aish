@@ -421,9 +421,9 @@ impl LlmProvider for GptProvider {
                     }
                     continue;
                 }
+                // done は完了通知のみ。本文は delta で既に送っているため、ここで TextDelta を出さない（二重表示防止）
                 if type_str == "response.output_text.done" {
-                    if let Some(text) = v["text"].as_str() {
-                        callback(LlmEvent::TextDelta(text.to_string()))?;
+                    if v["text"].as_str().is_some() {
                         found_any_text = true;
                     }
                     continue;
