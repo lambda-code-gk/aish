@@ -32,8 +32,15 @@ impl LlmEventStream for DriverLlmStream<'_> {
 }
 
 /// 履歴 (Message) とクエリから Vec<Msg> を構築
-fn build_messages(history_messages: &[LlmMessage], query: &Query) -> Vec<Msg> {
+fn build_messages(
+    history_messages: &[LlmMessage],
+    query: &Query,
+    system_instruction: Option<&str>,
+) -> Vec<Msg> {
     let mut msgs: Vec<Msg> = Vec::new();
+    if let Some(s) = system_instruction {
+        msgs.push(Msg::system(s));
+    }
     for m in history_messages {
         if m.role == "user" {
             msgs.push(Msg::user(&m.content));
@@ -118,6 +125,7 @@ impl AiUseCase {
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
         query: &Query,
+        system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
         let history_messages = if self.session_is_valid(&session_dir) {
             let dir = session_dir.as_ref().expect("session_dir is Some");
@@ -148,7 +156,7 @@ impl AiUseCase {
             registry.register(Arc::clone(t));
         }
 
-        let messages = build_messages(&history_messages, query);
+        let messages = build_messages(&history_messages, query, system_instruction);
         let home_dir = self.env_resolver.resolve_home_dir()?;
         let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
         let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()))
@@ -178,8 +186,9 @@ impl RunQuery for AiUseCase {
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
         query: &Query,
+        system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
-        self.run_query_impl(session_dir, provider, query)
+        self.run_query_impl(session_dir, provider, query, system_instruction)
     }
 }
 

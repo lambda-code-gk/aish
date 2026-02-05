@@ -34,19 +34,30 @@ impl UseCaseRunner for Runner {
                 name,
                 args,
                 provider,
-            } => self
-                .app
-                .task_use_case
-                .run(session_dir, &name, &args, provider),
-            AiCommand::Query { provider, query } => {
+                system,
+            } => self.app.task_use_case.run(
+                session_dir,
+                &name,
+                &args,
+                provider,
+                system.as_deref(),
+            ),
+            AiCommand::Query {
+                provider,
+                query,
+                system,
+            } => {
                 if query.trim().is_empty() {
                     return Err(Error::invalid_argument(
                         "No query provided. Please provide a message to send to the LLM.",
                     ));
                 }
-                self.app
-                    .run_query
-                    .run_query(session_dir, provider, &query)
+                self.app.run_query.run_query(
+                    session_dir,
+                    provider,
+                    &query,
+                    system.as_deref(),
+                )
             }
         }
     }
@@ -82,6 +93,7 @@ fn print_help() {
     println!("Options:");
     println!("  -h, --help                    Show this help message");
     println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
+    println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
     println!();
     println!("Description:");
     println!("  Send a message to the LLM and display the response.");

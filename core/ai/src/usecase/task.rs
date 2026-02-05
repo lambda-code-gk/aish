@@ -29,6 +29,7 @@ impl TaskUseCase {
         name: &TaskName,
         args: &[String],
         provider: Option<ProviderName>,
+        system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
         if let Some(code) = self.task_runner.run_if_exists(name.as_ref(), args)? {
             return Ok(code);
@@ -41,6 +42,7 @@ impl TaskUseCase {
                 "No query provided. Please provide a message to send to the LLM.",
             ));
         }
-        self.run_query.run_query(session_dir, provider, &query)
+        self.run_query
+            .run_query(session_dir, provider, &query, system_instruction)
     }
 }

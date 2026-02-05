@@ -53,11 +53,8 @@ impl LlmProvider for EchoProvider {
         history: &[Message],
         _tools: Option<&[ToolDef]>,
     ) -> Result<Value, Error> {
-        // クエリ情報を表示
+        // クエリ情報を表示（システム指示は stream_events で1回だけ表示）
         println!("[Echo Provider] Query: {}", query);
-        if let Some(system) = system_instruction {
-            println!("[Echo Provider] System instruction: {}", system);
-        }
         if !history.is_empty() {
             println!("[Echo Provider] History: {} messages", history.len());
         }
@@ -117,6 +114,11 @@ impl LlmProvider for EchoProvider {
         };
         let query = payload["query"].as_str().unwrap_or("").trim();
         let history = payload["history"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+
+        // ストリーム入口でもシステムプロンプトを表示
+        if let Some(s) = payload.get("system_instruction").and_then(|v| v.as_str()) {
+            println!("[Echo Provider] System instruction: {}", s);
+        }
 
         // 直近がツール結果なら、テキスト応答を返して終了
         let last_is_tool = history

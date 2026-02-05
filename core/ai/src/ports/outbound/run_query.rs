@@ -13,5 +13,6 @@ pub trait RunQuery: Send + Sync {
         session_dir: Option<SessionDir>,
         provider: Option<ProviderName>,
         query: &Query,
+        system_instruction: Option<&str>,
     ) -> Result<i32, Error>;
 }
