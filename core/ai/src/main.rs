@@ -25,6 +25,11 @@ impl UseCaseRunner for Runner {
         let session_dir = self.app.env_resolver.session_dir_from_env();
         let cmd = config_to_command(config);
 
+        // -S 未指定時は有効な sysq を結合して system instruction にする
+        let system_instruction = |explicit: Option<String>| {
+            explicit.or_else(|| self.app.resolve_system_instruction.resolve().ok().flatten())
+        };
+
         match cmd {
             AiCommand::Help => {
                 print_help();
@@ -40,7 +45,7 @@ impl UseCaseRunner for Runner {
                 &name,
                 &args,
                 provider,
-                system.as_deref(),
+                system_instruction(system).as_deref(),
             ),
             AiCommand::Query {
                 provider,
@@ -56,7 +61,7 @@ impl UseCaseRunner for Runner {
                     session_dir,
                     provider,
                     &query,
-                    system.as_deref(),
+                    system_instruction(system).as_deref(),
                 )
             }
         }
@@ -94,6 +99,7 @@ fn print_help() {
     println!("  -h, --help                    Show this help message");
     println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
+    println!("                                If omitted, enabled system prompts from aish sysq are used.");
     println!();
     println!("Description:");
     println!("  Send a message to the LLM and display the response.");

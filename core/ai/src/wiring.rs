@@ -9,10 +9,12 @@ use common::tool::EchoTool;
 
 use crate::adapter::{
     CliToolApproval, PartSessionStorage, StdCommandAllowRulesLoader, StdEventSinkFactory,
-    StdTaskRunner, ShellTool,
+    StdResolveSystemInstruction, StdTaskRunner, ShellTool,
 };
 use crate::domain::Query;
-use crate::ports::outbound::{RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner};
+use crate::ports::outbound::{
+    ResolveSystemInstruction, RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
+};
 use crate::usecase::app::AiUseCase;
 use crate::usecase::task::TaskUseCase;
 
@@ -35,6 +37,7 @@ pub struct App {
     pub env_resolver: Arc<dyn EnvResolver>,
     pub task_use_case: TaskUseCase,
     pub run_query: Arc<dyn RunQuery>,
+    pub resolve_system_instruction: Arc<dyn ResolveSystemInstruction>,
     /// テスト用に露出（Query 実行・session/history の単体テストで利用）
     #[cfg_attr(not(test), allow(dead_code))]
     pub ai_use_case: Arc<AiUseCase>,
@@ -59,6 +62,8 @@ pub fn wire_ai() -> App {
         Arc::new(ShellTool::new()),
     ];
     let approver: Arc<dyn crate::ports::outbound::ToolApproval> = Arc::new(CliToolApproval::new());
+    let resolve_system_instruction: Arc<dyn ResolveSystemInstruction> =
+        Arc::new(StdResolveSystemInstruction::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     let ai_use_case = Arc::new(AiUseCase::new(
         fs,
         history_loader,
@@ -76,6 +81,7 @@ pub fn wire_ai() -> App {
         env_resolver,
         task_use_case,
         run_query,
+        resolve_system_instruction,
         ai_use_case,
     }
 }

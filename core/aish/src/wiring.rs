@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use common::adapter::{FileSystem, StdClock, StdFileSystem, StdPathResolver};
+use common::adapter::{EnvResolver, FileSystem, StdClock, StdEnvResolver, StdFileSystem, StdPathResolver};
 use common::part_id::{IdGenerator, StdIdGenerator};
 use common::ports::outbound::{PathResolver, Signal};
 
-use crate::adapter::{StdShellRunner, UnixPtySpawn, UnixSignal};
-use crate::ports::outbound::ShellRunner;
+use crate::adapter::{StdShellRunner, StdSysqRepository, UnixPtySpawn, UnixSignal};
+use crate::ports::outbound::{ShellRunner, SysqRepository};
 
 /// 配線で組み立てたポート群（main の Command ディスパッチで利用）
 #[cfg(unix)]
@@ -16,6 +16,7 @@ pub struct App {
     pub fs: Arc<dyn FileSystem>,
     pub signal: Arc<dyn Signal>,
     pub shell_runner: Arc<dyn ShellRunner>,
+    pub sysq_repository: Arc<dyn SysqRepository>,
 }
 
 /// 配線: 標準アダプタで App を組み立てる（Unix 専用）
@@ -32,10 +33,14 @@ pub fn wire_aish() -> App {
         Arc::clone(&signal) as Arc<dyn Signal>,
         pty_spawn,
     ));
+    let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
+    let sysq_repository: Arc<dyn SysqRepository> =
+        Arc::new(StdSysqRepository::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     App {
         path_resolver,
         fs,
         signal,
         shell_runner,
+        sysq_repository,
     }
 }

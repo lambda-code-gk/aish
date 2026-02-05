@@ -78,7 +78,7 @@ pub fn config_to_command(config: &Config) -> Command {
         return Command::Help;
     }
     match &config.command_name {
-        Some(name) => Command::parse(name),
+        Some(name) => Command::parse_with_args(name, &config.command_args),
         None => Command::Shell,
     }
 }

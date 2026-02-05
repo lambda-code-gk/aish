@@ -284,6 +284,18 @@ test_aish_binary() {
         return 1
     fi
     log_info "✓ -s uses specified session dir for resume"
+
+    # テスト6: sysq list が 0 で終了すること
+    log_info "Test 6: sysq list exits 0"
+    if "$binary_path" -d "$test_home_dir" sysq list > "$TEST_DIR/aish_sysq_list.stdout" 2> "$TEST_DIR/aish_sysq_list.stderr"; then
+        log_info "✓ sysq list succeeded (exit code: 0)"
+    else
+        log_error "✗ sysq list failed"
+        cat "$TEST_DIR/aish_sysq_list.stderr"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("aish (sysq list)")
+        return 1
+    fi
     
     log_info "aish integration test PASSED"
     TESTS_PASSED=$((TESTS_PASSED + 1))

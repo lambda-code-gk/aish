@@ -26,6 +26,9 @@ pub mod ports;
 /// セッション管理
 pub mod session;
 
+/// システムプロンプト（sysq）のドメインとマージ
+pub mod system_prompt;
+
 /// イベント Sink（表示・保存の分離；trait は ports に定義）
 pub mod sink;
 

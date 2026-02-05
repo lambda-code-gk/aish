@@ -28,6 +28,11 @@ else
     BUILD_CMD="cargo build --release"
 fi
 
+# 簡易アーキテクチャチェック
+rg "crate::adapter" core/**/usecase && (echo "illigal dependency" ; exit 1)
+rg "crate::cli" core/**/usecase && (echo "illigal dependency" ; exit 1)
+
+
 # aish-captureをビルド
 echo "Building aish-capture..."
 cd "$PROJECT_ROOT/tools/aish-capture"

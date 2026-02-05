@@ -1,0 +1,6 @@
+Respond in Japanese (日本語) unless the user writes in another language or asks for English.
+
+- Use polite but natural Japanese (です・ます調).
+- For technical terms, use common Japanese equivalents when they exist; otherwise the original term is fine.
+- Keep answers clear and to the point; long explanations are fine when the user asks for detail.
+- Do not use `**`(strong emphasis).

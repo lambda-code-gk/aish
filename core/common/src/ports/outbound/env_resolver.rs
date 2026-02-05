@@ -5,6 +5,7 @@
 
 use crate::domain::{HomeDir, SessionDir};
 use crate::error::Error;
+use std::path::PathBuf;
 
 /// 環境変数解決抽象（Outbound ポート）
 ///
@@ -20,4 +21,14 @@ pub trait EnvResolver: Send + Sync {
     /// 2. $XDG_CONFIG_HOME/aish（XDG_CONFIG_HOME が設定されていれば）
     /// 3. $HOME/.config/aish
     fn resolve_home_dir(&self) -> Result<HomeDir, Error>;
+
+    /// カレントディレクトリを返す（プロジェクトスコープ探索用）
+    fn current_dir(&self) -> Result<PathBuf, Error>;
+
+    /// グローバル system.d ディレクトリ
+    /// AISH_HOME が設定されていれば $AISH_HOME/config/system.d、そうでなければ ~/.config/aish/system.d
+    fn resolve_global_system_d_dir(&self) -> Result<Option<PathBuf>, Error>;
+
+    /// ユーザー system.d ディレクトリ（~/.aish/system.d）
+    fn resolve_user_system_d_dir(&self) -> Result<Option<PathBuf>, Error>;
 }

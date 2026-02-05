@@ -60,6 +60,11 @@ pub fn run_app(config: Config) -> Result<i32, Error> {
             let session_explicitly_specified = is_session_explicitly_specified(&config);
             use_case.run(&config, session_explicitly_specified)
         }
+        Command::SysqList
+        | Command::SysqEnable { .. }
+        | Command::SysqDisable { .. } => Err(Error::invalid_argument(
+            "sysq commands are not available in run_app (use aish binary).".to_string(),
+        )),
         Command::Resume
         | Command::Sessions
         | Command::Rollout

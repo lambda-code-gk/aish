@@ -11,7 +11,7 @@ use cli::{config_to_command, parse_args, Config};
 use domain::command::Command;
 use ports::inbound::UseCaseRunner;
 #[cfg(unix)]
-use usecase::{ClearUseCase, ShellUseCase, TruncateConsoleLogUseCase};
+use usecase::{ClearUseCase, ShellUseCase, SysqUseCase, TruncateConsoleLogUseCase};
 #[cfg(unix)]
 use wiring::{wire_aish, App};
 
@@ -43,6 +43,22 @@ impl UseCaseRunner for Runner {
                 let use_case = ClearUseCase::from_app(&self.app);
                 let session_explicitly_specified = is_session_explicitly_specified(&config);
                 use_case.run(&config, session_explicitly_specified)
+            }
+            Command::SysqList => {
+                let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
+                let entries = use_case.list()?;
+                print_sysq_list(&entries);
+                Ok(0)
+            }
+            Command::SysqEnable { ids } => {
+                let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
+                use_case.enable(&ids)?;
+                Ok(0)
+            }
+            Command::SysqDisable { ids } => {
+                let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
+                use_case.disable(&ids)?;
+                Ok(0)
             }
             Command::Resume
             | Command::Sessions
@@ -120,7 +136,21 @@ fn print_help() {
     println!("  clear                  Clear all part files in the session directory (delete conversation history).");
     println!("  truncate_console_log   Truncate console buffer and log file (used by ai command).");
     println!();
+    println!("  sysq list              List system prompts and their enabled state.");
+    println!("  sysq enable <id>...    Enable system prompt(s).");
+    println!("  sysq disable <id>...   Disable system prompt(s).");
+    println!();
     println!("Not yet implemented: resume, sessions, rollout, ls, rm_last, memory, models.");
+}
+
+#[cfg(unix)]
+fn print_sysq_list(entries: &[crate::ports::outbound::SysqListEntry]) {
+    println!("{:8} {:7} {:<20} {}", "SCOPE", "ENABLED", "ID", "TITLE");
+    for e in entries {
+        let enabled = if e.enabled { "yes" } else { "no" };
+        let title = if e.title.len() > 40 { format!("{}...", &e.title[..37]) } else { e.title.clone() };
+        println!("{:8} {:7} {:<20} {}", e.scope.as_str(), enabled, e.id, title);
+    }
 }
 
 pub fn run() -> Result<i32, Error> {

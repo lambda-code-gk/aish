@@ -3,6 +3,8 @@ pub(crate) mod console_handler;
 pub(crate) mod logfmt;
 pub(crate) mod platform;
 pub(crate) mod shell;
+pub(crate) mod sysq;
 pub(crate) mod terminal;
 pub(crate) use aish_adapter::{UnixPtySpawn, UnixSignal};
 pub(crate) use shell::StdShellRunner;
+pub(crate) use sysq::StdSysqRepository;
