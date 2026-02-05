@@ -1,6 +1,6 @@
 //! タスク実行ユースケース（タスクがあれば実行、なければクエリに委譲）
 
-use crate::domain::TaskName;
+use crate::domain::{Query, TaskName};
 use crate::ports::outbound::{RunQuery, TaskRunner};
 use common::domain::{ProviderName, SessionDir};
 use common::error::Error;
@@ -35,7 +35,7 @@ impl TaskUseCase {
         }
         let mut query_parts = vec![name.as_ref().to_string()];
         query_parts.extend(args.iter().cloned());
-        let query = query_parts.join(" ");
+        let query = Query::new(query_parts.join(" "));
         if query.trim().is_empty() {
             return Err(Error::invalid_argument(
                 "No query provided. Please provide a message to send to the LLM.",

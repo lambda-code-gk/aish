@@ -1,4 +1,4 @@
-use crate::domain::{AiCommand, TaskName};
+use crate::domain::{AiCommand, Query, TaskName};
 use common::domain::ProviderName;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,7 +81,7 @@ pub fn config_to_command(config: Config) -> AiCommand {
         };
     }
 
-    let query = config.message_args.join(" ");
+    let query = Query::new(config.message_args.join(" "));
     AiCommand::Query {
         provider: config.provider,
         query,

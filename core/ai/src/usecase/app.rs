@@ -9,6 +9,7 @@ use common::error::Error;
 use common::llm::factory::AnyProvider;
 use common::llm::{create_driver, LlmDriver, ProviderType};
 use common::llm::provider::Message as LlmMessage;
+use crate::domain::Query;
 use common::msg::Msg;
 use common::domain::SessionDir;
 use common::tool::{Tool, ToolContext, ToolRegistry};
@@ -31,7 +32,7 @@ impl LlmEventStream for DriverLlmStream<'_> {
 }
 
 /// 履歴 (Message) とクエリから Vec<Msg> を構築
-fn build_messages(history_messages: &[LlmMessage], query: &str) -> Vec<Msg> {
+fn build_messages(history_messages: &[LlmMessage], query: &Query) -> Vec<Msg> {
     let mut msgs: Vec<Msg> = Vec::new();
     for m in history_messages {
         if m.role == "user" {
@@ -51,7 +52,7 @@ fn build_messages(history_messages: &[LlmMessage], query: &str) -> Vec<Msg> {
             }
         }
     }
-    msgs.push(Msg::user(query));
+    msgs.push(Msg::user(query.as_ref()));
     msgs
 }
 
@@ -116,7 +117,7 @@ impl AiUseCase {
         &self,
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
-        query: &str,
+        query: &Query,
     ) -> Result<i32, Error> {
         let history_messages = if self.session_is_valid(&session_dir) {
             let dir = session_dir.as_ref().expect("session_dir is Some");
@@ -147,7 +148,7 @@ impl AiUseCase {
             registry.register(Arc::clone(t));
         }
 
-        let messages = build_messages(&history_messages, &query);
+        let messages = build_messages(&history_messages, query);
         let home_dir = self.env_resolver.resolve_home_dir()?;
         let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
         let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()))
@@ -176,7 +177,7 @@ impl RunQuery for AiUseCase {
         &self,
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
-        query: &str,
+        query: &Query,
     ) -> Result<i32, Error> {
         self.run_query_impl(session_dir, provider, query)
     }

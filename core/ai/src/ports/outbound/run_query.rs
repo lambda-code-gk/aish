@@ -1,5 +1,6 @@
 //! クエリ実行の Outbound ポート（タスク未ヒット時の LLM 実行に利用）
 
+use crate::domain::Query;
 use common::domain::{ProviderName, SessionDir};
 use common::error::Error;
 
@@ -11,6 +12,6 @@ pub trait RunQuery: Send + Sync {
         &self,
         session_dir: Option<SessionDir>,
         provider: Option<ProviderName>,
-        query: &str,
+        query: &Query,
     ) -> Result<i32, Error>;
 }
