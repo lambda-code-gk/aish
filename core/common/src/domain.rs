@@ -125,3 +125,38 @@ impl AsRef<str> for ProviderName {
         &self.0
     }
 }
+
+/// モデル名（gemini-2.0, gpt-4 等）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelName(String);
+
+impl ModelName {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+}
+
+impl std::ops::Deref for ModelName {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ModelName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<String> for ModelName {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl AsRef<str> for ModelName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}

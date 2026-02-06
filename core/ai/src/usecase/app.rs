@@ -124,6 +124,7 @@ impl AiUseCase {
         &self,
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
+        model: Option<common::domain::ModelName>,
         query: &Query,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
@@ -149,7 +150,8 @@ impl AiUseCase {
             ProviderType::Gemini
         };
 
-        let driver = create_driver(provider_type, None)?;
+        let model_str = model.as_ref().map(|m| m.as_ref().to_string());
+        let driver = create_driver(provider_type, model_str)?;
         let stream = DriverLlmStream(&driver);
         let mut registry = ToolRegistry::new();
         for t in &self.tools {
@@ -185,10 +187,11 @@ impl RunQuery for AiUseCase {
         &self,
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
+        model: Option<common::domain::ModelName>,
         query: &Query,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
-        self.run_query_impl(session_dir, provider, query, system_instruction)
+        self.run_query_impl(session_dir, provider, model, query, system_instruction)
     }
 }
 

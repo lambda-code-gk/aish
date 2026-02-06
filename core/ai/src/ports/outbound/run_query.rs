@@ -1,7 +1,7 @@
 //! クエリ実行の Outbound ポート（タスク未ヒット時の LLM 実行に利用）
 
 use crate::domain::Query;
-use common::domain::{ProviderName, SessionDir};
+use common::domain::{ModelName, ProviderName, SessionDir};
 use common::error::Error;
 
 /// クエリを LLM に送って実行する能力
@@ -12,6 +12,7 @@ pub trait RunQuery: Send + Sync {
         &self,
         session_dir: Option<SessionDir>,
         provider: Option<ProviderName>,
+        model: Option<ModelName>,
         query: &Query,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error>;

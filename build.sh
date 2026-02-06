@@ -29,8 +29,8 @@ else
 fi
 
 # 簡易アーキテクチャチェック
-rg "crate::adapter" core/**/usecase && (echo "illigal dependency" ; exit 1)
-rg "crate::cli" core/**/usecase && (echo "illigal dependency" ; exit 1)
+rg "crate::adapter" core/**/src/usecase && (echo "illigal dependency" ; exit 1)
+rg "crate::cli" core/**/src/usecase && (echo "illigal dependency" ; exit 1)
 
 
 # aish-captureをビルド

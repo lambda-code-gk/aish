@@ -2,7 +2,7 @@
 
 use crate::domain::{Query, TaskName};
 use crate::ports::outbound::{RunQuery, TaskRunner};
-use common::domain::{ProviderName, SessionDir};
+use common::domain::{ModelName, ProviderName, SessionDir};
 use common::error::Error;
 use std::sync::Arc;
 
@@ -29,6 +29,7 @@ impl TaskUseCase {
         name: &TaskName,
         args: &[String],
         provider: Option<ProviderName>,
+        model: Option<ModelName>,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
         if let Some(code) = self.task_runner.run_if_exists(name.as_ref(), args)? {
@@ -43,6 +44,6 @@ impl TaskUseCase {
             ));
         }
         self.run_query
-            .run_query(session_dir, provider, &query, system_instruction)
+            .run_query(session_dir, provider, model, &query, system_instruction)
     }
 }

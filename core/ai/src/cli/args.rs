@@ -1,10 +1,11 @@
 use crate::domain::{AiCommand, Query, TaskName};
-use common::domain::ProviderName;
+use common::domain::{ModelName, ProviderName};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub help: bool,
     pub provider: Option<ProviderName>,
+    pub model: Option<ModelName>,
     pub system: Option<String>,
     pub task: Option<TaskName>,
     pub message_args: Vec<String>,
@@ -15,6 +16,7 @@ impl Default for Config {
         Self {
             help: false,
             provider: None,
+            model: None,
             system: None,
             task: None,
             message_args: Vec::new(),
@@ -55,6 +57,14 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
                 config.system = Some(args[i].clone());
                 i += 1;
             }
+            "-m" | "--model" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(Error::invalid_argument("Option -m/--model requires an argument"));
+                }
+                config.model = Some(ModelName::new(args[i].clone()));
+                i += 1;
+            }
             _ if args[i].starts_with('-') => {
                 return Err(Error::invalid_argument(format!("Unknown option: {}", args[i])));
             }
@@ -84,11 +94,13 @@ pub fn config_to_command(config: Config) -> AiCommand {
     if let Some(task) = config.task {
         let args = config.message_args;
         let provider = config.provider;
+        let model = config.model;
         let system = config.system;
         return AiCommand::Task {
             name: task,
             args,
             provider,
+            model,
             system,
         };
     }
@@ -96,6 +108,7 @@ pub fn config_to_command(config: Config) -> AiCommand {
     let query = Query::new(config.message_args.join(" "));
     AiCommand::Query {
         provider: config.provider,
+        model: config.model,
         query,
         system: config.system,
     }
@@ -110,6 +123,7 @@ mod tests {
         let config = Config::default();
         assert!(!config.help);
         assert!(config.provider.is_none());
+        assert!(config.model.is_none());
         assert!(config.system.is_none());
         assert!(config.task.is_none());
         assert_eq!(config.message_args.len(), 0);
@@ -284,6 +298,30 @@ mod tests {
     #[test]
     fn test_parse_args_system_requires_arg() {
         let args = vec!["ai".to_string(), "--system".to_string()];
+        let result = parse_args_from(&args);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("requires an argument"));
+        assert_eq!(err.exit_code(), 64);
+    }
+
+    #[test]
+    fn test_parse_args_model_short() {
+        let args = vec!["ai".to_string(), "-m".to_string(), "gemini-2.0".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert_eq!(config.model.as_ref().map(|m| m.as_ref()), Some("gemini-2.0"));
+    }
+
+    #[test]
+    fn test_parse_args_model_long() {
+        let args = vec!["ai".to_string(), "--model".to_string(), "gpt-4".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert_eq!(config.model.as_ref().map(|m| m.as_ref()), Some("gpt-4"));
+    }
+
+    #[test]
+    fn test_parse_args_model_requires_arg() {
+        let args = vec!["ai".to_string(), "-m".to_string()];
         let result = parse_args_from(&args);
         assert!(result.is_err());
         let err = result.unwrap_err();

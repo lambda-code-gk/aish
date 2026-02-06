@@ -25,10 +25,11 @@ impl RunQuery for AiRunQuery {
         &self,
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
+        model: Option<common::domain::ModelName>,
         query: &Query,
         system_instruction: Option<&str>,
     ) -> Result<i32, common::error::Error> {
-        self.0.run_query(session_dir, provider, query, system_instruction)
+        self.0.run_query(session_dir, provider, model, query, system_instruction)
     }
 }
 

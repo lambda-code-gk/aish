@@ -39,16 +39,19 @@ impl UseCaseRunner for Runner {
                 name,
                 args,
                 provider,
+                model,
                 system,
             } => self.app.task_use_case.run(
                 session_dir,
                 &name,
                 &args,
                 provider,
+                model,
                 system_instruction(system).as_deref(),
             ),
             AiCommand::Query {
                 provider,
+                model,
                 query,
                 system,
             } => {
@@ -60,6 +63,7 @@ impl UseCaseRunner for Runner {
                 self.app.run_query.run_query(
                     session_dir,
                     provider,
+                    model,
                     &query,
                     system_instruction(system).as_deref(),
                 )
@@ -98,6 +102,7 @@ fn print_help() {
     println!("Options:");
     println!("  -h, --help                    Show this help message");
     println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
+    println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: provider default");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
     println!("                                If omitted, enabled system prompts from aish sysq are used.");
     println!();
