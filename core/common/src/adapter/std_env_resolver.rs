@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 const SYSTEM_D_SUBDIR: &str = "system.d";
 const CONFIG_SYSTEM_D: &str = "config/system.d";
+const LLM_CONFIG_FILENAME: &str = "llm.json";
+const CONFIG_LLM: &str = "config/llm.json";
 
 /// 標準環境変数解決実装
 #[derive(Debug, Clone, Default)]
@@ -78,5 +80,17 @@ impl EnvResolver for StdEnvResolver {
         let home = env::var("HOME").ok().filter(|s| !s.is_empty());
         let path = home.map(|h| PathBuf::from(h).join(".aish").join(SYSTEM_D_SUBDIR));
         Ok(path)
+    }
+
+    fn resolve_llm_config_path(&self) -> Result<PathBuf, Error> {
+        if let Ok(home) = env::var("AISH_HOME") {
+            if !home.is_empty() {
+                let mut p = PathBuf::from(home);
+                p.push(CONFIG_LLM);
+                return Ok(p);
+            }
+        }
+        let home_dir = self.resolve_home_dir()?;
+        Ok(home_dir.as_ref().join(LLM_CONFIG_FILENAME))
     }
 }

@@ -1,6 +1,5 @@
 //! Clear コマンドのユースケース
 
-use crate::cli::Config;
 use crate::wiring::App;
 use common::adapter::FileSystem;
 use common::error::Error;
@@ -39,7 +38,11 @@ impl ClearUseCase {
     /// `session_explicitly_specified` は、セッションが明示的に指定されているかを示す。
     /// CLI オプション (-s/-d) や環境変数 (AISH_SESSION/AISH_HOME) から main/cli 側で判定し、
     /// この引数として渡す（usecase は環境変数を直接参照しない）。
-    pub fn run(&self, config: &Config, session_explicitly_specified: bool) -> Result<i32, Error> {
+    pub fn run(
+        &self,
+        path_input: &PathResolverInput,
+        session_explicitly_specified: bool,
+    ) -> Result<i32, Error> {
         // clear コマンドはセッションが明示的に指定されている必要がある
         if !session_explicitly_specified {
             return Err(Error::invalid_argument(
@@ -47,17 +50,13 @@ impl ClearUseCase {
                  Use -s/--session-dir, -d/--home-dir, or set AISH_SESSION environment variable.",
             ));
         }
-        let session = self.resolve_session(config)?;
+        let session = self.resolve_session(path_input)?;
         self.clear_parts(session.session_dir().as_ref())
     }
 
-    fn resolve_session(&self, config: &Config) -> Result<Session, Error> {
-        let path_input = PathResolverInput {
-            home_dir: config.home_dir.clone(),
-            session_dir: config.session_dir.clone(),
-        };
-        let home_dir = self.path_resolver.resolve_home_dir(&path_input)?;
-        let session_path = self.path_resolver.resolve_session_dir(&path_input, &home_dir)?;
+    fn resolve_session(&self, path_input: &PathResolverInput) -> Result<Session, Error> {
+        let home_dir = self.path_resolver.resolve_home_dir(path_input)?;
+        let session_path = self.path_resolver.resolve_session_dir(path_input, &home_dir)?;
         Session::new(&session_path, &home_dir)
     }
 

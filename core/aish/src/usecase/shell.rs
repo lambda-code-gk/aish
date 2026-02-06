@@ -1,6 +1,5 @@
 //! Shell コマンドのユースケース
 
-use crate::cli::Config;
 use crate::ports::outbound::ShellRunner;
 use crate::wiring::App;
 use common::error::Error;
@@ -34,21 +33,17 @@ impl ShellUseCase {
     }
 
     /// Shell を実行する
-    pub fn run(&self, config: &Config) -> Result<i32, Error> {
-        let session = self.resolve_session(config)?;
+    pub fn run(&self, path_input: &PathResolverInput) -> Result<i32, Error> {
+        let session = self.resolve_session(path_input)?;
         self.shell_runner.run(
             session.session_dir().as_ref(),
             session.aish_home().as_ref(),
         )
     }
 
-    fn resolve_session(&self, config: &Config) -> Result<Session, Error> {
-        let path_input = PathResolverInput {
-            home_dir: config.home_dir.clone(),
-            session_dir: config.session_dir.clone(),
-        };
-        let home_dir = self.path_resolver.resolve_home_dir(&path_input)?;
-        let session_path = self.path_resolver.resolve_session_dir(&path_input, &home_dir)?;
+    fn resolve_session(&self, path_input: &PathResolverInput) -> Result<Session, Error> {
+        let home_dir = self.path_resolver.resolve_home_dir(path_input)?;
+        let session_path = self.path_resolver.resolve_session_dir(path_input, &home_dir)?;
         Session::new(&session_path, &home_dir)
     }
 }

@@ -51,7 +51,7 @@ impl EventSink for StdoutSink {
                     .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
             }
             AgentEvent::Llm(LlmEvent::ToolCallBegin { name, .. }) => {
-                eprintln!("{}\nRunning tool: {}...{}", DARK_GREY, name, RESET);
+                eprintln!("{}Running tool: {}...{}", DARK_GREY, name, RESET);
             }
             AgentEvent::ToolResult { name, args, .. } => {
                 eprintln!("{}Tool {} args: {}{}", DARK_GREY, name, args, RESET);
