@@ -13,10 +13,10 @@ pub mod factory;
 pub mod openai_compat;
 pub mod resolver;
 
-pub use config::{LlmConfig, ProviderProfile, ProviderTypeKind};
+pub use config::{ProfilesConfig, ProviderProfile, ProviderTypeKind};
 pub use driver::LlmDriver;
 pub use events::{FinishReason, LlmEvent};
 pub use factory::{ProviderType, create_provider, create_driver};
 pub use provider::LlmProvider;
-pub use resolver::{load_llm_config, resolve_provider, ResolvedProvider};
+pub use resolver::{load_profiles_config, resolve_provider, ResolvedProvider};
 

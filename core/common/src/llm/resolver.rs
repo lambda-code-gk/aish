@@ -1,8 +1,8 @@
-//! llm.json の読み込みとプロバイダ解決
+//! profiles.json の読み込みとプロバイダ解決
 
 use crate::domain::ProviderName;
 use crate::error::Error;
-use crate::llm::config::{LlmConfig, ProviderTypeKind};
+use crate::llm::config::{ProfilesConfig, ProviderTypeKind};
 use crate::llm::factory::ProviderType;
 use crate::ports::outbound::{EnvResolver, FileSystem};
 
@@ -18,19 +18,19 @@ pub struct ResolvedProvider {
     pub temperature: Option<f32>,
 }
 
-/// llm.json を読み込む。ファイルが無ければ Ok(None)、JSON が壊れていれば Err（メッセージにパス含める）
-pub fn load_llm_config(
+/// profiles.json を読み込む。ファイルが無ければ Ok(None)、JSON が壊れていれば Err（メッセージにパス含める）
+pub fn load_profiles_config(
     fs: &dyn FileSystem,
     env: &dyn EnvResolver,
-) -> Result<Option<LlmConfig>, Error> {
-    let path = env.resolve_llm_config_path()?;
+) -> Result<Option<ProfilesConfig>, Error> {
+    let path = env.resolve_profiles_config_path()?;
     if !fs.exists(path.as_path()) {
         return Ok(None);
     }
     let contents = fs
         .read_to_string(path.as_path())
         .map_err(|e| Error::io_msg(format!("{}: {}", path.display(), e)))?;
-    LlmConfig::parse(&contents)
+    ProfilesConfig::parse(&contents)
         .map_err(|e| Error::json(format!("{}: {}", path.display(), e)))
         .map(Some)
 }
@@ -49,11 +49,11 @@ fn builtin_provider_names() -> &'static [&'static str] {
     &["gemini", "gpt", "openai", "openai_compat", "echo"]
 }
 
-/// 要求されたプロバイダ名（None の場合は default）と LlmConfig から ResolvedProvider を解決する。
+/// 要求されたプロバイダ名（None の場合は default）と ProfilesConfig から ResolvedProvider を解決する。
 /// 不明なプロバイダの場合は Error::invalid_argument（is_usage == true）で利用可能一覧を返す。
 pub fn resolve_provider(
     requested: Option<&ProviderName>,
-    cfg: Option<&LlmConfig>,
+    cfg: Option<&ProfilesConfig>,
 ) -> Result<ResolvedProvider, Error> {
     let effective_name: &str = requested
         .map(|r| r.as_ref())
@@ -113,7 +113,7 @@ pub fn resolve_provider(
 mod tests {
     use super::*;
     use crate::domain::ProviderName;
-    use crate::llm::config::{LlmConfig, ProviderProfile, ProviderTypeKind};
+    use crate::llm::config::{ProfilesConfig, ProviderProfile, ProviderTypeKind};
 
     #[test]
     fn test_resolve_provider_no_cfg_requested_none() {
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_resolve_provider_cfg_default_provider() {
-        let cfg = LlmConfig {
+        let cfg = ProfilesConfig {
             default_provider: Some("my_openai".to_string()),
             providers: {
                 let mut m = std::collections::HashMap::new();
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_resolve_provider_cfg_requested_overrides_default() {
-        let cfg = LlmConfig {
+        let cfg = ProfilesConfig {
             default_provider: Some("gemini".to_string()),
             providers: std::collections::HashMap::new(),
         };
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_resolve_provider_cfg_custom_name_unknown_builtin_fallback() {
-        let cfg = LlmConfig {
+        let cfg = ProfilesConfig {
             default_provider: None,
             providers: {
                 let mut m = std::collections::HashMap::new();
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_resolve_provider_cfg_unknown_provider_lists_available() {
-        let cfg = LlmConfig {
+        let cfg = ProfilesConfig {
             default_provider: None,
             providers: {
                 let mut m = std::collections::HashMap::new();

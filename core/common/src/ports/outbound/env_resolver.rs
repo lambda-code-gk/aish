@@ -32,7 +32,7 @@ pub trait EnvResolver: Send + Sync {
     /// ユーザー system.d ディレクトリ（~/.aish/system.d）
     fn resolve_user_system_d_dir(&self) -> Result<Option<PathBuf>, Error>;
 
-    /// llm 設定ファイルのパス
-    /// AISH_HOME があれば $AISH_HOME/config/llm.json、なければ resolve_home_dir() 直下の llm.json（例: ~/.config/aish/llm.json）
-    fn resolve_llm_config_path(&self) -> Result<PathBuf, Error>;
+    /// プロバイダプロファイル設定ファイルのパス
+    /// AISH_HOME があれば $AISH_HOME/config/profiles.json、なければ resolve_home_dir() 直下の profiles.json（例: ~/.config/aish/profiles.json）
+    fn resolve_profiles_config_path(&self) -> Result<PathBuf, Error>;
 }

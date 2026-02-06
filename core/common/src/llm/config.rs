@@ -1,13 +1,13 @@
-//! llm.json 用の設定型
+//! profiles.json 用の設定型
 //!
 //! プロバイダ名から ProviderType とオプション（base_url / model / api_key_env / temperature）を解決するための構造体。
 
 use serde::Deserialize;
 use std::collections::HashMap;
 
-/// llm.json のルート
+/// profiles.json のルート
 #[derive(Debug, Clone, Default)]
-pub struct LlmConfig {
+pub struct ProfilesConfig {
     /// 未指定時に使うプロバイダ名
     pub default_provider: Option<String>,
     /// プロバイダ名 -> プロファイル
@@ -51,7 +51,7 @@ impl ProviderTypeKind {
 
 /// serde 用の内部構造（type が予約語のため）
 #[derive(Debug, Deserialize)]
-struct LlmConfigRaw {
+struct ProfilesConfigRaw {
     #[serde(alias = "default")]
     default_provider: Option<String>,
     providers: Option<HashMap<String, ProviderProfileRaw>>,
@@ -90,17 +90,17 @@ impl From<ProviderTypeKindSerde> for ProviderTypeKind {
     }
 }
 
-impl LlmConfig {
+impl ProfilesConfig {
     /// JSON 文字列からパース（ファイル読みは resolver で行う）
     pub fn parse(json: &str) -> Result<Self, serde_json::Error> {
-        let raw: LlmConfigRaw = serde_json::from_str(json)?;
+        let raw: ProfilesConfigRaw = serde_json::from_str(json)?;
         let providers = raw
             .providers
             .unwrap_or_default()
             .into_iter()
             .map(|(k, v)| (k, v.into()))
             .collect();
-        Ok(LlmConfig {
+        Ok(ProfilesConfig {
             default_provider: raw.default_provider,
             providers,
         })
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_parse_empty_object() {
-        let cfg = LlmConfig::parse("{}").unwrap();
+        let cfg = ProfilesConfig::parse("{}").unwrap();
         assert!(cfg.default_provider.is_none());
         assert!(cfg.providers.is_empty());
     }
@@ -143,7 +143,7 @@ mod tests {
             }
         }
         "#;
-        let cfg = LlmConfig::parse(json).unwrap();
+        let cfg = ProfilesConfig::parse(json).unwrap();
         assert_eq!(cfg.default_provider.as_deref(), Some("my_gemini"));
         assert_eq!(cfg.providers.len(), 4);
 
@@ -166,14 +166,14 @@ mod tests {
     #[test]
     fn test_parse_type_alias_gpt() {
         let json = r#"{ "providers": { "x": { "type": "gpt" } } }"#;
-        let cfg = LlmConfig::parse(json).unwrap();
+        let cfg = ProfilesConfig::parse(json).unwrap();
         let p = cfg.providers.get("x").unwrap();
         assert!(matches!(p.type_, ProviderTypeKind::Openai));
     }
 
     #[test]
     fn test_parse_alias_default_and_default_model_and_ollama() {
-        // サンプル llm.json 互換: default_provider→default, model→default_model, type→ollama
+        // サンプル profiles.json 互換: default_provider→default, model→default_model, type→ollama
         let json = r#"
         {
             "default": "local",
@@ -187,7 +187,7 @@ mod tests {
             }
         }
         "#;
-        let cfg = LlmConfig::parse(json).unwrap();
+        let cfg = ProfilesConfig::parse(json).unwrap();
         assert_eq!(cfg.default_provider.as_deref(), Some("local"));
         let p = cfg.providers.get("local").unwrap();
         assert!(matches!(p.type_, ProviderTypeKind::OpenaiCompat));

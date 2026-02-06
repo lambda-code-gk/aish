@@ -7,7 +7,7 @@ use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{FileSystem, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
-use common::llm::{create_provider, load_llm_config, resolve_provider, LlmDriver, ResolvedProvider};
+use common::llm::{create_provider, load_profiles_config, resolve_provider, LlmDriver, ResolvedProvider};
 use common::llm::provider::Message as LlmMessage;
 use crate::domain::Query;
 use common::msg::Msg;
@@ -155,7 +155,7 @@ impl AiUseCase {
             Vec::new()
         };
 
-        let cfg_opt = load_llm_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
+        let cfg_opt = load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
         let resolved = resolve_provider(provider.as_ref(), cfg_opt.as_ref())?;
         let model_str = model
             .as_ref()
