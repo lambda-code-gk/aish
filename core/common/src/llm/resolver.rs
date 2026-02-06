@@ -9,6 +9,8 @@ use crate::ports::outbound::{EnvResolver, FileSystem};
 /// 解決済みプロバイダ（ProviderType + オプション）
 #[derive(Debug, Clone)]
 pub struct ResolvedProvider {
+    /// 解決に使ったプロファイル名（例: "local", "gemini"）。エラー表示用
+    pub profile_name: String,
     pub provider_type: ProviderType,
     pub base_url: Option<String>,
     pub model: Option<String>,
@@ -65,6 +67,7 @@ pub fn resolve_provider(
         if let Some(profile) = cfg.providers.get(effective_name) {
             let provider_type = provider_type_kind_to_provider_type(profile.type_);
             return Ok(ResolvedProvider {
+                profile_name: effective_name.to_string(),
                 provider_type,
                 base_url: profile.base_url.clone(),
                 model: profile.model.clone(),
@@ -77,6 +80,7 @@ pub fn resolve_provider(
     // 2) ビルトイン (ProviderType::from_str) を試す
     if let Some(provider_type) = ProviderType::from_str(effective_name) {
         return Ok(ResolvedProvider {
+            profile_name: effective_name.to_string(),
             provider_type,
             base_url: None,
             model: None,
@@ -114,6 +118,7 @@ mod tests {
     #[test]
     fn test_resolve_provider_no_cfg_requested_none() {
         let r = resolve_provider(None, None).unwrap();
+        assert_eq!(r.profile_name, "gemini");
         assert_eq!(r.provider_type, ProviderType::Gemini);
         assert!(r.model.is_none());
     }
@@ -169,6 +174,7 @@ mod tests {
             },
         };
         let r = resolve_provider(None, Some(&cfg)).unwrap();
+        assert_eq!(r.profile_name, "my_openai");
         assert_eq!(r.provider_type, ProviderType::Gpt);
         assert_eq!(r.base_url.as_deref(), Some("https://my.api/v1"));
         assert_eq!(r.model.as_deref(), Some("gpt-4"));

@@ -145,11 +145,13 @@ impl LlmProvider for AnyProvider {
 /// * `model` - モデル名（オプション、デフォルト値が使用される）
 /// * `base_url` - ベース URL（Gpt / OpenAiCompat 用。None のとき各プロバイダのデフォルト）
 /// * `api_key_env` - API キーを読む環境変数名（Gpt / OpenAiCompat 用。None のとき各プロバイダのデフォルト）
+/// * `temperature` - 温度（Gpt / OpenAiCompat 用。None のとき各プロバイダのデフォルト）
 pub fn create_provider(
     provider_type: ProviderType,
     model: Option<String>,
     base_url: Option<String>,
     api_key_env: Option<String>,
+    temperature: Option<f32>,
 ) -> Result<AnyProvider, Error> {
     match provider_type {
         ProviderType::Gemini => {
@@ -157,11 +159,16 @@ pub fn create_provider(
             Ok(AnyProvider::Gemini(provider))
         }
         ProviderType::Gpt => {
-            let provider = GptProvider::new(model, None, base_url, api_key_env)?;
+            let provider = GptProvider::new(
+                model,
+                temperature.map(|t| t as f64),
+                base_url,
+                api_key_env,
+            )?;
             Ok(AnyProvider::Gpt(provider))
         }
         ProviderType::OpenAiCompat => {
-            let provider = OpenAiCompatProvider::new(model, base_url, api_key_env, None)?;
+            let provider = OpenAiCompatProvider::new(model, base_url, api_key_env, temperature)?;
             Ok(AnyProvider::OpenAiCompat(provider))
         }
         ProviderType::Echo => {
@@ -177,14 +184,15 @@ pub fn create_provider(
 /// * `provider_type` - プロバイダタイプ
 /// * `model` - モデル名（オプション、デフォルト値が使用される）
 ///
-/// ResolvedProvider から base_url / api_key_env を渡す場合は
-/// `create_provider(..., resolved.base_url.clone(), resolved.api_key_env.clone())` のあと
+/// 互換維持のため temperature=None で create_provider を呼ぶ。
+/// ResolvedProvider の base_url / api_key_env / temperature を反映する場合は
+/// `create_provider(..., resolved.base_url.clone(), resolved.api_key_env.clone(), resolved.temperature)` のあと
 /// `LlmDriver::new(provider)` でドライバを組み立てる。
 pub fn create_driver(
     provider_type: ProviderType,
     model: Option<String>,
 ) -> Result<LlmDriver<AnyProvider>, Error> {
-    let provider = create_provider(provider_type, model, None, None)?;
+    let provider = create_provider(provider_type, model, None, None, None)?;
     Ok(LlmDriver::new(provider))
 }
 

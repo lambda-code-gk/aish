@@ -46,6 +46,14 @@ pub enum Error {
     /// システム・シグナル等（終了コード 70）
     #[error("{0}")]
     System(String),
+
+    /// 問題解決のための補足情報付きエラー（終了コード・is_usage は source に準拠）
+    #[error("{context}\n  {source}")]
+    WithContext {
+        context: String,
+        #[source]
+        source: Box<Error>,
+    },
 }
 
 impl Error {
@@ -55,12 +63,24 @@ impl Error {
             Error::InvalidArgument(_) | Error::Env(_) | Error::Provider(_) | Error::TaskNotFound(_) => 64,
             Error::System(_) => 70,
             Error::Io { .. } | Error::Http(_) | Error::Json(_) => 74,
+            Error::WithContext { source, .. } => source.exit_code(),
         }
     }
 
     /// 用法表示すべきか（InvalidArgument / Env / Provider / TaskNotFound は true）
     pub fn is_usage(&self) -> bool {
-        self.exit_code() == 64
+        match self {
+            Error::WithContext { source, .. } => source.is_usage(),
+            _ => self.exit_code() == 64,
+        }
+    }
+
+    /// 問題解決に役立つ補足情報を付与してエラーを包む
+    pub fn with_context(self, context: impl Into<String>) -> Self {
+        Error::WithContext {
+            context: context.into(),
+            source: Box::new(self),
+        }
     }
 
     // --- コンストラクタ（従来のヘルパー相当）---
@@ -138,5 +158,15 @@ mod tests {
         let e = io::Error::new(io::ErrorKind::NotFound, "file not found");
         let err: Error = e.into();
         assert_eq!(err.exit_code(), 74);
+    }
+
+    #[test]
+    fn test_with_context_delegates_exit_code_and_usage() {
+        let e = Error::http("connection refused").with_context("Provider profile: local (base_url: http://localhost:11434/v1)");
+        assert_eq!(e.exit_code(), 74);
+        assert!(!e.is_usage());
+        let e2 = Error::invalid_argument("bad").with_context("Context");
+        assert_eq!(e2.exit_code(), 64);
+        assert!(e2.is_usage());
     }
 }

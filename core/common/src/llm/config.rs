@@ -52,6 +52,7 @@ impl ProviderTypeKind {
 /// serde 用の内部構造（type が予約語のため）
 #[derive(Debug, Deserialize)]
 struct LlmConfigRaw {
+    #[serde(alias = "default")]
     default_provider: Option<String>,
     providers: Option<HashMap<String, ProviderProfileRaw>>,
 }
@@ -61,6 +62,7 @@ struct ProviderProfileRaw {
     #[serde(rename = "type", alias = "provider")]
     type_: ProviderTypeKindSerde,
     base_url: Option<String>,
+    #[serde(alias = "default_model")]
     model: Option<String>,
     api_key_env: Option<String>,
     temperature: Option<f32>,
@@ -72,7 +74,7 @@ enum ProviderTypeKindSerde {
     Gemini,
     #[serde(alias = "gpt")]
     Openai,
-    #[serde(rename = "openai_compat")]
+    #[serde(rename = "openai_compat", alias = "ollama")]
     OpenaiCompat,
     Echo,
 }
@@ -167,5 +169,30 @@ mod tests {
         let cfg = LlmConfig::parse(json).unwrap();
         let p = cfg.providers.get("x").unwrap();
         assert!(matches!(p.type_, ProviderTypeKind::Openai));
+    }
+
+    #[test]
+    fn test_parse_alias_default_and_default_model_and_ollama() {
+        // サンプル llm.json 互換: default_provider→default, model→default_model, type→ollama
+        let json = r#"
+        {
+            "default": "local",
+            "providers": {
+                "local": {
+                    "type": "ollama",
+                    "base_url": "http://localhost:11434/v1",
+                    "default_model": "llama3.1",
+                    "temperature": 0.4
+                }
+            }
+        }
+        "#;
+        let cfg = LlmConfig::parse(json).unwrap();
+        assert_eq!(cfg.default_provider.as_deref(), Some("local"));
+        let p = cfg.providers.get("local").unwrap();
+        assert!(matches!(p.type_, ProviderTypeKind::OpenaiCompat));
+        assert_eq!(p.model.as_deref(), Some("llama3.1"));
+        assert_eq!(p.base_url.as_deref(), Some("http://localhost:11434/v1"));
+        assert_eq!(p.temperature, Some(0.4));
     }
 }

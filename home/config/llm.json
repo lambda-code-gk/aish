@@ -1,11 +1,10 @@
 {
-  "default": "local",
+  "default_provider": "gemini",
   "providers": {
     "local": {
       "type": "openai_compat",
       "base_url": "http://localhost:11434/v1",
-      "api_key_env": "OLLAMA_API_KEY",
-      "default_model": "llama3.1",
+      "model": "llama3.1",
       "temperature": 0.4
     }
   }

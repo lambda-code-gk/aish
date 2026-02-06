@@ -7,7 +7,7 @@ use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{FileSystem, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
-use common::llm::{create_driver, load_llm_config, resolve_provider, LlmDriver};
+use common::llm::{create_provider, load_llm_config, resolve_provider, LlmDriver, ResolvedProvider};
 use common::llm::provider::Message as LlmMessage;
 use crate::domain::Query;
 use common::msg::Msg;
@@ -61,6 +61,22 @@ fn build_messages(
     }
     msgs.push(Msg::user(query.as_ref()));
     msgs
+}
+
+/// エラー表示用: どのプロファイルで失敗したかを示す補足文を返す
+fn llm_error_context(resolved: &ResolvedProvider) -> String {
+    let mut extra: Vec<String> = Vec::new();
+    if let Some(ref u) = resolved.base_url {
+        extra.push(format!("base_url: {}", u));
+    }
+    if let Some(ref m) = resolved.model {
+        extra.push(format!("model: {}", m));
+    }
+    if extra.is_empty() {
+        format!("Provider profile: {}", resolved.profile_name)
+    } else {
+        format!("Provider profile: {} ({})", resolved.profile_name, extra.join(", "))
+    }
 }
 
 /// ai のユースケース（アダプター経由で I/O を行う）
@@ -145,7 +161,15 @@ impl AiUseCase {
             .as_ref()
             .map(|m| m.as_ref().to_string())
             .or_else(|| resolved.model.clone());
-        let driver = create_driver(resolved.provider_type, model_str)?;
+        let ctx = llm_error_context(&resolved);
+        let provider = create_provider(
+            resolved.provider_type,
+            model_str,
+            resolved.base_url.clone(),
+            resolved.api_key_env.clone(),
+            resolved.temperature,
+        ).map_err(|e| e.with_context(ctx.clone()))?;
+        let driver = LlmDriver::new(provider);
         let stream = DriverLlmStream(&driver);
         let mut registry = ToolRegistry::new();
         for t in &self.tools {
@@ -162,7 +186,7 @@ impl AiUseCase {
             AgentLoop::new(stream, registry, tool_context, sinks, Arc::clone(&self.approver), Some("run_shell"));
         const MAX_TURNS: usize = 16;
         let (_final_messages, assistant_text) =
-            agent_loop.run_until_done(&messages, MAX_TURNS)?;
+            agent_loop.run_until_done(&messages, MAX_TURNS).map_err(|e| e.with_context(ctx))?;
 
         println!();
 
