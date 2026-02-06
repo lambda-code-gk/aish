@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use common::adapter::{
-    FileJsonLog, FileSystem, NoopLog, Process, StdClock, StdEnvResolver, StdFileSystem, StdProcess,
+    FileJsonLog, NoopLog, StdClock, StdEnvResolver, StdFileSystem, StdProcess,
 };
 use common::part_id::StdIdGenerator;
-use common::ports::outbound::{EnvResolver, Log};
+use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{

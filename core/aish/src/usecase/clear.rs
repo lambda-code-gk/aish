@@ -1,7 +1,7 @@
 //! Clear コマンドのユースケース
 
 use crate::wiring::App;
-use common::adapter::FileSystem;
+use common::ports::outbound::FileSystem;
 use common::error::Error;
 use common::ports::outbound::{PathResolver, PathResolverInput};
 use common::session::Session;

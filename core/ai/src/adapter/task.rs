@@ -2,8 +2,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use common::adapter::{FileSystem, Process};
 use common::error::Error;
+use common::ports::outbound::{FileSystem, Process};
 
 use crate::ports::outbound::TaskRunner;
 

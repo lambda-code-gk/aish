@@ -2,7 +2,7 @@
 
 #[cfg(unix)]
 mod unix {
-    use common::adapter::{Pty, PtyProcessStatus, PtySpawn, Signal, Winsize};
+    use common::ports::outbound::{Pty, PtyProcessStatus, PtySpawn, Signal, Winsize};
     use common::error::Error;
     use std::os::unix::io::RawFd;
 
@@ -24,7 +24,7 @@ mod unix {
         }
     }
 
-    /// platform::unix::Pty を common::adapter::Pty としてラップ
+    /// platform::unix::Pty を common::ports::outbound::Pty としてラップ
     pub struct UnixPty(pub platform::Pty);
 
     impl Pty for UnixPty {
@@ -46,7 +46,7 @@ mod unix {
         }
     }
 
-    /// common::adapter::PtySpawn の Unix 実装
+    /// common::ports::outbound::PtySpawn の Unix 実装
     #[derive(Debug, Clone, Copy, Default)]
     pub struct UnixPtySpawn;
 
@@ -63,7 +63,7 @@ mod unix {
         }
     }
 
-    /// common::adapter::Signal の Unix 実装（platform の setup_* / check_* / libc::kill）
+    /// common::ports::outbound::Signal の Unix 実装（platform の setup_* / check_* / libc::kill）
     #[derive(Debug, Clone, Copy, Default)]
     pub struct UnixSignal;
 

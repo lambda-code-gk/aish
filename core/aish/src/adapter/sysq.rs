@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use common::adapter::FileSystem;
 use common::error::Error;
+use common::ports::outbound::FileSystem;
 use common::ports::outbound::EnvResolver;
 use common::system_prompt::Scope;
 

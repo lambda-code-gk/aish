@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use common::adapter::{FileSystem, EnvResolver};
 use common::error::Error;
+use common::ports::outbound::{EnvResolver, FileSystem};
 use common::system_prompt::merge_enabled_ordered;
 
 use crate::ports::outbound::ResolveSystemInstruction;

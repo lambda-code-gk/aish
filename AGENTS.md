@@ -78,7 +78,8 @@ usecase モジュール（`core/ai/src/usecase/`, `core/aish/src/usecase/`）で
 ## プロジェクト概要・構造
 
 - **AISH**: CUI 自動化フレームワーク（LLM 連携）。シェルスクリプトから Rust への刷新中。
-- **core/common**: `ai` / `aish` 共通。エラー型、session、LLM ドライバ・プロバイダ、Part ID、Port trait（FileSystem, Process, Clock 等）と標準実装、Tool trait / ToolRegistry。**ai 専用・aish 専用のユースケースは置かない。**
+- **core/common**: `ai` / `aish` 共通。エラー型、session、LLM ドライバ・プロバイダ、Part ID、Port trait（FileSystem, Process, Clock 等）と標準実装、Tool trait / ToolRegistry。**ai 専用・aish 専用のユースケースは置かない。**  
+  - Outbound の trait のうち **Tool** と **LlmProvider** は、ドメイン型（ToolContext, Message 等）との循環参照を避けるため、それぞれ `common::tool` と `common::llm::provider` に定義し、`common::ports::outbound` から re-export している。その他の outbound trait は `ports/outbound` に定義。
 - **core/ai**: `ai` コマンド。main → cli → wiring → UseCaseRunner。usecase: `app.rs`（AiUseCase）, `task.rs`（TaskUseCase）, `agent_loop.rs`。adapter: sinks, task, part_session_storage, approval, tools 等。
 - **core/aish**: `aish` コマンド。main → cli → wiring → UseCaseRunner。usecase: shell, truncate_console_log, clear, sysq 等。adapter: shell, terminal, platform, logfmt, sysq 等。
 
@@ -116,6 +117,7 @@ usecase モジュール（`core/ai/src/usecase/`, `core/aish/src/usecase/`）で
 
 ## 更新履歴
 
+- **2026年2月**: common の port & adapter 整理。adapter から port の re-export を削除し、usecase は `common::ports::outbound` から trait を参照。StdIdGenerator を adapter に移動。Tool / LlmProvider が ports 外に定義されている理由を明記。
 - **2026年2月**: システムプロンプト（sysq）を追加。common に `system_prompt`（Scope・マージ）、EnvResolver に `current_dir` / `resolve_global_system_d_dir` / `resolve_user_system_d_dir` を追加。aish に `sysq list` / `sysq enable` / `sysq disable`、ai に `-S` 未指定時の sysq 解決（ResolveSystemInstruction ポート）を実装。結合テストに sysq list を追加。
 - **2026年2月**: アーキテクチャを「逆流防止」の判断基準として整理。依存方向・usecase 禁止事項・wiring 責務・inbound/outbound・実装時チェックリストを明文化。長さを抑え実務で参照しやすい形に変更。
 - **2026年1月**: common / ai / aish の状態・モジュール・CLI を現状に合わせて見直し。

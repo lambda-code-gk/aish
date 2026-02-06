@@ -3,11 +3,10 @@
 use std::sync::Arc;
 
 use common::adapter::{
-    EnvResolver, FileJsonLog, FileSystem, NoopLog, StdClock, StdEnvResolver, StdFileSystem,
-    StdPathResolver,
+    FileJsonLog, NoopLog, StdClock, StdEnvResolver, StdFileSystem, StdPathResolver,
 };
 use common::part_id::{IdGenerator, StdIdGenerator};
-use common::ports::outbound::{Log, PathResolver, Signal};
+use common::ports::outbound::{EnvResolver, FileSystem, Log, PathResolver, Signal};
 
 use crate::adapter::{StdShellRunner, StdSysqRepository, UnixPtySpawn, UnixSignal};
 use crate::ports::outbound::{ShellRunner, SysqRepository};

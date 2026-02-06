@@ -4,8 +4,8 @@
 //! shell はイベント取得のみ行い、処理はここに委譲する。
 
 use crate::domain::SessionEvent;
-use common::adapter::FileSystem;
 use common::error::Error;
+use common::ports::outbound::FileSystem;
 use common::part_id::IdGenerator;
 use std::io::Write;
 use std::path::Path;
