@@ -7,7 +7,7 @@ use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{FileSystem, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
-use common::llm::{create_driver, LlmDriver, ProviderType};
+use common::llm::{create_driver, load_llm_config, resolve_provider, LlmDriver};
 use common::llm::provider::Message as LlmMessage;
 use crate::domain::Query;
 use common::msg::Msg;
@@ -139,19 +139,13 @@ impl AiUseCase {
             Vec::new()
         };
 
-        let provider_type = if let Some(ref provider_name) = provider {
-            ProviderType::from_str(provider_name.as_ref()).ok_or_else(|| {
-                Error::invalid_argument(format!(
-                    "Unknown provider: {}. Supported providers: gemini, gpt, echo",
-                    provider_name
-                ))
-            })?
-        } else {
-            ProviderType::Gemini
-        };
-
-        let model_str = model.as_ref().map(|m| m.as_ref().to_string());
-        let driver = create_driver(provider_type, model_str)?;
+        let cfg_opt = load_llm_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
+        let resolved = resolve_provider(provider.as_ref(), cfg_opt.as_ref())?;
+        let model_str = model
+            .as_ref()
+            .map(|m| m.as_ref().to_string())
+            .or_else(|| resolved.model.clone());
+        let driver = create_driver(resolved.provider_type, model_str)?;
         let stream = DriverLlmStream(&driver);
         let mut registry = ToolRegistry::new();
         for t in &self.tools {
