@@ -9,34 +9,51 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{BufRead, BufReader};
 
-/// GPTプロバイダ
+const DEFAULT_GPT_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_GPT_API_KEY_ENV: &str = "OPENAI_API_KEY";
+
+/// GPTプロバイダ（Responses API）
 pub struct GptProvider {
     model: String,
     api_key: String,
     temperature: f64,
+    base_url: String,
 }
 
 impl GptProvider {
     /// 新しいGPTプロバイダを作成
-    /// 
+    ///
     /// # Arguments
-    /// * `model` - モデル名（デフォルト: "gpt-5.2"）
-    /// * `temperature` - 温度パラメータ（デフォルト: 0.7）
-    /// 
-    /// # Returns
-    /// * `Ok(Self)` - プロバイダ
-    /// * `Err(Error)` - エラーメッセージと終了コード
-    pub fn new(model: Option<String>, temperature: Option<f64>) -> Result<Self, Error> {
+    /// * `model` - モデル名（None のとき "gpt-5.2"）
+    /// * `temperature` - 温度（None のとき 0.7）
+    /// * `base_url` - ベース URL（None のとき DEFAULT_GPT_BASE_URL）。末尾スラッシュは除いて "{base_url}/responses" で利用
+    /// * `api_key_env` - API キーを読む環境変数名（None のとき OPENAI_API_KEY）
+    pub fn new(
+        model: Option<String>,
+        temperature: Option<f64>,
+        base_url: Option<String>,
+        api_key_env: Option<String>,
+    ) -> Result<Self, Error> {
         let model = model.unwrap_or_else(|| "gpt-5.2".to_string());
         let temperature = temperature.unwrap_or(0.7);
-        let api_key = env::var("OPENAI_API_KEY")
-            .map_err(|_| Error::env("OPENAI_API_KEY environment variable is not set"))?;
-        
+        let base_url = base_url
+            .unwrap_or_else(|| DEFAULT_GPT_BASE_URL.to_string())
+            .trim_end_matches('/')
+            .to_string();
+        let env_name = api_key_env.as_deref().unwrap_or(DEFAULT_GPT_API_KEY_ENV);
+        let api_key = env::var(env_name)
+            .map_err(|_| Error::env(format!("{} environment variable is not set", env_name)))?;
+
         Ok(Self {
             model,
             api_key,
             temperature,
+            base_url,
         })
+    }
+
+    fn url(&self) -> String {
+        format!("{}/responses", self.base_url)
     }
 }
 
@@ -46,11 +63,9 @@ impl LlmProvider for GptProvider {
     }
 
     fn make_http_request(&self, request_json: &str) -> Result<String, Error> {
-        let url = "https://api.openai.com/v1/responses";
-        
         let client = reqwest::blocking::Client::new();
         let response = client
-            .post(url)
+            .post(self.url())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .body(request_json.to_string())
@@ -261,8 +276,6 @@ impl LlmProvider for GptProvider {
         request_json: &str,
         callback: Box<dyn Fn(&str) -> Result<(), Error>>,
     ) -> Result<(), Error> {
-        let url = "https://api.openai.com/v1/responses";
-        
         // request_jsonに"stream": trueを追加
         let mut payload: Value = serde_json::from_str(request_json)
             .map_err(|e| Error::json(format!("Failed to parse request JSON: {}", e)))?;
@@ -272,13 +285,13 @@ impl LlmProvider for GptProvider {
 
         let client = reqwest::blocking::Client::new();
         let response = client
-            .post(url)
+            .post(self.url())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .body(streaming_request_json)
             .send()
             .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
-        
+
         let status = response.status();
         if !status.is_success() {
             let response_text = response
@@ -294,7 +307,7 @@ impl LlmProvider for GptProvider {
             };
             return Err(Error::http(format!("OpenAI API error: {}", error_msg)));
         }
-        
+
         let reader = BufReader::new(response);
         let mut found_any_text = false;
         for line_result in reader.lines() {
@@ -355,7 +368,6 @@ impl LlmProvider for GptProvider {
         _tools: Option<&[ToolDef]>,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let url = "https://api.openai.com/v1/responses";
         let mut payload: Value = serde_json::from_str(request_json)
             .map_err(|e| Error::json(format!("Failed to parse request JSON: {}", e)))?;
         payload["stream"] = json!(true);
@@ -364,7 +376,7 @@ impl LlmProvider for GptProvider {
 
         let client = reqwest::blocking::Client::new();
         let response = client
-            .post(url)
+            .post(self.url())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .body(streaming_request_json)
@@ -551,8 +563,9 @@ mod tests {
             model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
+            base_url: DEFAULT_GPT_BASE_URL.to_string(),
         };
-        
+
         let payload = provider.make_request_payload("Hello", None, &[], None).unwrap();
         assert!(payload["input"].is_array());
         assert_eq!(payload["input"].as_array().unwrap().len(), 1);
@@ -567,8 +580,9 @@ mod tests {
             model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
+            base_url: DEFAULT_GPT_BASE_URL.to_string(),
         };
-        
+
         let payload = provider.make_request_payload("Hello", Some("You are a helpful assistant"), &[], None).unwrap();
         let input = payload["input"].as_array().unwrap();
         assert_eq!(input.len(), 1); // user only (system is in instructions)
@@ -581,8 +595,9 @@ mod tests {
             model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
+            base_url: DEFAULT_GPT_BASE_URL.to_string(),
         };
-        
+
         let history = vec![
             Message::user("Hi"),
             Message::assistant("Hello!"),
@@ -599,6 +614,7 @@ mod tests {
             model: "gpt-5.2".to_string(),
             api_key: "test-key".to_string(),
             temperature: 0.7,
+            base_url: DEFAULT_GPT_BASE_URL.to_string(),
         };
         // ユーザー → アシスタント（echo 呼び出し）→ function_call → function_call_output → 次のクエリ
         let history = vec![

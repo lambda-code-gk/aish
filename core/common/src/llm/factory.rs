@@ -139,17 +139,17 @@ impl LlmProvider for AnyProvider {
 }
 
 /// プロバイダを作成する
-/// 
+///
 /// # Arguments
 /// * `provider_type` - プロバイダタイプ
 /// * `model` - モデル名（オプション、デフォルト値が使用される）
-/// 
-/// # Returns
-/// * `Ok(AnyProvider)` - プロバイダ
-/// * `Err(Error)` - エラーメッセージと終了コード
+/// * `base_url` - ベース URL（Gpt / OpenAiCompat 用。None のとき各プロバイダのデフォルト）
+/// * `api_key_env` - API キーを読む環境変数名（Gpt / OpenAiCompat 用。None のとき各プロバイダのデフォルト）
 pub fn create_provider(
     provider_type: ProviderType,
     model: Option<String>,
+    base_url: Option<String>,
+    api_key_env: Option<String>,
 ) -> Result<AnyProvider, Error> {
     match provider_type {
         ProviderType::Gemini => {
@@ -157,11 +157,11 @@ pub fn create_provider(
             Ok(AnyProvider::Gemini(provider))
         }
         ProviderType::Gpt => {
-            let provider = GptProvider::new(model, None)?;
+            let provider = GptProvider::new(model, None, base_url, api_key_env)?;
             Ok(AnyProvider::Gpt(provider))
         }
         ProviderType::OpenAiCompat => {
-            let provider = OpenAiCompatProvider::new(model, None, None, None)?;
+            let provider = OpenAiCompatProvider::new(model, base_url, api_key_env, None)?;
             Ok(AnyProvider::OpenAiCompat(provider))
         }
         ProviderType::Echo => {
@@ -172,19 +172,19 @@ pub fn create_provider(
 }
 
 /// ドライバーを作成する
-/// 
+///
 /// # Arguments
 /// * `provider_type` - プロバイダタイプ
 /// * `model` - モデル名（オプション、デフォルト値が使用される）
-/// 
-/// # Returns
-/// * `Ok(LlmDriver<AnyProvider>)` - ドライバー
-/// * `Err(Error)` - エラーメッセージと終了コード
+///
+/// ResolvedProvider から base_url / api_key_env を渡す場合は
+/// `create_provider(..., resolved.base_url.clone(), resolved.api_key_env.clone())` のあと
+/// `LlmDriver::new(provider)` でドライバを組み立てる。
 pub fn create_driver(
     provider_type: ProviderType,
     model: Option<String>,
 ) -> Result<LlmDriver<AnyProvider>, Error> {
-    let provider = create_provider(provider_type, model)?;
+    let provider = create_provider(provider_type, model, None, None)?;
     Ok(LlmDriver::new(provider))
 }
 
