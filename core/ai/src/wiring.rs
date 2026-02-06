@@ -2,9 +2,11 @@
 
 use std::sync::Arc;
 
-use common::adapter::{FileSystem, Process, StdClock, StdEnvResolver, StdFileSystem, StdProcess};
+use common::adapter::{
+    FileJsonLog, FileSystem, NoopLog, Process, StdClock, StdEnvResolver, StdFileSystem, StdProcess,
+};
 use common::part_id::StdIdGenerator;
-use common::ports::outbound::EnvResolver;
+use common::ports::outbound::{EnvResolver, Log};
 use common::tool::EchoTool;
 
 use crate::adapter::{
@@ -39,6 +41,8 @@ pub struct App {
     pub task_use_case: TaskUseCase,
     pub run_query: Arc<dyn RunQuery>,
     pub resolve_system_instruction: Arc<dyn ResolveSystemInstruction>,
+    /// 構造化ログ（ファイルへ JSONL）。エラー時のコンソール表示とは別。
+    pub logger: Arc<dyn Log>,
     /// テスト用に露出（Query 実行・session/history の単体テストで利用）
     #[cfg_attr(not(test), allow(dead_code))]
     pub ai_use_case: Arc<AiUseCase>,
@@ -47,13 +51,17 @@ pub struct App {
 /// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す
 pub fn wire_ai() -> App {
     let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
+    let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
+    let logger: Arc<dyn Log> = env_resolver
+        .resolve_log_file_path()
+        .map(|path| Arc::new(FileJsonLog::new(Arc::clone(&fs), path)) as Arc<dyn Log>)
+        .unwrap_or_else(|_| Arc::new(NoopLog));
     let id_gen = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
     let part_storage = Arc::new(PartSessionStorage::new(Arc::clone(&fs), id_gen));
     let history_loader: Arc<dyn SessionHistoryLoader> =
         Arc::clone(&part_storage) as Arc<dyn SessionHistoryLoader>;
     let response_saver: Arc<dyn SessionResponseSaver> =
         Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
-    let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
     let process: Arc<dyn Process> = Arc::new(StdProcess);
     let task_runner: Arc<dyn TaskRunner> = Arc::new(StdTaskRunner::new(Arc::clone(&fs), Arc::clone(&process)));
     let command_allow_rules_loader = Arc::new(StdCommandAllowRulesLoader);
@@ -75,6 +83,7 @@ pub fn wire_ai() -> App {
         sink_factory,
         tools,
         approver,
+        Arc::clone(&logger),
     ));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));
@@ -83,6 +92,7 @@ pub fn wire_ai() -> App {
         task_use_case,
         run_query,
         resolve_system_instruction,
+        logger,
         ai_use_case,
     }
 }

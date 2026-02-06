@@ -35,4 +35,9 @@ pub trait EnvResolver: Send + Sync {
     /// プロバイダプロファイル設定ファイルのパス
     /// AISH_HOME があれば $AISH_HOME/config/profiles.json、なければ resolve_home_dir() 直下の profiles.json（例: ~/.config/aish/profiles.json）
     fn resolve_profiles_config_path(&self) -> Result<PathBuf, Error>;
+
+    /// ログファイルのパス（JSONL 出力先）
+    /// AISH_HOME が設定されていれば $AISH_HOME/state/log.jsonl。
+    /// 未設定なら $XDG_STATE_HOME/aish/log.jsonl（XDG_STATE_HOME 未設定時は ~/.local/state/aish/log.jsonl）。
+    fn resolve_log_file_path(&self) -> Result<PathBuf, Error>;
 }

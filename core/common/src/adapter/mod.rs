@@ -4,6 +4,7 @@
 //! 実装は標準実装（Std*）やテスト用のモックを注入する。
 
 pub mod env_resolver;
+pub mod file_json_log;
 pub mod fs;
 pub mod clock;
 pub mod path_resolver;
@@ -20,6 +21,7 @@ pub mod pty;
 pub mod signal;
 
 pub use env_resolver::EnvResolver;
+pub use file_json_log::{FileJsonLog, NoopLog};
 pub use fs::{FileMetadata, FileSystem};
 pub use clock::Clock;
 pub use path_resolver::{PathResolver, PathResolverInput};

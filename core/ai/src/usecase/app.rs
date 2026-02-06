@@ -4,7 +4,7 @@ use crate::ports::outbound::{
 };
 use crate::usecase::agent_loop::AgentLoop;
 use common::ports::outbound::EnvResolver;
-use common::ports::outbound::{FileSystem, Process};
+use common::ports::outbound::{now_iso8601, FileSystem, Log, LogLevel, LogRecord, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
 use common::llm::{create_provider, load_profiles_config, resolve_provider, LlmDriver, ResolvedProvider};
@@ -90,6 +90,7 @@ pub struct AiUseCase {
     pub sink_factory: Arc<dyn EventSinkFactory>,
     pub tools: Vec<Arc<dyn Tool>>,
     pub approver: Arc<dyn ToolApproval>,
+    pub log: Arc<dyn Log>,
 }
 
 impl AiUseCase {
@@ -104,6 +105,7 @@ impl AiUseCase {
         sink_factory: Arc<dyn EventSinkFactory>,
         tools: Vec<Arc<dyn Tool>>,
         approver: Arc<dyn ToolApproval>,
+        log: Arc<dyn Log>,
     ) -> Self {
         Self {
             fs,
@@ -115,6 +117,7 @@ impl AiUseCase {
             sink_factory,
             tools,
             approver,
+            log,
         }
     }
 
@@ -144,6 +147,14 @@ impl AiUseCase {
         query: &Query,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
+        let _ = self.log.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "query started".to_string(),
+            layer: Some("usecase".to_string()),
+            kind: Some("usecase".to_string()),
+            fields: None,
+        });
         let history_messages = if self.session_is_valid(&session_dir) {
             let dir = session_dir.as_ref().expect("session_dir is Some");
             self.history_loader
@@ -185,9 +196,18 @@ impl AiUseCase {
         let mut agent_loop =
             AgentLoop::new(stream, registry, tool_context, sinks, Arc::clone(&self.approver), Some("run_shell"));
         const MAX_TURNS: usize = 16;
+        // エラーは CLI 層で 1 回だけ記録する（Provider 等のコンテキスト付き）。usecase では重複して書かない。
         let (_final_messages, assistant_text) =
             agent_loop.run_until_done(&messages, MAX_TURNS).map_err(|e| e.with_context(ctx))?;
 
+        let _ = self.log.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "query finished".to_string(),
+            layer: Some("usecase".to_string()),
+            kind: Some("usecase".to_string()),
+            fields: None,
+        });
         println!();
 
         if self.session_is_valid(&session_dir) && !assistant_text.trim().is_empty() {

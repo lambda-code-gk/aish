@@ -3,6 +3,7 @@
 pub mod clock;
 pub mod env_resolver;
 pub mod fs;
+pub mod log;
 pub mod path_resolver;
 pub mod process;
 pub mod sink;
@@ -19,6 +20,7 @@ pub mod llm_provider;
 pub use clock::Clock;
 pub use env_resolver::EnvResolver;
 pub use fs::{FileMetadata, FileSystem};
+pub use log::{Log, LogLevel, LogRecord, now_iso8601};
 pub use path_resolver::{PathResolver, PathResolverInput};
 pub use process::Process;
 pub use sink::{AgentEvent, EventSink};

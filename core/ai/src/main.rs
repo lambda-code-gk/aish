@@ -10,6 +10,7 @@ mod tests;
 
 use std::process;
 use common::error::Error;
+use common::ports::outbound::{now_iso8601, LogLevel, LogRecord};
 use cli::{config_to_command, parse_args, Config};
 use domain::AiCommand;
 use ports::inbound::UseCaseRunner;
@@ -24,13 +25,26 @@ impl UseCaseRunner for Runner {
     fn run(&self, config: Config) -> Result<i32, Error> {
         let session_dir = self.app.env_resolver.session_dir_from_env();
         let cmd = config_to_command(config);
+        let command_name = cmd_name_for_log(&cmd);
+        let _ = self.app.logger.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "command started".to_string(),
+            layer: Some("cli".to_string()),
+            kind: Some("lifecycle".to_string()),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("command".to_string(), serde_json::json!(command_name));
+                Some(m)
+            },
+        });
 
         // -S 未指定時は有効な sysq を結合して system instruction にする
         let system_instruction = |explicit: Option<String>| {
             explicit.or_else(|| self.app.resolve_system_instruction.resolve().ok().flatten())
         };
 
-        match cmd {
+        let result = match cmd {
             AiCommand::Help => {
                 print_help();
                 Ok(0)
@@ -68,7 +82,40 @@ impl UseCaseRunner for Runner {
                     system_instruction(system).as_deref(),
                 )
             }
+        };
+        let code = result.as_ref().copied().unwrap_or(0);
+        let _ = self.app.logger.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "command finished".to_string(),
+            layer: Some("cli".to_string()),
+            kind: Some("lifecycle".to_string()),
+            fields: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("command".to_string(), serde_json::json!(command_name));
+                m.insert("exit_code".to_string(), serde_json::json!(code));
+                Some(m)
+            },
+        });
+        if let Err(ref e) = result {
+            let _ = self.app.logger.log(&LogRecord {
+                ts: now_iso8601(),
+                level: LogLevel::Error,
+                message: e.to_string(),
+                layer: Some("cli".to_string()),
+                kind: Some("error".to_string()),
+                fields: None,
+            });
         }
+        result
+    }
+}
+
+fn cmd_name_for_log(cmd: &AiCommand) -> &'static str {
+    match cmd {
+        AiCommand::Help => "help",
+        AiCommand::Task { .. } => "task",
+        AiCommand::Query { .. } => "query",
     }
 }
 
