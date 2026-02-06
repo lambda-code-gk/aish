@@ -4,9 +4,10 @@
 
 use crate::error::Error;
 use crate::llm::driver::LlmDriver;
+use crate::llm::echo::EchoProvider;
 use crate::llm::gemini::GeminiProvider;
 use crate::llm::gpt::GptProvider;
-use crate::llm::echo::EchoProvider;
+use crate::llm::openai_compat::OpenAiCompatProvider;
 use crate::llm::provider::{LlmProvider, Message};
 use crate::tool::ToolDef;
 use serde_json::Value;
@@ -18,6 +19,8 @@ pub enum ProviderType {
     Gemini,
     /// GPT
     Gpt,
+    /// OpenAI Chat Completions 互換 (/chat/completions)
+    OpenAiCompat,
     /// Echo（クエリを表示するだけ）
     Echo,
 }
@@ -28,27 +31,30 @@ impl ProviderType {
         match s.to_lowercase().as_str() {
             "gemini" => Some(Self::Gemini),
             "gpt" | "openai" => Some(Self::Gpt),
+            "openai_compat" => Some(Self::OpenAiCompat),
             "echo" => Some(Self::Echo),
             _ => None,
         }
     }
-    
+
     /// プロバイダタイプを文字列に変換
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Gemini => "gemini",
             Self::Gpt => "gpt",
+            Self::OpenAiCompat => "openai_compat",
             Self::Echo => "echo",
         }
     }
 }
 
 /// プロバイダのenumラッパー
-/// 
+///
 /// 異なるプロバイダタイプを型安全に扱うために使用します。
 pub enum AnyProvider {
     Gemini(GeminiProvider),
     Gpt(GptProvider),
+    OpenAiCompat(OpenAiCompatProvider),
     Echo(EchoProvider),
 }
 
@@ -57,6 +63,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.name(),
             Self::Gpt(p) => p.name(),
+            Self::OpenAiCompat(p) => p.name(),
             Self::Echo(p) => p.name(),
         }
     }
@@ -65,6 +72,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.make_http_request(request_json),
             Self::Gpt(p) => p.make_http_request(request_json),
+            Self::OpenAiCompat(p) => p.make_http_request(request_json),
             Self::Echo(p) => p.make_http_request(request_json),
         }
     }
@@ -73,6 +81,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.parse_response_text(response_json),
             Self::Gpt(p) => p.parse_response_text(response_json),
+            Self::OpenAiCompat(p) => p.parse_response_text(response_json),
             Self::Echo(p) => p.parse_response_text(response_json),
         }
     }
@@ -81,6 +90,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.check_tool_calls(response_json),
             Self::Gpt(p) => p.check_tool_calls(response_json),
+            Self::OpenAiCompat(p) => p.check_tool_calls(response_json),
             Self::Echo(p) => p.check_tool_calls(response_json),
         }
     }
@@ -95,6 +105,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.make_request_payload(query, system_instruction, history, tools),
             Self::Gpt(p) => p.make_request_payload(query, system_instruction, history, tools),
+            Self::OpenAiCompat(p) => p.make_request_payload(query, system_instruction, history, tools),
             Self::Echo(p) => p.make_request_payload(query, system_instruction, history, tools),
         }
     }
@@ -107,6 +118,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.make_http_streaming_request(request_json, callback),
             Self::Gpt(p) => p.make_http_streaming_request(request_json, callback),
+            Self::OpenAiCompat(p) => p.make_http_streaming_request(request_json, callback),
             Self::Echo(p) => p.make_http_streaming_request(request_json, callback),
         }
     }
@@ -120,6 +132,7 @@ impl LlmProvider for AnyProvider {
         match self {
             Self::Gemini(p) => p.stream_events(request_json, tools, callback),
             Self::Gpt(p) => p.stream_events(request_json, tools, callback),
+            Self::OpenAiCompat(p) => p.stream_events(request_json, tools, callback),
             Self::Echo(p) => p.stream_events(request_json, tools, callback),
         }
     }
@@ -147,8 +160,11 @@ pub fn create_provider(
             let provider = GptProvider::new(model, None)?;
             Ok(AnyProvider::Gpt(provider))
         }
+        ProviderType::OpenAiCompat => {
+            let provider = OpenAiCompatProvider::new(model, None, None, None)?;
+            Ok(AnyProvider::OpenAiCompat(provider))
+        }
         ProviderType::Echo => {
-            // Echoプロバイダはモデルを無視
             let provider = EchoProvider::new();
             Ok(AnyProvider::Echo(provider))
         }
@@ -184,6 +200,7 @@ mod tests {
         assert_eq!(ProviderType::from_str("gpt"), Some(ProviderType::Gpt));
         assert_eq!(ProviderType::from_str("GPT"), Some(ProviderType::Gpt));
         assert_eq!(ProviderType::from_str("openai"), Some(ProviderType::Gpt));
+        assert_eq!(ProviderType::from_str("openai_compat"), Some(ProviderType::OpenAiCompat));
         assert_eq!(ProviderType::from_str("echo"), Some(ProviderType::Echo));
         assert_eq!(ProviderType::from_str("ECHO"), Some(ProviderType::Echo));
         assert_eq!(ProviderType::from_str("unknown"), None);
@@ -193,6 +210,7 @@ mod tests {
     fn test_provider_type_as_str() {
         assert_eq!(ProviderType::Gemini.as_str(), "gemini");
         assert_eq!(ProviderType::Gpt.as_str(), "gpt");
+        assert_eq!(ProviderType::OpenAiCompat.as_str(), "openai_compat");
         assert_eq!(ProviderType::Echo.as_str(), "echo");
     }
 

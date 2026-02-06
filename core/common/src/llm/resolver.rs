@@ -36,14 +36,15 @@ pub fn load_llm_config(
 fn provider_type_kind_to_provider_type(k: ProviderTypeKind) -> ProviderType {
     match k {
         ProviderTypeKind::Gemini => ProviderType::Gemini,
-        ProviderTypeKind::Openai | ProviderTypeKind::OpenaiCompat => ProviderType::Gpt,
+        ProviderTypeKind::Openai => ProviderType::Gpt,
+        ProviderTypeKind::OpenaiCompat => ProviderType::OpenAiCompat,
         ProviderTypeKind::Echo => ProviderType::Echo,
     }
 }
 
 /// 利用可能なビルトインプロバイダ名
 fn builtin_provider_names() -> &'static [&'static str] {
-    &["gemini", "gpt", "openai", "echo"]
+    &["gemini", "gpt", "openai", "openai_compat", "echo"]
 }
 
 /// 要求されたプロバイダ名（None の場合は default）と LlmConfig から ResolvedProvider を解決する。

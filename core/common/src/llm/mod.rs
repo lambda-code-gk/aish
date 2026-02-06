@@ -10,6 +10,7 @@ pub mod gemini;
 pub mod gpt;
 pub mod echo;
 pub mod factory;
+pub mod openai_compat;
 pub mod resolver;
 
 pub use config::{LlmConfig, ProviderProfile, ProviderTypeKind};
