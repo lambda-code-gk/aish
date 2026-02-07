@@ -1,1 +1,17 @@
-{"default_provider":"gemini","providers":{"local":{"type":"openai_compat","base_url":"http://localhost:11434/v1","model":"llama3.1","temperature":0.4}}}
+{
+  "default_provider": "sakura",
+  "providers": {
+    "local": {
+      "type": "openai_compat",
+      "base_url": "http://localhost:11434/v1",
+      "model": "llama3.1",
+      "temperature": 0.4
+    },
+    "sakura": {
+      "type": "openai_compat",
+      "base_url": "https://api.ai.sakura.ad.jp/v1",
+      "model": "gpt-oss-120b",
+      "api_key_env": "SAKURA_API_KEY"
+    }
+  }
+}
