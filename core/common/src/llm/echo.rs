@@ -120,13 +120,48 @@ impl LlmProvider for EchoProvider {
             println!("[Echo Provider] System instruction: {}", s);
         }
 
-        // 直近がツール結果なら、テキスト応答を返して終了
+        // 直近がツール結果なら、テキスト応答を返すか、ループテスト用にツール呼び出しを続ける
         let last_is_tool = history
             .last()
             .and_then(|m| m.get("role").and_then(|r| r.as_str()))
             .map(|r| r == "tool")
             .unwrap_or(false);
         if last_is_tool {
+            let tool_result_count = history
+                .iter()
+                .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("tool"))
+                .count();
+            // ツール結果のあと、何回までツール呼び出しを返すか。未設定時は 2（2 ターンで ReachedLimit を手動確認しやすい）
+            let loop_test_limit = std::env::var("AI_ECHO_LOOP_TEST")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(2);
+            let tool_names: Vec<&str> = tools
+                .map(|t| t.iter().map(|d| d.name.as_str()).collect())
+                .unwrap_or_default();
+            let first_tool = tool_names.first().copied().unwrap_or("run_shell");
+
+            if tool_result_count < loop_test_limit {
+                let step = tool_result_count + 1;
+                let call_id = format!("echo_loop_{}", step);
+                let args = json!({ "command": format!("echo loop step {}", step) });
+                let args_json = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                callback(LlmEvent::ToolCallBegin {
+                    call_id: call_id.clone(),
+                    name: first_tool.to_string(),
+                    thought_signature: None,
+                })?;
+                callback(LlmEvent::ToolCallArgsDelta {
+                    call_id: call_id.clone(),
+                    json_fragment: args_json,
+                })?;
+                callback(LlmEvent::ToolCallEnd { call_id })?;
+                callback(LlmEvent::Completed {
+                    finish: FinishReason::ToolCalls,
+                })?;
+                return Ok(());
+            }
+
             let result_preview = history
                 .last()
                 .and_then(|m| m.get("content").and_then(|c| c.as_str()))
@@ -180,7 +215,12 @@ impl LlmProvider for EchoProvider {
                     .unwrap_or("")
                     .trim();
                 let args: Value = if args_str.is_empty() {
-                    json!({})
+                    // run_shell は "command" 必須のため、引数なし時は安全なデフォルトを渡す
+                    if *name == "run_shell" {
+                        json!({ "command": "echo ok" })
+                    } else {
+                        json!({})
+                    }
                 } else if let Ok(v) = serde_json::from_str(args_str) {
                     v
                 } else {

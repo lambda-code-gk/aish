@@ -185,16 +185,25 @@ impl LlmProvider for GeminiProvider {
                 parts.push(json!({"text": msg.content}));
             }
             if let Some(ref tool_calls) = msg.tool_calls {
-                for tc in tool_calls {
+                for (i, tc) in tool_calls.iter().enumerate() {
                     let mut fc_obj = json!({
                         "functionCall": {
                             "name": tc.name,
                             "args": tc.args
                         }
                     });
-                    // Gemini 3 では thoughtSignature を含める必要がある
-                    if let Some(ref sig) = tc.thought_signature {
-                        fc_obj["thoughtSignature"] = json!(sig);
+                    // Gemini 3: 各ステップの「最初の」functionCall part に thoughtSignature が必須。
+                    // 並列呼び出しでは API は最初の part にのみ署名を付けるが、ストリーミングで
+                    // チャンク分割により取得できないことがある。欠落時は FAQ 推奨のダミーで検証をスキップする。
+                    let sig = tc.thought_signature.as_deref().or_else(|| {
+                        if i == 0 {
+                            Some(Self::thought_signature_fallback())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(s) = sig {
+                        fc_obj["thoughtSignature"] = json!(s);
                     }
                     parts.push(fc_obj);
                 }
@@ -395,7 +404,15 @@ impl LlmProvider for GeminiProvider {
     }
 }
 
+/// Gemini 3 で thought_signature がストリームから取得できなかった場合のダミー値。
+/// https://ai.google.dev/gemini-api/docs/thought-signatures の FAQ に従い検証スキップ用に使用する。
+const GEMINI_THOUGHT_SIGNATURE_FALLBACK: &str = "skip_thought_signature_validator";
+
 impl GeminiProvider {
+    fn thought_signature_fallback() -> &'static str {
+        GEMINI_THOUGHT_SIGNATURE_FALLBACK
+    }
+
     /// JSONチャンクを LlmEvent に変換（text / functionCall 対応）
     fn handle_json_chunk_events(
         json_str: &str,

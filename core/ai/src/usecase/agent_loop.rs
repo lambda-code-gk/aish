@@ -3,7 +3,7 @@
 //! 直列の transaction script をやめ、RunState で遷移する。
 //! LLM から ToolCallEnd が来たら tool 実行フェーズへ遷移し、結果を messages に注入する。
 
-use crate::ports::outbound::{Approval, LlmEventStream, ToolApproval};
+use crate::ports::outbound::{Approval, InterruptChecker, LlmEventStream, ToolApproval};
 use common::error::Error;
 use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
@@ -14,6 +14,14 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+
+/// メッセージ列に含まれるツール結果（実行済みツール呼び出し）の数を返す
+fn count_tool_results(messages: &[Msg]) -> usize {
+    messages
+        .iter()
+        .filter(|m| matches!(m, Msg::ToolResult { .. }))
+        .count()
+}
 
 /// 実行状態
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +166,8 @@ pub struct AgentLoop<S: LlmEventStream> {
     approver: Arc<dyn ToolApproval>,
     /// シェル系ツールの名前（allowlist 不一致時に承認を求める）。例: "run_shell"
     shell_tool_name: Option<&'static str>,
+    /// Ctrl+C 等の割り込み検知。Some のときストリームコールバック内でチェックする
+    interrupt_checker: Option<Arc<dyn InterruptChecker>>,
 }
 
 impl<S: LlmEventStream> AgentLoop<S> {
@@ -168,6 +178,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
         sinks: Vec<Box<dyn EventSink>>,
         approver: Arc<dyn ToolApproval>,
         shell_tool_name: Option<&'static str>,
+        interrupt_checker: Option<Arc<dyn InterruptChecker>>,
     ) -> Self {
         Self {
             stream,
@@ -176,6 +187,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
             sinks,
             approver,
             shell_tool_name,
+            interrupt_checker,
         }
     }
 
@@ -195,10 +207,12 @@ impl<S: LlmEventStream> AgentLoop<S> {
 
     /// 1 ターン実行: messages を元に LLM を呼び、イベントを Sink に流す。
     /// 受信したイベントは即座に Sink へ emit し、ストリーミング表示する。
+    /// tool_execution_cap: このターンで実行するツール呼び出しの上限。None なら無制限。
     /// 戻り値: (new_messages, run_state, assistant_text)
     pub fn run_once(
         &mut self,
         messages: &[Msg],
+        tool_execution_cap: Option<usize>,
     ) -> Result<(Vec<Msg>, RunState, String), Error> {
         let (system_opt, query, history) = msgs_to_provider(messages);
         let system_instruction = system_opt.as_deref();
@@ -211,7 +225,16 @@ impl<S: LlmEventStream> AgentLoop<S> {
         let collected: Rc<RefCell<Vec<LlmEvent>>> = Rc::new(RefCell::new(Vec::new()));
         let collected_inner = collected.clone();
         let sinks = &mut self.sinks;
+        let interrupt_checker = self.interrupt_checker.clone();
         let mut cb = |ev: LlmEvent| -> Result<(), Error> {
+            if interrupt_checker
+                .as_ref()
+                .map_or(false, |c| c.is_interrupted())
+            {
+                return Err(Error::System(
+                    "Interrupted by user (Ctrl+C). State saved for resume.".to_string(),
+                ));
+            }
             for s in sinks.iter_mut() {
                 s.on_event(&AgentEvent::Llm(ev.clone()))?;
             }
@@ -257,7 +280,11 @@ impl<S: LlmEventStream> AgentLoop<S> {
         }
 
         if run_state == RunState::ExecutingTools && !pending_tool_calls.is_empty() {
-            for (call_id, name, args, thought_signature) in pending_tool_calls {
+            let cap = tool_execution_cap.unwrap_or(usize::MAX);
+            for (i, (call_id, name, args, thought_signature)) in pending_tool_calls.into_iter().enumerate() {
+                if i >= cap {
+                    break;
+                }
                 // 履歴にツール呼び出し自体を記録（直前の assistant メッセージに紐付く）
                 new_messages.push(Msg::tool_call(call_id.clone(), name.clone(), args.clone(), thought_signature.clone()));
 
@@ -268,13 +295,13 @@ impl<S: LlmEventStream> AgentLoop<S> {
                         // allowlist に一致 → 通常の context で実行
                         self.tool_context.clone()
                     } else {
-                        // allowlist 不一致 → 承認を求める
+                        // allowlist 不一致 → 承認を求める（Ctrl+C で Err が返る）
                         match self.approver.approve_unsafe_shell(command) {
-                            Approval::Approved => {
+                            Ok(Approval::Approved) => {
                                 // 承認された → allow_unsafe=true の context で実行
                                 self.tool_context.clone().with_allow_unsafe(true)
                             }
-                            Approval::Denied => {
+                            Ok(Approval::Denied) => {
                                 // 拒否された → ツールを実行せず ToolError として履歴に積む
                                 let msg = "denied by user".to_string();
                                 self.emit(&AgentEvent::ToolError {
@@ -290,6 +317,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
                                 ));
                                 continue; // 次のツールへ
                             }
+                            Err(e) => return Err(e),
                         }
                     }
                 } else {
@@ -333,19 +361,39 @@ impl<S: LlmEventStream> AgentLoop<S> {
         Ok((new_messages, run_state, assistant_text))
     }
 
-    /// ツール実行後に再度 LLM を呼ぶループ。Done になるか max_turns に達するまで run_once を繰り返す。
+    /// ツール実行後に再度 LLM を呼ぶループ。Done になるか max_turns / ツール数上限に達するまで run_once を繰り返す。
     /// 上限到達時は `AgentLoopOutcome::ReachedLimit` を返し、呼び出し元で「続けますか？」等の判断ができる。
+    /// - max_turns: LLM 往復回数の上限（1回の応答に複数ツール呼び出しが含まれる場合でも1ターンと数える）
+    /// - max_additional_tool_calls: この run で「あと何件まで」ツール実行してよいか（既存件数に加算する）。続行時も同じ値を渡すと、その分だけ追加で実行できる。
     pub fn run_until_done(
         &mut self,
         initial_messages: &[Msg],
         max_turns: usize,
+        max_additional_tool_calls: usize,
     ) -> Result<AgentLoopOutcome, Error> {
+        let initial_tool_count = count_tool_results(initial_messages);
+        let max_tool_calls = initial_tool_count.saturating_add(max_additional_tool_calls);
         let mut messages = initial_messages.to_vec();
         let mut last_assistant_text = String::new();
         for _ in 0..max_turns {
-            let (new_messages, state, assistant_text) = self.run_once(&messages)?;
+            let current_tool_count = count_tool_results(&messages);
+            if current_tool_count >= max_tool_calls {
+                return Ok(AgentLoopOutcome::ReachedLimit(
+                    messages.clone(),
+                    last_assistant_text.clone(),
+                ));
+            }
+            let cap = max_tool_calls.saturating_sub(current_tool_count);
+            let (new_messages, state, assistant_text) = self.run_once(&messages, Some(cap))?;
             last_assistant_text = assistant_text;
+            let tool_count_after = count_tool_results(&new_messages);
             messages = new_messages;
+            if tool_count_after >= max_tool_calls {
+                return Ok(AgentLoopOutcome::ReachedLimit(
+                    messages,
+                    last_assistant_text,
+                ));
+            }
             match state {
                 RunState::Done => return Ok(AgentLoopOutcome::Done(messages, last_assistant_text)),
                 RunState::ExecutingTools => continue,
@@ -511,9 +559,9 @@ mod tests {
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
         let messages = vec![Msg::user("Hi")];
-        let (new_msgs, state, assistant_text) = loop_.run_once(&messages).unwrap();
+        let (new_msgs, state, assistant_text) = loop_.run_once(&messages, None).unwrap();
         assert_eq!(state, RunState::Done);
         assert_eq!(assistant_text, "world");
         assert_eq!(new_msgs.len(), 2);
@@ -544,9 +592,9 @@ mod tests {
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
         let messages = vec![Msg::user("echo hello")];
-        let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
+        let (new_msgs, state, _text) = loop_.run_once(&messages, None).unwrap();
 
         assert_eq!(state, RunState::ExecutingTools);
         // user, (empty) assistant, tool_call, tool_result
@@ -581,9 +629,9 @@ mod tests {
         let ctx = ToolContext::new(None); // allowlist 空
         let sinks: Vec<Box<dyn EventSink>> = vec![];
         let approver = Arc::new(StubApproval::denied());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
         let messages = vec![Msg::user("run it")];
-        let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
+        let (new_msgs, state, _text) = loop_.run_once(&messages, None).unwrap();
 
         assert_eq!(state, RunState::ExecutingTools);
         // user, (empty) assistant, tool_call, tool_result (error)
@@ -622,9 +670,9 @@ mod tests {
         let ctx = ToolContext::new(None); // allowlist 空
         let sinks: Vec<Box<dyn EventSink>> = vec![];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
         let messages = vec![Msg::user("run it")];
-        let (new_msgs, state, _text) = loop_.run_once(&messages).unwrap();
+        let (new_msgs, state, _text) = loop_.run_once(&messages, None).unwrap();
 
         assert_eq!(state, RunState::ExecutingTools);
         // user, (empty) assistant, tool_call, tool_result (success)
@@ -663,9 +711,9 @@ mod tests {
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
         let messages = vec![Msg::user("echo")];
-        let outcome = loop_.run_until_done(&messages, 2).unwrap();
+        let outcome = loop_.run_until_done(&messages, 2, 100).unwrap();
         match &outcome {
             AgentLoopOutcome::ReachedLimit(msgs, _) => {
                 assert!(!msgs.is_empty());
@@ -681,15 +729,59 @@ mod tests {
         let ctx = ToolContext::new(None);
         let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
         let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
         let messages = vec![Msg::user("Hi")];
-        let outcome = loop_.run_until_done(&messages, 16).unwrap();
+        let outcome = loop_.run_until_done(&messages, 16, 16).unwrap();
         match &outcome {
             AgentLoopOutcome::Done(msgs, text) => {
                 assert_eq!(msgs.len(), 2);
                 assert_eq!(text.as_str(), "bye");
             }
             AgentLoopOutcome::ReachedLimit(_, _) => panic!("expected Done"),
+        }
+    }
+
+    /// 1回の応答に複数ツール呼び出しがある場合、max_tool_calls で打ち切り ReachedLimit になる
+    #[test]
+    fn test_agent_loop_run_until_done_capped_by_tool_calls() {
+        let events: Vec<LlmEvent> = (1..=5)
+            .flat_map(|i| {
+                let call_id = format!("c{}", i);
+                vec![
+                    LlmEvent::ToolCallBegin {
+                        call_id: call_id.clone(),
+                        name: "run_shell".to_string(),
+                        thought_signature: None,
+                    },
+                    LlmEvent::ToolCallArgsDelta {
+                        call_id: call_id.clone(),
+                        json_fragment: format!(r#"{{"command": "echo {}"}}"#, i),
+                    },
+                    LlmEvent::ToolCallEnd { call_id },
+                ]
+            })
+            .chain(std::iter::once(LlmEvent::Completed {
+                finish: FinishReason::ToolCalls,
+            }))
+            .collect();
+        let stub = StubLlm::new(events);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(RunShellStubTool::new()));
+        let ctx = ToolContext::new(None);
+        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
+        let approver = Arc::new(StubApproval::approved());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
+        let messages = vec![Msg::user("echo many")];
+        let outcome = loop_.run_until_done(&messages, 10, 3).unwrap();
+        match &outcome {
+            AgentLoopOutcome::ReachedLimit(msgs, _) => {
+                assert_eq!(
+                    super::count_tool_results(msgs),
+                    3,
+                    "max_tool_calls=3 なので実行は3件まで"
+                );
+            }
+            AgentLoopOutcome::Done(_, _) => panic!("expected ReachedLimit (tool call cap)"),
         }
     }
 }

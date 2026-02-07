@@ -43,7 +43,13 @@ impl TaskUseCase {
                 "No query provided. Please provide a message to send to the LLM.",
             ));
         }
-        self.run_query
-            .run_query(session_dir, provider, model, Some(&query), system_instruction)
+        self.run_query.run_query(
+            session_dir,
+            provider,
+            model,
+            Some(&query),
+            system_instruction,
+            None,
+        )
     }
 }

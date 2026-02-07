@@ -19,6 +19,13 @@ pub enum AiCommand {
         /// タスク未ヒット時に run_query へ委譲する際に渡すシステムプロンプト（-S/--system）
         system: Option<String>,
     },
+    /// 保存された会話状態から再開（-c/--continue 指定時のみ）
+    Resume {
+        provider: Option<ProviderName>,
+        model: Option<ModelName>,
+        /// システムプロンプト（-S/--system で指定）
+        system: Option<String>,
+    },
     /// LLM クエリ（タスク未指定、またはタスクが見つからなかった場合）
     Query {
         provider: Option<ProviderName>,

@@ -1,7 +1,7 @@
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContinueAfterLimitPrompt,
-    EventSinkFactory, LlmEventStream, RunQuery, SessionHistoryLoader, SessionResponseSaver,
-    ToolApproval,
+    EventSinkFactory, InterruptChecker, LlmEventStream, RunQuery, SessionHistoryLoader,
+    SessionResponseSaver, ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
@@ -94,6 +94,7 @@ pub struct AiUseCase {
     pub sink_factory: Arc<dyn EventSinkFactory>,
     pub tools: Vec<Arc<dyn Tool>>,
     pub approver: Arc<dyn ToolApproval>,
+    pub interrupt_checker: Arc<dyn InterruptChecker>,
     pub log: Arc<dyn Log>,
 }
 
@@ -112,6 +113,7 @@ impl AiUseCase {
         sink_factory: Arc<dyn EventSinkFactory>,
         tools: Vec<Arc<dyn Tool>>,
         approver: Arc<dyn ToolApproval>,
+        interrupt_checker: Arc<dyn InterruptChecker>,
         log: Arc<dyn Log>,
     ) -> Self {
         Self {
@@ -127,6 +129,7 @@ impl AiUseCase {
             sink_factory,
             tools,
             approver,
+            interrupt_checker,
             log,
         }
     }
@@ -149,6 +152,26 @@ impl AiUseCase {
         Ok(())
     }
 
+    /// エラー終了時に続き用状態を保存する（LLM エラー・クラッシュ時などに resume 可能にする）。
+    /// 保存に失敗してもエラーにはせず、呼び出し元の Err をそのまま返す。
+    fn try_save_agent_state_on_error(&self, session_dir: &Option<SessionDir>, messages: &[Msg]) {
+        if messages.is_empty() || !self.session_is_valid(session_dir) {
+            return;
+        }
+        if let Some(dir) = session_dir {
+            if let Err(e) = self.agent_state_saver.save(dir, messages) {
+                let _ = self.log.log(&LogRecord {
+                    ts: now_iso8601(),
+                    level: LogLevel::Warn,
+                    message: format!("Failed to save agent state on error: {}", e),
+                    layer: Some("usecase".to_string()),
+                    kind: Some("error".to_string()),
+                    fields: None,
+                });
+            }
+        }
+    }
+
     fn run_query_impl(
         &self,
         session_dir: Option<common::domain::SessionDir>,
@@ -156,6 +179,7 @@ impl AiUseCase {
         model: Option<common::domain::ModelName>,
         query: Option<&Query>,
         system_instruction: Option<&str>,
+        max_turns_override: Option<usize>,
     ) -> Result<i32, Error> {
         let _ = self.log.log(&LogRecord {
             ts: now_iso8601(),
@@ -198,25 +222,51 @@ impl AiUseCase {
             }
         };
 
-        let cfg_opt = load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
-        let resolved = resolve_provider(provider.as_ref(), cfg_opt.as_ref())?;
+        let cfg_opt = match load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                self.try_save_agent_state_on_error(&session_dir, &messages);
+                return Err(e);
+            }
+        };
+        let resolved = match resolve_provider(provider.as_ref(), cfg_opt.as_ref()) {
+            Ok(r) => r,
+            Err(e) => {
+                self.try_save_agent_state_on_error(&session_dir, &messages);
+                return Err(e);
+            }
+        };
         let model_str = model
             .as_ref()
             .map(|m| m.as_ref().to_string())
             .or_else(|| resolved.model.clone());
         let ctx = llm_error_context(&resolved);
-        let provider = create_provider(
+        let provider = match create_provider(
             resolved.provider_type,
             model_str,
             resolved.base_url.clone(),
             resolved.api_key_env.clone(),
             resolved.temperature,
         )
-        .map_err(|e| e.with_context(ctx.clone()))?;
+        .map_err(|e| e.with_context(ctx.clone()))
+        {
+            Ok(p) => p,
+            Err(e) => {
+                self.try_save_agent_state_on_error(&session_dir, &messages);
+                return Err(e);
+            }
+        };
         let driver = LlmDriver::new(provider);
 
-        const MAX_TURNS: usize = 16;
-        let home_dir = self.env_resolver.resolve_home_dir()?;
+        const DEFAULT_MAX_TURNS: usize = 16;
+        let max_turns = max_turns_override.unwrap_or(DEFAULT_MAX_TURNS);
+        let home_dir = match self.env_resolver.resolve_home_dir() {
+            Ok(h) => h,
+            Err(e) => {
+                self.try_save_agent_state_on_error(&session_dir, &messages);
+                return Err(e);
+            }
+        };
         let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
 
         let mut messages = messages;
@@ -238,11 +288,19 @@ impl AiUseCase {
                 sinks,
                 Arc::clone(&self.approver),
                 Some("run_shell"),
+                Some(Arc::clone(&self.interrupt_checker)),
             );
 
-            let outcome = agent_loop
-                .run_until_done(&messages, MAX_TURNS)
-                .map_err(|e| e.with_context(ctx.clone()))?;
+            let outcome = match agent_loop
+                .run_until_done(&messages, max_turns, max_turns)
+                .map_err(|e| e.with_context(ctx.clone()))
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    self.try_save_agent_state_on_error(&session_dir, &messages);
+                    return Err(e);
+                }
+            };
 
             match outcome {
                 AgentLoopOutcome::Done(_msgs, assistant_text) => {
@@ -265,7 +323,13 @@ impl AiUseCase {
                     return Ok(0);
                 }
                 AgentLoopOutcome::ReachedLimit(msgs, assistant_text) => {
-                    let continue_ = self.continue_prompt.ask_continue()?;
+                    let continue_ = match self.continue_prompt.ask_continue() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            self.try_save_agent_state_on_error(&session_dir, &msgs);
+                            return Err(e);
+                        }
+                    };
                     if !continue_ {
                         if self.session_is_valid(&session_dir) {
                             let dir = session_dir.as_ref().expect("session_dir is Some");
@@ -300,8 +364,16 @@ impl RunQuery for AiUseCase {
         model: Option<common::domain::ModelName>,
         query: Option<&Query>,
         system_instruction: Option<&str>,
+        max_turns_override: Option<usize>,
     ) -> Result<i32, Error> {
-        self.run_query_impl(session_dir, provider, model, query, system_instruction)
+        self.run_query_impl(
+            session_dir,
+            provider,
+            model,
+            query,
+            system_instruction,
+            max_turns_override,
+        )
     }
 }
 

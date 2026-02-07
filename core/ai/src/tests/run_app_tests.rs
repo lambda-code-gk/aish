@@ -25,9 +25,28 @@ fn test_run_app_with_help() {
 
 #[test]
 fn test_run_app_without_query() {
+    // 引数なしの ai → クエリ未指定エラー（-c を促す）
     let config = Config::default();
     let result = run_app(config);
-    // クエリが空で続き用状態もない場合はエラー（resume 意図だが状態なし）
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("No query provided"),
+        "expected 'No query provided', got: {}",
+        err
+    );
+    assert!(err.to_string().contains("--continue"));
+    assert_eq!(err.exit_code(), 64);
+}
+
+#[test]
+fn test_run_app_continue_without_state() {
+    // ai -c で再開を要求したが保存状態がない場合はエラー
+    let config = Config {
+        continue_flag: true,
+        ..Default::default()
+    };
+    let result = run_app(config);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("No continuation state"));

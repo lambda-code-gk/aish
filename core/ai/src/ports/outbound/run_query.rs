@@ -8,6 +8,7 @@ use common::error::Error;
 ///
 /// TaskUseCase がタスク未存在時に利用する。AiUseCase が実装する。
 /// `query` が None のときは「resume」意図（保存された続き用状態から再開）。Some のときは通常のクエリ送信。
+/// `max_turns_override`: エージェントループの上限。None のときは既定値（16）。手動テストでは環境変数 AI_MAX_TURNS を渡す。
 pub trait RunQuery: Send + Sync {
     fn run_query(
         &self,
@@ -16,5 +17,6 @@ pub trait RunQuery: Send + Sync {
         model: Option<ModelName>,
         query: Option<&Query>,
         system_instruction: Option<&str>,
+        max_turns_override: Option<usize>,
     ) -> Result<i32, Error>;
 }

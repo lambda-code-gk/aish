@@ -10,9 +10,9 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, PartSessionStorage,
-    StdCommandAllowRulesLoader, StdEventSinkFactory, StdResolveSystemInstruction, StdTaskRunner,
-    ShellTool,
+    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, NoopInterruptChecker, PartSessionStorage,
+    SigintChecker, StdCommandAllowRulesLoader, StdEventSinkFactory, StdResolveSystemInstruction,
+    StdTaskRunner, ShellTool,
 };
 use crate::domain::Query;
 use crate::ports::outbound::{
@@ -32,8 +32,16 @@ impl RunQuery for AiRunQuery {
         model: Option<common::domain::ModelName>,
         query: Option<&Query>,
         system_instruction: Option<&str>,
+        max_turns_override: Option<usize>,
     ) -> Result<i32, common::error::Error> {
-        self.0.run_query(session_dir, provider, model, query, system_instruction)
+        self.0.run_query(
+            session_dir,
+            provider,
+            model,
+            query,
+            system_instruction,
+            max_turns_override,
+        )
     }
 }
 
@@ -72,7 +80,13 @@ pub fn wire_ai() -> App {
         Arc::new(EchoTool::new()),
         Arc::new(ShellTool::new()),
     ];
-    let approver: Arc<dyn crate::ports::outbound::ToolApproval> = Arc::new(CliToolApproval::new());
+    let interrupt_checker: Arc<dyn crate::ports::outbound::InterruptChecker> =
+        SigintChecker::new()
+            .map(Arc::new)
+            .map(|a| a as Arc<dyn crate::ports::outbound::InterruptChecker>)
+            .unwrap_or_else(|_| Arc::new(NoopInterruptChecker::new()));
+    let approver: Arc<dyn crate::ports::outbound::ToolApproval> =
+        Arc::new(CliToolApproval::new(Some(Arc::clone(&interrupt_checker))));
     let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(&fs)));
     let agent_state_saver: Arc<dyn AgentStateSaver> =
         Arc::clone(&agent_state_storage) as Arc<dyn AgentStateSaver>;
@@ -95,6 +109,7 @@ pub fn wire_ai() -> App {
         sink_factory,
         tools,
         approver,
+        interrupt_checker,
         Arc::clone(&logger),
     ));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));

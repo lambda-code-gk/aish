@@ -21,8 +21,8 @@ impl StubApproval {
 
 #[cfg(test)]
 impl ToolApproval for StubApproval {
-    fn approve_unsafe_shell(&self, _command: &str) -> Approval {
-        self.result
+    fn approve_unsafe_shell(&self, _command: &str) -> Result<Approval, common::error::Error> {
+        Ok(self.result)
     }
 }
 
@@ -33,12 +33,12 @@ mod tests {
     #[test]
     fn test_stub_approval_approved() {
         let stub = StubApproval::approved();
-        assert_eq!(stub.approve_unsafe_shell("rm -rf /"), Approval::Approved);
+        assert_eq!(stub.approve_unsafe_shell("rm -rf /").unwrap(), Approval::Approved);
     }
 
     #[test]
     fn test_stub_approval_denied() {
         let stub = StubApproval::denied();
-        assert_eq!(stub.approve_unsafe_shell("rm -rf /"), Approval::Denied);
+        assert_eq!(stub.approve_unsafe_shell("rm -rf /").unwrap(), Approval::Denied);
     }
 }

@@ -63,6 +63,14 @@ impl EventSink for StdoutSink {
         }
         Ok(())
     }
+
+    fn on_end(&mut self) -> Result<(), Error> {
+        println!();
+        io::stdout()
+            .flush()
+            .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
+        Ok(())
+    }
 }
 
 /// JSONL ログへ追記（デバッグ・永続化用）

@@ -4,6 +4,8 @@ use common::domain::{ModelName, ProviderName};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub help: bool,
+    /// -c / --continue: 保存された会話状態から再開する
+    pub continue_flag: bool,
     pub provider: Option<ProviderName>,
     pub model: Option<ModelName>,
     pub system: Option<String>,
@@ -15,6 +17,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             help: false,
+            continue_flag: false,
             provider: None,
             model: None,
             system: None,
@@ -39,6 +42,10 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
         match args[i].as_str() {
             "-h" | "--help" => {
                 config.help = true;
+                i += 1;
+            }
+            "-c" | "--continue" => {
+                config.continue_flag = true;
                 i += 1;
             }
             "-p" | "--provider" => {
@@ -91,6 +98,14 @@ pub fn config_to_command(config: Config) -> AiCommand {
         return AiCommand::Help;
     }
 
+    if config.continue_flag {
+        return AiCommand::Resume {
+            provider: config.provider,
+            model: config.model,
+            system: config.system,
+        };
+    }
+
     if let Some(task) = config.task {
         let args = config.message_args;
         let provider = config.provider;
@@ -122,6 +137,7 @@ mod tests {
     fn test_config_default() {
         let config = Config::default();
         assert!(!config.help);
+        assert!(!config.continue_flag);
         assert!(config.provider.is_none());
         assert!(config.model.is_none());
         assert!(config.system.is_none());
@@ -327,6 +343,32 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.to_string().contains("requires an argument"));
         assert_eq!(err.exit_code(), 64);
+    }
+
+    #[test]
+    fn test_parse_args_continue_short() {
+        let args = vec!["ai".to_string(), "-c".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.continue_flag);
+        assert!(config.task.is_none());
+        assert_eq!(config.message_args.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_args_continue_long() {
+        let args = vec!["ai".to_string(), "--continue".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.continue_flag);
+    }
+
+    #[test]
+    fn test_config_to_command_continue_returns_resume() {
+        let config = Config {
+            continue_flag: true,
+            ..Default::default()
+        };
+        let cmd = config_to_command(config);
+        assert!(matches!(cmd, AiCommand::Resume { .. }));
     }
 }
 

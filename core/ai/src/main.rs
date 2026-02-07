@@ -63,23 +63,44 @@ impl UseCaseRunner for Runner {
                 model,
                 system_instruction(system).as_deref(),
             ),
+            AiCommand::Resume {
+                provider,
+                model,
+                system,
+            } => {
+                let max_turns = std::env::var("AI_MAX_TURNS")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok());
+                self.app.run_query.run_query(
+                    session_dir,
+                    provider,
+                    model,
+                    None,
+                    system_instruction(system).as_deref(),
+                    max_turns,
+                )
+            }
             AiCommand::Query {
                 provider,
                 model,
                 query,
                 system,
             } => {
-                let query_opt = if query.trim().is_empty() {
-                    None
-                } else {
-                    Some(&query)
-                };
+                if query.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Use -c or --continue to resume a previous session.",
+                    ));
+                }
+                let max_turns = std::env::var("AI_MAX_TURNS")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok());
                 self.app.run_query.run_query(
                     session_dir,
                     provider,
                     model,
-                    query_opt,
+                    Some(&query),
                     system_instruction(system).as_deref(),
+                    max_turns,
                 )
             }
         };
@@ -115,6 +136,7 @@ fn cmd_name_for_log(cmd: &AiCommand) -> &'static str {
     match cmd {
         AiCommand::Help => "help",
         AiCommand::Task { .. } => "task",
+        AiCommand::Resume { .. } => "resume",
         AiCommand::Query { .. } => "query",
     }
 }
@@ -148,6 +170,7 @@ fn print_help() {
     println!("Usage: ai [options] [task] [message...]");
     println!("Options:");
     println!("  -h, --help                    Show this help message");
+    println!("  -c, --continue                Resume from the last saved session (after interrupt or limit)");
     println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: provider default");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
