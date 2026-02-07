@@ -1,7 +1,7 @@
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContinueAfterLimitPrompt,
-    EventSinkFactory, InterruptChecker, LlmEventStreamFactory, ProfileLister, RunQuery,
-    SessionHistoryLoader, SessionResponseSaver, ToolApproval,
+    EventSinkFactory, InterruptChecker, LlmEventStreamFactory, ProfileLister, ResolveProfileAndModel,
+    RunQuery, SessionHistoryLoader, SessionResponseSaver, ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
@@ -63,6 +63,7 @@ pub struct AiUseCase {
     pub interrupt_checker: Arc<dyn InterruptChecker>,
     pub log: Arc<dyn Log>,
     pub profile_lister: Arc<dyn ProfileLister>,
+    pub resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
     pub llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
 }
 
@@ -84,6 +85,7 @@ impl AiUseCase {
         interrupt_checker: Arc<dyn InterruptChecker>,
         log: Arc<dyn Log>,
         profile_lister: Arc<dyn ProfileLister>,
+        resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
         llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
     ) -> Self {
         Self {
@@ -102,6 +104,7 @@ impl AiUseCase {
             interrupt_checker,
             log,
             profile_lister,
+            resolve_profile_and_model,
             llm_stream_factory,
         }
     }
@@ -159,13 +162,22 @@ impl AiUseCase {
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
     ) -> Result<i32, Error> {
+        let (profile_name, model_name) = self
+            .resolve_profile_and_model
+            .resolve(provider.as_ref(), model.as_ref())?;
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("profile".to_string(), serde_json::json!(profile_name.clone()));
+        fields.insert("model".to_string(), serde_json::json!(model_name.clone()));
         let _ = self.log.log(&LogRecord {
             ts: now_iso8601(),
             level: LogLevel::Info,
-            message: "query started".to_string(),
+            message: format!(
+                "query started (profile: {}, model: {})",
+                profile_name, model_name
+            ),
             layer: Some("usecase".to_string()),
             kind: Some("usecase".to_string()),
-            fields: None,
+            fields: Some(fields),
         });
 
         let messages: Vec<Msg> = match query {
