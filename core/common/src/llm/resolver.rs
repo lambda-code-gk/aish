@@ -49,6 +49,24 @@ fn builtin_provider_names() -> &'static [&'static str] {
     &["gemini", "gpt", "openai", "openai_compat", "echo"]
 }
 
+/// 現在有効な（利用可能な）プロファイル一覧。名前のソート済みリストとデフォルトプロファイル名。
+pub fn list_available_profiles(cfg: Option<&ProfilesConfig>) -> (Vec<String>, Option<String>) {
+    let mut names: Vec<String> = builtin_provider_names()
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    if let Some(c) = cfg {
+        for k in c.providers.keys() {
+            if !names.contains(k) {
+                names.push(k.clone());
+            }
+        }
+    }
+    names.sort();
+    let default = cfg.and_then(|c| c.default_provider.clone());
+    (names, default)
+}
+
 /// 要求されたプロバイダ名（None の場合は default）と ProfilesConfig から ResolvedProvider を解決する。
 /// 不明なプロバイダの場合は Error::invalid_argument（is_usage == true）で利用可能一覧を返す。
 pub fn resolve_provider(
@@ -245,5 +263,55 @@ mod tests {
         assert!(msg.contains("nonexistent"));
         assert!(msg.contains("my_custom"));
         assert!(msg.contains("gemini"));
+    }
+
+    #[test]
+    fn test_list_available_profiles_no_cfg() {
+        let (names, default) = list_available_profiles(None);
+        assert_eq!(default, None);
+        assert!(names.contains(&"gemini".to_string()));
+        assert!(names.contains(&"echo".to_string()));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn test_list_available_profiles_with_cfg() {
+        let cfg = ProfilesConfig {
+            default_provider: Some("my_openai".to_string()),
+            providers: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "my_openai".to_string(),
+                    ProviderProfile {
+                        type_: ProviderTypeKind::Openai,
+                        base_url: None,
+                        model: None,
+                        api_key_env: None,
+                        temperature: None,
+                    },
+                );
+                m.insert(
+                    "custom_echo".to_string(),
+                    ProviderProfile {
+                        type_: ProviderTypeKind::Echo,
+                        base_url: None,
+                        model: None,
+                        api_key_env: None,
+                        temperature: None,
+                    },
+                );
+                m
+            },
+        };
+        let (names, default) = list_available_profiles(Some(&cfg));
+        assert_eq!(default.as_deref(), Some("my_openai"));
+        assert!(names.contains(&"my_openai".to_string()));
+        assert!(names.contains(&"custom_echo".to_string()));
+        assert!(names.contains(&"gemini".to_string()));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
     }
 }

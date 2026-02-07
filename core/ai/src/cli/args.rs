@@ -4,6 +4,8 @@ use common::domain::{ModelName, ProviderName};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub help: bool,
+    /// -L / --list-profiles: 現在有効なプロファイル一覧を表示
+    pub list_profiles: bool,
     /// -c / --continue: 保存された会話状態から再開する
     pub continue_flag: bool,
     pub provider: Option<ProviderName>,
@@ -17,6 +19,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             help: false,
+            list_profiles: false,
             continue_flag: false,
             provider: None,
             model: None,
@@ -42,6 +45,10 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
         match args[i].as_str() {
             "-h" | "--help" => {
                 config.help = true;
+                i += 1;
+            }
+            "-L" | "--list-profiles" => {
+                config.list_profiles = true;
                 i += 1;
             }
             "-c" | "--continue" => {
@@ -98,6 +105,10 @@ pub fn config_to_command(config: Config) -> AiCommand {
         return AiCommand::Help;
     }
 
+    if config.list_profiles {
+        return AiCommand::ListProfiles;
+    }
+
     if config.continue_flag {
         return AiCommand::Resume {
             provider: config.provider,
@@ -137,6 +148,7 @@ mod tests {
     fn test_config_default() {
         let config = Config::default();
         assert!(!config.help);
+        assert!(!config.list_profiles);
         assert!(!config.continue_flag);
         assert!(config.provider.is_none());
         assert!(config.model.is_none());
@@ -369,6 +381,30 @@ mod tests {
         };
         let cmd = config_to_command(config);
         assert!(matches!(cmd, AiCommand::Resume { .. }));
+    }
+
+    #[test]
+    fn test_parse_args_list_profiles_short() {
+        let args = vec!["ai".to_string(), "-L".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.list_profiles);
+    }
+
+    #[test]
+    fn test_parse_args_list_profiles_long() {
+        let args = vec!["ai".to_string(), "--list-profiles".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.list_profiles);
+    }
+
+    #[test]
+    fn test_config_to_command_list_profiles_returns_list_profiles() {
+        let config = Config {
+            list_profiles: true,
+            ..Default::default()
+        };
+        let cmd = config_to_command(config);
+        assert!(matches!(cmd, AiCommand::ListProfiles));
     }
 }
 

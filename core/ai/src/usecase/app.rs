@@ -8,7 +8,7 @@ use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{now_iso8601, FileSystem, Log, LogLevel, LogRecord, Process};
 use common::error::Error;
 use common::llm::factory::AnyProvider;
-use common::llm::{create_provider, load_profiles_config, resolve_provider, LlmDriver, ResolvedProvider};
+use common::llm::{create_provider, list_available_profiles, load_profiles_config, resolve_provider, LlmDriver, ResolvedProvider};
 use common::llm::provider::Message as LlmMessage;
 use crate::domain::Query;
 use common::msg::Msg;
@@ -140,6 +140,13 @@ impl AiUseCase {
         } else {
             false
         }
+    }
+
+    /// 現在有効なプロファイル一覧を返す（ソート済み名前リストとデフォルトプロファイル名）。
+    /// 表示は CLI の責務のため、usecase はデータのみ返す。
+    pub fn list_profiles(&self) -> Result<(Vec<String>, Option<String>), Error> {
+        let cfg_opt = load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
+        Ok(list_available_profiles(cfg_opt.as_ref()))
     }
 
     fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {

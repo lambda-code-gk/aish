@@ -49,6 +49,17 @@ impl UseCaseRunner for Runner {
                 print_help();
                 Ok(0)
             }
+            AiCommand::ListProfiles => {
+                let (names, default) = self.app.ai_use_case.list_profiles()?;
+                for name in &names {
+                    if default.as_deref() == Some(name.as_str()) {
+                        println!("{} (default)", name);
+                    } else {
+                        println!("{}", name);
+                    }
+                }
+                Ok(0)
+            }
             AiCommand::Task {
                 name,
                 args,
@@ -135,6 +146,7 @@ impl UseCaseRunner for Runner {
 fn cmd_name_for_log(cmd: &AiCommand) -> &'static str {
     match cmd {
         AiCommand::Help => "help",
+        AiCommand::ListProfiles => "list-profiles",
         AiCommand::Task { .. } => "task",
         AiCommand::Resume { .. } => "resume",
         AiCommand::Query { .. } => "query",
@@ -170,6 +182,7 @@ fn print_help() {
     println!("Usage: ai [options] [task] [message...]");
     println!("Options:");
     println!("  -h, --help                    Show this help message");
+    println!("  -L, --list-profiles           List currently available provider profiles (from profiles.json + built-ins)");
     println!("  -c, --continue                Resume from the last saved session (after interrupt or limit)");
     println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: provider default");

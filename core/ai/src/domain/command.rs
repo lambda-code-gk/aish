@@ -10,6 +10,8 @@ use common::domain::{ModelName, ProviderName};
 pub enum AiCommand {
     /// ヘルプ表示
     Help,
+    /// 現在有効なプロファイル一覧表示
+    ListProfiles,
     /// タスク実行（タスクが見つかった場合のみ、見つからなければ Query へ）
     Task {
         name: TaskName,

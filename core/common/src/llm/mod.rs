@@ -18,5 +18,5 @@ pub use driver::LlmDriver;
 pub use events::{FinishReason, LlmEvent};
 pub use factory::{ProviderType, create_provider, create_driver};
 pub use provider::LlmProvider;
-pub use resolver::{load_profiles_config, resolve_provider, ResolvedProvider};
+pub use resolver::{list_available_profiles, load_profiles_config, resolve_provider, ResolvedProvider};
 
