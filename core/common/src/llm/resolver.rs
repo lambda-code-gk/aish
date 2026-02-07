@@ -50,18 +50,16 @@ fn builtin_provider_names() -> &'static [&'static str] {
 }
 
 /// 現在有効な（利用可能な）プロファイル一覧。名前のソート済みリストとデフォルトプロファイル名。
+/// cfg が Some なら profiles.json のキーのみ、None ならビルトイン名のみを返す。
 pub fn list_available_profiles(cfg: Option<&ProfilesConfig>) -> (Vec<String>, Option<String>) {
-    let mut names: Vec<String> = builtin_provider_names()
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-    if let Some(c) = cfg {
-        for k in c.providers.keys() {
-            if !names.contains(k) {
-                names.push(k.clone());
-            }
-        }
-    }
+    let mut names: Vec<String> = if let Some(c) = cfg {
+        c.providers.keys().cloned().collect()
+    } else {
+        builtin_provider_names()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    };
     names.sort();
     let default = cfg.and_then(|c| c.default_provider.clone());
     (names, default)
@@ -95,31 +93,22 @@ pub fn resolve_provider(
         }
     }
 
-    // 2) ビルトイン (ProviderType::from_str) を試す
-    if let Some(provider_type) = ProviderType::from_str(effective_name) {
-        return Ok(ResolvedProvider {
-            profile_name: effective_name.to_string(),
-            provider_type,
-            base_url: None,
-            model: None,
-            api_key_env: None,
-            temperature: None,
-        });
+    // 2) profiles.json が無い場合のみ、ビルトインにフォールバック（後方互換）
+    if cfg.is_none() {
+        if let Some(provider_type) = ProviderType::from_str(effective_name) {
+            return Ok(ResolvedProvider {
+                profile_name: effective_name.to_string(),
+                provider_type,
+                base_url: None,
+                model: None,
+                api_key_env: None,
+                temperature: None,
+            });
+        }
     }
 
     // 3) どれも無ければ usage エラー
-    let mut available: Vec<String> = builtin_provider_names()
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-    if let Some(cfg) = cfg {
-        for k in cfg.providers.keys() {
-            if !available.contains(k) {
-                available.push(k.clone());
-            }
-        }
-    }
-    available.sort();
+    let (available, _) = list_available_profiles(cfg);
     Err(Error::invalid_argument(format!(
         "Unknown provider: '{}'. Available: {}",
         effective_name,
@@ -204,7 +193,30 @@ mod tests {
     fn test_resolve_provider_cfg_requested_overrides_default() {
         let cfg = ProfilesConfig {
             default_provider: Some("gemini".to_string()),
-            providers: std::collections::HashMap::new(),
+            providers: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "gemini".to_string(),
+                    ProviderProfile {
+                        type_: ProviderTypeKind::Gemini,
+                        base_url: None,
+                        model: None,
+                        api_key_env: None,
+                        temperature: None,
+                    },
+                );
+                m.insert(
+                    "echo".to_string(),
+                    ProviderProfile {
+                        type_: ProviderTypeKind::Echo,
+                        base_url: None,
+                        model: None,
+                        api_key_env: None,
+                        temperature: None,
+                    },
+                );
+                m
+            },
         };
         let name = ProviderName::new("echo");
         let r = resolve_provider(Some(&name), Some(&cfg)).unwrap();
@@ -262,7 +274,35 @@ mod tests {
         assert!(msg.contains("Unknown provider"));
         assert!(msg.contains("nonexistent"));
         assert!(msg.contains("my_custom"));
-        assert!(msg.contains("gemini"));
+        // cfg がある場合、ビルトイン名は一覧に含まれない
+        assert!(!msg.contains("gemini"));
+    }
+
+    #[test]
+    fn test_resolve_provider_cfg_present_no_builtin_fallback() {
+        // profiles.json がある場合、ビルトイン名でも profiles.json に無ければエラー
+        let cfg = ProfilesConfig {
+            default_provider: None,
+            providers: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "my_echo".to_string(),
+                    ProviderProfile {
+                        type_: ProviderTypeKind::Echo,
+                        base_url: None,
+                        model: None,
+                        api_key_env: None,
+                        temperature: None,
+                    },
+                );
+                m
+            },
+        };
+        let name = ProviderName::new("echo");
+        let e = resolve_provider(Some(&name), Some(&cfg)).unwrap_err();
+        assert!(e.is_usage());
+        assert!(e.to_string().contains("Unknown provider"));
+        assert!(e.to_string().contains("echo"));
     }
 
     #[test]
@@ -309,7 +349,8 @@ mod tests {
         assert_eq!(default.as_deref(), Some("my_openai"));
         assert!(names.contains(&"my_openai".to_string()));
         assert!(names.contains(&"custom_echo".to_string()));
-        assert!(names.contains(&"gemini".to_string()));
+        // cfg がある場合、ビルトイン名は含まれない
+        assert!(!names.contains(&"gemini".to_string()));
         let mut sorted = names.clone();
         sorted.sort();
         assert_eq!(names, sorted);

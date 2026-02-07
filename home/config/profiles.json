@@ -1,11 +1,35 @@
 {
   "default_provider": "sakura",
   "providers": {
+    "echo": {
+      "type": "echo"
+    },
+    "gemini": {
+      "type": "gemini",
+      "model": "gemini-3-flash-preview",
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    "gpt": {
+      "type": "openai",
+      "model": "gpt-5.2",
+      "api_key_env": "OPENAI_API_KEY"
+    },
     "local": {
       "type": "openai_compat",
       "base_url": "http://localhost:11434/v1",
       "model": "llama3.1",
       "temperature": 0.4
+    },
+    "openai": {
+      "type": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-5.2",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "openai_compat": {
+      "type": "openai_compat",
+      "base_url": "http://localhost:11434/v1",
+      "model": "llama3.1"
     },
     "sakura": {
       "type": "openai_compat",
