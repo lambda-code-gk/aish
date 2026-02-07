@@ -1,6 +1,5 @@
 //! Clear コマンドのユースケース
 
-use crate::wiring::App;
 use common::ports::outbound::FileSystem;
 use common::error::Error;
 use common::ports::outbound::{PathResolver, PathResolverInput};
@@ -23,14 +22,6 @@ impl ClearUseCase {
             path_resolver,
             fs,
         }
-    }
-
-    /// App から ClearUseCase を作成する
-    pub fn from_app(app: &App) -> Self {
-        Self::new(
-            Arc::clone(&app.path_resolver),
-            Arc::clone(&app.fs),
-        )
     }
 
     /// Clear を実行する

@@ -12,7 +12,7 @@ use cli::{config_to_command, parse_args, Config};
 use domain::command::Command;
 use ports::inbound::UseCaseRunner;
 #[cfg(unix)]
-use usecase::{ClearUseCase, ShellUseCase, SysqUseCase, TruncateConsoleLogUseCase};
+use usecase::SysqUseCase;
 #[cfg(unix)]
 use wiring::{wire_aish, App};
 
@@ -36,18 +36,11 @@ impl UseCaseRunner for Runner {
                 print_help();
                 Ok(0)
             }
-            Command::Shell => {
-                let use_case = ShellUseCase::from_app(&self.app);
-                use_case.run(&path_input)
-            }
-            Command::TruncateConsoleLog => {
-                let use_case = TruncateConsoleLogUseCase::from_app(&self.app);
-                use_case.run(&path_input)
-            }
+            Command::Shell => self.app.shell_use_case.run(&path_input),
+            Command::TruncateConsoleLog => self.app.truncate_console_log_use_case.run(&path_input),
             Command::Clear => {
-                let use_case = ClearUseCase::from_app(&self.app);
                 let session_explicitly_specified = is_session_explicitly_specified(&config);
-                use_case.run(&path_input, session_explicitly_specified)
+                self.app.clear_use_case.run(&path_input, session_explicitly_specified)
             }
             Command::SysqList => {
                 let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
@@ -177,7 +170,6 @@ pub fn run() -> Result<i32, Error> {
 mod tests {
     use super::*;
     use crate::cli::{config_to_command, Config};
-    use crate::usecase::{ClearUseCase, ShellUseCase, TruncateConsoleLogUseCase};
     use crate::wiring::wire_aish;
     use domain::command::Command;
 
@@ -209,18 +201,11 @@ mod tests {
         };
         match command {
             Command::Help => Ok(0),
-            Command::Shell => {
-                let use_case = ShellUseCase::from_app(&app);
-                use_case.run(&path_input)
-            }
-            Command::TruncateConsoleLog => {
-                let use_case = TruncateConsoleLogUseCase::from_app(&app);
-                use_case.run(&path_input)
-            }
+            Command::Shell => app.shell_use_case.run(&path_input),
+            Command::TruncateConsoleLog => app.truncate_console_log_use_case.run(&path_input),
             Command::Clear => {
-                let use_case = ClearUseCase::from_app(&app);
                 let session_explicitly_specified = is_session_explicitly_specified_for_test(&config);
-                use_case.run(&path_input, session_explicitly_specified)
+                app.clear_use_case.run(&path_input, session_explicitly_specified)
             }
             Command::SysqList
             | Command::SysqEnable { .. }

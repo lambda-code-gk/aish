@@ -1,7 +1,6 @@
 //! Shell コマンドのユースケース
 
 use crate::ports::outbound::ShellRunner;
-use crate::wiring::App;
 use common::error::Error;
 use common::ports::outbound::{PathResolver, PathResolverInput};
 use common::session::Session;
@@ -22,14 +21,6 @@ impl ShellUseCase {
             path_resolver,
             shell_runner,
         }
-    }
-
-    /// App から ShellUseCase を作成する
-    pub fn from_app(app: &App) -> Self {
-        Self::new(
-            Arc::clone(&app.path_resolver),
-            Arc::clone(&app.shell_runner),
-        )
     }
 
     /// Shell を実行する

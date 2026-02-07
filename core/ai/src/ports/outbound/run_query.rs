@@ -7,13 +7,14 @@ use common::error::Error;
 /// クエリを LLM に送って実行する能力
 ///
 /// TaskUseCase がタスク未存在時に利用する。AiUseCase が実装する。
+/// `query` が None のときは「resume」意図（保存された続き用状態から再開）。Some のときは通常のクエリ送信。
 pub trait RunQuery: Send + Sync {
     fn run_query(
         &self,
         session_dir: Option<SessionDir>,
         provider: Option<ProviderName>,
         model: Option<ModelName>,
-        query: &Query,
+        query: Option<&Query>,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error>;
 }

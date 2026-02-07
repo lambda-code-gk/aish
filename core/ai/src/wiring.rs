@@ -10,12 +10,14 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliToolApproval, PartSessionStorage, StdCommandAllowRulesLoader, StdEventSinkFactory,
-    StdResolveSystemInstruction, StdTaskRunner, ShellTool,
+    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, PartSessionStorage,
+    StdCommandAllowRulesLoader, StdEventSinkFactory, StdResolveSystemInstruction, StdTaskRunner,
+    ShellTool,
 };
 use crate::domain::Query;
 use crate::ports::outbound::{
-    ResolveSystemInstruction, RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
+    AgentStateLoader, AgentStateSaver, ResolveSystemInstruction, RunQuery, SessionHistoryLoader,
+    SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::AiUseCase;
 use crate::usecase::task::TaskUseCase;
@@ -28,7 +30,7 @@ impl RunQuery for AiRunQuery {
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
         model: Option<common::domain::ModelName>,
-        query: &Query,
+        query: Option<&Query>,
         system_instruction: Option<&str>,
     ) -> Result<i32, common::error::Error> {
         self.0.run_query(session_dir, provider, model, query, system_instruction)
@@ -71,12 +73,22 @@ pub fn wire_ai() -> App {
         Arc::new(ShellTool::new()),
     ];
     let approver: Arc<dyn crate::ports::outbound::ToolApproval> = Arc::new(CliToolApproval::new());
+    let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(&fs)));
+    let agent_state_saver: Arc<dyn AgentStateSaver> =
+        Arc::clone(&agent_state_storage) as Arc<dyn AgentStateSaver>;
+    let agent_state_loader: Arc<dyn AgentStateLoader> =
+        Arc::clone(&agent_state_storage) as Arc<dyn AgentStateLoader>;
+    let continue_prompt: Arc<dyn crate::ports::outbound::ContinueAfterLimitPrompt> =
+        Arc::new(CliContinuePrompt::new());
     let resolve_system_instruction: Arc<dyn ResolveSystemInstruction> =
         Arc::new(StdResolveSystemInstruction::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     let ai_use_case = Arc::new(AiUseCase::new(
         fs,
         history_loader,
         response_saver,
+        agent_state_saver,
+        agent_state_loader,
+        continue_prompt,
         Arc::clone(&env_resolver),
         process,
         command_allow_rules_loader,

@@ -1,6 +1,5 @@
 //! TruncateConsoleLog コマンドのユースケース
 
-use crate::wiring::App;
 use common::ports::outbound::FileSystem;
 use common::error::Error;
 use common::ports::outbound::{PathResolver, PathResolverInput, Signal};
@@ -26,15 +25,6 @@ impl TruncateConsoleLogUseCase {
             fs,
             signal,
         }
-    }
-
-    /// App から TruncateConsoleLogUseCase を作成する
-    pub fn from_app(app: &App) -> Self {
-        Self::new(
-            Arc::clone(&app.path_resolver),
-            Arc::clone(&app.fs),
-            Arc::clone(&app.signal),
-        )
     }
 
     /// TruncateConsoleLog を実行する

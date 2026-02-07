@@ -44,6 +44,6 @@ impl TaskUseCase {
             ));
         }
         self.run_query
-            .run_query(session_dir, provider, model, &query, system_instruction)
+            .run_query(session_dir, provider, model, Some(&query), system_instruction)
     }
 }

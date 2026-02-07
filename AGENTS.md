@@ -3,8 +3,8 @@
 ## ⚠️ 作業前の必須確認
 
 - コード編集・追加・修正の**前**にこのAGENTS.mdを読む
-- **作業前**: `./test_integration.sh` で全テスト成功を確認
-- **作業後**: `./test_integration.sh` で既存機能が壊れていないことを確認
+- **作業前**: `./test_architecture.sh && ./test.sh &&./test_integration.sh` で全テスト成功を確認
+- **作業後**: `./test_architecture.sh && ./test.sh && ./test_integration.sh` で既存機能が壊れていないことを確認
 
 ---
 

@@ -27,10 +27,10 @@ fn test_run_app_with_help() {
 fn test_run_app_without_query() {
     let config = Config::default();
     let result = run_app(config);
-    // クエリがない場合はエラー
+    // クエリが空で続き用状態もない場合はエラー（resume 意図だが状態なし）
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("No query provided"));
+    assert!(err.to_string().contains("No continuation state"));
     assert_eq!(err.exit_code(), 64);
 }
 

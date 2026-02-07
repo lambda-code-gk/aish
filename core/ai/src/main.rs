@@ -69,16 +69,16 @@ impl UseCaseRunner for Runner {
                 query,
                 system,
             } => {
-                if query.trim().is_empty() {
-                    return Err(Error::invalid_argument(
-                        "No query provided. Please provide a message to send to the LLM.",
-                    ));
-                }
+                let query_opt = if query.trim().is_empty() {
+                    None
+                } else {
+                    Some(&query)
+                };
                 self.app.run_query.run_query(
                     session_dir,
                     provider,
                     model,
-                    &query,
+                    query_opt,
                     system_instruction(system).as_deref(),
                 )
             }

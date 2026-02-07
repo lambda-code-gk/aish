@@ -1,8 +1,9 @@
 use crate::ports::outbound::{
-    CommandAllowRulesLoader, EventSinkFactory, LlmEventStream, RunQuery, SessionHistoryLoader,
-    SessionResponseSaver, ToolApproval,
+    AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContinueAfterLimitPrompt,
+    EventSinkFactory, LlmEventStream, RunQuery, SessionHistoryLoader, SessionResponseSaver,
+    ToolApproval,
 };
-use crate::usecase::agent_loop::AgentLoop;
+use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{now_iso8601, FileSystem, Log, LogLevel, LogRecord, Process};
 use common::error::Error;
@@ -84,6 +85,9 @@ pub struct AiUseCase {
     pub fs: Arc<dyn FileSystem>,
     pub history_loader: Arc<dyn SessionHistoryLoader>,
     pub response_saver: Arc<dyn SessionResponseSaver>,
+    pub agent_state_saver: Arc<dyn AgentStateSaver>,
+    pub agent_state_loader: Arc<dyn AgentStateLoader>,
+    pub continue_prompt: Arc<dyn ContinueAfterLimitPrompt>,
     pub env_resolver: Arc<dyn EnvResolver>,
     pub process: Arc<dyn Process>,
     pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
@@ -99,6 +103,9 @@ impl AiUseCase {
         fs: Arc<dyn FileSystem>,
         history_loader: Arc<dyn SessionHistoryLoader>,
         response_saver: Arc<dyn SessionResponseSaver>,
+        agent_state_saver: Arc<dyn AgentStateSaver>,
+        agent_state_loader: Arc<dyn AgentStateLoader>,
+        continue_prompt: Arc<dyn ContinueAfterLimitPrompt>,
         env_resolver: Arc<dyn EnvResolver>,
         process: Arc<dyn Process>,
         command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
@@ -111,6 +118,9 @@ impl AiUseCase {
             fs,
             history_loader,
             response_saver,
+            agent_state_saver,
+            agent_state_loader,
+            continue_prompt,
             env_resolver,
             process,
             command_allow_rules_loader,
@@ -144,7 +154,7 @@ impl AiUseCase {
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
         model: Option<common::domain::ModelName>,
-        query: &Query,
+        query: Option<&Query>,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
         let _ = self.log.log(&LogRecord {
@@ -155,15 +165,37 @@ impl AiUseCase {
             kind: Some("usecase".to_string()),
             fields: None,
         });
-        let history_messages = if self.session_is_valid(&session_dir) {
-            let dir = session_dir.as_ref().expect("session_dir is Some");
-            self.history_loader
-                .load(dir)
-                .ok()
-                .map(|h| h.messages().to_vec())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
+
+        let messages: Vec<Msg> = match query {
+            None => {
+                // Resume: 保存された続き用状態から再開
+                let dir = session_dir.as_ref().ok_or_else(|| {
+                    Error::invalid_argument("No continuation state. Please provide a message.")
+                })?;
+                if !self.session_is_valid(&session_dir) {
+                    return Err(Error::invalid_argument(
+                        "No continuation state. Please provide a message.",
+                    ));
+                }
+                self.agent_state_loader
+                    .load(dir)?
+                    .ok_or_else(|| {
+                        Error::invalid_argument("No continuation state. Please provide a message.")
+                    })?
+            }
+            Some(q) => {
+                let history_messages = if self.session_is_valid(&session_dir) {
+                    let dir = session_dir.as_ref().expect("session_dir is Some");
+                    self.history_loader
+                        .load(dir)
+                        .ok()
+                        .map(|h| h.messages().to_vec())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                build_messages(&history_messages, q, system_instruction)
+            }
         };
 
         let cfg_opt = load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
@@ -179,44 +211,84 @@ impl AiUseCase {
             resolved.base_url.clone(),
             resolved.api_key_env.clone(),
             resolved.temperature,
-        ).map_err(|e| e.with_context(ctx.clone()))?;
+        )
+        .map_err(|e| e.with_context(ctx.clone()))?;
         let driver = LlmDriver::new(provider);
-        let stream = DriverLlmStream(&driver);
-        let mut registry = ToolRegistry::new();
-        for t in &self.tools {
-            registry.register(Arc::clone(t));
-        }
 
-        let messages = build_messages(&history_messages, query, system_instruction);
+        const MAX_TURNS: usize = 16;
         let home_dir = self.env_resolver.resolve_home_dir()?;
         let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
-        let tool_context = ToolContext::new(session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()))
-            .with_command_allow_rules(allow_rules);
-        let sinks = self.sink_factory.create_sinks();
-        let mut agent_loop =
-            AgentLoop::new(stream, registry, tool_context, sinks, Arc::clone(&self.approver), Some("run_shell"));
-        const MAX_TURNS: usize = 16;
-        // エラーは CLI 層で 1 回だけ記録する（Provider 等のコンテキスト付き）。usecase では重複して書かない。
-        let (_final_messages, assistant_text) =
-            agent_loop.run_until_done(&messages, MAX_TURNS).map_err(|e| e.with_context(ctx))?;
 
-        let _ = self.log.log(&LogRecord {
-            ts: now_iso8601(),
-            level: LogLevel::Info,
-            message: "query finished".to_string(),
-            layer: Some("usecase".to_string()),
-            kind: Some("usecase".to_string()),
-            fields: None,
-        });
-        println!();
+        let mut messages = messages;
+        loop {
+            let stream = DriverLlmStream(&driver);
+            let mut registry = ToolRegistry::new();
+            for t in &self.tools {
+                registry.register(Arc::clone(t));
+            }
+            let tool_context = ToolContext::new(
+                session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()),
+            )
+            .with_command_allow_rules(allow_rules.clone());
+            let sinks = self.sink_factory.create_sinks();
+            let mut agent_loop = AgentLoop::new(
+                stream,
+                registry,
+                tool_context,
+                sinks,
+                Arc::clone(&self.approver),
+                Some("run_shell"),
+            );
 
-        if self.session_is_valid(&session_dir) && !assistant_text.trim().is_empty() {
-            let dir = session_dir.as_ref().expect("session_dir is Some");
-            self.response_saver.save_assistant(dir, &assistant_text)?;
-            self.truncate_console_log(dir)?;
+            let outcome = agent_loop
+                .run_until_done(&messages, MAX_TURNS)
+                .map_err(|e| e.with_context(ctx.clone()))?;
+
+            match outcome {
+                AgentLoopOutcome::Done(_msgs, assistant_text) => {
+                    if self.session_is_valid(&session_dir) {
+                        let dir = session_dir.as_ref().expect("session_dir is Some");
+                        self.agent_state_saver.clear(dir)?;
+                        if !assistant_text.trim().is_empty() {
+                            self.response_saver.save_assistant(dir, &assistant_text)?;
+                            self.truncate_console_log(dir)?;
+                        }
+                    }
+                    let _ = self.log.log(&LogRecord {
+                        ts: now_iso8601(),
+                        level: LogLevel::Info,
+                        message: "query finished".to_string(),
+                        layer: Some("usecase".to_string()),
+                        kind: Some("usecase".to_string()),
+                        fields: None,
+                    });
+                    return Ok(0);
+                }
+                AgentLoopOutcome::ReachedLimit(msgs, assistant_text) => {
+                    let continue_ = self.continue_prompt.ask_continue()?;
+                    if !continue_ {
+                        if self.session_is_valid(&session_dir) {
+                            let dir = session_dir.as_ref().expect("session_dir is Some");
+                            self.agent_state_saver.save(dir, &msgs)?;
+                            if !assistant_text.trim().is_empty() {
+                                self.response_saver.save_assistant(dir, &assistant_text)?;
+                                self.truncate_console_log(dir)?;
+                            }
+                        }
+                        let _ = self.log.log(&LogRecord {
+                            ts: now_iso8601(),
+                            level: LogLevel::Info,
+                            message: "query finished (saved for resume)".to_string(),
+                            layer: Some("usecase".to_string()),
+                            kind: Some("usecase".to_string()),
+                            fields: None,
+                        });
+                        return Ok(0);
+                    }
+                    messages = msgs;
+                }
+            }
         }
-
-        Ok(0)
     }
 }
 
@@ -226,7 +298,7 @@ impl RunQuery for AiUseCase {
         session_dir: Option<common::domain::SessionDir>,
         provider: Option<common::domain::ProviderName>,
         model: Option<common::domain::ModelName>,
-        query: &Query,
+        query: Option<&Query>,
         system_instruction: Option<&str>,
     ) -> Result<i32, Error> {
         self.run_query_impl(session_dir, provider, model, query, system_instruction)

@@ -29,6 +29,15 @@ pub enum RunState {
     Error,
 }
 
+/// エージェントループの終了結果（Done と上限到達を区別する）
+#[derive(Debug, Clone)]
+pub enum AgentLoopOutcome {
+    /// 正常終了（LLM が Stop 等で終了）
+    Done(Vec<Msg>, String),
+    /// 最大ターン数に達したが会話は継続可能
+    ReachedLimit(Vec<Msg>, String),
+}
+
 /// Vec<Msg> をドライバ用 (system_instruction, query, history) に変換
 /// ToolCall/ToolResult は Assistant(content, tool_calls) と Tool(call_id, result) に変換
 pub fn msgs_to_provider(msgs: &[Msg]) -> (Option<String>, String, Vec<Message>) {
@@ -325,11 +334,12 @@ impl<S: LlmEventStream> AgentLoop<S> {
     }
 
     /// ツール実行後に再度 LLM を呼ぶループ。Done になるか max_turns に達するまで run_once を繰り返す。
+    /// 上限到達時は `AgentLoopOutcome::ReachedLimit` を返し、呼び出し元で「続けますか？」等の判断ができる。
     pub fn run_until_done(
         &mut self,
         initial_messages: &[Msg],
         max_turns: usize,
-    ) -> Result<(Vec<Msg>, String), Error> {
+    ) -> Result<AgentLoopOutcome, Error> {
         let mut messages = initial_messages.to_vec();
         let mut last_assistant_text = String::new();
         for _ in 0..max_turns {
@@ -337,14 +347,14 @@ impl<S: LlmEventStream> AgentLoop<S> {
             last_assistant_text = assistant_text;
             messages = new_messages;
             match state {
-                RunState::Done => return Ok((messages, last_assistant_text)),
+                RunState::Done => return Ok(AgentLoopOutcome::Done(messages, last_assistant_text)),
                 RunState::ExecutingTools => continue,
                 RunState::StreamingModel | RunState::Error => {
-                    return Ok((messages, last_assistant_text));
+                    return Ok(AgentLoopOutcome::Done(messages, last_assistant_text));
                 }
             }
         }
-        Ok((messages, last_assistant_text))
+        Ok(AgentLoopOutcome::ReachedLimit(messages, last_assistant_text))
     }
 }
 
@@ -625,6 +635,61 @@ mod tests {
             assert_eq!(result["stdout"].as_str(), Some("echo approved\n"));
         } else {
             panic!("Expected ToolResult");
+        }
+    }
+
+    #[test]
+    fn test_agent_loop_run_until_done_reached_limit() {
+        // Stub は毎回 ToolCalls で終わるので Done にならない。max_turns で打ち切られ ReachedLimit になる。
+        let stub = StubLlm::new(vec![
+            LlmEvent::ToolCallBegin {
+                call_id: "c1".to_string(),
+                name: "echo".to_string(),
+                thought_signature: None,
+            },
+            LlmEvent::ToolCallArgsDelta {
+                call_id: "c1".to_string(),
+                json_fragment: r#"{"message": "hi"}"#.to_string(),
+            },
+            LlmEvent::ToolCallEnd {
+                call_id: "c1".to_string(),
+            },
+            LlmEvent::Completed {
+                finish: FinishReason::ToolCalls,
+            },
+        ]);
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(common::tool::EchoTool::new()));
+        let ctx = ToolContext::new(None);
+        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
+        let approver = Arc::new(StubApproval::approved());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let messages = vec![Msg::user("echo")];
+        let outcome = loop_.run_until_done(&messages, 2).unwrap();
+        match &outcome {
+            AgentLoopOutcome::ReachedLimit(msgs, _) => {
+                assert!(!msgs.is_empty());
+            }
+            AgentLoopOutcome::Done(_, _) => panic!("expected ReachedLimit"),
+        }
+    }
+
+    #[test]
+    fn test_agent_loop_run_until_done_done() {
+        let stub = StubLlm::text_only("bye");
+        let registry = ToolRegistry::new();
+        let ctx = ToolContext::new(None);
+        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
+        let approver = Arc::new(StubApproval::approved());
+        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"));
+        let messages = vec![Msg::user("Hi")];
+        let outcome = loop_.run_until_done(&messages, 16).unwrap();
+        match &outcome {
+            AgentLoopOutcome::Done(msgs, text) => {
+                assert_eq!(msgs.len(), 2);
+                assert_eq!(text.as_str(), "bye");
+            }
+            AgentLoopOutcome::ReachedLimit(_, _) => panic!("expected Done"),
         }
     }
 }

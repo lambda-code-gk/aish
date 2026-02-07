@@ -1,7 +1,9 @@
 //! Outbound ポート: アプリが外界（承認・LLM ストリーム等）を使うための trait
 
+pub mod agent_state_storage;
 pub mod approval;
 pub mod command_allow_rules_loader;
+pub mod continue_prompt;
 pub mod event_sink_factory;
 pub mod llm_event_stream;
 pub mod resolve_system_instruction;
@@ -10,8 +12,10 @@ pub mod session_history_loader;
 pub mod session_response_saver;
 pub mod task_runner;
 
+pub use agent_state_storage::{AgentStateLoader, AgentStateSaver};
 pub use approval::{Approval, ToolApproval};
 pub use command_allow_rules_loader::CommandAllowRulesLoader;
+pub use continue_prompt::ContinueAfterLimitPrompt;
 pub use event_sink_factory::EventSinkFactory;
 pub use llm_event_stream::LlmEventStream;
 pub use resolve_system_instruction::ResolveSystemInstruction;
