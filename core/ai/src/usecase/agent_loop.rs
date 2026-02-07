@@ -5,18 +5,19 @@
 
 use crate::ports::outbound::{Approval, InterruptChecker, LlmEventStream, ToolApproval};
 use common::error::Error;
-use common::llm::events::{FinishReason, LlmEvent};
+use common::llm::events::LlmEvent;
 use common::llm::provider::Message;
 use common::msg::Msg;
 use common::sink::{AgentEvent, EventSink};
-use common::tool::{is_command_allowed, ToolContext, ToolDef, ToolRegistry};
+use common::tool::{is_command_allowed, ToolContext, ToolRegistry};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 /// メッセージ列に含まれるツール結果（実行済みツール呼び出し）の数を返す
-fn count_tool_results(messages: &[Msg]) -> usize {
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn count_tool_results(messages: &[Msg]) -> usize {
     messages
         .iter()
         .filter(|m| matches!(m, Msg::ToolResult { .. }))
@@ -158,8 +159,8 @@ impl ToolCallAccumulator {
 }
 
 /// AgentLoop: 状態機械で LlmEvent を処理し、Sink に流す
-pub struct AgentLoop<S: LlmEventStream> {
-    stream: S,
+pub struct AgentLoop {
+    stream: Arc<dyn LlmEventStream>,
     tool_registry: ToolRegistry,
     tool_context: ToolContext,
     sinks: Vec<Box<dyn EventSink>>,
@@ -170,9 +171,9 @@ pub struct AgentLoop<S: LlmEventStream> {
     interrupt_checker: Option<Arc<dyn InterruptChecker>>,
 }
 
-impl<S: LlmEventStream> AgentLoop<S> {
+impl AgentLoop {
     pub fn new(
-        stream: S,
+        stream: Arc<dyn LlmEventStream>,
         tool_registry: ToolRegistry,
         tool_context: ToolContext,
         sinks: Vec<Box<dyn EventSink>>,
@@ -241,7 +242,7 @@ impl<S: LlmEventStream> AgentLoop<S> {
             collected_inner.borrow_mut().push(ev);
             Ok(())
         };
-        self.stream
+        self.stream.as_ref()
             .stream_events(&query, system_instruction, &history, tools_ref, &mut cb)?;
 
         let mut assistant_text = String::new();
@@ -403,385 +404,5 @@ impl<S: LlmEventStream> AgentLoop<S> {
             }
         }
         Ok(AgentLoopOutcome::ReachedLimit(messages, last_assistant_text))
-    }
-}
-
-/// テスト用: 固定の LlmEvent 列を返す Stub
-#[cfg_attr(not(test), allow(dead_code))]
-pub struct StubLlm {
-    events: Vec<LlmEvent>,
-}
-
-#[allow(dead_code)] // テストで使用
-impl StubLlm {
-    pub fn new(events: Vec<LlmEvent>) -> Self {
-        Self { events }
-    }
-
-    pub fn text_only(text: &str) -> Self {
-        Self::new(vec![
-            LlmEvent::TextDelta(text.to_string()),
-            LlmEvent::Completed {
-                finish: FinishReason::Stop,
-            },
-        ])
-    }
-}
-
-impl LlmEventStream for StubLlm {
-    fn stream_events(
-        &self,
-        _query: &str,
-        _system_instruction: Option<&str>,
-        _history: &[Message],
-        _tools: Option<&[ToolDef]>,
-        callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        for ev in &self.events {
-            callback(ev.clone())?;
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::approval::StubApproval;
-    use common::llm::events::LlmEvent;
-    use common::tool::{Tool, ToolError};
-
-    /// テスト用: 何も出力しない EventSink
-    struct StubEventSink;
-    impl StubEventSink {
-        fn new() -> Self {
-            Self
-        }
-    }
-    impl EventSink for StubEventSink {
-        fn on_event(&mut self, _ev: &AgentEvent) -> Result<(), Error> {
-            Ok(())
-        }
-        fn on_end(&mut self) -> Result<(), Error> {
-            Ok(())
-        }
-    }
-
-    /// テスト用: name "run_shell" の Tool
-    struct RunShellStubTool;
-    impl RunShellStubTool {
-        fn new() -> Self {
-            Self
-        }
-    }
-    impl Tool for RunShellStubTool {
-        fn name(&self) -> &'static str {
-            "run_shell"
-        }
-        fn call(&self, args: Value, _ctx: &ToolContext) -> Result<Value, ToolError> {
-            let command = args.get("command").and_then(Value::as_str).unwrap_or("");
-            Ok(serde_json::json!({
-                "stdout": format!("{}\n", command),
-                "stderr": "",
-                "exit_code": 0
-            }))
-        }
-    }
-
-    #[test]
-    fn test_msgs_to_provider_simple() {
-        let msgs = vec![Msg::user("Hello")];
-        let (sys, query, history) = msgs_to_provider(&msgs);
-        assert!(sys.is_none());
-        assert_eq!(query, "Hello");
-        assert!(history.is_empty());
-    }
-
-    #[test]
-    fn test_msgs_to_provider_with_history() {
-        let msgs = vec![
-            Msg::user("Hi"),
-            Msg::assistant("Hello!"),
-            Msg::user("Bye"),
-        ];
-        let (_sys, query, history) = msgs_to_provider(&msgs);
-        assert_eq!(query, "Bye");
-        assert_eq!(history.len(), 2);
-    }
-
-    #[test]
-    fn test_msgs_to_provider_with_tool_call_and_result() {
-        let msgs = vec![
-            Msg::user("run it"),
-            Msg::assistant("ok"),
-            Msg::ToolCall {
-                call_id: "c1".to_string(),
-                name: "run".to_string(),
-                args: serde_json::json!({"cmd": "ls"}),
-                thought_signature: Some("sig123".to_string()),
-            },
-            Msg::ToolResult {
-                call_id: "c1".to_string(),
-                name: "run".to_string(),
-                result: serde_json::json!({"ok": true}),
-            },
-        ];
-        let (_sys, query, history) = msgs_to_provider(&msgs);
-        assert_eq!(query, "");
-        assert_eq!(history.len(), 3);
-        assert_eq!(history[0].role, "user");
-        assert_eq!(history[1].role, "assistant");
-        assert!(history[1].tool_calls.is_some());
-        assert_eq!(history[1].tool_calls.as_ref().unwrap().len(), 1);
-        assert_eq!(history[1].tool_calls.as_ref().unwrap()[0].thought_signature.as_deref(), Some("sig123"));
-        assert_eq!(history[2].role, "tool");
-        assert!(history[2].tool_call_id.as_deref() == Some("c1"));
-    }
-
-    #[test]
-    fn test_stub_llm_text_only() {
-        let stub = StubLlm::text_only("hello");
-        let mut received = Vec::new();
-        stub.stream_events("q", None, &[], None, &mut |ev| {
-            received.push(ev);
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(received.len(), 2);
-        assert!(matches!(&received[0], LlmEvent::TextDelta(s) if s == "hello"));
-        assert!(matches!(&received[1], LlmEvent::Completed { .. }));
-    }
-
-    #[test]
-    fn test_agent_loop_run_once_text_only() {
-        let stub = StubLlm::text_only("world");
-        let registry = ToolRegistry::new();
-        let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
-        let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("Hi")];
-        let (new_msgs, state, assistant_text) = loop_.run_once(&messages, None).unwrap();
-        assert_eq!(state, RunState::Done);
-        assert_eq!(assistant_text, "world");
-        assert_eq!(new_msgs.len(), 2);
-        assert!(matches!(&new_msgs[1], Msg::Assistant(s) if s == "world"));
-    }
-
-    #[test]
-    fn test_agent_loop_run_once_with_tool_call() {
-        let stub = StubLlm::new(vec![
-            LlmEvent::ToolCallBegin {
-                call_id: "c1".to_string(),
-                name: "echo".to_string(),
-                thought_signature: Some("test_signature".to_string()),
-            },
-            LlmEvent::ToolCallArgsDelta {
-                call_id: "c1".to_string(),
-                json_fragment: r#"{"message": "hello"}"#.to_string(),
-            },
-            LlmEvent::ToolCallEnd {
-                call_id: "c1".to_string(),
-            },
-            LlmEvent::Completed {
-                finish: FinishReason::ToolCalls,
-            },
-        ]);
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(common::tool::EchoTool::new()));
-        let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![];
-        let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("echo hello")];
-        let (new_msgs, state, _text) = loop_.run_once(&messages, None).unwrap();
-
-        assert_eq!(state, RunState::ExecutingTools);
-        // user, (empty) assistant, tool_call, tool_result
-        assert_eq!(new_msgs.len(), 4);
-        assert!(matches!(&new_msgs[1], Msg::Assistant(s) if s.is_empty()));
-        assert!(matches!(new_msgs[2], Msg::ToolCall { ref name, ref thought_signature, .. } if name == "echo" && thought_signature == &Some("test_signature".to_string())));
-        assert!(matches!(new_msgs[3], Msg::ToolResult { ref name, .. } if name == "echo"));
-    }
-
-    #[test]
-    fn test_agent_loop_shell_tool_denied() {
-        // allowlist 不一致かつ Denied の場合、ツールは実行されない
-        let stub = StubLlm::new(vec![
-            LlmEvent::ToolCallBegin {
-                call_id: "c1".to_string(),
-                name: "run_shell".to_string(),
-                thought_signature: None,
-            },
-            LlmEvent::ToolCallArgsDelta {
-                call_id: "c1".to_string(),
-                json_fragment: r#"{"command": "rm -rf /"}"#.to_string(),
-            },
-            LlmEvent::ToolCallEnd {
-                call_id: "c1".to_string(),
-            },
-            LlmEvent::Completed {
-                finish: FinishReason::ToolCalls,
-            },
-        ]);
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(RunShellStubTool::new()));
-        let ctx = ToolContext::new(None); // allowlist 空
-        let sinks: Vec<Box<dyn EventSink>> = vec![];
-        let approver = Arc::new(StubApproval::denied());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("run it")];
-        let (new_msgs, state, _text) = loop_.run_once(&messages, None).unwrap();
-
-        assert_eq!(state, RunState::ExecutingTools);
-        // user, (empty) assistant, tool_call, tool_result (error)
-        assert_eq!(new_msgs.len(), 4);
-        // ツール結果はエラー
-        if let Msg::ToolResult { result, .. } = &new_msgs[3] {
-            assert!(result.get("error").is_some());
-            assert!(result["error"].as_str().unwrap().contains("denied"));
-        } else {
-            panic!("Expected ToolResult");
-        }
-    }
-
-    #[test]
-    fn test_agent_loop_shell_tool_approved() {
-        // allowlist 不一致でも Approved の場合、ツールは実行される
-        let stub = StubLlm::new(vec![
-            LlmEvent::ToolCallBegin {
-                call_id: "c1".to_string(),
-                name: "run_shell".to_string(),
-                thought_signature: None,
-            },
-            LlmEvent::ToolCallArgsDelta {
-                call_id: "c1".to_string(),
-                json_fragment: r#"{"command": "echo approved"}"#.to_string(),
-            },
-            LlmEvent::ToolCallEnd {
-                call_id: "c1".to_string(),
-            },
-            LlmEvent::Completed {
-                finish: FinishReason::ToolCalls,
-            },
-        ]);
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(RunShellStubTool::new()));
-        let ctx = ToolContext::new(None); // allowlist 空
-        let sinks: Vec<Box<dyn EventSink>> = vec![];
-        let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("run it")];
-        let (new_msgs, state, _text) = loop_.run_once(&messages, None).unwrap();
-
-        assert_eq!(state, RunState::ExecutingTools);
-        // user, (empty) assistant, tool_call, tool_result (success)
-        assert_eq!(new_msgs.len(), 4);
-        // ツール結果は成功（Stub は command を stdout に echo する）
-        if let Msg::ToolResult { result, .. } = &new_msgs[3] {
-            assert!(result.get("stdout").is_some());
-            assert_eq!(result["stdout"].as_str(), Some("echo approved\n"));
-        } else {
-            panic!("Expected ToolResult");
-        }
-    }
-
-    #[test]
-    fn test_agent_loop_run_until_done_reached_limit() {
-        // Stub は毎回 ToolCalls で終わるので Done にならない。max_turns で打ち切られ ReachedLimit になる。
-        let stub = StubLlm::new(vec![
-            LlmEvent::ToolCallBegin {
-                call_id: "c1".to_string(),
-                name: "echo".to_string(),
-                thought_signature: None,
-            },
-            LlmEvent::ToolCallArgsDelta {
-                call_id: "c1".to_string(),
-                json_fragment: r#"{"message": "hi"}"#.to_string(),
-            },
-            LlmEvent::ToolCallEnd {
-                call_id: "c1".to_string(),
-            },
-            LlmEvent::Completed {
-                finish: FinishReason::ToolCalls,
-            },
-        ]);
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(common::tool::EchoTool::new()));
-        let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
-        let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("echo")];
-        let outcome = loop_.run_until_done(&messages, 2, 100).unwrap();
-        match &outcome {
-            AgentLoopOutcome::ReachedLimit(msgs, _) => {
-                assert!(!msgs.is_empty());
-            }
-            AgentLoopOutcome::Done(_, _) => panic!("expected ReachedLimit"),
-        }
-    }
-
-    #[test]
-    fn test_agent_loop_run_until_done_done() {
-        let stub = StubLlm::text_only("bye");
-        let registry = ToolRegistry::new();
-        let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
-        let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("Hi")];
-        let outcome = loop_.run_until_done(&messages, 16, 16).unwrap();
-        match &outcome {
-            AgentLoopOutcome::Done(msgs, text) => {
-                assert_eq!(msgs.len(), 2);
-                assert_eq!(text.as_str(), "bye");
-            }
-            AgentLoopOutcome::ReachedLimit(_, _) => panic!("expected Done"),
-        }
-    }
-
-    /// 1回の応答に複数ツール呼び出しがある場合、max_tool_calls で打ち切り ReachedLimit になる
-    #[test]
-    fn test_agent_loop_run_until_done_capped_by_tool_calls() {
-        let events: Vec<LlmEvent> = (1..=5)
-            .flat_map(|i| {
-                let call_id = format!("c{}", i);
-                vec![
-                    LlmEvent::ToolCallBegin {
-                        call_id: call_id.clone(),
-                        name: "run_shell".to_string(),
-                        thought_signature: None,
-                    },
-                    LlmEvent::ToolCallArgsDelta {
-                        call_id: call_id.clone(),
-                        json_fragment: format!(r#"{{"command": "echo {}"}}"#, i),
-                    },
-                    LlmEvent::ToolCallEnd { call_id },
-                ]
-            })
-            .chain(std::iter::once(LlmEvent::Completed {
-                finish: FinishReason::ToolCalls,
-            }))
-            .collect();
-        let stub = StubLlm::new(events);
-        let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(RunShellStubTool::new()));
-        let ctx = ToolContext::new(None);
-        let sinks: Vec<Box<dyn EventSink>> = vec![Box::new(StubEventSink::new())];
-        let approver = Arc::new(StubApproval::approved());
-        let mut loop_ = AgentLoop::new(stub, registry, ctx, sinks, approver, Some("run_shell"), None);
-        let messages = vec![Msg::user("echo many")];
-        let outcome = loop_.run_until_done(&messages, 10, 3).unwrap();
-        match &outcome {
-            AgentLoopOutcome::ReachedLimit(msgs, _) => {
-                assert_eq!(
-                    super::count_tool_results(msgs),
-                    3,
-                    "max_tool_calls=3 なので実行は3件まで"
-                );
-            }
-            AgentLoopOutcome::Done(_, _) => panic!("expected ReachedLimit (tool call cap)"),
-        }
     }
 }

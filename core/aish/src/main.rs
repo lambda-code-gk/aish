@@ -12,8 +12,6 @@ use cli::{config_to_command, parse_args, Config};
 use domain::command::Command;
 use ports::inbound::UseCaseRunner;
 #[cfg(unix)]
-use usecase::SysqUseCase;
-#[cfg(unix)]
 use wiring::{wire_aish, App};
 
 /// Command をディスパッチする Runner（match は main レイヤーに集約）
@@ -43,19 +41,16 @@ impl UseCaseRunner for Runner {
                 self.app.clear_use_case.run(&path_input, session_explicitly_specified)
             }
             Command::SysqList => {
-                let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
-                let entries = use_case.list()?;
+                let entries = self.app.sysq_use_case.list()?;
                 print_sysq_list(&entries);
                 Ok(0)
             }
             Command::SysqEnable { ids } => {
-                let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
-                use_case.enable(&ids)?;
+                self.app.sysq_use_case.enable(&ids)?;
                 Ok(0)
             }
             Command::SysqDisable { ids } => {
-                let use_case = SysqUseCase::new(std::sync::Arc::clone(&self.app.sysq_repository));
-                use_case.disable(&ids)?;
+                self.app.sysq_use_case.disable(&ids)?;
                 Ok(0)
             }
             Command::Resume

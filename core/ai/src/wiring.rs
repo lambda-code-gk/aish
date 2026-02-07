@@ -11,8 +11,8 @@ use common::tool::EchoTool;
 
 use crate::adapter::{
     CliContinuePrompt, CliToolApproval, FileAgentStateStorage, NoopInterruptChecker, PartSessionStorage,
-    SigintChecker, StdCommandAllowRulesLoader, StdEventSinkFactory, StdResolveSystemInstruction,
-    StdTaskRunner, ShellTool,
+    SigintChecker, StdCommandAllowRulesLoader, StdEventSinkFactory, StdLlmEventStreamFactory,
+    StdProfileLister, StdResolveSystemInstruction, StdTaskRunner, ShellTool,
 };
 use crate::domain::Query;
 use crate::ports::outbound::{
@@ -96,6 +96,10 @@ pub fn wire_ai() -> App {
         Arc::new(CliContinuePrompt::new());
     let resolve_system_instruction: Arc<dyn ResolveSystemInstruction> =
         Arc::new(StdResolveSystemInstruction::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
+    let profile_lister: Arc<dyn crate::ports::outbound::ProfileLister> =
+        Arc::new(StdProfileLister::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
+    let llm_stream_factory: Arc<dyn crate::ports::outbound::LlmEventStreamFactory> =
+        Arc::new(StdLlmEventStreamFactory::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
     let ai_use_case = Arc::new(AiUseCase::new(
         fs,
         history_loader,
@@ -111,6 +115,8 @@ pub fn wire_ai() -> App {
         approver,
         interrupt_checker,
         Arc::clone(&logger),
+        profile_lister,
+        llm_stream_factory,
     ));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));

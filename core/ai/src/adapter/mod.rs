@@ -2,17 +2,24 @@ pub(crate) mod agent_state_storage;
 pub(crate) mod approval;
 pub(crate) mod config;
 pub(crate) mod continue_prompt;
+pub(crate) mod llm_event_stream_factory;
 pub(crate) mod part_session_storage;
+pub(crate) mod profile_lister;
 pub(crate) mod sigint_checker;
 pub(crate) mod resolve_system_instruction;
 pub(crate) mod sinks;
 pub(crate) mod task;
 pub(crate) mod tools;
+
+#[cfg(test)]
+pub(crate) mod stub_llm;
 pub(crate) use agent_state_storage::FileAgentStateStorage;
 pub(crate) use approval::CliToolApproval;
 pub(crate) use config::StdCommandAllowRulesLoader;
 pub(crate) use continue_prompt::CliContinuePrompt;
+pub(crate) use llm_event_stream_factory::StdLlmEventStreamFactory;
 pub(crate) use part_session_storage::PartSessionStorage;
+pub(crate) use profile_lister::StdProfileLister;
 pub(crate) use resolve_system_instruction::StdResolveSystemInstruction;
 pub(crate) use sigint_checker::{NoopInterruptChecker, SigintChecker};
 pub(crate) use sinks::StdEventSinkFactory;

@@ -1,36 +1,18 @@
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContinueAfterLimitPrompt,
-    EventSinkFactory, InterruptChecker, LlmEventStream, RunQuery, SessionHistoryLoader,
-    SessionResponseSaver, ToolApproval,
+    EventSinkFactory, InterruptChecker, LlmEventStreamFactory, ProfileLister, RunQuery,
+    SessionHistoryLoader, SessionResponseSaver, ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{now_iso8601, FileSystem, Log, LogLevel, LogRecord, Process};
 use common::error::Error;
-use common::llm::factory::AnyProvider;
-use common::llm::{create_provider, list_available_profiles, load_profiles_config, resolve_provider, LlmDriver, ResolvedProvider};
 use common::llm::provider::Message as LlmMessage;
 use crate::domain::Query;
 use common::msg::Msg;
 use common::domain::SessionDir;
 use common::tool::{Tool, ToolContext, ToolRegistry};
 use std::sync::Arc;
-
-/// ドライバを LlmEventStream として使うアダプタ
-struct DriverLlmStream<'a>(&'a LlmDriver<AnyProvider>);
-
-impl LlmEventStream for DriverLlmStream<'_> {
-    fn stream_events(
-        &self,
-        query: &str,
-        system_instruction: Option<&str>,
-        history: &[LlmMessage],
-        tools: Option<&[common::tool::ToolDef]>,
-        callback: &mut dyn FnMut(common::llm::events::LlmEvent) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        self.0.query_stream_events(query, system_instruction, history, tools, callback)
-    }
-}
 
 /// 履歴 (Message) とクエリから Vec<Msg> を構築
 fn build_messages(
@@ -64,22 +46,6 @@ fn build_messages(
     msgs
 }
 
-/// エラー表示用: どのプロファイルで失敗したかを示す補足文を返す
-fn llm_error_context(resolved: &ResolvedProvider) -> String {
-    let mut extra: Vec<String> = Vec::new();
-    if let Some(ref u) = resolved.base_url {
-        extra.push(format!("base_url: {}", u));
-    }
-    if let Some(ref m) = resolved.model {
-        extra.push(format!("model: {}", m));
-    }
-    if extra.is_empty() {
-        format!("Provider profile: {}", resolved.profile_name)
-    } else {
-        format!("Provider profile: {} ({})", resolved.profile_name, extra.join(", "))
-    }
-}
-
 /// ai のユースケース（アダプター経由で I/O を行う）
 pub struct AiUseCase {
     pub fs: Arc<dyn FileSystem>,
@@ -96,6 +62,8 @@ pub struct AiUseCase {
     pub approver: Arc<dyn ToolApproval>,
     pub interrupt_checker: Arc<dyn InterruptChecker>,
     pub log: Arc<dyn Log>,
+    pub profile_lister: Arc<dyn ProfileLister>,
+    pub llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
 }
 
 impl AiUseCase {
@@ -115,6 +83,8 @@ impl AiUseCase {
         approver: Arc<dyn ToolApproval>,
         interrupt_checker: Arc<dyn InterruptChecker>,
         log: Arc<dyn Log>,
+        profile_lister: Arc<dyn ProfileLister>,
+        llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
     ) -> Self {
         Self {
             fs,
@@ -131,6 +101,8 @@ impl AiUseCase {
             approver,
             interrupt_checker,
             log,
+            profile_lister,
+            llm_stream_factory,
         }
     }
 
@@ -145,8 +117,7 @@ impl AiUseCase {
     /// 現在有効なプロファイル一覧を返す（ソート済み名前リストとデフォルトプロファイル名）。
     /// 表示は CLI の責務のため、usecase はデータのみ返す。
     pub fn list_profiles(&self) -> Result<(Vec<String>, Option<String>), Error> {
-        let cfg_opt = load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref())?;
-        Ok(list_available_profiles(cfg_opt.as_ref()))
+        self.profile_lister.list_profiles()
     }
 
     fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {
@@ -229,41 +200,18 @@ impl AiUseCase {
             }
         };
 
-        let cfg_opt = match load_profiles_config(self.fs.as_ref(), self.env_resolver.as_ref()) {
-            Ok(c) => c,
+        let (stream, ctx) = match self.llm_stream_factory.create_stream(
+            session_dir.as_ref(),
+            provider.as_ref(),
+            model.as_ref(),
+            system_instruction,
+        ) {
+            Ok(s) => s,
             Err(e) => {
                 self.try_save_agent_state_on_error(&session_dir, &messages);
                 return Err(e);
             }
         };
-        let resolved = match resolve_provider(provider.as_ref(), cfg_opt.as_ref()) {
-            Ok(r) => r,
-            Err(e) => {
-                self.try_save_agent_state_on_error(&session_dir, &messages);
-                return Err(e);
-            }
-        };
-        let model_str = model
-            .as_ref()
-            .map(|m| m.as_ref().to_string())
-            .or_else(|| resolved.model.clone());
-        let ctx = llm_error_context(&resolved);
-        let provider = match create_provider(
-            resolved.provider_type,
-            model_str,
-            resolved.base_url.clone(),
-            resolved.api_key_env.clone(),
-            resolved.temperature,
-        )
-        .map_err(|e| e.with_context(ctx.clone()))
-        {
-            Ok(p) => p,
-            Err(e) => {
-                self.try_save_agent_state_on_error(&session_dir, &messages);
-                return Err(e);
-            }
-        };
-        let driver = LlmDriver::new(provider);
 
         const DEFAULT_MAX_TURNS: usize = 16;
         let max_turns = max_turns_override.unwrap_or(DEFAULT_MAX_TURNS);
@@ -277,8 +225,8 @@ impl AiUseCase {
         let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
 
         let mut messages = messages;
+        let ctx = ctx.0;
         loop {
-            let stream = DriverLlmStream(&driver);
             let mut registry = ToolRegistry::new();
             for t in &self.tools {
                 registry.register(Arc::clone(t));
@@ -289,7 +237,7 @@ impl AiUseCase {
             .with_command_allow_rules(allow_rules.clone());
             let sinks = self.sink_factory.create_sinks();
             let mut agent_loop = AgentLoop::new(
-                stream,
+                Arc::clone(&stream),
                 registry,
                 tool_context,
                 sinks,

@@ -21,6 +21,15 @@ rg "std::env" $USECASE_DIRS 2>/dev/null && fail "usecase must not use std::env d
 # usecase 内で stdout / stderr に直接出力しない
 rg "println!|eprintln!|std::io::stdout|std::io::stderr" $USECASE_DIRS 2>/dev/null && fail "usecase must not use println!/eprintln!/stdout/stderr directly" || true
 
+# usecase は common::llm の具象（LlmDriver, create_provider, load_profiles_config 等）に直接依存しない（port 経由のみ）
+rg "LlmDriver|create_provider|resolve_provider|load_profiles_config|list_available_profiles|create_driver" $USECASE_DIRS 2>/dev/null && fail "usecase must not use common::llm concrete APIs (use LlmEventStream etc. via wiring)" || true
+
+# usecase 内で outbound port の trait を impl しない（adapter は wiring/adapter に置く）
+rg "impl.*LlmEventStream" $USECASE_DIRS 2>/dev/null && fail "usecase must not implement outbound port LlmEventStream (move to adapter or test util)" || true
+
+# main で UseCase を new しない（wiring で組み立てた app 経由で呼ぶ）
+rg "UseCase::new\s*\(" $MAIN_FILES 2>/dev/null && fail "main must not construct usecase (wire usecase in wiring, expose via App)" || true
+
 # main は adapter を直接 use しない（wiring 経由のみ）
 rg "crate::adapter|use .*adapter::" $MAIN_FILES 2>/dev/null && fail "main must not depend on adapter (use wiring only)" || true
 

@@ -1,5 +1,6 @@
 //! 結合テスト（アダプタ経由で I/O を行うテスト）
 
+mod agent_loop_tests;
 mod run_app_tests;
 mod save_response_tests;
 mod session_history_tests;
