@@ -322,7 +322,7 @@ impl LlmProvider for OpenAiCompatProvider {
         }
 
         let reader = BufReader::new(response);
-        let mut found_any = false;
+        let mut _found_any = false;
         let mut had_tool_calls = false;
         // index -> (call_id, name). Streaming sends tool_calls by index.
         let mut index_to_call: std::collections::HashMap<usize, (String, String)> =
@@ -351,10 +351,20 @@ impl LlmProvider for OpenAiCompatProvider {
                 None => continue,
             };
 
-            if let Some(content) = delta["content"].as_str() {
-                if !content.is_empty() {
-                    callback(LlmEvent::TextDelta(content.to_string()))?;
-                    found_any = true;
+            // content: 文字列のほか、OpenAI 互換の content parts 配列にも対応
+            if let Some(s) = delta["content"].as_str() {
+                if !s.is_empty() {
+                    callback(LlmEvent::TextDelta(s.to_string()))?;
+                    _found_any = true;
+                }
+            } else if let Some(parts) = delta["content"].as_array() {
+                for part in parts {
+                    if let Some(text) = part["text"].as_str() {
+                        if !text.is_empty() {
+                            callback(LlmEvent::TextDelta(text.to_string()))?;
+                            _found_any = true;
+                        }
+                    }
                 }
             }
 
@@ -402,10 +412,8 @@ impl LlmProvider for OpenAiCompatProvider {
             callback(LlmEvent::ToolCallEnd { call_id })?;
         }
 
-        if !found_any && !had_tool_calls {
-            return Err(Error::json("No content or tool_calls in streaming response"));
-        }
-
+        // 空ストリーム（content も tool_calls もなし）はエラーにせず正常終了する。
+        // 一部の openai_compat バックエンド（例: ツール実行後の続きで空の delta のみ返す場合）に対応。
         callback(LlmEvent::Completed {
             finish: if had_tool_calls {
                 FinishReason::ToolCalls
@@ -546,4 +554,5 @@ mod tests {
         assert_eq!(tool_calls[0]["function"]["name"], "run_shell");
         assert_eq!(tool_calls[0]["function"]["arguments"], "{\"x\":1}");
     }
+
 }
