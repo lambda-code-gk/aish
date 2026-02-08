@@ -1,5 +1,9 @@
 use crate::domain::{AiCommand, Query, TaskName};
+use clap::builder::ArgAction;
+use clap::value_parser;
+use clap_complete::Shell;
 use common::domain::{ModelName, ProviderName};
+use common::error::Error;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -30,73 +34,200 @@ impl Default for Config {
     }
 }
 
-use common::error::Error;
-
-pub fn parse_args() -> Result<Config, Error> {
-    let args: Vec<String> = std::env::args().collect();
-    parse_args_from(&args)
+/// 解析結果: 通常の Config / 補完スクリプト生成 / タスク一覧表示
+#[derive(Debug, Clone)]
+pub enum ParseOutcome {
+    Config(Config),
+    GenerateCompletion(Shell),
+    /// --list-tasks が指定された（main でタスク一覧を表示して終了）
+    ListTasks,
 }
 
-fn parse_args_from(args: &[String]) -> Result<Config, Error> {
-    let mut config = Config::default();
-    
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" | "--help" => {
-                config.help = true;
-                i += 1;
-            }
-            "-L" | "--list-profiles" => {
-                config.list_profiles = true;
-                i += 1;
-            }
-            "-c" | "--continue" => {
-                config.continue_flag = true;
-                i += 1;
-            }
-            "-p" | "--profile" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(Error::invalid_argument("Option -p/--profile requires an argument"));
-                }
-                config.profile = Some(ProviderName::new(args[i].clone()));
-                i += 1;
-            }
-            "-S" | "--system" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(Error::invalid_argument("Option -S/--system requires an argument"));
-                }
-                config.system = Some(args[i].clone());
-                i += 1;
-            }
-            "-m" | "--model" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(Error::invalid_argument("Option -m/--model requires an argument"));
-                }
-                config.model = Some(ModelName::new(args[i].clone()));
-                i += 1;
-            }
-            _ if args[i].starts_with('-') => {
-                return Err(Error::invalid_argument(format!("Unknown option: {}", args[i])));
-            }
-            _ => {
-                // 位置引数（タスク名とメッセージ引数）
-                config.task = Some(TaskName::new(args[i].clone()));
-                i += 1;
-                // 残りの引数はメッセージ引数として扱う
-                while i < args.len() {
-                    config.message_args.push(args[i].clone());
-                    i += 1;
-                }
-                break;
-            }
-        }
+fn build_clap_command() -> clap::Command {
+    clap::Command::new("ai")
+        .about("Send a message to the LLM or run a task script")
+        .disable_help_flag(true)
+        .arg(
+            clap::Arg::new("help")
+                .short('h')
+                .long("help")
+                .help("Show this help message")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("list-profiles")
+                .short('L')
+                .long("list-profiles")
+                .help("List currently available provider profiles")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("continue")
+                .short('c')
+                .long("continue")
+                .help("Resume the agent loop from the last saved state")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("profile")
+                .short('p')
+                .long("profile")
+                .value_name("profile")
+                .help("Specify LLM profile (gemini, gpt, echo, etc.)")
+                .num_args(1),
+        )
+        .arg(
+            clap::Arg::new("system")
+                .short('S')
+                .long("system")
+                .value_name("instruction")
+                .help("Set system instruction for this query")
+                .num_args(1),
+        )
+        .arg(
+            clap::Arg::new("model")
+                .short('m')
+                .long("model")
+                .value_name("model")
+                .help("Specify model name (e.g. gemini-2.0, gpt-4)")
+                .num_args(1),
+        )
+        .arg(
+            clap::Arg::new("generate")
+                .long("generate")
+                .value_name("shell")
+                .help("Generate shell completion script")
+                .value_parser(value_parser!(Shell))
+                .num_args(1),
+        )
+        .arg(
+            clap::Arg::new("list-tasks")
+                .long("list-tasks")
+                .help("List available task names (for completion)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("positional")
+                .index(1)
+                .help("Task name then message/args, or just message words")
+                .num_args(0..)
+                .trailing_var_arg(true),
+        )
+}
+
+fn matches_to_config(matches: &clap::ArgMatches) -> Config {
+    let help = matches.get_flag("help");
+    let list_profiles = matches.get_flag("list-profiles");
+    let continue_flag = matches.get_flag("continue");
+    let profile = matches
+        .get_one::<String>("profile")
+        .map(|s| ProviderName::new(s.clone()));
+    let model = matches
+        .get_one::<String>("model")
+        .map(|s| ModelName::new(s.clone()));
+    let system = matches.get_one::<String>("system").cloned();
+    let positional: Vec<String> = matches
+        .get_many::<String>("positional")
+        .map(|i| i.cloned().collect())
+        .unwrap_or_default();
+    let (task, message_args) = match positional.split_first() {
+        Some((first, rest)) => (
+            Some(TaskName::new(first.clone())),
+            rest.to_vec(),
+        ),
+        None => (None, vec![]),
+    };
+
+    Config {
+        help,
+        list_profiles,
+        continue_flag,
+        profile,
+        model,
+        system,
+        task,
+        message_args,
     }
-    
-    Ok(config)
+}
+
+/// コマンドラインを解析する。補完生成が要求された場合は ParseOutcome::GenerateCompletion を返す。
+pub fn parse_args() -> Result<ParseOutcome, Error> {
+    let cmd = build_clap_command();
+    let matches = cmd
+        .try_get_matches()
+        .map_err(|e| Error::invalid_argument(e.to_string()))?;
+
+    if let Some(&shell) = matches.get_one::<Shell>("generate") {
+        return Ok(ParseOutcome::GenerateCompletion(shell));
+    }
+
+    if matches.get_flag("list-tasks") {
+        return Ok(ParseOutcome::ListTasks);
+    }
+
+    Ok(ParseOutcome::Config(matches_to_config(&matches)))
+}
+
+/// テスト用: 引数スライスから解析する
+#[allow(dead_code)]
+pub fn parse_args_from(args: &[String]) -> Result<Config, Error> {
+    let cmd = build_clap_command();
+    let matches = cmd
+        .try_get_matches_from(args)
+        .map_err(|e| Error::invalid_argument(e.to_string()))?;
+    Ok(matches_to_config(&matches))
+}
+
+/// 補完スクリプトを標準出力に出力する。
+pub fn print_completion(shell: Shell) {
+    emit_fallback_completion(shell);
+}
+
+fn emit_fallback_completion(shell: Shell) {
+    let opts = "-h --help -L --list-profiles -c --continue -p --profile -S --system -m --model --generate --list-tasks";
+    match shell {
+        Shell::Bash => {
+            println!(
+                r#"# Fallback completion for ai (options + task names via ai --list-tasks)
+_ai() {{
+  local cur="${{COMP_WORDS[COMP_CWORD]}}"
+  local tasks
+  tasks=$(ai --list-tasks 2>/dev/null)
+  COMPREPLY=($(compgen -W "$tasks {opts}" -- "$cur"))
+}}
+complete -F _ai ai
+"#,
+                opts = opts
+            );
+        }
+        Shell::Zsh => {
+            println!(
+                r#"# Fallback completion for ai (options + task names via ai --list-tasks)
+#compdef ai
+local -a reply
+reply=($(ai --list-tasks 2>/dev/null) {opts})
+_describe 'ai' reply
+"#,
+                opts = opts
+            );
+        }
+        Shell::Fish => {
+            println!(
+                r#"# Fallback completion for ai (options + task names)
+complete -c ai -l help -s h -d "Show help"
+complete -c ai -l list-profiles -s L -d "List profiles"
+complete -c ai -l continue -s c -d "Resume session"
+complete -c ai -l profile -s p -d "LLM profile" -r
+complete -c ai -l system -s S -d "System instruction" -r
+complete -c ai -l model -s m -d "Model name" -r
+complete -c ai -l generate -d "Generate completion script" -r -a "bash zsh fish"
+complete -c ai -l list-tasks -d "List task names"
+complete -c ai -a "(ai --list-tasks 2>/dev/null)"
+"#
+            );
+        }
+        _ => {}
+    }
 }
 
 /// Config を AiCommand に変換する
@@ -171,7 +302,7 @@ mod tests {
     fn test_parse_args_no_args() {
         let args = vec!["ai".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, false);
+        assert!(!config.help);
         assert_eq!(config.task, None);
         assert_eq!(config.message_args.len(), 0);
     }
@@ -180,7 +311,7 @@ mod tests {
     fn test_parse_args_help_short() {
         let args = vec!["ai".to_string(), "-h".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, true);
+        assert!(config.help);
         assert_eq!(config.task, None);
         assert_eq!(config.message_args.len(), 0);
     }
@@ -189,7 +320,7 @@ mod tests {
     fn test_parse_args_help_long() {
         let args = vec!["ai".to_string(), "--help".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, true);
+        assert!(config.help);
         assert_eq!(config.task, None);
         assert_eq!(config.message_args.len(), 0);
     }
@@ -198,9 +329,8 @@ mod tests {
     fn test_parse_args_unknown_option() {
         let args = vec!["ai".to_string(), "--unknown".to_string()];
         let result = parse_args_from(&args);
-        assert!(result.is_err());
+        assert!(result.is_err(), "unknown long option must be rejected");
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("Unknown option"));
         assert_eq!(err.exit_code(), 64);
     }
 
@@ -208,9 +338,8 @@ mod tests {
     fn test_parse_args_unknown_option_short() {
         let args = vec!["ai".to_string(), "-x".to_string()];
         let result = parse_args_from(&args);
-        assert!(result.is_err());
+        assert!(result.is_err(), "unknown short option -x must be rejected");
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("Unknown option"));
         assert_eq!(err.exit_code(), 64);
     }
 
@@ -218,7 +347,7 @@ mod tests {
     fn test_parse_args_task_only() {
         let args = vec!["ai".to_string(), "agent".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, false);
+        assert!(!config.help);
         assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 0);
     }
@@ -227,7 +356,7 @@ mod tests {
     fn test_parse_args_task_with_message() {
         let args = vec!["ai".to_string(), "agent".to_string(), "hello".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, false);
+        assert!(!config.help);
         assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 1);
         assert_eq!(config.message_args[0], "hello");
@@ -243,7 +372,7 @@ mod tests {
             "test".to_string(),
         ];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, false);
+        assert!(!config.help);
         assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("agent"));
         assert_eq!(config.message_args.len(), 3);
         assert_eq!(config.message_args[0], "hello");
@@ -253,12 +382,9 @@ mod tests {
 
     #[test]
     fn test_parse_args_help_with_task() {
-        // ヘルプが指定された場合、タスクは無視される（実装による）
         let args = vec!["ai".to_string(), "-h".to_string(), "agent".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.help, true);
-        // 現在の実装では、ヘルプの後にタスクが来ても処理される
-        // これは実装の仕様による
+        assert!(config.help);
     }
 
     #[test]
@@ -281,7 +407,7 @@ mod tests {
         let result = parse_args_from(&args);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("requires an argument"));
+        assert!(err.to_string().contains("argument") || err.to_string().contains("required"));
         assert_eq!(err.exit_code(), 64);
     }
 
@@ -289,7 +415,8 @@ mod tests {
     fn test_parse_args_profile_with_message() {
         let args = vec![
             "ai".to_string(),
-            "-p".to_string(), "echo".to_string(),
+            "-p".to_string(),
+            "echo".to_string(),
             "Hello".to_string(),
         ];
         let config = parse_args_from(&args).unwrap();
@@ -329,7 +456,7 @@ mod tests {
         let result = parse_args_from(&args);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("requires an argument"));
+        assert!(err.to_string().contains("argument") || err.to_string().contains("required"));
         assert_eq!(err.exit_code(), 64);
     }
 
@@ -353,7 +480,7 @@ mod tests {
         let result = parse_args_from(&args);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("requires an argument"));
+        assert!(err.to_string().contains("argument") || err.to_string().contains("required"));
         assert_eq!(err.exit_code(), 64);
     }
 
@@ -407,4 +534,3 @@ mod tests {
         assert!(matches!(cmd, AiCommand::ListProfiles));
     }
 }
-

@@ -8,7 +8,7 @@ mod wiring;
 use std::process;
 use common::error::Error;
 use common::ports::outbound::PathResolverInput;
-use cli::{config_to_command, parse_args, Config};
+use cli::{config_to_command, parse_args, print_completion, Config, ParseOutcome};
 use domain::command::Command;
 use ports::inbound::UseCaseRunner;
 #[cfg(unix)]
@@ -119,9 +119,10 @@ fn print_usage() {
 
 fn print_help() {
     println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
-    println!("  -h                    Display this help message.");
+    println!("  -h, --help            Display this help message.");
     println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME for this process).");
     println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
+    println!("  --generate <shell>    Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
     println!("  <command>             Command to execute. Omit to start the interactive shell.");
     println!("  [args...]             Arguments for the command.");
     println!();
@@ -151,7 +152,14 @@ fn print_sysq_list(entries: &[crate::ports::outbound::SysqListEntry]) {
 }
 
 pub fn run() -> Result<i32, Error> {
-    let config = parse_args()?;
+    let outcome = parse_args()?;
+    let config = match &outcome {
+        ParseOutcome::Config(c) => c.clone(),
+        ParseOutcome::GenerateCompletion(shell) => {
+            print_completion(*shell);
+            return Ok(0);
+        }
+    };
     #[cfg(unix)]
     {
         let app = wire_aish();

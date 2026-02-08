@@ -68,3 +68,11 @@ __aish_ctrl_l() {
     aish clear 2>/dev/null
 }
 bind -x '"\C-l": __aish_ctrl_l'
+
+# Tab補完: aish / ai（コマンドがある場合のみ有効化）
+if command -v aish >/dev/null 2>&1; then
+    source <(aish --generate bash 2>/dev/null) || true
+fi
+if command -v ai >/dev/null 2>&1; then
+    source <(ai --generate bash 2>/dev/null) || true
+fi

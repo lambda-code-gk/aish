@@ -9,4 +9,7 @@ use common::error::Error;
 /// - 戻り値: `Ok(Some(code))` 実行した終了コード, `Ok(None)` タスクなし, `Err` 実行時エラー
 pub trait TaskRunner: Send + Sync {
     fn run_if_exists(&self, task_name: &str, args: &[String]) -> Result<Option<i32>, Error>;
+
+    /// 利用可能なタスク名一覧を返す（補完用）。task.d のサブディレクトリ名と .sh のベース名。
+    fn list_names(&self) -> Result<Vec<String>, Error>;
 }

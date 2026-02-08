@@ -22,6 +22,11 @@ impl TaskUseCase {
         }
     }
 
+    /// 利用可能なタスク名一覧を返す（補完用）。
+    pub fn list_names(&self) -> Result<Vec<String>, Error> {
+        self.task_runner.list_names()
+    }
+
     /// タスクを実行する。タスクが存在しなければクエリとして LLM に送る。
     pub fn run(
         &self,

@@ -11,7 +11,7 @@ mod tests;
 use std::process;
 use common::error::Error;
 use common::ports::outbound::{now_iso8601, LogLevel, LogRecord};
-use cli::{config_to_command, parse_args, Config};
+use cli::{config_to_command, parse_args, print_completion, Config, ParseOutcome};
 use domain::AiCommand;
 use ports::inbound::UseCaseRunner;
 use wiring::{wire_ai, App};
@@ -168,7 +168,22 @@ fn main() {
 }
 
 pub fn run() -> Result<i32, Error> {
-    let config = parse_args()?;
+    let outcome = parse_args()?;
+    let config = match &outcome {
+        ParseOutcome::Config(c) => c.clone(),
+        ParseOutcome::GenerateCompletion(shell) => {
+            print_completion(*shell);
+            return Ok(0);
+        }
+        ParseOutcome::ListTasks => {
+            let app = wire_ai();
+            let names = app.task_use_case.list_names()?;
+            for n in &names {
+                println!("{}", n);
+            }
+            return Ok(0);
+        }
+    };
     let app = wire_ai();
     let runner = Runner { app };
     runner.run(config)
@@ -188,6 +203,8 @@ fn print_help() {
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
     println!("                                If omitted, enabled system prompts from aish sysq are used.");
+    println!("  --generate <shell>             Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
+    println!("  --list-tasks                   List available task names (used by shell completion).");
     println!();
     println!("Environment:");
     println!("  AISH_SESSION    Session directory for resume/continue. Set by aish when running ai from the shell.");

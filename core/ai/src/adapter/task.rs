@@ -23,6 +23,10 @@ impl TaskRunner for StdTaskRunner {
     fn run_if_exists(&self, task_name: &str, args: &[String]) -> Result<Option<i32>, Error> {
         run_task_if_exists(self.fs.as_ref(), self.process.as_ref(), task_name, args)
     }
+
+    fn list_names(&self) -> Result<Vec<String>, Error> {
+        list_task_names(self.fs.as_ref())
+    }
 }
 
 /// タスクを解決して実行する（アダプター経由）
@@ -110,6 +114,48 @@ fn resolve_task_path<F: FileSystem + ?Sized>(fs: &F, task_dir: &Path, task_name:
     }
 
     None
+}
+
+/// タスク名一覧を返す（task.d 内のディレクトリ名と .sh のベース名）。補完用。
+fn list_task_names<F: FileSystem + ?Sized>(fs: &F) -> Result<Vec<String>, Error> {
+    let task_dir = match find_task_dir(fs) {
+        Some(dir) => dir,
+        None => return Ok(Vec::new()),
+    };
+
+    let entries = fs.read_dir(&task_dir)?;
+    let mut names = Vec::new();
+
+    for path in entries {
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let full = task_dir.join(name);
+        let meta = match fs.metadata(&full) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            if fs.exists(&full.join("execute")) {
+                if let Ok(m) = fs.metadata(&full.join("execute")) {
+                    if m.is_file() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        } else if meta.is_file() && name.ends_with(".sh") {
+            let base = name.strip_suffix(".sh").unwrap_or(name);
+            names.push(base.to_string());
+        }
+    }
+
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 #[cfg(test)]
@@ -219,6 +265,32 @@ mod tests {
         let result = run_task_if_exists(&fs, &process, "unknown_task", &[]);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_list_task_names() {
+        let _guard = TASK_ENV_MUTEX.lock().unwrap();
+        let tmp = create_temp_dir("aish_task_test_list");
+        let config_dir = tmp.join("config").join("task.d");
+        fs::create_dir_all(&config_dir).unwrap();
+
+        // task as script: foo.sh
+        let foo_sh = config_dir.join("foo.sh");
+        File::create(&foo_sh).unwrap();
+        // task as dir with execute: bar/execute
+        let bar_dir = config_dir.join("bar");
+        fs::create_dir_all(&bar_dir).unwrap();
+        let bar_exec = bar_dir.join("execute");
+        File::create(&bar_exec).unwrap();
+
+        env::set_var("AISH_HOME", &tmp);
+        env::remove_var("XDG_CONFIG_HOME");
+
+        let fs = StdFileSystem;
+        let names = list_task_names(&fs).unwrap();
+        assert!(names.contains(&"foo".to_string()));
+        assert!(names.contains(&"bar".to_string()));
+        assert_eq!(names.len(), 2);
     }
 }
 
