@@ -12,9 +12,10 @@ use common::tool::EchoTool;
 
 use crate::adapter::{
     CliContinuePrompt, CliToolApproval, FileAgentStateStorage, LeakscanPrepareSession,
-    NoopInterruptChecker, PartSessionStorage, ReviewedSessionStorage, SigintChecker,
-    StdCommandAllowRulesLoader, StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister,
-    StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner, ShellTool,
+    NoContinuePrompt, NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage,
+    ReviewedSessionStorage, SigintChecker, StdCommandAllowRulesLoader, StdEventSinkFactory,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel, StdResolveSystemInstruction,
+    StdTaskRunner, ShellTool,
 };
 use crate::domain::Query;
 use crate::ports::outbound::{
@@ -88,8 +89,10 @@ fn resolve_leakscan_paths(
     None
 }
 
-/// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す
-pub fn wire_ai() -> App {
+/// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す。
+///
+/// `non_interactive`: true のとき確認プロンプトを出さない（ツール承認は常に拒否・続行はしない・leakscan ヒットは拒否）。CI 向け。
+pub fn wire_ai(non_interactive: bool) -> App {
     let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
     let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
     let logger: Arc<dyn Log> = env_resolver
@@ -112,6 +115,7 @@ pub fn wire_ai() -> App {
                     leakscan_binary,
                     rules_path,
                     Some(Arc::clone(&interrupt_checker)),
+                    non_interactive,
                 ),
             );
             let reviewed_storage = Arc::new(ReviewedSessionStorage::new(Arc::clone(&fs)));
@@ -140,15 +144,22 @@ pub fn wire_ai() -> App {
         Arc::new(EchoTool::new()),
         Arc::new(ShellTool::new()),
     ];
-    let approver: Arc<dyn crate::ports::outbound::ToolApproval> =
-        Arc::new(CliToolApproval::new(Some(Arc::clone(&interrupt_checker))));
+    let approver: Arc<dyn crate::ports::outbound::ToolApproval> = if non_interactive {
+        Arc::new(NonInteractiveToolApproval::new())
+    } else {
+        Arc::new(CliToolApproval::new(Some(Arc::clone(&interrupt_checker))))
+    };
     let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(&fs)));
     let agent_state_saver: Arc<dyn AgentStateSaver> =
         Arc::clone(&agent_state_storage) as Arc<dyn AgentStateSaver>;
     let agent_state_loader: Arc<dyn AgentStateLoader> =
         Arc::clone(&agent_state_storage) as Arc<dyn AgentStateLoader>;
     let continue_prompt: Arc<dyn crate::ports::outbound::ContinueAfterLimitPrompt> =
-        Arc::new(CliContinuePrompt::new());
+        if non_interactive {
+            Arc::new(NoContinuePrompt::new())
+        } else {
+            Arc::new(CliContinuePrompt::new())
+        };
     let resolve_system_instruction: Arc<dyn ResolveSystemInstruction> =
         Arc::new(StdResolveSystemInstruction::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     let profile_lister: Arc<dyn crate::ports::outbound::ProfileLister> =

@@ -34,6 +34,27 @@ impl Default for CliToolApproval {
     }
 }
 
+/// 非対話用: 常に拒否を返す（CI 等でプロンプトを出さない）
+pub struct NonInteractiveToolApproval;
+
+impl NonInteractiveToolApproval {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for NonInteractiveToolApproval {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ToolApproval for NonInteractiveToolApproval {
+    fn approve_unsafe_shell(&self, _command: &str) -> Result<Approval, Error> {
+        Ok(Approval::Denied)
+    }
+}
+
 impl ToolApproval for CliToolApproval {
     fn approve_unsafe_shell(&self, command: &str) -> Result<Approval, Error> {
         eprintln!("============ Approval =============");
@@ -96,5 +117,14 @@ mod tests {
     fn test_cli_tool_approval_default() {
         let _approval = CliToolApproval::default();
         // Default トレイトが実装されていることを確認
+    }
+
+    #[test]
+    fn test_non_interactive_tool_approval_always_denied() {
+        let approval = NonInteractiveToolApproval::new();
+        assert_eq!(
+            approval.approve_unsafe_shell("rm -rf /").unwrap(),
+            Approval::Denied
+        );
     }
 }

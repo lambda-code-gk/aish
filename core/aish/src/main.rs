@@ -324,6 +324,11 @@ mod tests {
             fs::write(session_path.join("part_00000001_user.txt"), "Hello").unwrap();
             fs::write(session_path.join("part_00000002_assistant.txt"), "Hi there").unwrap();
             fs::write(session_path.join("part_00000003_user.txt"), "How are you?").unwrap();
+            fs::write(session_path.join("reviewed_ABC12001_user.txt"), "Reviewed user").unwrap();
+            fs::write(session_path.join("reviewed_ABC12002_assistant.txt"), "Reviewed assistant").unwrap();
+            let evacuated_dir = session_path.join("leakscan_evacuated");
+            fs::create_dir_all(&evacuated_dir).unwrap();
+            fs::write(evacuated_dir.join("part_old_user.txt"), "evacuated").unwrap();
             fs::write(session_path.join("console.txt"), "console log").unwrap();
             fs::write(session_path.join("AISH_PID"), "12345").unwrap();
 
@@ -340,6 +345,9 @@ mod tests {
             assert!(!session_path.join("part_00000001_user.txt").exists());
             assert!(!session_path.join("part_00000002_assistant.txt").exists());
             assert!(!session_path.join("part_00000003_user.txt").exists());
+            assert!(!session_path.join("reviewed_ABC12001_user.txt").exists());
+            assert!(!session_path.join("reviewed_ABC12002_assistant.txt").exists());
+            assert!(!session_path.join("leakscan_evacuated").exists());
             assert!(session_path.join("console.txt").exists());
             assert!(session_path.join("AISH_PID").exists());
 

@@ -17,9 +17,9 @@ pub(crate) mod tools;
 #[cfg(test)]
 pub(crate) mod stub_llm;
 pub(crate) use agent_state_storage::FileAgentStateStorage;
-pub(crate) use approval::CliToolApproval;
+pub(crate) use approval::{CliToolApproval, NonInteractiveToolApproval};
 pub(crate) use config::StdCommandAllowRulesLoader;
-pub(crate) use continue_prompt::CliContinuePrompt;
+pub(crate) use continue_prompt::{CliContinuePrompt, NoContinuePrompt};
 pub(crate) use leakscan_prepare_session::LeakscanPrepareSession;
 pub(crate) use llm_event_stream_factory::StdLlmEventStreamFactory;
 pub(crate) use part_session_storage::PartSessionStorage;

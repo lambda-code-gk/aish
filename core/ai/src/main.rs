@@ -176,7 +176,7 @@ pub fn run() -> Result<i32, Error> {
             return Ok(0);
         }
         ParseOutcome::ListTasks => {
-            let app = wire_ai();
+            let app = wire_ai(false);
             let names = app.task_use_case.list_names()?;
             for n in &names {
                 println!("{}", n);
@@ -184,7 +184,7 @@ pub fn run() -> Result<i32, Error> {
             return Ok(0);
         }
     };
-    let app = wire_ai();
+    let app = wire_ai(config.non_interactive);
     let runner = Runner { app };
     runner.run(config)
 }
@@ -199,6 +199,7 @@ fn print_help() {
     println!("  -h, --help                    Show this help message");
     println!("  -L, --list-profiles           List currently available provider profiles (from profiles.json + built-ins)");
     println!("  -c, --continue                Resume the agent loop from the last saved state (after turn limit or error). Uses AISH_SESSION when set.");
+    println!("  --no-interactive              Do not prompt for confirmations (CI-friendly: tool approval denied, no continue, leakscan deny).");
     println!("  -p, --profile <profile>         Specify LLM profile (gemini, gpt, echo, etc.). Default: profiles.json default, or gemini if not set.");
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");

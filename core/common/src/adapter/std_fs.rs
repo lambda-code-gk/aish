@@ -55,6 +55,16 @@ impl FileSystem for StdFileSystem {
         })
     }
 
+    fn remove_dir_all(&self, path: &Path) -> Result<(), Error> {
+        std::fs::remove_dir_all(path).map_err(|e| {
+            Error::io_msg(format!(
+                "Failed to remove directory '{}': {}",
+                path.display(),
+                e
+            ))
+        })
+    }
+
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, Error> {
         let entries = std::fs::read_dir(path).map_err(|e| {
             Error::io_msg(format!(

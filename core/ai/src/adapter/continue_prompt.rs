@@ -6,6 +6,27 @@ use crate::ports::outbound::ContinueAfterLimitPrompt;
 use common::error::Error;
 use std::io::{self, BufRead, Write};
 
+/// 非対話用: 常に続行しない（false）を返す（CI 等でプロンプトを出さない）
+pub struct NoContinuePrompt;
+
+impl NoContinuePrompt {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for NoContinuePrompt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ContinueAfterLimitPrompt for NoContinuePrompt {
+    fn ask_continue(&self) -> Result<bool, Error> {
+        Ok(false)
+    }
+}
+
 /// CLI で「続けますか？」を標準入出力で問い合わせる実装
 pub struct CliContinuePrompt;
 

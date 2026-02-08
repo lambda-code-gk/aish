@@ -41,6 +41,8 @@ pub trait FileSystem: Send + Sync {
     fn create_dir_all(&self, path: &Path) -> Result<(), Error>;
     fn metadata(&self, path: &Path) -> Result<FileMetadata, Error>;
     fn remove_file(&self, path: &Path) -> Result<(), Error>;
+    /// ディレクトリを再帰的に削除する（中身ごと）
+    fn remove_dir_all(&self, path: &Path) -> Result<(), Error>;
     /// ディレクトリ直下のエントリのフルパス一覧
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, Error>;
     fn canonicalize(&self, path: &Path) -> Result<PathBuf, Error>;

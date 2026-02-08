@@ -12,6 +12,8 @@ pub struct Config {
     pub list_profiles: bool,
     /// -c / --continue: 保存された会話状態から再開する
     pub continue_flag: bool,
+    /// --no-interactive: 確認プロンプトを出さず CI 等でブロックしない（承認は常に拒否・続行はしない・leakscan ヒットは拒否）
+    pub non_interactive: bool,
     pub profile: Option<ProviderName>,
     pub model: Option<ModelName>,
     pub system: Option<String>,
@@ -25,6 +27,7 @@ impl Default for Config {
             help: false,
             list_profiles: false,
             continue_flag: false,
+            non_interactive: false,
             profile: None,
             model: None,
             system: None,
@@ -66,6 +69,12 @@ fn build_clap_command() -> clap::Command {
                 .short('c')
                 .long("continue")
                 .help("Resume the agent loop from the last saved state")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("no-interactive")
+                .long("no-interactive")
+                .help("Do not prompt for confirmations (CI-friendly: tool approval denied, no continue, leakscan deny)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -119,6 +128,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
     let help = matches.get_flag("help");
     let list_profiles = matches.get_flag("list-profiles");
     let continue_flag = matches.get_flag("continue");
+    let non_interactive = matches.get_flag("no-interactive");
     let profile = matches
         .get_one::<String>("profile")
         .map(|s| ProviderName::new(s.clone()));
@@ -142,6 +152,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         help,
         list_profiles,
         continue_flag,
+        non_interactive,
         profile,
         model,
         system,
@@ -184,7 +195,7 @@ pub fn print_completion(shell: Shell) {
 }
 
 fn emit_fallback_completion(shell: Shell) {
-    let opts = "-h --help -L --list-profiles -c --continue -p --profile -S --system -m --model --generate --list-tasks";
+    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -p --profile -S --system -m --model --generate --list-tasks";
     match shell {
         Shell::Bash => {
             println!(
@@ -217,6 +228,7 @@ _describe 'ai' reply
 complete -c ai -l help -s h -d "Show help"
 complete -c ai -l list-profiles -s L -d "List profiles"
 complete -c ai -l continue -s c -d "Resume session"
+complete -c ai -l no-interactive -d "Do not prompt (CI-friendly)"
 complete -c ai -l profile -s p -d "LLM profile" -r
 complete -c ai -l system -s S -d "System instruction" -r
 complete -c ai -l model -s m -d "Model name" -r
@@ -522,6 +534,13 @@ mod tests {
         let args = vec!["ai".to_string(), "--list-profiles".to_string()];
         let config = parse_args_from(&args).unwrap();
         assert!(config.list_profiles);
+    }
+
+    #[test]
+    fn test_parse_args_no_interactive() {
+        let args = vec!["ai".to_string(), "--no-interactive".to_string(), "hello".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.non_interactive);
     }
 
     #[test]

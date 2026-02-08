@@ -53,6 +53,8 @@ pub struct LeakscanPrepareSession {
     leakscan_binary: PathBuf,
     rules_path: PathBuf,
     interrupt_checker: Option<Arc<dyn InterruptChecker>>,
+    /// true のときヒット時に対話せず常に Deny（CI 等向け）
+    non_interactive: bool,
 }
 
 impl LeakscanPrepareSession {
@@ -61,12 +63,14 @@ impl LeakscanPrepareSession {
         leakscan_binary: PathBuf,
         rules_path: PathBuf,
         interrupt_checker: Option<Arc<dyn InterruptChecker>>,
+        non_interactive: bool,
     ) -> Self {
         Self {
             fs,
             leakscan_binary,
             rules_path,
             interrupt_checker,
+            non_interactive,
         }
     }
 
@@ -190,7 +194,11 @@ impl LeakscanPrepareSession {
         let (should_allow, content_for_reviewed) = match self.leakscan_check(&content)? {
             (false, _) => (true, content),
             (true, verbose_output) => {
-                let choice = self.prompt_sensitive_choice(&verbose_output)?;
+                let choice = if self.non_interactive {
+                    SensitiveChoice::Deny
+                } else {
+                    self.prompt_sensitive_choice(&verbose_output)?
+                };
                 match choice {
                     SensitiveChoice::Allow => (true, content),
                     SensitiveChoice::Deny => {

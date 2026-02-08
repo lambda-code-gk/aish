@@ -59,16 +59,27 @@ impl ClearUseCase {
         // ディレクトリ内のファイル一覧を取得
         let entries = self.fs.read_dir(session_dir)?;
 
-        // part_ で始まるファイルを削除
         for entry in entries {
             if let Some(file_name) = entry.file_name().and_then(|n| n.to_str()) {
+                // part_ で始まるファイルを削除（会話履歴）
                 if file_name.starts_with("part_") {
-                    // ファイルかどうか確認
+                    if self.fs.metadata(&entry).map(|m| m.is_file()).unwrap_or(false) {
+                        self.fs.remove_file(&entry)?;
+                    }
+                }
+                // reviewed_ で始まるファイルを削除（leakscan 通過後の履歴）
+                else if file_name.starts_with("reviewed_") {
                     if self.fs.metadata(&entry).map(|m| m.is_file()).unwrap_or(false) {
                         self.fs.remove_file(&entry)?;
                     }
                 }
             }
+        }
+
+        // leakscan 退避用ディレクトリを削除
+        let evacuated_dir = session_dir.join("leakscan_evacuated");
+        if self.fs.exists(&evacuated_dir) {
+            self.fs.remove_dir_all(&evacuated_dir)?;
         }
 
         Ok(0)

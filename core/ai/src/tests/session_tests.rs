@@ -5,7 +5,7 @@ use std::fs;
 use std::sync::Arc;
 
 fn use_case() -> Arc<AiUseCase> {
-    wire_ai().ai_use_case
+    wire_ai(false).ai_use_case
 }
 
 #[test]
