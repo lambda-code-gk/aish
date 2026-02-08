@@ -166,6 +166,7 @@ impl AiUseCase {
             .resolve_profile_and_model
             .resolve(provider.as_ref(), model.as_ref())?;
         let mut fields = std::collections::BTreeMap::new();
+        fields.insert("event".to_string(), serde_json::json!("query_started"));
         fields.insert("profile".to_string(), serde_json::json!(profile_name.clone()));
         fields.insert("model".to_string(), serde_json::json!(model_name.clone()));
         let _ = self.log.log(&LogRecord {
@@ -176,7 +177,7 @@ impl AiUseCase {
                 profile_name, model_name
             ),
             layer: Some("usecase".to_string()),
-            kind: Some("usecase".to_string()),
+            kind: Some("query".to_string()),
             fields: Some(fields),
         });
 
