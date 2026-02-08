@@ -1,5 +1,6 @@
 //! 配線: 標準アダプタで UseCase を組み立てる
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use common::adapter::{
@@ -10,15 +11,15 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, NoopInterruptChecker, PartSessionStorage,
-    SigintChecker, StdCommandAllowRulesLoader, StdEventSinkFactory, StdLlmEventStreamFactory,
-    StdProfileLister, StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner,
-    ShellTool,
+    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, LeakscanPrepareSession,
+    NoopInterruptChecker, PartSessionStorage, ReviewedSessionStorage, SigintChecker,
+    StdCommandAllowRulesLoader, StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister,
+    StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner, ShellTool,
 };
 use crate::domain::Query;
 use crate::ports::outbound::{
-    AgentStateLoader, AgentStateSaver, ResolveSystemInstruction, RunQuery, SessionHistoryLoader,
-    SessionResponseSaver, TaskRunner,
+    AgentStateLoader, AgentStateSaver, PrepareSessionForSensitiveCheck, ResolveSystemInstruction,
+    RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::AiUseCase;
 use crate::usecase::task::TaskUseCase;
@@ -59,6 +60,34 @@ pub struct App {
     pub ai_use_case: Arc<AiUseCase>,
 }
 
+/// leakscan バイナリと rules のパスを解決する。両方存在すれば Some((binary, rules))、でなければ None。
+///
+/// rules.json の検索先: `$AISH_HOME/config/rules.json`（他の設定ファイルと同様 config/ 配下）。
+/// leakscan バイナリの検索先: `$AISH_HOME/bin/leakscan` または `<ai バイナリの隣>/leakscan`。
+fn resolve_leakscan_paths(
+    fs: &Arc<dyn FileSystem>,
+    env_resolver: &Arc<dyn EnvResolver>,
+) -> Option<(PathBuf, PathBuf)> {
+    let home = env_resolver.resolve_home_dir().ok()?;
+    let rules = home.as_ref().join("config").join("rules.json");
+    if !fs.exists(&rules) {
+        return None;
+    }
+    // 1. $AISH_HOME/bin/leakscan
+    let binary = home.as_ref().join("bin").join("leakscan");
+    if fs.exists(&binary) {
+        return Some((binary, rules));
+    }
+    // 2. カレント exe の隣に leakscan がある場合（開発時など）
+    let current_exe = std::env::current_exe().ok()?;
+    let bin_dir = current_exe.parent()?;
+    let binary_alt = bin_dir.join("leakscan");
+    if fs.exists(&binary_alt) {
+        return Some((binary_alt, rules));
+    }
+    None
+}
+
 /// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す
 pub fn wire_ai() -> App {
     let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
@@ -69,10 +98,40 @@ pub fn wire_ai() -> App {
         .unwrap_or_else(|_| Arc::new(NoopLog));
     let id_gen = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
     let part_storage = Arc::new(PartSessionStorage::new(Arc::clone(&fs), id_gen));
-    let history_loader: Arc<dyn SessionHistoryLoader> =
-        Arc::clone(&part_storage) as Arc<dyn SessionHistoryLoader>;
-    let response_saver: Arc<dyn SessionResponseSaver> =
-        Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
+    let interrupt_checker: Arc<dyn crate::ports::outbound::InterruptChecker> =
+        SigintChecker::new()
+            .map(Arc::new)
+            .map(|a| a as Arc<dyn crate::ports::outbound::InterruptChecker>)
+            .unwrap_or_else(|_| Arc::new(NoopInterruptChecker::new()));
+
+    let (history_loader, response_saver, prepare_session_for_sensitive_check) =
+        if let Some((leakscan_binary, rules_path)) = resolve_leakscan_paths(&fs, &env_resolver) {
+            let leakscan_prepare: Arc<dyn PrepareSessionForSensitiveCheck> = Arc::new(
+                LeakscanPrepareSession::new(
+                    Arc::clone(&fs),
+                    leakscan_binary,
+                    rules_path,
+                    Some(Arc::clone(&interrupt_checker)),
+                ),
+            );
+            let reviewed_storage = Arc::new(ReviewedSessionStorage::new(Arc::clone(&fs)));
+            let history: Arc<dyn SessionHistoryLoader> =
+                Arc::clone(&reviewed_storage) as Arc<dyn SessionHistoryLoader>;
+            // response_saver は part_* に書くので PartSessionStorage のまま
+            let response_saver: Arc<dyn SessionResponseSaver> =
+                Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
+            (
+                history,
+                response_saver,
+                Some(leakscan_prepare) as Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
+            )
+        } else {
+            let history_loader: Arc<dyn SessionHistoryLoader> =
+                Arc::clone(&part_storage) as Arc<dyn SessionHistoryLoader>;
+            let response_saver: Arc<dyn SessionResponseSaver> =
+                Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
+            (history_loader, response_saver, None)
+        };
     let process: Arc<dyn Process> = Arc::new(StdProcess);
     let task_runner: Arc<dyn TaskRunner> = Arc::new(StdTaskRunner::new(Arc::clone(&fs), Arc::clone(&process)));
     let command_allow_rules_loader = Arc::new(StdCommandAllowRulesLoader);
@@ -81,11 +140,6 @@ pub fn wire_ai() -> App {
         Arc::new(EchoTool::new()),
         Arc::new(ShellTool::new()),
     ];
-    let interrupt_checker: Arc<dyn crate::ports::outbound::InterruptChecker> =
-        SigintChecker::new()
-            .map(Arc::new)
-            .map(|a| a as Arc<dyn crate::ports::outbound::InterruptChecker>)
-            .unwrap_or_else(|_| Arc::new(NoopInterruptChecker::new()));
     let approver: Arc<dyn crate::ports::outbound::ToolApproval> =
         Arc::new(CliToolApproval::new(Some(Arc::clone(&interrupt_checker))));
     let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(&fs)));
@@ -121,6 +175,7 @@ pub fn wire_ai() -> App {
         profile_lister,
         resolve_profile_and_model,
         llm_stream_factory,
+        prepare_session_for_sensitive_check,
     ));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));

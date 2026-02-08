@@ -1,7 +1,8 @@
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContinueAfterLimitPrompt,
-    EventSinkFactory, InterruptChecker, LlmEventStreamFactory, ProfileLister, ResolveProfileAndModel,
-    RunQuery, SessionHistoryLoader, SessionResponseSaver, ToolApproval,
+    EventSinkFactory, InterruptChecker, LlmEventStreamFactory, PrepareSessionForSensitiveCheck,
+    ProfileLister, ResolveProfileAndModel, RunQuery, SessionHistoryLoader, SessionResponseSaver,
+    ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
@@ -65,6 +66,7 @@ pub struct AiUseCase {
     pub profile_lister: Arc<dyn ProfileLister>,
     pub resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
     pub llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
+    pub prepare_session_for_sensitive_check: Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
 }
 
 impl AiUseCase {
@@ -87,6 +89,7 @@ impl AiUseCase {
         profile_lister: Arc<dyn ProfileLister>,
         resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
         llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
+        prepare_session_for_sensitive_check: Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
     ) -> Self {
         Self {
             fs,
@@ -106,6 +109,7 @@ impl AiUseCase {
             profile_lister,
             resolve_profile_and_model,
             llm_stream_factory,
+            prepare_session_for_sensitive_check,
         }
     }
 
@@ -201,6 +205,11 @@ impl AiUseCase {
             Some(q) => {
                 let history_messages = if self.session_is_valid(&session_dir) {
                     let dir = session_dir.as_ref().expect("session_dir is Some");
+                    // ユーザークエリを part として保存（leakscan の対象にする）
+                    self.response_saver.save_user(dir, q.as_ref())?;
+                    if let Some(ref prep) = self.prepare_session_for_sensitive_check {
+                        prep.prepare(dir)?;
+                    }
                     self.history_loader
                         .load(dir)
                         .ok()
@@ -209,7 +218,36 @@ impl AiUseCase {
                 } else {
                     Vec::new()
                 };
-                build_messages(&history_messages, q, system_instruction)
+                // history_loader が reviewed から読み込む場合、build_messages の query は
+                // 既に reviewed に含まれているため、重複して追加しない。
+                // reviewed が無い場合（leakscan 無効時）は従来どおり query を末尾に追加。
+                if self.prepare_session_for_sensitive_check.is_some() {
+                    // leakscan 有効: 履歴に user クエリの reviewed が含まれている
+                    let mut msgs: Vec<Msg> = Vec::new();
+                    if let Some(s) = system_instruction {
+                        msgs.push(Msg::system(s));
+                    }
+                    for m in &history_messages {
+                        if m.role == "user" {
+                            msgs.push(Msg::user(&m.content));
+                        } else if m.role == "tool" {
+                            if let Some(ref call_id) = m.tool_call_id {
+                                let name = m.tool_name.as_deref().unwrap_or("");
+                                msgs.push(Msg::tool_result(call_id, name, serde_json::from_str(&m.content).unwrap_or(serde_json::json!({}))));
+                            }
+                        } else {
+                            msgs.push(Msg::assistant(&m.content));
+                            if let Some(ref tool_calls) = m.tool_calls {
+                                for tc in tool_calls {
+                                    msgs.push(Msg::tool_call(&tc.id, &tc.name, tc.args.clone(), tc.thought_signature.clone()));
+                                }
+                            }
+                        }
+                    }
+                    msgs
+                } else {
+                    build_messages(&history_messages, q, system_instruction)
+                }
             }
         };
 

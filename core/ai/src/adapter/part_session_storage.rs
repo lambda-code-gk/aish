@@ -92,4 +92,24 @@ impl SessionResponseSaver for PartSessionStorage {
         let file_path = session_dir.as_ref().join(&filename);
         self.fs.write(&file_path, response)
     }
+
+    fn save_user(&self, session_dir: &SessionDir, content: &str) -> Result<(), Error> {
+        if !self.fs.exists(session_dir.as_ref())
+            || !self
+                .fs
+                .metadata(session_dir.as_ref())
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+        {
+            return Err(Error::io_msg("Session is not valid"));
+        }
+        let id = self.id_gen.next_id();
+        let filename = format!("part_{}_user.txt", id);
+        let file_path = session_dir.as_ref().join(&filename);
+        let mut body = content.to_string();
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        self.fs.write(&file_path, &body)
+    }
 }
