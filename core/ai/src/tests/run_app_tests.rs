@@ -55,28 +55,28 @@ fn test_run_app_continue_without_state() {
 
 #[test]
 fn test_run_app_with_message() {
-    // echoプロバイダを使用してネットワーク不要で高速に実行
-    // （provider未指定だとGeminiが使われ、APIキー欠如でHTTPタイムアウトまで数秒かかる）
+    // echoプロファイルを使用してネットワーク不要で高速に実行
+    // （profile未指定だとGeminiが使われ、APIキー欠如でHTTPタイムアウトまで数秒かかる）
     let config = Config {
-        provider: Some(ProviderName::new("echo")),
+        profile: Some(ProviderName::new("echo")),
         message_args: vec!["Hello".to_string()],
         ..Default::default()
     };
     let result = run_app(config);
-    assert!(result.is_ok(), "echo provider should succeed without API key");
+    assert!(result.is_ok(), "echo profile should succeed without API key");
 }
 
 #[test]
 fn test_run_app_with_task_and_message() {
-    // echoプロバイダを使用（agentタスクは存在しない想定なのでLLMパスに入る）
+    // echoプロファイルを使用（agentタスクは存在しない想定なのでLLMパスに入る）
     let config = Config {
-        provider: Some(ProviderName::new("echo")),
+        profile: Some(ProviderName::new("echo")),
         task: Some(TaskName::new("agent")),
         message_args: vec!["hello".to_string(), "world".to_string()],
         ..Default::default()
     };
     let result = run_app(config);
-    assert!(result.is_ok(), "echo provider should succeed without API key");
+    assert!(result.is_ok(), "echo profile should succeed without API key");
 }
 
 #[test]
@@ -93,22 +93,22 @@ fn test_run_app_help_takes_precedence() {
 }
 
 #[test]
-fn test_run_app_with_provider() {
+fn test_run_app_with_profile() {
     // 環境変数が設定されていない場合はエラーになるが、基本的な構造はテストできる
     let config = Config {
-        provider: Some(ProviderName::new("echo")),
+        profile: Some(ProviderName::new("echo")),
         message_args: vec!["Hello".to_string()],
         ..Default::default()
     };
-    // EchoプロバイダはAPIキーが不要なので成功する
+    // EchoプロファイルはAPIキーが不要なので成功する
     let result = run_app(config);
     assert!(result.is_ok());
 }
 
 #[test]
-fn test_run_app_with_unknown_provider() {
+fn test_run_app_with_unknown_profile() {
     let config = Config {
-        provider: Some(ProviderName::new("unknown")),
+        profile: Some(ProviderName::new("unknown")),
         message_args: vec!["Hello".to_string()],
         ..Default::default()
     };

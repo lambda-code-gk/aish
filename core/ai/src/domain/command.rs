@@ -16,21 +16,21 @@ pub enum AiCommand {
     Task {
         name: TaskName,
         args: Vec<String>,
-        provider: Option<ProviderName>,
+        profile: Option<ProviderName>,
         model: Option<ModelName>,
         /// タスク未ヒット時に run_query へ委譲する際に渡すシステムプロンプト（-S/--system）
         system: Option<String>,
     },
     /// 保存された会話状態から再開（-c/--continue 指定時のみ）
     Resume {
-        provider: Option<ProviderName>,
+        profile: Option<ProviderName>,
         model: Option<ModelName>,
         /// システムプロンプト（-S/--system で指定）
         system: Option<String>,
     },
     /// LLM クエリ（タスク未指定、またはタスクが見つからなかった場合）
     Query {
-        provider: Option<ProviderName>,
+        profile: Option<ProviderName>,
         model: Option<ModelName>,
         query: Query,
         /// システムプロンプト（-S/--system で指定）

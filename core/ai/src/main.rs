@@ -63,19 +63,19 @@ impl UseCaseRunner for Runner {
             AiCommand::Task {
                 name,
                 args,
-                provider,
+                profile,
                 model,
                 system,
             } => self.app.task_use_case.run(
                 session_dir,
                 &name,
                 &args,
-                provider,
+                profile,
                 model,
                 system_instruction(system).as_deref(),
             ),
             AiCommand::Resume {
-                provider,
+                profile,
                 model,
                 system,
             } => {
@@ -84,7 +84,7 @@ impl UseCaseRunner for Runner {
                     .and_then(|s| s.parse::<usize>().ok());
                 self.app.run_query.run_query(
                     session_dir,
-                    provider,
+                    profile,
                     model,
                     None,
                     system_instruction(system).as_deref(),
@@ -92,7 +92,7 @@ impl UseCaseRunner for Runner {
                 )
             }
             AiCommand::Query {
-                provider,
+                profile,
                 model,
                 query,
                 system,
@@ -107,7 +107,7 @@ impl UseCaseRunner for Runner {
                     .and_then(|s| s.parse::<usize>().ok());
                 self.app.run_query.run_query(
                     session_dir,
-                    provider,
+                    profile,
                     model,
                     Some(&query),
                     system_instruction(system).as_deref(),
@@ -183,11 +183,16 @@ fn print_help() {
     println!("Options:");
     println!("  -h, --help                    Show this help message");
     println!("  -L, --list-profiles           List currently available provider profiles (from profiles.json + built-ins)");
-    println!("  -c, --continue                Resume from the last saved session (after interrupt or limit)");
-    println!("  -p, --provider <provider>      Specify LLM provider (gemini, gpt, echo). Default: gemini");
-    println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: provider default");
+    println!("  -c, --continue                Resume the agent loop from the last saved state (after turn limit or error). Uses AISH_SESSION when set.");
+    println!("  -p, --profile <profile>         Specify LLM profile (gemini, gpt, echo, etc.). Default: profiles.json default, or gemini if not set.");
+    println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
     println!("                                If omitted, enabled system prompts from aish sysq are used.");
+    println!();
+    println!("Environment:");
+    println!("  AISH_SESSION    Session directory for resume/continue. Set by aish when running ai from the shell.");
+    println!("  AISH_HOME       Home directory. Profiles: $AISH_HOME/config/profiles.json; tasks: $AISH_HOME/config/task.d/");
+    println!("                 If unset, $XDG_CONFIG_HOME/aish (e.g. ~/.config/aish) is used.");
     println!();
     println!("Description:");
     println!("  Send a message to the LLM and display the response.");
@@ -200,6 +205,6 @@ fn print_help() {
     println!("Examples:");
     println!("  ai Hello, how are you?");
     println!("  ai -p gpt What is Rust programming language?");
-    println!("  ai --provider echo Explain quantum computing");
+    println!("  ai --profile echo Explain quantum computing");
     println!("  ai mytask do something");
 }

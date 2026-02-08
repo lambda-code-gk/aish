@@ -8,7 +8,7 @@ pub struct Config {
     pub list_profiles: bool,
     /// -c / --continue: 保存された会話状態から再開する
     pub continue_flag: bool,
-    pub provider: Option<ProviderName>,
+    pub profile: Option<ProviderName>,
     pub model: Option<ModelName>,
     pub system: Option<String>,
     pub task: Option<TaskName>,
@@ -21,7 +21,7 @@ impl Default for Config {
             help: false,
             list_profiles: false,
             continue_flag: false,
-            provider: None,
+            profile: None,
             model: None,
             system: None,
             task: None,
@@ -55,12 +55,12 @@ fn parse_args_from(args: &[String]) -> Result<Config, Error> {
                 config.continue_flag = true;
                 i += 1;
             }
-            "-p" | "--provider" => {
+            "-p" | "--profile" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err(Error::invalid_argument("Option -p/--provider requires an argument"));
+                    return Err(Error::invalid_argument("Option -p/--profile requires an argument"));
                 }
-                config.provider = Some(ProviderName::new(args[i].clone()));
+                config.profile = Some(ProviderName::new(args[i].clone()));
                 i += 1;
             }
             "-S" | "--system" => {
@@ -111,7 +111,7 @@ pub fn config_to_command(config: Config) -> AiCommand {
 
     if config.continue_flag {
         return AiCommand::Resume {
-            provider: config.provider,
+            profile: config.profile,
             model: config.model,
             system: config.system,
         };
@@ -119,13 +119,13 @@ pub fn config_to_command(config: Config) -> AiCommand {
 
     if let Some(task) = config.task {
         let args = config.message_args;
-        let provider = config.provider;
+        let profile = config.profile;
         let model = config.model;
         let system = config.system;
         return AiCommand::Task {
             name: task,
             args,
-            provider,
+            profile,
             model,
             system,
         };
@@ -133,7 +133,7 @@ pub fn config_to_command(config: Config) -> AiCommand {
 
     let query = Query::new(config.message_args.join(" "));
     AiCommand::Query {
-        provider: config.provider,
+        profile: config.profile,
         model: config.model,
         query,
         system: config.system,
@@ -150,7 +150,7 @@ mod tests {
         assert!(!config.help);
         assert!(!config.list_profiles);
         assert!(!config.continue_flag);
-        assert!(config.provider.is_none());
+        assert!(config.profile.is_none());
         assert!(config.model.is_none());
         assert!(config.system.is_none());
         assert!(config.task.is_none());
@@ -262,21 +262,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_args_provider() {
+    fn test_parse_args_profile() {
         let args = vec!["ai".to_string(), "-p".to_string(), "gemini".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("gemini"));
+        assert_eq!(config.profile.as_ref().map(|p| p.as_ref()), Some("gemini"));
     }
 
     #[test]
-    fn test_parse_args_provider_long() {
-        let args = vec!["ai".to_string(), "--provider".to_string(), "gpt".to_string()];
+    fn test_parse_args_profile_long() {
+        let args = vec!["ai".to_string(), "--profile".to_string(), "gpt".to_string()];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("gpt"));
+        assert_eq!(config.profile.as_ref().map(|p| p.as_ref()), Some("gpt"));
     }
 
     #[test]
-    fn test_parse_args_provider_requires_arg() {
+    fn test_parse_args_profile_requires_arg() {
         let args = vec!["ai".to_string(), "-p".to_string()];
         let result = parse_args_from(&args);
         assert!(result.is_err());
@@ -286,14 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_args_provider_with_message() {
+    fn test_parse_args_profile_with_message() {
         let args = vec![
             "ai".to_string(),
             "-p".to_string(), "echo".to_string(),
             "Hello".to_string(),
         ];
         let config = parse_args_from(&args).unwrap();
-        assert_eq!(config.provider.as_ref().map(|p| p.as_ref()), Some("echo"));
+        assert_eq!(config.profile.as_ref().map(|p| p.as_ref()), Some("echo"));
         assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("Hello"));
     }
 

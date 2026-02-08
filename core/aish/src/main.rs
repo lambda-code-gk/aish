@@ -120,10 +120,14 @@ fn print_usage() {
 fn print_help() {
     println!("Usage: aish [-h] [-s|--session-dir directory] [-d|--home-dir directory] [<command> [args...]]");
     println!("  -h                    Display this help message.");
-    println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME environment variable).");
+    println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME for this process).");
     println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
     println!("  <command>             Command to execute. Omit to start the interactive shell.");
     println!("  [args...]             Arguments for the command.");
+    println!();
+    println!("Environment:");
+    println!("  AISH_HOME       Home directory (config, profiles.json, task.d, system.d). Default: $XDG_CONFIG_HOME/aish or ~/.config/aish.");
+    println!("  AISH_SESSION   Session directory; set by aish for child processes (e.g. ai). Use -s or -d to scope clear/resume.");
     println!();
     println!("Implemented commands:");
     println!("  clear                  Clear all part files in the session directory (delete conversation history).");
