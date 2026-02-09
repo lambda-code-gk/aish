@@ -131,7 +131,7 @@ impl LeakscanPrepareSession {
         eprintln!("----------------------------------------");
         eprint!("{}", verbose_output);
         eprintln!("----------------------------------------");
-        eprint!("Send to LLM? [y]es / [n]o (deny) / [a]lways allow / [m]ask: ");
+        eprint!("Send to LLM? [y]es / [n]o (deny) / [m]ask: ");
         std::io::stderr().flush().map_err(|e| Error::io_msg(e.to_string()))?;
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -140,7 +140,6 @@ impl LeakscanPrepareSession {
             let choice = if std::io::stdin().read_line(&mut line).is_ok() {
                 match line.trim().to_lowercase().as_str() {
                     "y" | "yes" | "" => SensitiveChoice::Allow,
-                    "a" | "always" => SensitiveChoice::Allow,
                     "n" | "no" => SensitiveChoice::Deny,
                     "m" | "mask" => SensitiveChoice::Mask,
                     _ => SensitiveChoice::Deny,

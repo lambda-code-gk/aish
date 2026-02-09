@@ -11,11 +11,11 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, LeakscanPrepareSession,
+    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, GrepTool, LeakscanPrepareSession,
     NoContinuePrompt, NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage,
-    ReviewedSessionStorage, SigintChecker, StdCommandAllowRulesLoader, StdEventSinkFactory,
-    StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel, StdResolveSystemInstruction,
-    StdTaskRunner, ShellTool,
+    ReadFileTool, ReplaceFileTool, ReviewedSessionStorage, SigintChecker, StdCommandAllowRulesLoader,
+    StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
+    StdResolveSystemInstruction, StdTaskRunner, ShellTool, WriteFileTool,
 };
 use crate::domain::Query;
 use crate::ports::outbound::{
@@ -143,6 +143,10 @@ pub fn wire_ai(non_interactive: bool) -> App {
     let tools: Vec<Arc<dyn common::tool::Tool>> = vec![
         Arc::new(EchoTool::new()),
         Arc::new(ShellTool::new()),
+        Arc::new(ReadFileTool::new()),
+        Arc::new(WriteFileTool::new()),
+        Arc::new(ReplaceFileTool::new()),
+        Arc::new(GrepTool::new()),
     ];
     let approver: Arc<dyn crate::ports::outbound::ToolApproval> = if non_interactive {
         Arc::new(NonInteractiveToolApproval::new())

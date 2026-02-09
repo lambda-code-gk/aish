@@ -30,4 +30,4 @@ pub(crate) use resolve_system_instruction::StdResolveSystemInstruction;
 pub(crate) use sigint_checker::{NoopInterruptChecker, SigintChecker};
 pub(crate) use sinks::StdEventSinkFactory;
 pub(crate) use task::StdTaskRunner;
-pub(crate) use tools::ShellTool;
+pub(crate) use tools::{GrepTool, ReadFileTool, ReplaceFileTool, ShellTool, WriteFileTool};
