@@ -169,7 +169,7 @@ impl LlmProvider for EchoProvider {
             let msg = format!(
                 "[Echo Provider] Tool result was received. Proceeding with: {}",
                 if result_preview.len() > 60 {
-                    format!("{}...", &result_preview[..60])
+                    format!("{}...", &result_preview[..result_preview.floor_char_boundary(60)])
                 } else {
                     result_preview.to_string()
                 }

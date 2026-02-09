@@ -147,7 +147,7 @@ fn print_sysq_list(entries: &[crate::ports::outbound::SysqListEntry]) {
     println!("{:8} {:7} {:<20} {}", "SCOPE", "ENABLED", "ID", "TITLE");
     for e in entries {
         let enabled = if e.enabled { "yes" } else { "no" };
-        let title = if e.title.len() > 40 { format!("{}...", &e.title[..37]) } else { e.title.clone() };
+        let title = if e.title.len() > 40 { format!("{}...", &e.title[..e.title.floor_char_boundary(37)]) } else { e.title.clone() };
         println!("{:8} {:7} {:<20} {}", e.scope.as_str(), enabled, e.id, title);
     }
 }

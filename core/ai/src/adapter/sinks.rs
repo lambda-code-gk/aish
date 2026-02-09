@@ -80,7 +80,7 @@ impl EventSink for StdoutSink {
             AgentEvent::Llm(LlmEvent::ToolCallArgsDelta { call_id, json_fragment }) => {
                 if self.verbose {
                     let snippet = if json_fragment.len() > 120 {
-                        format!("{}...", &json_fragment[..120])
+                        format!("{}...", &json_fragment[..json_fragment.floor_char_boundary(120)])
                     } else {
                         json_fragment.clone()
                     };
@@ -116,7 +116,7 @@ impl EventSink for StdoutSink {
                 if self.verbose {
                     let result_str = result.to_string();
                     let snippet = if result_str.len() > 200 {
-                        format!("{}...", &result_str[..200])
+                        format!("{}...", &result_str[..result_str.floor_char_boundary(200)])
                     } else {
                         result_str
                     };

@@ -1,5 +1,5 @@
 {
-  "default_provider": "sakura",
+  "default_provider": "sakura-qwen",
   "providers": {
     "echo": {
       "type": "echo"
@@ -35,6 +35,12 @@
       "type": "openai_compat",
       "base_url": "https://api.ai.sakura.ad.jp/v1",
       "model": "gpt-oss-120b",
+      "api_key_env": "SAKURA_API_KEY"
+    },
+    "sakura-qwen": {
+      "type": "openai_compat",
+      "base_url": "https://api.ai.sakura.ad.jp/v1",
+      "model": "Qwen3-Coder-480B-A35B-Instruct-FP8",
       "api_key_env": "SAKURA_API_KEY"
     }
   }
