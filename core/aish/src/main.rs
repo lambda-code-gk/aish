@@ -122,6 +122,7 @@ fn print_help() {
     println!("  -h, --help            Display this help message.");
     println!("  -d, --home-dir        Specify a home directory (sets AISH_HOME for this process).");
     println!("  -s, --session-dir     Specify a session directory (for resume). Without -s, a new unique session is used each time.");
+    println!("  -v, --verbose         Emit verbose debug logs (for troubleshooting).");
     println!("  --generate <shell>    Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
     println!("  <command>             Command to execute. Omit to start the interactive shell.");
     println!("  [args...]             Arguments for the command.");

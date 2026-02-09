@@ -7,7 +7,7 @@ use common::error::Error;
 
 /// 標準アダプターで App を組み立て、Runner で run する（テスト用の入口）
 fn run_app(config: Config) -> Result<i32, Error> {
-    let app = wiring::wire_ai(config.non_interactive);
+    let app = wiring::wire_ai(config.non_interactive, config.verbose);
     let runner = crate::Runner { app };
     runner.run(config)
 }

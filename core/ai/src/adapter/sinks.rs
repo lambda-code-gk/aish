@@ -18,26 +18,37 @@ const DARK_GREY: &str = "\x1b[90m";
 const RESET: &str = "\x1b[0m";
 
 /// 標準出力へ表示（TextDelta と tool の args を表示）
-pub struct StdoutSink;
+pub struct StdoutSink {
+    /// 不具合調査用: true のとき冗長なデバッグ行を stderr に出す
+    verbose: bool,
+}
 
 impl StdoutSink {
-    pub fn new() -> Self {
-        Self
+    pub fn new(verbose: bool) -> Self {
+        Self { verbose }
     }
 }
 
 impl Default for StdoutSink {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
 /// EventSinkFactory の標準実装（StdoutSink のみを返す）
-pub struct StdEventSinkFactory;
+pub struct StdEventSinkFactory {
+    verbose: bool,
+}
+
+impl StdEventSinkFactory {
+    pub fn new(verbose: bool) -> Self {
+        Self { verbose }
+    }
+}
 
 impl EventSinkFactory for StdEventSinkFactory {
     fn create_sinks(&self) -> Vec<Box<dyn EventSink>> {
-        vec![Box::new(StdoutSink::new())]
+        vec![Box::new(StdoutSink::new(self.verbose))]
     }
 }
 
@@ -50,16 +61,74 @@ impl EventSink for StdoutSink {
                     .flush()
                     .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
             }
-            AgentEvent::Llm(LlmEvent::ToolCallBegin { name, .. }) => {
+            AgentEvent::Llm(LlmEvent::ToolCallBegin {
+                call_id,
+                name,
+                thought_signature,
+            }) => {
                 eprintln!("{}Running tool: {}...{}", DARK_GREY, name, RESET);
+                if self.verbose {
+                    eprintln!(
+                        "{}  [verbose] call_id={} thought_signature={:?}{}",
+                        DARK_GREY,
+                        call_id,
+                        thought_signature,
+                        RESET
+                    );
+                }
             }
-            AgentEvent::ToolResult { name, args, .. } => {
+            AgentEvent::Llm(LlmEvent::ToolCallArgsDelta { call_id, json_fragment }) => {
+                if self.verbose {
+                    let snippet = if json_fragment.len() > 120 {
+                        format!("{}...", &json_fragment[..120])
+                    } else {
+                        json_fragment.clone()
+                    };
+                    eprintln!(
+                        "{}  [verbose] ToolCallArgsDelta call_id={} fragment={}{}",
+                        DARK_GREY, call_id, snippet, RESET
+                    );
+                }
+            }
+            AgentEvent::Llm(LlmEvent::ToolCallEnd { call_id }) => {
+                if self.verbose {
+                    eprintln!("{}  [verbose] ToolCallEnd call_id={}{}", DARK_GREY, call_id, RESET);
+                }
+            }
+            AgentEvent::Llm(LlmEvent::Completed { finish }) => {
+                if self.verbose {
+                    eprintln!(
+                        "{}  [verbose] LlmEvent::Completed finish={:?}{}",
+                        DARK_GREY, finish, RESET
+                    );
+                }
+            }
+            AgentEvent::Llm(LlmEvent::Failed { message }) => {
+                if self.verbose {
+                    eprintln!(
+                        "{}  [verbose] LlmEvent::Failed message={}{}",
+                        DARK_GREY, message, RESET
+                    );
+                }
+            }
+            AgentEvent::ToolResult { name, args, result, .. } => {
                 eprintln!("{}Tool {} args: {}{}", DARK_GREY, name, args, RESET);
+                if self.verbose {
+                    let result_str = result.to_string();
+                    let snippet = if result_str.len() > 200 {
+                        format!("{}...", &result_str[..200])
+                    } else {
+                        result_str
+                    };
+                    eprintln!(
+                        "{}  [verbose] result={}{}",
+                        DARK_GREY, snippet, RESET
+                    );
+                }
             }
             AgentEvent::ToolError { name, args, message, .. } => {
                 eprintln!("{}Tool {} args: {} failed: {}{}", DARK_GREY, name, args, message, RESET);
             }
-            _ => {}
         }
         Ok(())
     }
@@ -146,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_stdout_sink_text_delta() {
-        let mut sink = StdoutSink::new();
+        let mut sink = StdoutSink::new(false);
         let ev = AgentEvent::Llm(LlmEvent::TextDelta("hello".to_string()));
         assert!(sink.on_event(&ev).is_ok());
     }

@@ -24,6 +24,12 @@ struct Runner {
 impl UseCaseRunner for Runner {
     fn run(&self, config: Config) -> Result<i32, Error> {
         let session_dir = self.app.env_resolver.session_dir_from_env();
+        let verbose = config.verbose;
+        let non_interactive = config.non_interactive;
+        let profile_for_log = config.profile.as_ref().map(|p| p.as_ref().to_string());
+        let model_for_log = config.model.as_ref().map(|m| m.as_ref().to_string());
+        let task_for_log = config.task.as_ref().map(|t| t.as_ref().to_string());
+        let message_args_len = config.message_args.len();
         let cmd = config_to_command(config);
         let command_name = cmd_name_for_log(&cmd);
         let _ = self.app.logger.log(&LogRecord {
@@ -38,6 +44,33 @@ impl UseCaseRunner for Runner {
                 Some(m)
             },
         });
+        if verbose {
+            let _ = self.app.logger.log(&LogRecord {
+                ts: now_iso8601(),
+                level: LogLevel::Debug,
+                message: "verbose: config snapshot".to_string(),
+                layer: Some("cli".to_string()),
+                kind: Some("debug".to_string()),
+                fields: {
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert("command".to_string(), serde_json::json!(command_name));
+                    m.insert("non_interactive".to_string(), serde_json::json!(non_interactive));
+                    if let Some(ref p) = profile_for_log {
+                        m.insert("profile".to_string(), serde_json::json!(p));
+                    }
+                    if let Some(ref mname) = model_for_log {
+                        m.insert("model".to_string(), serde_json::json!(mname));
+                    }
+                    if let Some(ref t) = task_for_log {
+                        m.insert("task".to_string(), serde_json::json!(t));
+                    }
+                    if message_args_len > 0 {
+                        m.insert("message_args_len".to_string(), serde_json::json!(message_args_len));
+                    }
+                    Some(m)
+                },
+            });
+        }
 
         // -S 未指定時は有効な sysq を結合して system instruction にする
         let system_instruction = |explicit: Option<String>| {
@@ -176,7 +209,7 @@ pub fn run() -> Result<i32, Error> {
             return Ok(0);
         }
         ParseOutcome::ListTasks => {
-            let app = wire_ai(false);
+            let app = wire_ai(false, false);
             let names = app.task_use_case.list_names()?;
             for n in &names {
                 println!("{}", n);
@@ -184,7 +217,7 @@ pub fn run() -> Result<i32, Error> {
             return Ok(0);
         }
     };
-    let app = wire_ai(config.non_interactive);
+    let app = wire_ai(config.non_interactive, config.verbose);
     let runner = Runner { app };
     runner.run(config)
 }
@@ -200,6 +233,7 @@ fn print_help() {
     println!("  -L, --list-profiles           List currently available provider profiles (from profiles.json + built-ins)");
     println!("  -c, --continue                Resume the agent loop from the last saved state (after turn limit or error). Uses AISH_SESSION when set.");
     println!("  --no-interactive              Do not prompt for confirmations (CI-friendly: tool approval denied, no continue, leakscan deny).");
+    println!("  -v, --verbose                 Emit verbose debug logs to stderr (for troubleshooting).");
     println!("  -p, --profile <profile>         Specify LLM profile (gemini, gpt, echo, etc.). Default: profiles.json default, or gemini if not set.");
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");

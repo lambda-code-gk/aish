@@ -92,7 +92,8 @@ fn resolve_leakscan_paths(
 /// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す。
 ///
 /// `non_interactive`: true のとき確認プロンプトを出さない（ツール承認は常に拒否・続行はしない・leakscan ヒットは拒否）。CI 向け。
-pub fn wire_ai(non_interactive: bool) -> App {
+/// `verbose`: true のとき不具合調査用の冗長ログを stderr 等に出力する。
+pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
     let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
     let logger: Arc<dyn Log> = env_resolver
@@ -139,7 +140,7 @@ pub fn wire_ai(non_interactive: bool) -> App {
     let process: Arc<dyn Process> = Arc::new(StdProcess);
     let task_runner: Arc<dyn TaskRunner> = Arc::new(StdTaskRunner::new(Arc::clone(&fs), Arc::clone(&process)));
     let command_allow_rules_loader = Arc::new(StdCommandAllowRulesLoader);
-    let sink_factory = Arc::new(StdEventSinkFactory);
+    let sink_factory = Arc::new(StdEventSinkFactory::new(verbose));
     let tools: Vec<Arc<dyn common::tool::Tool>> = vec![
         Arc::new(EchoTool::new()),
         Arc::new(ShellTool::new()),

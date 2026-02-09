@@ -14,6 +14,8 @@ pub struct Config {
     pub continue_flag: bool,
     /// --no-interactive: 確認プロンプトを出さず CI 等でブロックしない（承認は常に拒否・続行はしない・leakscan ヒットは拒否）
     pub non_interactive: bool,
+    /// -v / --verbose: 不具合調査用の冗長ログを stderr 等に出力する
+    pub verbose: bool,
     pub profile: Option<ProviderName>,
     pub model: Option<ModelName>,
     pub system: Option<String>,
@@ -28,6 +30,7 @@ impl Default for Config {
             list_profiles: false,
             continue_flag: false,
             non_interactive: false,
+            verbose: false,
             profile: None,
             model: None,
             system: None,
@@ -75,6 +78,13 @@ fn build_clap_command() -> clap::Command {
             clap::Arg::new("no-interactive")
                 .long("no-interactive")
                 .help("Do not prompt for confirmations (CI-friendly: tool approval denied, no continue, leakscan deny)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .help("Emit verbose debug logs to stderr (for troubleshooting)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -129,6 +139,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
     let list_profiles = matches.get_flag("list-profiles");
     let continue_flag = matches.get_flag("continue");
     let non_interactive = matches.get_flag("no-interactive");
+    let verbose = matches.get_flag("verbose");
     let profile = matches
         .get_one::<String>("profile")
         .map(|s| ProviderName::new(s.clone()));
@@ -153,6 +164,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         list_profiles,
         continue_flag,
         non_interactive,
+        verbose,
         profile,
         model,
         system,
@@ -195,7 +207,7 @@ pub fn print_completion(shell: Shell) {
 }
 
 fn emit_fallback_completion(shell: Shell) {
-    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -p --profile -S --system -m --model --generate --list-tasks";
+    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose -p --profile -S --system -m --model --generate --list-tasks";
     match shell {
         Shell::Bash => {
             println!(
@@ -293,6 +305,7 @@ mod tests {
         assert!(!config.help);
         assert!(!config.list_profiles);
         assert!(!config.continue_flag);
+        assert!(!config.verbose);
         assert!(config.profile.is_none());
         assert!(config.model.is_none());
         assert!(config.system.is_none());
@@ -541,6 +554,20 @@ mod tests {
         let args = vec!["ai".to_string(), "--no-interactive".to_string(), "hello".to_string()];
         let config = parse_args_from(&args).unwrap();
         assert!(config.non_interactive);
+    }
+
+    #[test]
+    fn test_parse_args_verbose_short() {
+        let args = vec!["ai".to_string(), "-v".to_string(), "hello".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.verbose);
+    }
+
+    #[test]
+    fn test_parse_args_verbose_long() {
+        let args = vec!["ai".to_string(), "--verbose".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.verbose);
     }
 
     #[test]

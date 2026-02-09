@@ -10,6 +10,8 @@ pub struct Config {
     pub help: bool,
     pub session_dir: Option<String>,
     pub home_dir: Option<String>,
+    /// -v / --verbose: 不具合調査用の冗長ログを出力する
+    pub verbose: bool,
     /// コマンド名（None の場合は Shell）
     pub command_name: Option<String>,
     pub command_args: Vec<String>,
@@ -21,6 +23,7 @@ impl Default for Config {
             help: false,
             session_dir: None,
             home_dir: None,
+            verbose: false,
             command_name: None,
             command_args: Vec::new(),
         }
@@ -58,6 +61,13 @@ fn global_args(cmd: clap::Command) -> clap::Command {
             .value_name("directory")
             .help("Specify a home directory (sets AISH_HOME for this process)")
             .num_args(1),
+    )
+    .arg(
+        clap::Arg::new("verbose")
+            .short('v')
+            .long("verbose")
+            .help("Emit verbose debug logs (for troubleshooting)")
+            .action(ArgAction::SetTrue),
     )
     .arg(
         clap::Arg::new("generate")
@@ -120,6 +130,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         .get_one::<String>("session-dir")
         .cloned();
     let home_dir = matches.get_one::<String>("home-dir").cloned();
+    let verbose = matches.get_flag("verbose");
 
     let (command_name, command_args) = match matches.subcommand() {
         None => (None, Vec::new()),
@@ -155,6 +166,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         help,
         session_dir,
         home_dir,
+        verbose,
         command_name,
         command_args,
     }
@@ -248,6 +260,7 @@ mod tests {
         assert!(!config.help);
         assert_eq!(config.session_dir, None);
         assert_eq!(config.home_dir, None);
+        assert!(!config.verbose);
         assert_eq!(config.command_name, None);
         assert_eq!(config.command_args.len(), 0);
     }
