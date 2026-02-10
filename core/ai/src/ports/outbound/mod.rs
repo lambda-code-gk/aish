@@ -3,6 +3,7 @@
 pub mod agent_state_storage;
 pub mod approval;
 pub mod command_allow_rules_loader;
+pub mod context_message_builder;
 pub mod continue_prompt;
 pub mod event_sink_factory;
 pub mod interrupt_checker;
@@ -20,6 +21,7 @@ pub mod task_runner;
 pub use agent_state_storage::{AgentStateLoader, AgentStateSaver};
 pub use approval::{Approval, ToolApproval};
 pub use command_allow_rules_loader::CommandAllowRulesLoader;
+pub use context_message_builder::{ContextMessageBuilder, QueryPlacement};
 pub use continue_prompt::ContinueAfterLimitPrompt;
 pub use event_sink_factory::EventSinkFactory;
 pub use interrupt_checker::InterruptChecker;

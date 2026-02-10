@@ -13,14 +13,15 @@ use common::tool::EchoTool;
 use crate::adapter::{
     CliContinuePrompt, CliToolApproval, FileAgentStateStorage, GrepTool, LeakscanPrepareSession,
     NoContinuePrompt, NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage,
-    ReadFileTool, ReplaceFileTool, ReviewedSessionStorage, SigintChecker, StdCommandAllowRulesLoader,
-    StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
-    StdResolveSystemInstruction, StdTaskRunner, ShellTool, WriteFileTool,
+    PassThroughReducer, ReadFileTool, ReplaceFileTool, ReviewedSessionStorage, SigintChecker,
+    StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
+    StdResolveSystemInstruction, StdTaskRunner, ShellTool, TailWindowReducer, WriteFileTool,
 };
-use crate::domain::Query;
+use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
-    AgentStateLoader, AgentStateSaver, PrepareSessionForSensitiveCheck, ResolveSystemInstruction,
-    RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
+    AgentStateLoader, AgentStateSaver, ContextMessageBuilder, PrepareSessionForSensitiveCheck,
+    ResolveSystemInstruction, RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::AiUseCase;
 use crate::usecase::task::TaskUseCase;
@@ -59,6 +60,35 @@ pub struct App {
     /// テスト用に露出（Query 実行・session/history の単体テストで利用）
     #[cfg_attr(not(test), allow(dead_code))]
     pub ai_use_case: Arc<AiUseCase>,
+}
+
+/// AISH_CONTEXT_STRATEGY / AISH_CONTEXT_MAX_MESSAGES / AISH_CONTEXT_MAX_CHARS から reducer と budget を決定する。
+/// 未設定時は tail（TailWindow + 実用 budget）。legacy を指定すると従来の PassThrough + 大きめ budget。
+fn context_strategy_from_env() -> (Arc<dyn crate::domain::HistoryReducer>, ContextBudget) {
+    let strategy = std::env::var("AISH_CONTEXT_STRATEGY").unwrap_or_else(|_| "tail".into());
+    let (reducer, default_budget) = match strategy.to_lowercase().as_str() {
+        "legacy" => (
+            Arc::new(PassThroughReducer) as Arc<dyn crate::domain::HistoryReducer>,
+            ContextBudget::legacy(),
+        ),
+        _ => (
+            Arc::new(TailWindowReducer) as Arc<dyn crate::domain::HistoryReducer>,
+            ContextBudget::tail_default(),
+        ),
+    };
+    let max_messages = std::env::var("AISH_CONTEXT_MAX_MESSAGES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default_budget.max_messages);
+    let max_chars = std::env::var("AISH_CONTEXT_MAX_CHARS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default_budget.max_chars);
+    let budget = ContextBudget {
+        max_messages,
+        max_chars,
+    };
+    (reducer, budget)
 }
 
 /// leakscan バイナリと rules のパスを解決する。両方存在すれば Some((binary, rules))、でなければ None。
@@ -173,9 +203,15 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         Arc::new(StdResolveProfileAndModel::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
     let llm_stream_factory: Arc<dyn crate::ports::outbound::LlmEventStreamFactory> =
         Arc::new(StdLlmEventStreamFactory::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
+
+    let (reducer, budget) = context_strategy_from_env();
+    let context_message_builder: Arc<dyn ContextMessageBuilder> =
+        Arc::new(StdContextMessageBuilder::new(reducer, budget));
+
     let ai_use_case = Arc::new(AiUseCase::new(
         fs,
         history_loader,
+        context_message_builder,
         response_saver,
         agent_state_saver,
         agent_state_loader,
@@ -202,5 +238,140 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         resolve_system_instruction,
         logger,
         ai_use_case,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::context_strategy_from_env;
+    use common::llm::provider::Message as LlmMessage;
+    use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn test_context_strategy_tail_with_overrides() {
+        let _guard = env_lock().lock().expect("lock poisoned");
+        let old_strategy = env::var("AISH_CONTEXT_STRATEGY").ok();
+        let old_max_messages = env::var("AISH_CONTEXT_MAX_MESSAGES").ok();
+        let old_max_chars = env::var("AISH_CONTEXT_MAX_CHARS").ok();
+
+        env::set_var("AISH_CONTEXT_STRATEGY", "tail");
+        env::set_var("AISH_CONTEXT_MAX_MESSAGES", "2");
+        env::set_var("AISH_CONTEXT_MAX_CHARS", "100");
+
+        let (reducer, budget) = context_strategy_from_env();
+        assert_eq!(budget.max_messages, 2);
+        assert_eq!(budget.max_chars, 100);
+
+        let messages = vec![
+            LlmMessage::user("a"),
+            LlmMessage::user("b"),
+            LlmMessage::user("c"),
+        ];
+        let reduced = reducer.reduce(&messages, budget);
+        assert_eq!(reduced.len(), 2);
+        assert_eq!(reduced[0].content, "b");
+        assert_eq!(reduced[1].content, "c");
+
+        if let Some(v) = old_strategy {
+            env::set_var("AISH_CONTEXT_STRATEGY", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_STRATEGY");
+        }
+        if let Some(v) = old_max_messages {
+            env::set_var("AISH_CONTEXT_MAX_MESSAGES", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_MAX_MESSAGES");
+        }
+        if let Some(v) = old_max_chars {
+            env::set_var("AISH_CONTEXT_MAX_CHARS", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_MAX_CHARS");
+        }
+    }
+
+    #[test]
+    fn test_context_strategy_unknown_falls_back_to_tail() {
+        let _guard = env_lock().lock().expect("lock poisoned");
+        let old_strategy = env::var("AISH_CONTEXT_STRATEGY").ok();
+        let old_max_messages = env::var("AISH_CONTEXT_MAX_MESSAGES").ok();
+        let old_max_chars = env::var("AISH_CONTEXT_MAX_CHARS").ok();
+
+        env::set_var("AISH_CONTEXT_STRATEGY", "unknown");
+        env::remove_var("AISH_CONTEXT_MAX_MESSAGES");
+        env::remove_var("AISH_CONTEXT_MAX_CHARS");
+
+        let (reducer, budget) = context_strategy_from_env();
+        assert_eq!(budget.max_messages, 40);
+        assert_eq!(budget.max_chars, 40_000);
+
+        let messages = vec![
+            LlmMessage::user("a"),
+            LlmMessage::user("b"),
+            LlmMessage::user("c"),
+        ];
+        let reduced = reducer.reduce(&messages, budget);
+        assert_eq!(reduced.len(), 3);
+
+        if let Some(v) = old_strategy {
+            env::set_var("AISH_CONTEXT_STRATEGY", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_STRATEGY");
+        }
+        if let Some(v) = old_max_messages {
+            env::set_var("AISH_CONTEXT_MAX_MESSAGES", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_MAX_MESSAGES");
+        }
+        if let Some(v) = old_max_chars {
+            env::set_var("AISH_CONTEXT_MAX_CHARS", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_MAX_CHARS");
+        }
+    }
+
+    #[test]
+    fn test_context_strategy_legacy_uses_legacy_budget() {
+        let _guard = env_lock().lock().expect("lock poisoned");
+        let old_strategy = env::var("AISH_CONTEXT_STRATEGY").ok();
+        let old_max_messages = env::var("AISH_CONTEXT_MAX_MESSAGES").ok();
+        let old_max_chars = env::var("AISH_CONTEXT_MAX_CHARS").ok();
+
+        env::set_var("AISH_CONTEXT_STRATEGY", "legacy");
+        env::remove_var("AISH_CONTEXT_MAX_MESSAGES");
+        env::remove_var("AISH_CONTEXT_MAX_CHARS");
+
+        let (reducer, budget) = context_strategy_from_env();
+        assert_eq!(budget.max_messages, 10_000);
+        assert_eq!(budget.max_chars, 10_000_000);
+
+        let messages = vec![
+            LlmMessage::user("a"),
+            LlmMessage::user("b"),
+            LlmMessage::user("c"),
+        ];
+        let reduced = reducer.reduce(&messages, budget);
+        assert_eq!(reduced.len(), 3);
+
+        if let Some(v) = old_strategy {
+            env::set_var("AISH_CONTEXT_STRATEGY", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_STRATEGY");
+        }
+        if let Some(v) = old_max_messages {
+            env::set_var("AISH_CONTEXT_MAX_MESSAGES", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_MAX_MESSAGES");
+        }
+        if let Some(v) = old_max_chars {
+            env::set_var("AISH_CONTEXT_MAX_CHARS", v);
+        } else {
+            env::remove_var("AISH_CONTEXT_MAX_CHARS");
+        }
     }
 }

@@ -1,56 +1,24 @@
 use crate::ports::outbound::{
-    AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContinueAfterLimitPrompt,
-    EventSinkFactory, InterruptChecker, LlmEventStreamFactory, PrepareSessionForSensitiveCheck,
-    ProfileLister, ResolveProfileAndModel, RunQuery, SessionHistoryLoader, SessionResponseSaver,
-    ToolApproval,
+    AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContextMessageBuilder,
+    ContinueAfterLimitPrompt, EventSinkFactory, InterruptChecker, LlmEventStreamFactory,
+    PrepareSessionForSensitiveCheck, ProfileLister, QueryPlacement, ResolveProfileAndModel, RunQuery,
+    SessionHistoryLoader, SessionResponseSaver, ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
 use common::ports::outbound::{now_iso8601, FileSystem, Log, LogLevel, LogRecord, Process};
 use common::error::Error;
-use common::llm::provider::Message as LlmMessage;
 use crate::domain::Query;
 use common::msg::Msg;
 use common::domain::SessionDir;
 use common::tool::{Tool, ToolContext, ToolRegistry};
 use std::sync::Arc;
 
-/// 履歴 (Message) とクエリから Vec<Msg> を構築
-fn build_messages(
-    history_messages: &[LlmMessage],
-    query: &Query,
-    system_instruction: Option<&str>,
-) -> Vec<Msg> {
-    let mut msgs: Vec<Msg> = Vec::new();
-    if let Some(s) = system_instruction {
-        msgs.push(Msg::system(s));
-    }
-    for m in history_messages {
-        if m.role == "user" {
-            msgs.push(Msg::user(&m.content));
-        } else if m.role == "tool" {
-            if let Some(ref call_id) = m.tool_call_id {
-                let name = m.tool_name.as_deref().unwrap_or("");
-                msgs.push(Msg::tool_result(call_id, name, serde_json::from_str(&m.content).unwrap_or(serde_json::json!({}))));
-            }
-        } else {
-            // assistant
-            msgs.push(Msg::assistant(&m.content));
-            if let Some(ref tool_calls) = m.tool_calls {
-                for tc in tool_calls {
-                    msgs.push(Msg::tool_call(&tc.id, &tc.name, tc.args.clone(), tc.thought_signature.clone()));
-                }
-            }
-        }
-    }
-    msgs.push(Msg::user(query.as_ref()));
-    msgs
-}
-
 /// ai のユースケース（アダプター経由で I/O を行う）
 pub struct AiUseCase {
     pub fs: Arc<dyn FileSystem>,
     pub history_loader: Arc<dyn SessionHistoryLoader>,
+    pub context_message_builder: Arc<dyn ContextMessageBuilder>,
     pub response_saver: Arc<dyn SessionResponseSaver>,
     pub agent_state_saver: Arc<dyn AgentStateSaver>,
     pub agent_state_loader: Arc<dyn AgentStateLoader>,
@@ -74,6 +42,7 @@ impl AiUseCase {
     pub fn new(
         fs: Arc<dyn FileSystem>,
         history_loader: Arc<dyn SessionHistoryLoader>,
+        context_message_builder: Arc<dyn ContextMessageBuilder>,
         response_saver: Arc<dyn SessionResponseSaver>,
         agent_state_saver: Arc<dyn AgentStateSaver>,
         agent_state_loader: Arc<dyn AgentStateLoader>,
@@ -94,6 +63,7 @@ impl AiUseCase {
         Self {
             fs,
             history_loader,
+            context_message_builder,
             response_saver,
             agent_state_saver,
             agent_state_loader,
@@ -203,51 +173,32 @@ impl AiUseCase {
                     })?
             }
             Some(q) => {
-                let history_messages = if self.session_is_valid(&session_dir) {
+                let (history_messages, query_placement) = if self.session_is_valid(&session_dir) {
                     let dir = session_dir.as_ref().expect("session_dir is Some");
-                    // ユーザークエリを part として保存（leakscan の対象にする）
                     self.response_saver.save_user(dir, q.as_ref())?;
                     if let Some(ref prep) = self.prepare_session_for_sensitive_check {
                         prep.prepare(dir)?;
                     }
-                    self.history_loader
-                        .load(dir)
-                        .ok()
-                        .map(|h| h.messages().to_vec())
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                // history_loader が reviewed から読み込む場合、build_messages の query は
-                // 既に reviewed に含まれているため、重複して追加しない。
-                // reviewed が無い場合（leakscan 無効時）は従来どおり query を末尾に追加。
-                if self.prepare_session_for_sensitive_check.is_some() {
-                    // leakscan 有効: 履歴に user クエリの reviewed が含まれている
-                    let mut msgs: Vec<Msg> = Vec::new();
-                    if let Some(s) = system_instruction {
-                        msgs.push(Msg::system(s));
-                    }
-                    for m in &history_messages {
-                        if m.role == "user" {
-                            msgs.push(Msg::user(&m.content));
-                        } else if m.role == "tool" {
-                            if let Some(ref call_id) = m.tool_call_id {
-                                let name = m.tool_name.as_deref().unwrap_or("");
-                                msgs.push(Msg::tool_result(call_id, name, serde_json::from_str(&m.content).unwrap_or(serde_json::json!({}))));
-                            }
-                        } else {
-                            msgs.push(Msg::assistant(&m.content));
-                            if let Some(ref tool_calls) = m.tool_calls {
-                                for tc in tool_calls {
-                                    msgs.push(Msg::tool_call(&tc.id, &tc.name, tc.args.clone(), tc.thought_signature.clone()));
-                                }
-                            }
+                    let loaded = self.history_loader.load(dir);
+                    match loaded {
+                        Ok(history) => {
+                            // valid session: save_user → load しているので query は履歴に含まれている
+                            (history.messages().to_vec(), QueryPlacement::AlreadyInHistory)
+                        }
+                        Err(_) => {
+                            // load 失敗時でも query を欠落させないため、空履歴 + 末尾追加にフォールバック
+                            (Vec::new(), QueryPlacement::AppendAtEnd)
                         }
                     }
-                    msgs
                 } else {
-                    build_messages(&history_messages, q, system_instruction)
-                }
+                    (Vec::new(), QueryPlacement::AppendAtEnd)
+                };
+                self.context_message_builder.build(
+                    &history_messages,
+                    Some(q),
+                    system_instruction,
+                    query_placement,
+                )
             }
         };
 

@@ -108,8 +108,8 @@ impl LlmProvider for EchoProvider {
         let payload: Value = match serde_json::from_str(request_json) {
             Ok(p) => p,
             Err(_) => {
-                // パース失敗時は従来どおりテキストのみ返す
-                return self.stream_events_text_only(callback);
+                // パース失敗時は従来どおりテキストのみ返す（履歴件数は 0）
+                return self.stream_events_text_only(callback, 0);
             }
         };
         let query = payload["query"].as_str().unwrap_or("").trim();
@@ -245,8 +245,9 @@ impl LlmProvider for EchoProvider {
             }
         }
 
-        // 通常のテキスト応答
-        self.stream_events_text_only(callback)
+        // 通常のテキスト応答（採用された履歴件数を表示）
+        let history_count = history.len();
+        self.stream_events_text_only(callback, history_count)
     }
 }
 
@@ -254,7 +255,12 @@ impl EchoProvider {
     fn stream_events_text_only(
         &self,
         callback: &mut dyn FnMut(LlmEvent) -> Result<(), Error>,
+        history_count: usize,
     ) -> Result<(), Error> {
+        let header = format!("[Echo Provider] 採用された履歴件数: {} 件。\n\n", history_count);
+        callback(LlmEvent::TextDelta(header))?;
+        io::stdout().flush().ok();
+
         let text = "[Echo Provider] This is a simulated streaming response from the echo provider. It displays text chunk by chunk to demonstrate the streaming capability.";
         for word in text.split_whitespace() {
             callback(LlmEvent::TextDelta(word.to_string()))?;

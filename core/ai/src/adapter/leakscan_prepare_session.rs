@@ -14,6 +14,9 @@ use std::sync::Arc;
 
 const EVACUATED_DIR: &str = "leakscan_evacuated";
 
+/// Deny 時に reviewed に書き込む固定文（機微情報を含めない）
+const DENY_PLACEHOLDER_CONTENT: &str = "[REDACTED] content denied by user.\n";
+
 /// leakscan のユーザー選択（y/n/a/m）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SensitiveChoice {
@@ -201,6 +204,10 @@ impl LeakscanPrepareSession {
                 match choice {
                     SensitiveChoice::Allow => (true, content),
                     SensitiveChoice::Deny => {
+                        let reviewed_name = reviewed_filename(&id, role);
+                        let reviewed_path = session_dir.join(&reviewed_name);
+                        self.fs
+                            .write(&reviewed_path, DENY_PLACEHOLDER_CONTENT)?;
                         self.fs.rename(part_path, &dest_part_in_evacuated)?;
                         return Ok(());
                     }
@@ -276,5 +283,69 @@ impl PrepareSessionForSensitiveCheck for LeakscanPrepareSession {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::adapter::StdFileSystem;
+    use std::io::Write;
+
+    /// -v を付けると stdout に HIT を出して exit 0 するダミー leakscan
+    fn write_dummy_leakscan_script(path: &Path) -> std::io::Result<()> {
+        let mut f = std::fs::File::create(path)?;
+        #[cfg(unix)]
+        {
+            f.write_all(b"#!/bin/sh\ncase \"$1\" in -v) echo HIT;; *) ;; esac\n")?;
+        }
+        #[cfg(not(unix))]
+        {
+            f.write_all(b"echo HIT\n")?;
+        }
+        f.sync_all()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(path, perms)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_deny_creates_reviewed_placeholder_and_evacuates() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().to_path_buf();
+        let script_path = temp.path().join("leakscan.sh");
+        let rules_path = temp.path().join("rules.json");
+        std::fs::write(&rules_path, "{}").unwrap();
+        write_dummy_leakscan_script(&script_path).unwrap();
+
+        let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
+        let prep = LeakscanPrepareSession::new(
+            fs.clone(),
+            script_path,
+            rules_path,
+            None,
+            true,
+        );
+
+        let part_content = "secret stuff";
+        let part_path = session_dir.join("part_ABC12_user.txt");
+        std::fs::write(&part_path, part_content).unwrap();
+
+        let session_dir_ref = common::domain::SessionDir::new(session_dir.clone());
+        prep.prepare(&session_dir_ref).unwrap();
+
+        let reviewed_path = session_dir.join("reviewed_ABC12_user.txt");
+        assert!(fs.exists(&reviewed_path), "reviewed file should exist");
+        let reviewed_content = std::fs::read_to_string(&reviewed_path).unwrap();
+        assert_eq!(reviewed_content, DENY_PLACEHOLDER_CONTENT);
+
+        let evacuated_path = session_dir.join(EVACUATED_DIR).join("part_ABC12_user.txt");
+        assert!(fs.exists(&evacuated_path), "part should be in evacuated");
     }
 }
