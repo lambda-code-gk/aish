@@ -108,7 +108,7 @@ test_ai_binary() {
     
     # テスト1: 引数なしで実行した場合、適切なエラーメッセージが表示されること
     log_info "Test 1: Error handling (no query)"
-    if "$binary_path" > "$TEST_DIR/ai_test1.stdout" 2> "$TEST_DIR/ai_test1.stderr"; then
+    if env -u AISH_SESSION -u AISH_HOME "$binary_path" > "$TEST_DIR/ai_test1.stdout" 2> "$TEST_DIR/ai_test1.stderr"; then
         log_error "✗ Expected error for no query, but command succeeded"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         FAILED_TESTS+=("ai (should fail without query)")
@@ -128,7 +128,7 @@ test_ai_binary() {
     
     # テスト2: エラーハンドリング（存在しないオプション）
     log_info "Test 2: Error handling (invalid option)"
-    if "$binary_path" --unknown-option > "$TEST_DIR/ai_test2.stdout" 2> "$TEST_DIR/ai_test2.stderr"; then
+    if env -u AISH_SESSION -u AISH_HOME "$binary_path" --unknown-option > "$TEST_DIR/ai_test2.stdout" 2> "$TEST_DIR/ai_test2.stderr"; then
         log_error "✗ Expected error for unknown option, but command succeeded"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         FAILED_TESTS+=("ai (should fail with unknown option)")
@@ -173,7 +173,8 @@ test_aish_binary() {
     log_info "Test 1: Binary execution with pipe input"
     local test_output
     # シェルが終了するように、最後にexitを送る
-    if test_output=$(printf 'echo test\nexit\n' | "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test1.stderr"); then
+    # 既存のAISH関連環境変数やPROMPT_COMMANDをクリアしてクリーンな環境でテスト
+    if test_output=$(printf 'echo test\nexit\n' | env -u AISH_SESSION -u AISH_HOME -u AISH_PID -u PROMPT_COMMAND "$binary_path" -d "$test_home_dir" 2> "$TEST_DIR/aish_test1.stderr"); then
         local exit_code=$?
         if echo "$test_output" | grep -q "test"; then
             log_info "✓ Binary executed successfully and shell output is correct (exit code: $exit_code)"
@@ -195,7 +196,7 @@ test_aish_binary() {
     
     # テスト2: エラーハンドリング（存在しないオプション）
     log_info "Test 2: Error handling (invalid option)"
-    if "$binary_path" -d "$test_home_dir" --invalid-option 2> "$TEST_DIR/aish_test2.stderr"; then
+    if env -u AISH_SESSION -u AISH_HOME "$binary_path" -d "$test_home_dir" --invalid-option 2> "$TEST_DIR/aish_test2.stderr"; then
         log_error "✗ Should have failed with invalid option"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         FAILED_TESTS+=("aish (error handling)")
@@ -215,7 +216,7 @@ test_aish_binary() {
 
     # テスト3: 未実装コマンドは非0で終了すること
     log_info "Test 3: Unimplemented command exits non-zero"
-    if "$binary_path" -d "$test_home_dir" resume 2> "$TEST_DIR/aish_test_unimpl.stderr"; then
+    if env -u AISH_SESSION -u AISH_HOME "$binary_path" -d "$test_home_dir" resume 2> "$TEST_DIR/aish_test_unimpl.stderr"; then
         log_error "✗ Unimplemented command 'resume' should exit non-zero"
         TESTS_FAILED=$((TESTS_FAILED + 1))
         FAILED_TESTS+=("aish (unimplemented command should fail)")
@@ -286,7 +287,7 @@ test_aish_binary() {
 
     # テスト6: sysq list が 0 で終了すること
     log_info "Test 6: sysq list exits 0"
-    if "$binary_path" -d "$test_home_dir" sysq list > "$TEST_DIR/aish_sysq_list.stdout" 2> "$TEST_DIR/aish_sysq_list.stderr"; then
+    if env -u AISH_SESSION -u AISH_HOME "$binary_path" -d "$test_home_dir" sysq list > "$TEST_DIR/aish_sysq_list.stdout" 2> "$TEST_DIR/aish_sysq_list.stderr"; then
         log_info "✓ sysq list succeeded (exit code: 0)"
     else
         log_error "✗ sysq list failed"

@@ -1,9 +1,12 @@
 //! 履歴検索ツール（manifest + reviewed）
+//!
+//! manifest が無い場合は reviewed/ を走査して動作する。
 
 use crate::domain::{parse_lines, ManifestRole};
-use common::safe_session_path::{is_safe_reviewed_path, resolve_under_session_dir};
+use common::safe_session_path::{is_safe_reviewed_path, resolve_under_session_dir, REVIEWED_DIR};
 use common::tool::{Tool, ToolContext, ToolError};
 use serde_json::Value;
+use std::io;
 
 pub struct HistorySearchTool;
 
@@ -49,10 +52,27 @@ impl Tool for HistorySearchTool {
             .clone()
             .ok_or_else(|| ToolError::ExecutionFailed("session_dir is not set".to_string()))?;
         let manifest_path = session_dir.join("manifest.jsonl");
-        let body = std::fs::read_to_string(&manifest_path)
-            .map_err(|e| ToolError::ExecutionFailed(format!("{}: {}", manifest_path.display(), e)))?;
-        let records = parse_lines(&body);
+        match std::fs::read_to_string(&manifest_path) {
+            Ok(body) => self.call_with_manifest(&session_dir, &parse_lines(&body), args),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                self.call_without_manifest(&session_dir, args)
+            }
+            Err(e) => Err(ToolError::ExecutionFailed(format!(
+                "{}: {}",
+                manifest_path.display(),
+                e
+            ))),
+        }
+    }
+}
 
+impl HistorySearchTool {
+    fn call_with_manifest(
+        &self,
+        session_dir: &std::path::Path,
+        records: &[crate::domain::ManifestRecordV1],
+        args: Value,
+    ) -> Result<Value, ToolError> {
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
@@ -60,7 +80,6 @@ impl Tool for HistorySearchTool {
         if query.is_empty() {
             return Err(ToolError::InvalidArgs("query must not be empty".to_string()));
         }
-
         let limit = args
             .get("limit")
             .and_then(|v| v.as_u64())
@@ -87,7 +106,7 @@ impl Tool for HistorySearchTool {
                 continue;
             }
             let reviewed_path = session_dir.join(&msg.reviewed_path);
-            let Some(safe_path) = resolve_under_session_dir(&session_dir, &reviewed_path) else {
+            let Some(safe_path) = resolve_under_session_dir(session_dir, &reviewed_path) else {
                 continue;
             };
             let content = match std::fs::read_to_string(&safe_path) {
@@ -107,9 +126,98 @@ impl Tool for HistorySearchTool {
                 break;
             }
         }
-
         Ok(serde_json::json!({ "hits": hits }))
     }
+
+    fn call_without_manifest(
+        &self,
+        session_dir: &std::path::Path,
+        args: Value,
+    ) -> Result<Value, ToolError> {
+        let query = args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidArgs("missing 'query'".to_string()))?;
+        if query.is_empty() {
+            return Err(ToolError::InvalidArgs("query must not be empty".to_string()));
+        }
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.min(50) as usize)
+            .unwrap_or(10);
+        if limit == 0 {
+            return Err(ToolError::InvalidArgs("limit must be >= 1".to_string()));
+        }
+        let case_sensitive = args
+            .get("case_sensitive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let role_filter = parse_role_filter(args.get("role").and_then(|v| v.as_str()))?;
+
+        let reviewed_dir = session_dir.join(REVIEWED_DIR);
+        let mut entries: Vec<(String, ManifestRole, String)> = match std::fs::read_dir(&reviewed_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let path = e.path();
+                    if !path.is_file() {
+                        return None;
+                    }
+                    let name = path.file_name().and_then(|n| n.to_str())?;
+                    let (id, role) = parse_reviewed_filename(name)?;
+                    let rel_path = format!("{}/{}", REVIEWED_DIR, name);
+                    Some((id, role, rel_path))
+                })
+                .collect(),
+            Err(_) => return Ok(serde_json::json!({ "hits": [] })),
+        };
+        entries.sort_by(|a, b| b.0.cmp(&a.0)); // rev order (newest first)
+
+        let mut hits = Vec::new();
+        for (id, role, rel_path) in entries {
+            if hits.len() >= limit {
+                break;
+            }
+            if !role_filter.matches(role) {
+                continue;
+            }
+            let full = session_dir.join(&rel_path);
+            let Some(safe_path) = resolve_under_session_dir(session_dir, &full) else {
+                continue;
+            };
+            let content = match std::fs::read_to_string(&safe_path) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if let Some((start, end)) = find_match_range(&content, query, case_sensitive) {
+                hits.push(serde_json::json!({
+                    "id": id,
+                    "role": role.as_str(),
+                    "ts": "",
+                    "snippet": snippet(&content, start, end),
+                    "path": rel_path
+                }));
+            }
+        }
+        Ok(serde_json::json!({ "hits": hits }))
+    }
+}
+
+/// `reviewed_<id>_user.txt` / `reviewed_<id>_assistant.txt` から (id, role) を返す。
+fn parse_reviewed_filename(name: &str) -> Option<(String, ManifestRole)> {
+    let rest = name.strip_prefix("reviewed_")?;
+    let (id, role) = if let Some(s) = rest.strip_suffix("_user.txt") {
+        (s, ManifestRole::User)
+    } else if let Some(s) = rest.strip_suffix("_assistant.txt") {
+        (s, ManifestRole::Assistant)
+    } else {
+        return None;
+    };
+    if id.is_empty() || id.contains('/') || id.contains('\\') {
+        return None;
+    }
+    Some((id.to_string(), role))
 }
 
 fn find_match_range(content: &str, query: &str, case_sensitive: bool) -> Option<(usize, usize)> {
@@ -204,6 +312,32 @@ mod tests {
         let hits = r["hits"].as_array().unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0]["id"].as_str(), Some("002"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn prepare_session_no_manifest() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("history_search_tool_nomanifest_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let reviewed_dir = dir.join("reviewed");
+        std::fs::create_dir_all(&reviewed_dir).unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_001_user.txt"), "The quick brown fox").unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_002_assistant.txt"), "Jumps over lazy dog").unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_history_search_without_manifest() {
+        let tool = HistorySearchTool::new();
+        let dir = prepare_session_no_manifest();
+        let ctx = ToolContext::new(Some(dir.clone()));
+        let r = tool
+            .call(serde_json::json!({"query":"fox","limit":10}), &ctx)
+            .unwrap();
+        let hits = r["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["id"].as_str(), Some("001"));
+        assert_eq!(hits[0]["path"].as_str(), Some("reviewed/reviewed_001_user.txt"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

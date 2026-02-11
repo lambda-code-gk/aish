@@ -1,9 +1,14 @@
 //! 履歴取得ツール（manifest + reviewed）
+//!
+//! manifest が無い場合は reviewed/ を走査して動作する。
 
 use crate::domain::{parse_lines, ManifestRole};
-use common::safe_session_path::{is_safe_reviewed_path, is_safe_summary_basename, resolve_under_session_dir};
+use common::safe_session_path::{
+    is_safe_reviewed_path, is_safe_summary_basename, resolve_under_session_dir, REVIEWED_DIR,
+};
 use common::tool::{Tool, ToolContext, ToolError};
 use serde_json::Value;
+use std::io;
 
 pub struct HistoryGetTool;
 
@@ -49,10 +54,27 @@ impl Tool for HistoryGetTool {
             .clone()
             .ok_or_else(|| ToolError::ExecutionFailed("session_dir is not set".to_string()))?;
         let manifest_path = session_dir.join("manifest.jsonl");
-        let body = std::fs::read_to_string(&manifest_path)
-            .map_err(|e| ToolError::ExecutionFailed(format!("{}: {}", manifest_path.display(), e)))?;
-        let records = parse_lines(&body);
+        match std::fs::read_to_string(&manifest_path) {
+            Ok(body) => self.call_with_manifest(&session_dir, &parse_lines(&body), args),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                self.call_without_manifest(&session_dir, args)
+            }
+            Err(e) => Err(ToolError::ExecutionFailed(format!(
+                "{}: {}",
+                manifest_path.display(),
+                e
+            ))),
+        }
+    }
+}
 
+impl HistoryGetTool {
+    fn call_with_manifest(
+        &self,
+        session_dir: &std::path::Path,
+        records: &[crate::domain::ManifestRecordV1],
+        args: Value,
+    ) -> Result<Value, ToolError> {
         let limit = args
             .get("limit")
             .and_then(|v| v.as_u64())
@@ -76,7 +98,7 @@ impl Tool for HistoryGetTool {
         let role_filter = parse_role_filter(args.get("role").and_then(|v| v.as_str()))?;
 
         let mut selected = Vec::new();
-        for rec in &records {
+        for rec in records.iter() {
             let Some(msg) = rec.message() else {
                 continue;
             };
@@ -158,6 +180,98 @@ impl Tool for HistoryGetTool {
 
         Ok(serde_json::json!({ "messages": out }))
     }
+
+    fn call_without_manifest(
+        &self,
+        session_dir: &std::path::Path,
+        args: Value,
+    ) -> Result<Value, ToolError> {
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.min(200) as usize)
+            .unwrap_or(20);
+        if limit == 0 {
+            return Err(ToolError::InvalidArgs("limit must be >= 1".to_string()));
+        }
+        let before_id = args.get("before_id").and_then(|v| v.as_str());
+        let after_id = args.get("after_id").and_then(|v| v.as_str());
+        if before_id.is_some() && after_id.is_some() {
+            return Err(ToolError::InvalidArgs(
+                "specify either before_id or after_id".to_string(),
+            ));
+        }
+        let role_filter = parse_role_filter(args.get("role").and_then(|v| v.as_str()))?;
+
+        let reviewed_dir = session_dir.join(REVIEWED_DIR);
+        let mut entries: Vec<(String, ManifestRole, String)> = match std::fs::read_dir(&reviewed_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let path = e.path();
+                    if !path.is_file() {
+                        return None;
+                    }
+                    let name = path.file_name().and_then(|n| n.to_str())?;
+                    let (id, role) = parse_reviewed_filename(name)?;
+                    let rel_path = format!("{}/{}", REVIEWED_DIR, name);
+                    Some((id, role, rel_path))
+                })
+                .collect(),
+            Err(_) => return Ok(serde_json::json!({ "messages": [] })),
+        };
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut selected: Vec<_> = entries
+            .into_iter()
+            .filter(|(id, role, _)| {
+                role_filter.matches(*role)
+                    && before_id.map_or(true, |b| id.as_str() < b)
+                    && after_id.map_or(true, |a| id.as_str() > a)
+            })
+            .collect();
+        if selected.len() > limit {
+            if after_id.is_some() {
+                selected.truncate(limit);
+            } else {
+                let keep_from = selected.len() - limit;
+                selected = selected.split_off(keep_from);
+            }
+        }
+
+        let mut out = Vec::new();
+        for (id, role, rel_path) in selected {
+            let full = session_dir.join(&rel_path);
+            let Some(safe_path) = resolve_under_session_dir(session_dir, &full) else {
+                continue;
+            };
+            if let Ok(content) = std::fs::read_to_string(&safe_path) {
+                out.push(serde_json::json!({
+                    "id": id,
+                    "role": role.as_str(),
+                    "ts": "",
+                    "content": content
+                }));
+            }
+        }
+        Ok(serde_json::json!({ "messages": out }))
+    }
+}
+
+/// `reviewed_<id>_user.txt` / `reviewed_<id>_assistant.txt` から (id, role) を返す。
+fn parse_reviewed_filename(name: &str) -> Option<(String, ManifestRole)> {
+    let rest = name.strip_prefix("reviewed_")?;
+    let (id, role_suffix) = if let Some(s) = rest.strip_suffix("_user.txt") {
+        (s, ManifestRole::User)
+    } else if let Some(s) = rest.strip_suffix("_assistant.txt") {
+        (s, ManifestRole::Assistant)
+    } else {
+        return None;
+    };
+    if id.is_empty() || id.contains('/') || id.contains('\\') {
+        return None;
+    }
+    Some((id.to_string(), role_suffix))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -226,6 +340,33 @@ mod tests {
         let msgs = r["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0]["id"].as_str(), Some("001"));
+        assert_eq!(msgs[1]["id"].as_str(), Some("002"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn prepare_session_no_manifest() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("history_get_tool_nomanifest_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let reviewed_dir = dir.join("reviewed");
+        std::fs::create_dir_all(&reviewed_dir).unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_001_user.txt"), "u1").unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_002_assistant.txt"), "a2").unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_history_get_without_manifest() {
+        let tool = HistoryGetTool::new();
+        let dir = prepare_session_no_manifest();
+        let ctx = ToolContext::new(Some(dir.clone()));
+        let r = tool
+            .call(serde_json::json!({"limit": 2, "role": "any"}), &ctx)
+            .unwrap();
+        let msgs = r["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["id"].as_str(), Some("001"));
+        assert_eq!(msgs[0]["ts"].as_str(), Some(""));
         assert_eq!(msgs[1]["id"].as_str(), Some("002"));
         let _ = std::fs::remove_dir_all(dir);
     }
