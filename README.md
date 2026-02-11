@@ -24,10 +24,14 @@ Rust 製の `ai` / `aish` バイナリとして提供され、ターミナルの
 
 ## 📚 Documentation
 
-- 詳細なコンセプトとユースケース: `docs/overview.md`
-- コマンド一覧と概要: `docs/commands.md`
-- `aish` の使い方とセッション管理: `docs/aish-usage.md`
-- `ai` の使い方（最初に読むべき詳細ガイド）: `docs/ai-usage.md`
+- **はじめに**: [docs/README.md](docs/README.md) — ドキュメントの目次と読む順番
+- 詳細なコンセプトとユースケース: [docs/overview.md](docs/overview.md)
+- コマンド一覧と概要: [docs/commands.md](docs/commands.md)
+- `aish` の使い方とセッション管理: [docs/aish-usage.md](docs/aish-usage.md)
+- `ai` の使い方（最も詳しいガイド）: [docs/ai-usage.md](docs/ai-usage.md)
+- システムプロンプト（sysq）の設定: [docs/system-prompts.md](docs/system-prompts.md)
+- セキュリティ・プライバシーと leakscan: [docs/security.md](docs/security.md)
+- よくある質問とトラブルシューティング: [docs/faq.md](docs/faq.md)
 
 ## 🚀 Quick Start
 
