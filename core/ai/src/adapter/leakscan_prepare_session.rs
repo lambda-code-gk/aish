@@ -3,11 +3,10 @@
 //! セッション dir 内の part_* を leakscan し、ヒット時はユーザーに問い合わせ、
 //! 通過分は reviewed_<id>_... にコピー、元 part は leakscan_evacuated/ に移動する。
 
-use crate::adapter::compactor_deterministic::maybe_compact;
-use crate::ports::outbound::{InterruptChecker, PrepareSessionForSensitiveCheck};
-use crate::{adapter::session_manifest, domain::ManifestRecordV1};
+use crate::adapter::session_manifest;
+use crate::ports::outbound::{CompactionStrategy, InterruptChecker, PrepareSessionForSensitiveCheck};
 use crate::domain::{
-    hash64, ManifestDecision, ManifestRole, MessageRecordV1,
+    hash64, ManifestDecision, ManifestRecordV1, ManifestRole, MessageRecordV1,
 };
 use common::domain::SessionDir;
 use common::error::Error;
@@ -73,6 +72,8 @@ pub struct LeakscanPrepareSession {
     interrupt_checker: Option<Arc<dyn InterruptChecker>>,
     /// true のときヒット時に対話せず常に Deny（CI 等向け）
     non_interactive: bool,
+    /// compaction 実装（None のときは compaction しない）
+    compaction: Option<Arc<dyn CompactionStrategy>>,
 }
 
 impl LeakscanPrepareSession {
@@ -82,6 +83,7 @@ impl LeakscanPrepareSession {
         rules_path: PathBuf,
         interrupt_checker: Option<Arc<dyn InterruptChecker>>,
         non_interactive: bool,
+        compaction: Option<Arc<dyn CompactionStrategy>>,
     ) -> Self {
         Self {
             fs,
@@ -89,6 +91,7 @@ impl LeakscanPrepareSession {
             rules_path,
             interrupt_checker,
             non_interactive,
+            compaction,
         }
     }
 
@@ -308,7 +311,10 @@ impl PrepareSessionForSensitiveCheck for LeakscanPrepareSession {
                 return Err(e);
             }
         }
-        maybe_compact(self.fs.as_ref(), dir)?;
+        if let Some(ref c) = self.compaction {
+            let records = session_manifest::load_all(self.fs.as_ref(), dir)?;
+            c.maybe_compact(self.fs.as_ref(), dir, &records)?;
+        }
         Ok(())
     }
 }
@@ -361,6 +367,7 @@ mod tests {
             rules_path,
             None,
             true,
+            None,
         );
 
         let part_content = "secret stuff";

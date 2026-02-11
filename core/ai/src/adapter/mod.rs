@@ -23,6 +23,7 @@ pub(crate) mod tools;
 pub(crate) mod stub_llm;
 pub(crate) use agent_state_storage::FileAgentStateStorage;
 pub(crate) use approval::{CliToolApproval, NonInteractiveToolApproval};
+pub(crate) use compactor_deterministic::DeterministicCompactionStrategy;
 pub(crate) use config::StdCommandAllowRulesLoader;
 pub(crate) use context_message_builder::StdContextMessageBuilder;
 pub(crate) use continue_prompt::{CliContinuePrompt, NoContinuePrompt};

@@ -1,6 +1,7 @@
 //! Outbound ポート: アプリが外界（承認・LLM ストリーム等）を使うための trait
 
 pub mod agent_state_storage;
+pub mod compaction_strategy;
 pub mod approval;
 pub mod command_allow_rules_loader;
 pub mod context_message_builder;
@@ -19,6 +20,7 @@ pub mod session_response_saver;
 pub mod task_runner;
 
 pub use agent_state_storage::{AgentStateLoader, AgentStateSaver};
+pub use compaction_strategy::CompactionStrategy;
 pub use approval::{Approval, ToolApproval};
 pub use command_allow_rules_loader::CommandAllowRulesLoader;
 pub use context_message_builder::{ContextMessageBuilder, QueryPlacement};

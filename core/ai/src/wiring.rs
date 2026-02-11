@@ -11,8 +11,9 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliContinuePrompt, CliToolApproval, FileAgentStateStorage, GrepTool, LeakscanPrepareSession,
-    ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, NoContinuePrompt, NoopInterruptChecker,
+    CliContinuePrompt, CliToolApproval, DeterministicCompactionStrategy, FileAgentStateStorage, GrepTool,
+    LeakscanPrepareSession, ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, NoContinuePrompt,
+    NoopInterruptChecker,
     NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer, ReadFileTool,
     ReplaceFileTool, ReviewedTailViewStrategy, SigintChecker, StdCommandAllowRulesLoader, StdContextMessageBuilder,
     StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
@@ -162,6 +163,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
                     rules_path,
                     Some(Arc::clone(&interrupt_checker)),
                     non_interactive,
+                    Some(Arc::new(DeterministicCompactionStrategy)),
                 ),
             );
             let reviewed_storage = Arc::new(ManifestReviewedSessionStorage::with_strategies(
