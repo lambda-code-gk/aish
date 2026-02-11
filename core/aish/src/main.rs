@@ -311,6 +311,7 @@ mod tests {
             let temp_dir = std::env::temp_dir();
             let home_path = temp_dir.join("aish_test_clear_home");
             let session_path = temp_dir.join("aish_test_clear_session");
+            let reviewed_dir = session_path.join("reviewed");
 
             if home_path.exists() {
                 fs::remove_dir_all(&home_path).unwrap();
@@ -321,15 +322,19 @@ mod tests {
 
             fs::create_dir_all(&home_path).unwrap();
             fs::create_dir_all(&session_path).unwrap();
+            fs::create_dir_all(&reviewed_dir).unwrap();
 
             fs::write(session_path.join("part_00000001_user.txt"), "Hello").unwrap();
             fs::write(session_path.join("part_00000002_assistant.txt"), "Hi there").unwrap();
             fs::write(session_path.join("part_00000003_user.txt"), "How are you?").unwrap();
-            fs::write(session_path.join("reviewed_ABC12001_user.txt"), "Reviewed user").unwrap();
-            fs::write(session_path.join("reviewed_ABC12002_assistant.txt"), "Reviewed assistant").unwrap();
+            fs::write(session_path.join("reviewed_ABC12001_user.txt"), "Reviewed user (legacy)").unwrap();
+            fs::write(session_path.join("reviewed_ABC12002_assistant.txt"), "Reviewed assistant (legacy)").unwrap();
+            fs::write(reviewed_dir.join("reviewed_ABC12003_user.txt"), "Reviewed user").unwrap();
+            fs::write(reviewed_dir.join("reviewed_ABC12004_assistant.txt"), "Reviewed assistant").unwrap();
             let evacuated_dir = session_path.join("leakscan_evacuated");
             fs::create_dir_all(&evacuated_dir).unwrap();
             fs::write(evacuated_dir.join("part_old_user.txt"), "evacuated").unwrap();
+            fs::write(session_path.join("manifest.jsonl"), "{\"kind\":\"message\"}\n").unwrap();
             fs::write(session_path.join("console.txt"), "console log").unwrap();
             fs::write(session_path.join("AISH_PID"), "12345").unwrap();
 
@@ -348,7 +353,9 @@ mod tests {
             assert!(!session_path.join("part_00000003_user.txt").exists());
             assert!(!session_path.join("reviewed_ABC12001_user.txt").exists());
             assert!(!session_path.join("reviewed_ABC12002_assistant.txt").exists());
+            assert!(!reviewed_dir.exists());
             assert!(!session_path.join("leakscan_evacuated").exists());
+            assert!(!session_path.join("manifest.jsonl").exists());
             assert!(session_path.join("console.txt").exists());
             assert!(session_path.join("AISH_PID").exists());
 

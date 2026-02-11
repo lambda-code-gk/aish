@@ -1,7 +1,7 @@
 //! Clear コマンドのユースケース
 
-use common::ports::outbound::FileSystem;
 use common::error::Error;
+use common::ports::outbound::FileSystem;
 use common::ports::outbound::{PathResolver, PathResolverInput};
 use common::session::Session;
 use std::path::Path;
@@ -76,10 +76,22 @@ impl ClearUseCase {
             }
         }
 
+        // reviewed/ ディレクトリを削除（leakscan 通過後の履歴）
+        let reviewed_dir = session_dir.join("reviewed");
+        if self.fs.exists(&reviewed_dir) {
+            self.fs.remove_dir_all(&reviewed_dir)?;
+        }
+
         // leakscan 退避用ディレクトリを削除
         let evacuated_dir = session_dir.join("leakscan_evacuated");
         if self.fs.exists(&evacuated_dir) {
             self.fs.remove_dir_all(&evacuated_dir)?;
+        }
+
+        // manifest.jsonl を削除（履歴メタデータ；参照先の reviewed は上で削除済み）
+        let manifest_path = session_dir.join("manifest.jsonl");
+        if self.fs.exists(&manifest_path) && self.fs.metadata(&manifest_path).map(|m| m.is_file()).unwrap_or(false) {
+            self.fs.remove_file(&manifest_path)?;
         }
 
         Ok(0)
