@@ -25,7 +25,7 @@ use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, ContextMessageBuilder, PrepareSessionForSensitiveCheck,
     ResolveSystemInstruction, RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
-use crate::usecase::app::AiUseCase;
+use crate::usecase::app::{AiDeps, AiUseCase, ModelDeps, ObsDeps, PolicyDeps, SessionDeps, SystemDeps, ToolingDeps};
 use crate::usecase::task::TaskUseCase;
 
 /// Arc<AiUseCase> を RunQuery として渡すための薄いラッパ
@@ -133,41 +133,31 @@ fn resolve_leakscan_paths(
     None
 }
 
-/// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す。
-///
-/// `non_interactive`: true のとき確認プロンプトを出さない（ツール承認は常に拒否・続行はしない・leakscan ヒットは拒否）。CI 向け。
-/// `verbose`: true のとき不具合調査用の冗長ログを stderr 等に出力する。
-pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
-    let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
-    let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
-    let logger: Arc<dyn Log> = env_resolver
-        .resolve_log_file_path()
-        .map(|path| Arc::new(FileJsonLog::new(Arc::clone(&fs), path)) as Arc<dyn Log>)
-        .unwrap_or_else(|_| Arc::new(NoopLog));
+fn build_session_deps(
+    fs: &Arc<dyn FileSystem>,
+    env_resolver: &Arc<dyn EnvResolver>,
+    interrupt_checker: &Arc<dyn crate::ports::outbound::InterruptChecker>,
+    non_interactive: bool,
+) -> SessionDeps {
     let id_gen = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
-    let part_storage = Arc::new(PartSessionStorage::new(Arc::clone(&fs), id_gen));
-    let interrupt_checker: Arc<dyn crate::ports::outbound::InterruptChecker> =
-        SigintChecker::new()
-            .map(Arc::new)
-            .map(|a| a as Arc<dyn crate::ports::outbound::InterruptChecker>)
-            .unwrap_or_else(|_| Arc::new(NoopInterruptChecker::new()));
+    let part_storage = Arc::new(PartSessionStorage::new(Arc::clone(fs), id_gen));
     let (reducer, budget) = context_strategy_from_env();
     let history_load_max = history_load_max_from_budget(budget);
 
     let (history_loader, response_saver, prepare_session_for_sensitive_check) =
-        if let Some((leakscan_binary, rules_path)) = resolve_leakscan_paths(&fs, &env_resolver) {
+        if let Some((leakscan_binary, rules_path)) = resolve_leakscan_paths(fs, env_resolver) {
             let leakscan_prepare: Arc<dyn PrepareSessionForSensitiveCheck> = Arc::new(
                 LeakscanPrepareSession::new(
-                    Arc::clone(&fs),
+                    Arc::clone(fs),
                     leakscan_binary,
                     rules_path,
-                    Some(Arc::clone(&interrupt_checker)),
+                    Some(Arc::clone(interrupt_checker)),
                     non_interactive,
                     Some(Arc::new(DeterministicCompactionStrategy)),
                 ),
             );
             let reviewed_storage = Arc::new(ManifestReviewedSessionStorage::with_strategies(
-                Arc::clone(&fs),
+                Arc::clone(fs),
                 history_load_max,
                 Arc::new(ManifestTailCompactionViewStrategy),
                 Arc::new(ReviewedTailViewStrategy),
@@ -189,9 +179,55 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
                 Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
             (history_loader, response_saver, None)
         };
-    let process: Arc<dyn Process> = Arc::new(StdProcess);
-    let task_runner: Arc<dyn TaskRunner> = Arc::new(StdTaskRunner::new(Arc::clone(&fs), Arc::clone(&process)));
+
+    let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(fs)));
+    let agent_state_saver: Arc<dyn AgentStateSaver> =
+        Arc::clone(&agent_state_storage) as Arc<dyn AgentStateSaver>;
+    let agent_state_loader: Arc<dyn AgentStateLoader> =
+        Arc::clone(&agent_state_storage) as Arc<dyn AgentStateLoader>;
+
+    let context_message_builder: Arc<dyn ContextMessageBuilder> =
+        Arc::new(StdContextMessageBuilder::new(reducer, budget));
+
+    SessionDeps {
+        fs: Arc::clone(fs),
+        history_loader,
+        context_message_builder,
+        response_saver,
+        agent_state_saver,
+        agent_state_loader,
+        prepare_session_for_sensitive_check,
+    }
+}
+
+fn build_policy_deps(
+    env_resolver: &Arc<dyn EnvResolver>,
+    interrupt_checker: &Arc<dyn crate::ports::outbound::InterruptChecker>,
+    non_interactive: bool,
+) -> PolicyDeps {
     let command_allow_rules_loader = Arc::new(StdCommandAllowRulesLoader);
+    let approver: Arc<dyn crate::ports::outbound::ToolApproval> = if non_interactive {
+        Arc::new(NonInteractiveToolApproval::new())
+    } else {
+        Arc::new(CliToolApproval::new(Some(Arc::clone(interrupt_checker))))
+    };
+    let continue_prompt: Arc<dyn crate::ports::outbound::ContinueAfterLimitPrompt> =
+        if non_interactive {
+            Arc::new(NoContinuePrompt::new())
+        } else {
+            Arc::new(CliContinuePrompt::new())
+        };
+
+    PolicyDeps {
+        continue_prompt,
+        env_resolver: Arc::clone(env_resolver),
+        command_allow_rules_loader,
+        approver,
+        interrupt_checker: Arc::clone(interrupt_checker),
+    }
+}
+
+fn build_tooling_deps(verbose: bool) -> ToolingDeps {
     let sink_factory = Arc::new(StdEventSinkFactory::new(verbose));
     let tools: Vec<Arc<dyn common::tool::Tool>> = vec![
         Arc::new(EchoTool::new()),
@@ -203,56 +239,95 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         Arc::new(HistoryGetTool::new()),
         Arc::new(HistorySearchTool::new()),
     ];
-    let approver: Arc<dyn crate::ports::outbound::ToolApproval> = if non_interactive {
-        Arc::new(NonInteractiveToolApproval::new())
-    } else {
-        Arc::new(CliToolApproval::new(Some(Arc::clone(&interrupt_checker))))
-    };
-    let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(&fs)));
-    let agent_state_saver: Arc<dyn AgentStateSaver> =
-        Arc::clone(&agent_state_storage) as Arc<dyn AgentStateSaver>;
-    let agent_state_loader: Arc<dyn AgentStateLoader> =
-        Arc::clone(&agent_state_storage) as Arc<dyn AgentStateLoader>;
-    let continue_prompt: Arc<dyn crate::ports::outbound::ContinueAfterLimitPrompt> =
-        if non_interactive {
-            Arc::new(NoContinuePrompt::new())
-        } else {
-            Arc::new(CliContinuePrompt::new())
-        };
-    let resolve_system_instruction: Arc<dyn ResolveSystemInstruction> =
-        Arc::new(StdResolveSystemInstruction::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
-    let profile_lister: Arc<dyn crate::ports::outbound::ProfileLister> =
-        Arc::new(StdProfileLister::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
-    let resolve_profile_and_model: Arc<dyn crate::ports::outbound::ResolveProfileAndModel> =
-        Arc::new(StdResolveProfileAndModel::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
-    let llm_stream_factory: Arc<dyn crate::ports::outbound::LlmEventStreamFactory> =
-        Arc::new(StdLlmEventStreamFactory::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
 
-    let context_message_builder: Arc<dyn ContextMessageBuilder> =
-        Arc::new(StdContextMessageBuilder::new(reducer, budget));
-
-    let ai_use_case = Arc::new(AiUseCase::new(
-        fs,
-        history_loader,
-        context_message_builder,
-        response_saver,
-        agent_state_saver,
-        agent_state_loader,
-        continue_prompt,
-        Arc::clone(&env_resolver),
-        process,
-        command_allow_rules_loader,
+    ToolingDeps {
         sink_factory,
         tools,
-        approver,
-        interrupt_checker,
-        Arc::clone(&logger),
+    }
+}
+
+fn build_model_deps(
+    fs: &Arc<dyn FileSystem>,
+    env_resolver: &Arc<dyn EnvResolver>,
+) -> ModelDeps {
+    let profile_lister: Arc<dyn crate::ports::outbound::ProfileLister> =
+        Arc::new(StdProfileLister::new(Arc::clone(fs), Arc::clone(env_resolver)));
+    let resolve_profile_and_model: Arc<dyn crate::ports::outbound::ResolveProfileAndModel> =
+        Arc::new(StdResolveProfileAndModel::new(Arc::clone(fs), Arc::clone(env_resolver)));
+    let llm_stream_factory: Arc<dyn crate::ports::outbound::LlmEventStreamFactory> =
+        Arc::new(StdLlmEventStreamFactory::new(Arc::clone(fs), Arc::clone(env_resolver)));
+
+    ModelDeps {
         profile_lister,
         resolve_profile_and_model,
         llm_stream_factory,
-        prepare_session_for_sensitive_check,
-    ));
+    }
+}
+
+fn build_system_deps(process: &Arc<dyn Process>) -> SystemDeps {
+    SystemDeps {
+        process: Arc::clone(process),
+    }
+}
+
+fn build_task_runner(
+    fs: &Arc<dyn FileSystem>,
+    process: &Arc<dyn Process>,
+) -> Arc<dyn TaskRunner> {
+    Arc::new(StdTaskRunner::new(Arc::clone(fs), Arc::clone(process)))
+}
+
+fn build_obs_deps(logger: &Arc<dyn Log>) -> ObsDeps {
+    ObsDeps {
+        log: Arc::clone(logger),
+    }
+}
+
+fn build_resolve_system_instruction(
+    env_resolver: &Arc<dyn EnvResolver>,
+    fs: &Arc<dyn FileSystem>,
+) -> Arc<dyn ResolveSystemInstruction> {
+    Arc::new(StdResolveSystemInstruction::new(
+        Arc::clone(env_resolver),
+        Arc::clone(fs),
+    ))
+}
+
+/// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す。
+///
+/// `non_interactive`: true のとき確認プロンプトを出さない（ツール承認は常に拒否・続行はしない・leakscan ヒットは拒否）。CI 向け。
+/// `verbose`: true のとき不具合調査用の冗長ログを stderr 等に出力する。
+pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
+    let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
+    let env_resolver: Arc<dyn EnvResolver> = Arc::new(StdEnvResolver);
+    let logger: Arc<dyn Log> = env_resolver
+        .resolve_log_file_path()
+        .map(|path| Arc::new(FileJsonLog::new(Arc::clone(&fs), path)) as Arc<dyn Log>)
+        .unwrap_or_else(|_| Arc::new(NoopLog));
+    let interrupt_checker: Arc<dyn crate::ports::outbound::InterruptChecker> =
+        SigintChecker::new()
+            .map(Arc::new)
+            .map(|a| a as Arc<dyn crate::ports::outbound::InterruptChecker>)
+            .unwrap_or_else(|_| Arc::new(NoopInterruptChecker::new()));
+    let process: Arc<dyn Process> = Arc::new(StdProcess);
+    let session = build_session_deps(&fs, &env_resolver, &interrupt_checker, non_interactive);
+    let policy = build_policy_deps(&env_resolver, &interrupt_checker, non_interactive);
+    let tooling = build_tooling_deps(verbose);
+    let model = build_model_deps(&fs, &env_resolver);
+    let system = build_system_deps(&process);
+    let obs = build_obs_deps(&logger);
+
+    let ai_use_case = Arc::new(AiUseCase::new(AiDeps {
+        session,
+        policy,
+        tooling,
+        model,
+        system,
+        obs,
+    }));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
+    let task_runner: Arc<dyn TaskRunner> = build_task_runner(&fs, &process);
+    let resolve_system_instruction = build_resolve_system_instruction(&env_resolver, &fs);
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));
     App {
         env_resolver,

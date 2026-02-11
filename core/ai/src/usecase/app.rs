@@ -14,78 +14,67 @@ use common::domain::SessionDir;
 use common::tool::{Tool, ToolContext, ToolRegistry};
 use std::sync::Arc;
 
-/// ai のユースケース（アダプター経由で I/O を行う）
-pub struct AiUseCase {
+// --- 責務別 Deps（usecase が定義を所有し、wiring は組み立てるだけ）
+
+pub struct AiDeps {
+    pub session: SessionDeps,
+    pub policy: PolicyDeps,
+    pub tooling: ToolingDeps,
+    pub model: ModelDeps,
+    pub system: SystemDeps,
+    pub obs: ObsDeps,
+}
+
+pub struct SessionDeps {
     pub fs: Arc<dyn FileSystem>,
     pub history_loader: Arc<dyn SessionHistoryLoader>,
     pub context_message_builder: Arc<dyn ContextMessageBuilder>,
     pub response_saver: Arc<dyn SessionResponseSaver>,
     pub agent_state_saver: Arc<dyn AgentStateSaver>,
     pub agent_state_loader: Arc<dyn AgentStateLoader>,
-    pub continue_prompt: Arc<dyn ContinueAfterLimitPrompt>,
-    pub env_resolver: Arc<dyn EnvResolver>,
-    pub process: Arc<dyn Process>,
-    pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
-    pub sink_factory: Arc<dyn EventSinkFactory>,
-    pub tools: Vec<Arc<dyn Tool>>,
-    pub approver: Arc<dyn ToolApproval>,
-    pub interrupt_checker: Arc<dyn InterruptChecker>,
-    pub log: Arc<dyn Log>,
-    pub profile_lister: Arc<dyn ProfileLister>,
-    pub resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
-    pub llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
     pub prepare_session_for_sensitive_check: Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
 }
 
+pub struct PolicyDeps {
+    pub continue_prompt: Arc<dyn ContinueAfterLimitPrompt>,
+    pub env_resolver: Arc<dyn EnvResolver>,
+    pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
+    pub approver: Arc<dyn ToolApproval>,
+    pub interrupt_checker: Arc<dyn InterruptChecker>,
+}
+
+pub struct ToolingDeps {
+    pub sink_factory: Arc<dyn EventSinkFactory>,
+    pub tools: Vec<Arc<dyn Tool>>,
+}
+
+pub struct ModelDeps {
+    pub profile_lister: Arc<dyn ProfileLister>,
+    pub resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
+    pub llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
+}
+
+pub struct SystemDeps {
+    pub process: Arc<dyn Process>,
+}
+
+pub struct ObsDeps {
+    pub log: Arc<dyn Log>,
+}
+
+/// ai のユースケース（アダプター経由で I/O を行う）
+pub struct AiUseCase {
+    deps: AiDeps,
+}
+
 impl AiUseCase {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        fs: Arc<dyn FileSystem>,
-        history_loader: Arc<dyn SessionHistoryLoader>,
-        context_message_builder: Arc<dyn ContextMessageBuilder>,
-        response_saver: Arc<dyn SessionResponseSaver>,
-        agent_state_saver: Arc<dyn AgentStateSaver>,
-        agent_state_loader: Arc<dyn AgentStateLoader>,
-        continue_prompt: Arc<dyn ContinueAfterLimitPrompt>,
-        env_resolver: Arc<dyn EnvResolver>,
-        process: Arc<dyn Process>,
-        command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
-        sink_factory: Arc<dyn EventSinkFactory>,
-        tools: Vec<Arc<dyn Tool>>,
-        approver: Arc<dyn ToolApproval>,
-        interrupt_checker: Arc<dyn InterruptChecker>,
-        log: Arc<dyn Log>,
-        profile_lister: Arc<dyn ProfileLister>,
-        resolve_profile_and_model: Arc<dyn ResolveProfileAndModel>,
-        llm_stream_factory: Arc<dyn LlmEventStreamFactory>,
-        prepare_session_for_sensitive_check: Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
-    ) -> Self {
-        Self {
-            fs,
-            history_loader,
-            context_message_builder,
-            response_saver,
-            agent_state_saver,
-            agent_state_loader,
-            continue_prompt,
-            env_resolver,
-            process,
-            command_allow_rules_loader,
-            sink_factory,
-            tools,
-            approver,
-            interrupt_checker,
-            log,
-            profile_lister,
-            resolve_profile_and_model,
-            llm_stream_factory,
-            prepare_session_for_sensitive_check,
-        }
+    pub fn new(deps: AiDeps) -> Self {
+        Self { deps }
     }
 
     pub(crate) fn session_is_valid(&self, session_dir: &Option<SessionDir>) -> bool {
         if let Some(ref dir) = session_dir {
-            self.fs.exists(dir.as_ref()) && self.fs.metadata(dir.as_ref()).map(|m| m.is_dir()).unwrap_or(false)
+            self.deps.session.fs.exists(dir.as_ref()) && self.deps.session.fs.metadata(dir.as_ref()).map(|m| m.is_dir()).unwrap_or(false)
         } else {
             false
         }
@@ -94,13 +83,13 @@ impl AiUseCase {
     /// 現在有効なプロファイル一覧を返す（ソート済み名前リストとデフォルトプロファイル名）。
     /// 表示は CLI の責務のため、usecase はデータのみ返す。
     pub fn list_profiles(&self) -> Result<(Vec<String>, Option<String>), Error> {
-        self.profile_lister.list_profiles()
+        self.deps.model.profile_lister.list_profiles()
     }
 
     /// 有効なツール一覧を返す（名前と説明）。プロバイダごとの有効/無効は未対応のため常に全ツール。
     /// 表示は CLI の責務のため、usecase はデータのみ返す。
     pub fn list_tools(&self) -> Vec<(String, String)> {
-        self.tools
+        self.deps.tooling.tools
             .iter()
             .map(|t| (t.name().to_string(), t.description().to_string()))
             .collect()
@@ -112,7 +101,7 @@ impl AiUseCase {
             session_dir.as_path().display().to_string(),
             "truncate_console_log".to_string(),
         ];
-        let _ = self.process.run(std::path::Path::new("aish"), &args);
+        let _ = self.deps.system.process.run(std::path::Path::new("aish"), &args);
         Ok(())
     }
 
@@ -123,8 +112,8 @@ impl AiUseCase {
             return;
         }
         if let Some(dir) = session_dir {
-            if let Err(e) = self.agent_state_saver.save(dir, messages) {
-                let _ = self.log.log(&LogRecord {
+            if let Err(e) = self.deps.session.agent_state_saver.save(dir, messages) {
+                let _ = self.deps.obs.log.log(&LogRecord {
                     ts: now_iso8601(),
                     level: LogLevel::Warn,
                     message: format!("Failed to save agent state on error: {}", e),
@@ -146,13 +135,13 @@ impl AiUseCase {
         max_turns_override: Option<usize>,
     ) -> Result<i32, Error> {
         let (profile_name, model_name) = self
-            .resolve_profile_and_model
+            .deps.model.resolve_profile_and_model
             .resolve(provider.as_ref(), model.as_ref())?;
         let mut fields = std::collections::BTreeMap::new();
         fields.insert("event".to_string(), serde_json::json!("query_started"));
         fields.insert("profile".to_string(), serde_json::json!(profile_name.clone()));
         fields.insert("model".to_string(), serde_json::json!(model_name.clone()));
-        let _ = self.log.log(&LogRecord {
+        let _ = self.deps.obs.log.log(&LogRecord {
             ts: now_iso8601(),
             level: LogLevel::Info,
             message: format!(
@@ -175,7 +164,7 @@ impl AiUseCase {
                         "No continuation state. Please provide a message.",
                     ));
                 }
-                self.agent_state_loader
+                self.deps.session.agent_state_loader
                     .load(dir)?
                     .ok_or_else(|| {
                         Error::invalid_argument("No continuation state. Please provide a message.")
@@ -184,11 +173,11 @@ impl AiUseCase {
             Some(q) => {
                 let (history_messages, query_placement) = if self.session_is_valid(&session_dir) {
                     let dir = session_dir.as_ref().expect("session_dir is Some");
-                    self.response_saver.save_user(dir, q.as_ref())?;
-                    if let Some(ref prep) = self.prepare_session_for_sensitive_check {
+                    self.deps.session.response_saver.save_user(dir, q.as_ref())?;
+                    if let Some(ref prep) = self.deps.session.prepare_session_for_sensitive_check {
                         prep.prepare(dir)?;
                     }
-                    let loaded = self.history_loader.load(dir);
+                    let loaded = self.deps.session.history_loader.load(dir);
                     match loaded {
                         Ok(history) => {
                             // valid session: save_user → load しているので query は履歴に含まれている
@@ -202,7 +191,7 @@ impl AiUseCase {
                 } else {
                     (Vec::new(), QueryPlacement::AppendAtEnd)
                 };
-                self.context_message_builder.build(
+                self.deps.session.context_message_builder.build(
                     &history_messages,
                     Some(q),
                     system_instruction,
@@ -211,7 +200,7 @@ impl AiUseCase {
             }
         };
 
-        let (stream, ctx) = match self.llm_stream_factory.create_stream(
+        let (stream, ctx) = match self.deps.model.llm_stream_factory.create_stream(
             session_dir.as_ref(),
             provider.as_ref(),
             model.as_ref(),
@@ -226,35 +215,35 @@ impl AiUseCase {
 
         const DEFAULT_MAX_TURNS: usize = 16;
         let max_turns = max_turns_override.unwrap_or(DEFAULT_MAX_TURNS);
-        let home_dir = match self.env_resolver.resolve_home_dir() {
+        let home_dir = match self.deps.policy.env_resolver.resolve_home_dir() {
             Ok(h) => h,
             Err(e) => {
                 self.try_save_agent_state_on_error(&session_dir, &messages);
                 return Err(e);
             }
         };
-        let allow_rules = self.command_allow_rules_loader.load_rules(&home_dir);
+        let allow_rules = self.deps.policy.command_allow_rules_loader.load_rules(&home_dir);
 
         let mut messages = messages;
         let ctx = ctx.0;
         loop {
             let mut registry = ToolRegistry::new();
-            for t in &self.tools {
+            for t in &self.deps.tooling.tools {
                 registry.register(Arc::clone(t));
             }
             let tool_context = ToolContext::new(
                 session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()),
             )
             .with_command_allow_rules(allow_rules.clone());
-            let sinks = self.sink_factory.create_sinks();
+            let sinks = self.deps.tooling.sink_factory.create_sinks();
             let mut agent_loop = AgentLoop::new(
                 Arc::clone(&stream),
                 registry,
                 tool_context,
                 sinks,
-                Arc::clone(&self.approver),
+                Arc::clone(&self.deps.policy.approver),
                 Some("run_shell"),
-                Some(Arc::clone(&self.interrupt_checker)),
+                Some(Arc::clone(&self.deps.policy.interrupt_checker)),
             );
 
             let outcome = match agent_loop
@@ -272,13 +261,13 @@ impl AiUseCase {
                 AgentLoopOutcome::Done(_msgs, assistant_text) => {
                     if self.session_is_valid(&session_dir) {
                         let dir = session_dir.as_ref().expect("session_dir is Some");
-                        self.agent_state_saver.clear(dir)?;
+                        self.deps.session.agent_state_saver.clear(dir)?;
                         if !assistant_text.trim().is_empty() {
-                            self.response_saver.save_assistant(dir, &assistant_text)?;
+                            self.deps.session.response_saver.save_assistant(dir, &assistant_text)?;
                             self.truncate_console_log(dir)?;
                         }
                     }
-                    let _ = self.log.log(&LogRecord {
+                    let _ = self.deps.obs.log.log(&LogRecord {
                         ts: now_iso8601(),
                         level: LogLevel::Info,
                         message: "query finished".to_string(),
@@ -289,7 +278,7 @@ impl AiUseCase {
                     return Ok(0);
                 }
                 AgentLoopOutcome::ReachedLimit(msgs, assistant_text) => {
-                    let continue_ = match self.continue_prompt.ask_continue() {
+                    let continue_ = match self.deps.policy.continue_prompt.ask_continue() {
                         Ok(c) => c,
                         Err(e) => {
                             self.try_save_agent_state_on_error(&session_dir, &msgs);
@@ -299,13 +288,13 @@ impl AiUseCase {
                     if !continue_ {
                         if self.session_is_valid(&session_dir) {
                             let dir = session_dir.as_ref().expect("session_dir is Some");
-                            self.agent_state_saver.save(dir, &msgs)?;
+                            self.deps.session.agent_state_saver.save(dir, &msgs)?;
                             if !assistant_text.trim().is_empty() {
-                                self.response_saver.save_assistant(dir, &assistant_text)?;
+                                self.deps.session.response_saver.save_assistant(dir, &assistant_text)?;
                                 self.truncate_console_log(dir)?;
                             }
                         }
-                        let _ = self.log.log(&LogRecord {
+                        let _ = self.deps.obs.log.log(&LogRecord {
                             ts: now_iso8601(),
                             level: LogLevel::Info,
                             message: "query finished (saved for resume)".to_string(),
