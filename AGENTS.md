@@ -3,8 +3,8 @@
 ## ⚠️ 作業前の必須確認
 
 - コード編集・追加・修正の**前**にこのAGENTS.mdを読む
-- **作業前**: `./test_architecture.sh && ./test.sh &&./test_integration.sh` で全テスト成功を確認
-- **作業後**: `./test_architecture.sh && ./test.sh && ./test_integration.sh` で既存機能が壊れていないことを確認
+- **作業前**: `./tests/architecture.sh && ./tests/units.sh && ./tests/integration.sh` で全テスト成功を確認
+- **作業後**: `./tests/architecture.sh && ./tests/units.sh && ./tests/integration.sh` で既存機能が壊れていないことを確認
 
 ---
 
@@ -88,7 +88,7 @@ usecase モジュール（`core/ai/src/usecase/`, `core/aish/src/usecase/`）で
 - 有効/無効: 各スコープの `system.d/enabled` に 1 行 1 ID で列挙されたものが有効。`aish sysq list` で一覧と有効状態表示、`aish sysq enable id [id...]` / `aish sysq disable id [id...]` で切り替え。
 - **ai** 実行時: `-S/--system` 未指定のとき、上記で有効な sysq を優先順位でマージし結合した文字列を system instruction として使用。指定時はその文字列をそのまま使用。
 
-ビルド・テストはプロジェクトルートで `./build.sh`, `./test.sh`, `./test_integration.sh`。個別は `cd core/ai && cargo test` 等。
+ビルド・テストはプロジェクトルートで `./build.sh`, `./tests/units.sh`, `./tests/integration.sh`。個別は `cd core/ai && cargo test` 等。
 
 ---
 
@@ -110,8 +110,8 @@ usecase モジュール（`core/ai/src/usecase/`, `core/aish/src/usecase/`）で
 
 ## 参照
 
-- 結合テスト: `./test_integration.sh`（作業前後に必須）
-- 単体テスト: `./test.sh`
+- 結合テスト: `./tests/integration.sh`（作業前後に必須）
+- 単体テスト: `./tests/units.sh`
 - 既知のバグ: `BUGS.md`
 - サブプロジェクト: `tools/aish-capture/AGENTS.md` 等
 

@@ -97,6 +97,15 @@ impl AiUseCase {
         self.profile_lister.list_profiles()
     }
 
+    /// 有効なツール一覧を返す（名前と説明）。プロバイダごとの有効/無効は未対応のため常に全ツール。
+    /// 表示は CLI の責務のため、usecase はデータのみ返す。
+    pub fn list_tools(&self) -> Vec<(String, String)> {
+        self.tools
+            .iter()
+            .map(|t| (t.name().to_string(), t.description().to_string()))
+            .collect()
+    }
+
     fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {
         let args = vec![
             "-s".to_string(),

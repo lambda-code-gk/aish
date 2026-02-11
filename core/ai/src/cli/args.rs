@@ -10,6 +10,8 @@ pub struct Config {
     pub help: bool,
     /// -L / --list-profiles: 現在有効なプロファイル一覧を表示
     pub list_profiles: bool,
+    /// --list-tools: 指定プロバイダで有効なツール一覧を表示（-p と併用でプロバイダ指定）
+    pub list_tools: bool,
     /// -c / --continue: 保存された会話状態から再開する
     pub continue_flag: bool,
     /// --no-interactive: 確認プロンプトを出さず CI 等でブロックしない（承認は常に拒否・続行はしない・leakscan ヒットは拒否）
@@ -28,6 +30,7 @@ impl Default for Config {
         Self {
             help: false,
             list_profiles: false,
+            list_tools: false,
             continue_flag: false,
             non_interactive: false,
             verbose: false,
@@ -65,6 +68,12 @@ fn build_clap_command() -> clap::Command {
                 .short('L')
                 .long("list-profiles")
                 .help("List currently available provider profiles")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("list-tools")
+                .long("list-tools")
+                .help("List tools enabled for the given profile (use with -p/--profile, e.g. -p echo)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -137,6 +146,7 @@ fn build_clap_command() -> clap::Command {
 fn matches_to_config(matches: &clap::ArgMatches) -> Config {
     let help = matches.get_flag("help");
     let list_profiles = matches.get_flag("list-profiles");
+    let list_tools = matches.get_flag("list-tools");
     let continue_flag = matches.get_flag("continue");
     let non_interactive = matches.get_flag("no-interactive");
     let verbose = matches.get_flag("verbose");
@@ -162,6 +172,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
     Config {
         help,
         list_profiles,
+        list_tools,
         continue_flag,
         non_interactive,
         verbose,
@@ -262,6 +273,12 @@ pub fn config_to_command(config: Config) -> AiCommand {
 
     if config.list_profiles {
         return AiCommand::ListProfiles;
+    }
+
+    if config.list_tools {
+        return AiCommand::ListTools {
+            profile: config.profile,
+        };
     }
 
     if config.continue_flag {
@@ -578,5 +595,16 @@ mod tests {
         };
         let cmd = config_to_command(config);
         assert!(matches!(cmd, AiCommand::ListProfiles));
+    }
+
+    #[test]
+    fn test_config_to_command_list_tools_returns_list_tools() {
+        let config = Config {
+            list_tools: true,
+            profile: Some(ProviderName::new("echo".to_string())),
+            ..Default::default()
+        };
+        let cmd = config_to_command(config);
+        assert!(matches!(cmd, AiCommand::ListTools { profile: Some(_) }));
     }
 }

@@ -12,8 +12,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # プロジェクトルートの取得
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # テスト用のディレクトリ
 TEST_DIR=$(mktemp -d)
@@ -47,10 +46,9 @@ log_skip() {
 }
 
 test_case() {
-    local name="$1"
     echo ""
     echo "========================================="
-    echo "Test: $name"
+    echo "Test: $1"
     echo "========================================="
 }
 
@@ -72,14 +70,15 @@ build_binary() {
         return 1
     fi
     
-    cd "$project_path"
-    if [ "$BUILD_MODE" == "debug" ]; then
-        cargo build >&2
-    else
-        cargo build --release >&2
-    fi
-    
-    cd "$PROJECT_ROOT"
+    # プロジェクトディレクトリに移動してビルド
+    (
+        cd "$project_path"
+        if [ "$BUILD_MODE" == "debug" ]; then
+            cargo build >&2
+        else
+            cargo build --release >&2
+        fi
+    )
     
     local binary_path="$project_path/target/$TARGET_DIR/$binary_name"
     if [ ! -f "$binary_path" ]; then
@@ -104,7 +103,6 @@ check_provider_available() {
             [ -n "${SAKURA_API_KEY:-}" ]
             ;;
         echo)
-            # Echoプロバイダは常に利用可能
             return 0
             ;;
         *)
@@ -121,16 +119,8 @@ test_provider_e2e() {
     
     test_case "$test_name"
     
-    # APIキーの確認
     if ! check_provider_available "$provider"; then
-        local env_var
-        case "$provider" in
-            gemini) env_var="GEMINI_API_KEY" ;;
-            gpt|openai) env_var="OPENAI_API_KEY" ;;
-            sakura-qwen) env_var="SAKURA_API_KEY" ;;
-            *) env_var="(unknown)" ;;
-        esac
-        log_skip "Skipping $provider: $env_var is not set"
+        log_skip "Skipping $provider: API key is not set"
         TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
         SKIPPED_TESTS+=("$provider (API key not set)")
         return 0
@@ -141,12 +131,10 @@ test_provider_e2e() {
     local output_file="$TEST_DIR/e2e_${provider}.stdout"
     local error_file="$TEST_DIR/e2e_${provider}.stderr"
     
-    # タイムアウト付きで実行（30秒）
     if timeout 30 "$binary_path" -p "$provider" 'say hello' > "$output_file" 2> "$error_file"; then
         local output
         output=$(cat "$output_file")
         
-        # 出力が空でないことを確認
         if [ -n "$output" ]; then
             log_info "✓ $provider: Response received"
             log_info "  Response preview: ${output:0:100}..."
@@ -167,8 +155,6 @@ test_provider_e2e() {
             FAILED_TESTS+=("$provider (timeout)")
         else
             log_error "✗ $provider: Command failed (exit code: $exit_code)"
-            echo "--- stdout ---"
-            cat "$output_file"
             echo "--- stderr ---"
             cat "$error_file"
             TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -178,7 +164,6 @@ test_provider_e2e() {
     fi
 }
 
-# メイン実行
 main() {
     echo "========================================="
     echo "E2E Test Suite"
@@ -199,28 +184,14 @@ main() {
     log_info "Binary path: $binary_path"
     echo ""
     
-    # 環境変数の状態を表示
-    log_info "Checking API keys..."
-    [ -n "${GEMINI_API_KEY:-}" ] && log_info "  GEMINI_API_KEY: set" || log_warn "  GEMINI_API_KEY: not set"
-    [ -n "${OPENAI_API_KEY:-}" ] && log_info "  OPENAI_API_KEY: set" || log_warn "  OPENAI_API_KEY: not set"
-    echo ""
-    
-    # 各プロバイダでテスト実行
+    # テスト実行
     log_info "Running E2E tests..."
-    
-    # Echo プロバイダ（常に利用可能）
     test_provider_e2e "$binary_path" "echo" || true
-    
-    # Gemini プロバイダ
     test_provider_e2e "$binary_path" "gemini" || true
-    
-    # GPT プロバイダ
     test_provider_e2e "$binary_path" "gpt" || true
-    
-    # Sakura-Qwen プロバイダ
     test_provider_e2e "$binary_path" "sakura-qwen" || true
     
-    # 結果サマリー
+    # 結果表示
     echo ""
     echo "========================================="
     echo "E2E Test Summary"
@@ -230,37 +201,11 @@ main() {
     echo "Skipped: $TESTS_SKIPPED"
     echo "Total:   $((TESTS_PASSED + TESTS_FAILED + TESTS_SKIPPED))"
     
-    if [ ${#SKIPPED_TESTS[@]} -gt 0 ]; then
-        echo ""
-        log_warn "Skipped tests:"
-        for skipped_test in "${SKIPPED_TESTS[@]}"; do
-            echo "  - $skipped_test"
-        done
-    fi
-    
-    if [ ${#FAILED_TESTS[@]} -gt 0 ]; then
-        echo ""
-        log_error "Failed tests:"
-        for failed_test in "${FAILED_TESTS[@]}"; do
-            echo "  - $failed_test"
-        done
-    fi
-    
-    # 少なくとも1つのテストが実行されたことを確認
-    if [ $((TESTS_PASSED + TESTS_FAILED)) -eq 0 ]; then
-        echo ""
-        log_warn "No tests were executed (all skipped due to missing API keys)"
-        log_warn "Set GEMINI_API_KEY and/or OPENAI_API_KEY to run E2E tests"
-        exit 0
-    fi
-    
     if [ $TESTS_FAILED -eq 0 ]; then
-        echo ""
-        log_info "All executed E2E tests passed! ✓"
+        log_info "\nAll executed E2E tests passed! ✓"
         exit 0
     else
-        echo ""
-        log_error "Some E2E tests failed. ✗"
+        log_error "\nSome E2E tests failed. ✗"
         exit 1
     fi
 }

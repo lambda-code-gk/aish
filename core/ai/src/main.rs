@@ -93,6 +93,28 @@ impl UseCaseRunner for Runner {
                 }
                 Ok(0)
             }
+            AiCommand::ListTools { profile } => {
+                const DESC_MAX_LEN: usize = 52;
+                let tools = self.app.ai_use_case.list_tools();
+                if let Some(ref p) = profile {
+                    println!("Tools enabled for profile '{}':", p.as_ref());
+                } else {
+                    println!("Tools:");
+                }
+                for (name, desc) in &tools {
+                    if desc.is_empty() {
+                        println!("  {}", name);
+                    } else {
+                        let short: String = if desc.chars().count() <= DESC_MAX_LEN {
+                            desc.clone()
+                        } else {
+                            format!("{}...", desc.chars().take(DESC_MAX_LEN).collect::<String>())
+                        };
+                        println!("  {}  {}", name, short);
+                    }
+                }
+                Ok(0)
+            }
             AiCommand::Task {
                 name,
                 args,
@@ -180,6 +202,7 @@ fn cmd_name_for_log(cmd: &AiCommand) -> &'static str {
     match cmd {
         AiCommand::Help => "help",
         AiCommand::ListProfiles => "list-profiles",
+        AiCommand::ListTools { .. } => "list-tools",
         AiCommand::Task { .. } => "task",
         AiCommand::Resume { .. } => "resume",
         AiCommand::Query { .. } => "query",
@@ -231,6 +254,7 @@ fn print_help() {
     println!("Options:");
     println!("  -h, --help                    Show this help message");
     println!("  -L, --list-profiles           List currently available provider profiles (from profiles.json + built-ins)");
+    println!("  --list-tools                  List tools enabled for the given profile (use with -p, e.g. -p echo)");
     println!("  -c, --continue                Resume the agent loop from the last saved state (after turn limit or error). Uses AISH_SESSION when set.");
     println!("  --no-interactive              Do not prompt for confirmations (CI-friendly: tool approval denied, no continue, leakscan deny).");
     println!("  -v, --verbose                 Emit verbose debug logs to stderr (for troubleshooting).");

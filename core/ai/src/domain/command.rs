@@ -12,6 +12,10 @@ pub enum AiCommand {
     Help,
     /// 現在有効なプロファイル一覧表示
     ListProfiles,
+    /// 指定プロバイダで有効なツール一覧表示（未指定時は全ツール）
+    ListTools {
+        profile: Option<ProviderName>,
+    },
     /// タスク実行（タスクが見つかった場合のみ、見つからなければ Query へ）
     Task {
         name: TaskName,

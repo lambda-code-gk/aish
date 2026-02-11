@@ -3,6 +3,9 @@
 # 失敗時は "Architecture violation: ..." を表示して exit 1
 
 set -e
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 USECASE_DIRS="core/ai/src/usecase core/aish/src/usecase"
 MAIN_FILES="core/ai/src/main.rs core/aish/src/main.rs"
 PORTS_DIRS="core/ai/src/ports core/aish/src/ports"

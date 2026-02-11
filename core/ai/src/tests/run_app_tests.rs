@@ -118,3 +118,16 @@ fn test_run_app_with_unknown_profile() {
     assert!(err.to_string().contains("Unknown provider"));
     assert_eq!(err.exit_code(), 64);
 }
+
+#[test]
+fn test_run_app_list_tools_echo() {
+    // echo プロバイダで有効なツール一覧を表示（ネットワーク不要）
+    let config = Config {
+        list_tools: true,
+        profile: Some(ProviderName::new("echo")),
+        ..Default::default()
+    };
+    let result = run_app(config);
+    assert!(result.is_ok(), "list-tools with profile echo should succeed");
+    assert_eq!(result.unwrap(), 0);
+}
