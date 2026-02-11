@@ -29,7 +29,7 @@ else
 fi
 
 # 簡易アーキテクチャチェック
-./test_architecture.sh
+"$SCRIPT_DIR/tests/architecture.sh"
 rg "crate::adapter" core/**/src/usecase && (echo "illigal dependency" ; exit 1)
 rg "crate::cli" core/**/src/usecase && (echo "illigal dependency" ; exit 1)
 
