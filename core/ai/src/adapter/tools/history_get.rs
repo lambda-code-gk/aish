@@ -96,8 +96,12 @@ impl Tool for HistoryGetTool {
         }
 
         if selected.len() > limit {
-            let keep_from = selected.len() - limit;
-            selected = selected.split_off(keep_from);
+            if after_id.is_some() {
+                selected.truncate(limit);
+            } else {
+                let keep_from = selected.len() - limit;
+                selected = selected.split_off(keep_from);
+            }
         }
 
         let mut out = Vec::new();
@@ -204,6 +208,66 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0]["id"].as_str(), Some("001"));
         assert_eq!(msgs[1]["id"].as_str(), Some("002"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn prepare_session_four_messages(suffix: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("history_get_tool_4_{}_{}", std::process::id(), suffix));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (id, role, content) in [
+            ("001", "user", "u1"),
+            ("002", "assistant", "a2"),
+            ("003", "user", "u3"),
+            ("004", "assistant", "a4"),
+        ] {
+            let f = format!("reviewed_{}_{}.txt", id, role);
+            std::fs::write(dir.join(&f), content).unwrap();
+        }
+        let manifest = "\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"a\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"b\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t3\",\"id\":\"003\",\"role\":\"user\",\"part_path\":\"part_003_user.txt\",\"reviewed_path\":\"reviewed_003_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"c\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t4\",\"id\":\"004\",\"role\":\"assistant\",\"part_path\":\"part_004_assistant.txt\",\"reviewed_path\":\"reviewed_004_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"d\"}\n";
+        std::fs::write(dir.join("manifest.jsonl"), manifest).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_history_get_after_id_returns_first_limit() {
+        let tool = HistoryGetTool::new();
+        let dir = prepare_session_four_messages("after");
+        let ctx = ToolContext::new(Some(dir.clone()));
+        let r = tool
+            .call(serde_json::json!({
+                "after_id": "001",
+                "limit": 2,
+                "role": "any"
+            }), &ctx)
+            .unwrap();
+        let msgs = r["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2, "after_id should return first 2 after 001");
+        assert_eq!(msgs[0]["id"].as_str(), Some("002"));
+        assert_eq!(msgs[1]["id"].as_str(), Some("003"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_history_get_before_id_returns_last_limit() {
+        let tool = HistoryGetTool::new();
+        let dir = prepare_session_four_messages("before");
+        let ctx = ToolContext::new(Some(dir.clone()));
+        let r = tool
+            .call(serde_json::json!({
+                "before_id": "004",
+                "limit": 2,
+                "role": "any"
+            }), &ctx)
+            .unwrap();
+        let msgs = r["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2, "before_id should return last 2 before 004");
+        assert_eq!(msgs[0]["id"].as_str(), Some("002"));
+        assert_eq!(msgs[1]["id"].as_str(), Some("003"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }
