@@ -6,6 +6,7 @@ use crate::ports::outbound::SessionHistoryLoader;
 use common::domain::SessionDir;
 use common::error::Error;
 use common::ports::outbound::FileSystem;
+use common::safe_session_path::{is_safe_reviewed_path, is_safe_summary_basename, resolve_under_session_dir, REVIEWED_DIR};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -40,9 +41,13 @@ impl HistoryViewStrategy for ManifestTailCompactionViewStrategy {
 
         if let Some(oldest_id) = oldest_tail_id {
             if let Some(comp) = latest_compaction_before(&records, &oldest_id) {
-                let summary_path = dir.join(&comp.summary_path);
-                if let Ok(summary) = fs.read_to_string(&summary_path) {
-                    history.push_assistant(summary);
+                if is_safe_summary_basename(&comp.summary_path) {
+                    let summary_path = dir.join(&comp.summary_path);
+                    if let Some(safe_path) = resolve_under_session_dir(dir, &summary_path) {
+                        if let Ok(summary) = fs.read_to_string(&safe_path) {
+                            history.push_assistant(summary);
+                        }
+                    }
                 }
             }
         }
@@ -51,15 +56,21 @@ impl HistoryViewStrategy for ManifestTailCompactionViewStrategy {
             let Some(msg) = rec.message() else {
                 continue;
             };
+            if !is_safe_reviewed_path(&msg.reviewed_path) {
+                continue;
+            }
             let reviewed_path = dir.join(&msg.reviewed_path);
-            match fs.read_to_string(&reviewed_path) {
+            let Some(safe_path) = resolve_under_session_dir(dir, &reviewed_path) else {
+                continue;
+            };
+            match fs.read_to_string(&safe_path) {
                 Ok(content) => match msg.role {
                     ManifestRole::User => history.push_user(content),
                     ManifestRole::Assistant => history.push_assistant(content),
                 },
                 Err(e) => eprintln!(
                     "Warning: Failed to read reviewed file '{}': {}",
-                    reviewed_path.display(),
+                    safe_path.display(),
                     e
                 ),
             }
@@ -78,8 +89,12 @@ impl HistoryViewStrategy for ReviewedTailViewStrategy {
         dir: &Path,
         load_max: usize,
     ) -> Result<History, Error> {
+        let reviewed_dir = dir.join(REVIEWED_DIR);
+        if !fs.exists(&reviewed_dir) {
+            return Ok(History::new());
+        }
         let mut reviewed_files: Vec<PathBuf> = fs
-            .read_dir(dir)?
+            .read_dir(&reviewed_dir)?
             .into_iter()
             .filter(|path| {
                 path.file_name()

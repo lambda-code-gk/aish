@@ -8,6 +8,7 @@ use crate::ports::outbound::SessionHistoryLoader;
 use common::domain::SessionDir;
 use common::error::Error;
 use common::ports::outbound::FileSystem;
+use common::safe_session_path::REVIEWED_DIR;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,9 +38,13 @@ impl SessionHistoryLoader for ReviewedSessionStorage {
         {
             return Ok(History::new());
         }
+        let reviewed_dir = session_dir.as_ref().join(REVIEWED_DIR);
+        if !self.fs.exists(&reviewed_dir) {
+            return Ok(History::new());
+        }
         let mut reviewed_files: Vec<PathBuf> = self
             .fs
-            .read_dir(session_dir.as_ref())?
+            .read_dir(&reviewed_dir)?
             .into_iter()
             .filter(|path| {
                 path.file_name()

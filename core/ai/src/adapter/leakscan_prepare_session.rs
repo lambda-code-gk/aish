@@ -13,6 +13,7 @@ use common::domain::SessionDir;
 use common::error::Error;
 use common::ports::outbound::now_iso8601;
 use common::ports::outbound::FileSystem;
+use common::safe_session_path::REVIEWED_DIR;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -232,18 +233,23 @@ impl LeakscanPrepareSession {
             }
         };
 
-        let reviewed_name = reviewed_filename(&id, role);
-        let reviewed_path = session_dir.join(&reviewed_name);
+        let reviewed_basename = reviewed_filename(&id, role);
+        let reviewed_subdir = session_dir.join(REVIEWED_DIR);
+        if !self.fs.exists(&reviewed_subdir) {
+            self.fs.create_dir_all(&reviewed_subdir)?;
+        }
+        let reviewed_path = reviewed_subdir.join(&reviewed_basename);
         self.fs.write(&reviewed_path, &content_for_reviewed)?;
         self.fs.rename(part_path, &dest_part_in_evacuated)?;
 
+        let reviewed_path_in_manifest = format!("{}/{}", REVIEWED_DIR, reviewed_basename);
         let rec = ManifestRecordV1::Message(MessageRecordV1 {
             v: 1,
             ts: now_iso8601(),
             id,
             role: role_from_str(role)?,
             part_path: name.to_string(),
-            reviewed_path: reviewed_name,
+            reviewed_path: reviewed_path_in_manifest,
             decision,
             bytes: content_for_reviewed.len() as u64,
             hash64: hash64(&content_for_reviewed),
@@ -364,7 +370,7 @@ mod tests {
         let session_dir_ref = common::domain::SessionDir::new(session_dir.clone());
         prep.prepare(&session_dir_ref).unwrap();
 
-        let reviewed_path = session_dir.join("reviewed_ABC12_user.txt");
+        let reviewed_path = session_dir.join(REVIEWED_DIR).join("reviewed_ABC12_user.txt");
         assert!(fs.exists(&reviewed_path), "reviewed file should exist");
         let reviewed_content = std::fs::read_to_string(&reviewed_path).unwrap();
         assert_eq!(reviewed_content, DENY_PLACEHOLDER_CONTENT);
@@ -381,6 +387,6 @@ mod tests {
         assert_eq!(first.id, "ABC12");
         assert_eq!(first.role, ManifestRole::User);
         assert_eq!(first.decision, ManifestDecision::Deny);
-        assert_eq!(first.reviewed_path, "reviewed_ABC12_user.txt");
+        assert_eq!(first.reviewed_path, "reviewed/reviewed_ABC12_user.txt");
     }
 }

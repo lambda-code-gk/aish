@@ -20,6 +20,9 @@ pub mod msg;
 /// Part ID生成（固定長・辞書順＝時系列）
 pub mod part_id;
 
+/// セッション配下パス検証（パストラバーサル対策）
+pub mod safe_session_path;
+
 /// Ports & Adapters のポート定義（inbound / outbound）
 pub mod ports;
 

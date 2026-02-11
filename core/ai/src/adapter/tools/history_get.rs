@@ -1,6 +1,7 @@
 //! 履歴取得ツール（manifest + reviewed）
 
 use crate::domain::{parse_lines, ManifestRole};
+use common::safe_session_path::{is_safe_reviewed_path, is_safe_summary_basename, resolve_under_session_dir};
 use common::tool::{Tool, ToolContext, ToolError};
 use serde_json::Value;
 
@@ -113,23 +114,39 @@ impl Tool for HistoryGetTool {
                     .filter(|c| c.to_id.as_str() < first.id.as_str())
                     .last()
                 {
-                    let summary_path = session_dir.join(&comp.summary_path);
-                    if let Ok(summary) = std::fs::read_to_string(&summary_path) {
-                        out.push(serde_json::json!({
-                            "id": format!("compaction:{}:{}", comp.from_id, comp.to_id),
-                            "role": "assistant",
-                            "ts": comp.ts,
-                            "content": summary
-                        }));
+                    if is_safe_summary_basename(&comp.summary_path) {
+                        let summary_path = session_dir.join(&comp.summary_path);
+                        if let Some(safe_path) = resolve_under_session_dir(&session_dir, &summary_path) {
+                            if let Ok(summary) = std::fs::read_to_string(&safe_path) {
+                                out.push(serde_json::json!({
+                                    "id": format!("compaction:{}:{}", comp.from_id, comp.to_id),
+                                    "role": "assistant",
+                                    "ts": comp.ts,
+                                    "content": summary
+                                }));
+                            }
+                        }
                     }
                 }
             }
         }
 
         for msg in selected {
+            if !is_safe_reviewed_path(&msg.reviewed_path) {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "invalid or unsafe reviewed_path: {}",
+                    msg.reviewed_path
+                )));
+            }
             let reviewed_path = session_dir.join(&msg.reviewed_path);
-            let content = std::fs::read_to_string(&reviewed_path).map_err(|e| {
-                ToolError::ExecutionFailed(format!("{}: {}", reviewed_path.display(), e))
+            let safe_path = resolve_under_session_dir(&session_dir, &reviewed_path).ok_or_else(|| {
+                ToolError::ExecutionFailed(format!(
+                    "reviewed_path not under session dir: {}",
+                    msg.reviewed_path
+                ))
+            })?;
+            let content = std::fs::read_to_string(&safe_path).map_err(|e| {
+                ToolError::ExecutionFailed(format!("{}: {}", safe_path.display(), e))
             })?;
             out.push(serde_json::json!({
                 "id": msg.id,
@@ -180,11 +197,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("history_get_tool_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("reviewed_001_user.txt"), "u1").unwrap();
-        std::fs::write(dir.join("reviewed_002_assistant.txt"), "a2").unwrap();
+        let reviewed_dir = dir.join("reviewed");
+        std::fs::create_dir_all(&reviewed_dir).unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_001_user.txt"), "u1").unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_002_assistant.txt"), "a2").unwrap();
         std::fs::write(dir.join("manifest.jsonl"), "\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"aa\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"bb\"}\n").unwrap();
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed/reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"aa\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed/reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"bb\"}\n").unwrap();
         dir
     }
 
@@ -215,6 +234,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("history_get_tool_4_{}_{}", std::process::id(), suffix));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        let reviewed_dir = dir.join("reviewed");
+        std::fs::create_dir_all(&reviewed_dir).unwrap();
         for (id, role, content) in [
             ("001", "user", "u1"),
             ("002", "assistant", "a2"),
@@ -222,13 +243,13 @@ mod tests {
             ("004", "assistant", "a4"),
         ] {
             let f = format!("reviewed_{}_{}.txt", id, role);
-            std::fs::write(dir.join(&f), content).unwrap();
+            std::fs::write(reviewed_dir.join(&f), content).unwrap();
         }
         let manifest = "\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"a\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"b\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t3\",\"id\":\"003\",\"role\":\"user\",\"part_path\":\"part_003_user.txt\",\"reviewed_path\":\"reviewed_003_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"c\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t4\",\"id\":\"004\",\"role\":\"assistant\",\"part_path\":\"part_004_assistant.txt\",\"reviewed_path\":\"reviewed_004_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"d\"}\n";
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed/reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"a\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed/reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"b\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t3\",\"id\":\"003\",\"role\":\"user\",\"part_path\":\"part_003_user.txt\",\"reviewed_path\":\"reviewed/reviewed_003_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"c\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t4\",\"id\":\"004\",\"role\":\"assistant\",\"part_path\":\"part_004_assistant.txt\",\"reviewed_path\":\"reviewed/reviewed_004_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"d\"}\n";
         std::fs::write(dir.join("manifest.jsonl"), manifest).unwrap();
         dir
     }

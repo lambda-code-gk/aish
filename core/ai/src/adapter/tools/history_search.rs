@@ -1,6 +1,7 @@
 //! 履歴検索ツール（manifest + reviewed）
 
 use crate::domain::{parse_lines, ManifestRole};
+use common::safe_session_path::{is_safe_reviewed_path, resolve_under_session_dir};
 use common::tool::{Tool, ToolContext, ToolError};
 use serde_json::Value;
 
@@ -82,8 +83,14 @@ impl Tool for HistorySearchTool {
             if !role_filter.matches(msg.role) {
                 continue;
             }
+            if !is_safe_reviewed_path(&msg.reviewed_path) {
+                continue;
+            }
             let reviewed_path = session_dir.join(&msg.reviewed_path);
-            let content = match std::fs::read_to_string(&reviewed_path) {
+            let Some(safe_path) = resolve_under_session_dir(&session_dir, &reviewed_path) else {
+                continue;
+            };
+            let content = match std::fs::read_to_string(&safe_path) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -168,11 +175,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("history_search_tool_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("reviewed_001_user.txt"), "The quick brown fox").unwrap();
-        std::fs::write(dir.join("reviewed_002_assistant.txt"), "Jumps over lazy dog").unwrap();
+        let reviewed_dir = dir.join("reviewed");
+        std::fs::create_dir_all(&reviewed_dir).unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_001_user.txt"), "The quick brown fox").unwrap();
+        std::fs::write(reviewed_dir.join("reviewed_002_assistant.txt"), "Jumps over lazy dog").unwrap();
         std::fs::write(dir.join("manifest.jsonl"), "\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":19,\"hash64\":\"aa\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":19,\"hash64\":\"bb\"}\n").unwrap();
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed/reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":19,\"hash64\":\"aa\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed/reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":19,\"hash64\":\"bb\"}\n").unwrap();
         dir
     }
 

@@ -43,9 +43,11 @@ fn test_load_reviewed_from_reviewed_files() {
     let session_dir = SessionDir::new(session_path.clone());
 
     // ID は辞書順＝時系列のため、001 < 002 < 003 の順で並ぶ
-    let r1 = session_path.join("reviewed_ABC12001_user.txt");
-    let r2 = session_path.join("reviewed_ABC12002_assistant.txt");
-    let r3 = session_path.join("reviewed_ABC12003_user.txt");
+    let reviewed_dir = session_path.join("reviewed");
+    fs::create_dir_all(&reviewed_dir).unwrap();
+    let r1 = reviewed_dir.join("reviewed_ABC12001_user.txt");
+    let r2 = reviewed_dir.join("reviewed_ABC12002_assistant.txt");
+    let r3 = reviewed_dir.join("reviewed_ABC12003_user.txt");
     fs::write(&r1, "First user").unwrap();
     fs::write(&r2, "Assistant reply").unwrap();
     fs::write(&r3, "Second user").unwrap();
@@ -76,8 +78,9 @@ fn test_load_reviewed_ignores_part_files() {
     }
     fs::create_dir_all(&session_path).unwrap();
     let session_dir = SessionDir::new(session_path.clone());
-
-    let reviewed_file = session_path.join("reviewed_XYZ99999_user.txt");
+    let reviewed_dir = session_path.join("reviewed");
+    fs::create_dir_all(&reviewed_dir).unwrap();
+    let reviewed_file = reviewed_dir.join("reviewed_XYZ99999_user.txt");
     let part_file = session_path.join("part_ABC12xyz_user.txt");
     fs::write(&reviewed_file, "Reviewed content").unwrap();
     fs::write(&part_file, "Part content (should be ignored)").unwrap();

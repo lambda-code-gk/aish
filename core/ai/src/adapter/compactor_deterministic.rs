@@ -5,6 +5,7 @@ use crate::domain::{ManifestRecordV1, ManifestRole};
 use crate::domain::manifest::CompactionRecordV1;
 use common::error::Error;
 use common::ports::outbound::{now_iso8601, FileSystem};
+use common::safe_session_path::{is_safe_reviewed_path, resolve_under_session_dir};
 use std::path::Path;
 
 const DEFAULT_TRIGGER_MESSAGES: usize = 200;
@@ -87,9 +88,14 @@ fn build_summary(
     let mut lines = Vec::new();
     lines.push("# Compaction summary (deterministic)".to_string());
     for msg in selected {
-        let body = fs
-            .read_to_string(&session_dir.join(&msg.reviewed_path))
-            .unwrap_or_else(|_| "[unreadable reviewed content]".to_string());
+        let body = if is_safe_reviewed_path(&msg.reviewed_path) {
+            let joined = session_dir.join(&msg.reviewed_path);
+            resolve_under_session_dir(session_dir, &joined)
+                .and_then(|safe_path| fs.read_to_string(&safe_path).ok())
+        } else {
+            None
+        }
+        .unwrap_or_else(|| "[unreadable reviewed content]".to_string());
         let first_line = body.lines().next().unwrap_or("").trim();
         let short = truncate_chars(first_line, MAX_BULLET_CHARS);
         let role = match msg.role {
@@ -138,15 +144,17 @@ mod tests {
         std::env::set_var("AISH_COMPACTION_TRIGGER_MESSAGES", "2");
         std::env::set_var("AISH_COMPACTION_CHUNK_MESSAGES", "2");
 
-        fs.write(&dir.join("reviewed_001_user.txt"), "u1\nbody").unwrap();
-        fs.write(&dir.join("reviewed_002_assistant.txt"), "a2").unwrap();
-        fs.write(&dir.join("reviewed_003_user.txt"), "u3").unwrap();
+        let reviewed_dir = dir.join("reviewed");
+        fs.create_dir_all(&reviewed_dir).unwrap();
+        fs.write(&reviewed_dir.join("reviewed_001_user.txt"), "u1\nbody").unwrap();
+        fs.write(&reviewed_dir.join("reviewed_002_assistant.txt"), "a2").unwrap();
+        fs.write(&reviewed_dir.join("reviewed_003_user.txt"), "u3").unwrap();
         fs.write(
             &dir.join("manifest.jsonl"),
             "\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"aa\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"bb\"}\n\
-{\"kind\":\"message\",\"v\":1,\"ts\":\"t3\",\"id\":\"003\",\"role\":\"user\",\"part_path\":\"part_003_user.txt\",\"reviewed_path\":\"reviewed_003_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"cc\"}\n",
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t1\",\"id\":\"001\",\"role\":\"user\",\"part_path\":\"part_001_user.txt\",\"reviewed_path\":\"reviewed/reviewed_001_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"aa\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t2\",\"id\":\"002\",\"role\":\"assistant\",\"part_path\":\"part_002_assistant.txt\",\"reviewed_path\":\"reviewed/reviewed_002_assistant.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"bb\"}\n\
+{\"kind\":\"message\",\"v\":1,\"ts\":\"t3\",\"id\":\"003\",\"role\":\"user\",\"part_path\":\"part_003_user.txt\",\"reviewed_path\":\"reviewed/reviewed_003_user.txt\",\"decision\":\"allow\",\"bytes\":2,\"hash64\":\"cc\"}\n",
         )
         .unwrap();
 
