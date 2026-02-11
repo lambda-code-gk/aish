@@ -101,6 +101,7 @@ pub fn run_shell(
     pty_spawn: &dyn PtySpawn,
 ) -> Result<i32, Error> {
     let log_file_path = session_dir.join("console.txt");
+    let mute_flag_path = session_dir.join("console.muted");
 
     let mut log_file = fs.open_append(&log_file_path)?;
 
@@ -183,7 +184,7 @@ pub fn run_shell(
         match pty.wait_nonblocking() {
             Ok(Some(status)) => {
                 let output = terminal_buffer.output();
-                if !output.is_empty() {
+                if !output.is_empty() && !fs.exists(&mute_flag_path) {
                     let _ = log_file.write_all(output.as_bytes());
                     let _ = log_file.write_all(b"\n");
                     let _ = log_file.flush();
@@ -275,7 +276,7 @@ pub fn run_shell(
                     while wait_count < 20 {
                         if let Ok(Some(status)) = pty.wait_nonblocking() {
                             let output = terminal_buffer.output();
-                            if !output.is_empty() {
+                            if !output.is_empty() && !fs.exists(&mute_flag_path) {
                                 let _ = log_file.write_all(output.as_bytes());
                                 let _ = log_file.write_all(b"\n");
                                 let _ = log_file.flush();
@@ -290,7 +291,7 @@ pub fn run_shell(
                         wait_count += 1;
                     }
                     let output = terminal_buffer.output();
-                    if !output.is_empty() {
+                    if !output.is_empty() && !fs.exists(&mute_flag_path) {
                         let _ = log_file.write_all(output.as_bytes());
                         let _ = log_file.write_all(b"\n");
                         let _ = log_file.flush();

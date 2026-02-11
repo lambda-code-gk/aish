@@ -1,10 +1,20 @@
 pub(crate) mod app;
 pub(crate) mod clear;
+pub(crate) mod rollout;
+pub(crate) mod resume;
 pub(crate) mod shell;
+pub(crate) mod sessions;
 pub(crate) mod sysq;
 pub(crate) mod truncate_console_log;
+pub(crate) mod mute;
+pub(crate) mod unmute;
 
 pub(crate) use clear::ClearUseCase;
+pub(crate) use rollout::RolloutUseCase;
+pub(crate) use resume::ResumeUseCase;
 pub(crate) use shell::ShellUseCase;
+pub(crate) use sessions::SessionsUseCase;
 pub(crate) use sysq::SysqUseCase;
 pub(crate) use truncate_console_log::TruncateConsoleLogUseCase;
+pub(crate) use mute::MuteUseCase;
+pub(crate) use unmute::UnmuteUseCase;

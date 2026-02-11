@@ -59,18 +59,35 @@ impl<'a, F: FileSystem + ?Sized, I: IdGenerator + ?Sized> ConsoleLogHandler<'a, 
         buffer_output: &str,
         mut log_file: Box<dyn Write + Send>,
     ) -> Result<Box<dyn Write + Send>, Error> {
+        // ミュートフラグ（console.muted）が存在する場合は、console.txt への記録や
+        // part ファイルへのロールオーバー / truncate を行わない。
+        let muted = {
+            let mute_flag_path = self.session_dir.join("console.muted");
+            self.fs.exists(&mute_flag_path)
+        };
+
         match event {
             SessionEvent::SigUsr1 => {
-                if !buffer_output.is_empty() {
-                    log_file.write_all(buffer_output.as_bytes())?;
-                    log_file.flush()?;
+                if muted {
+                    // ミュート中はバッファのフラッシュやロールオーバーを行わない
+                    return Ok(log_file);
+                } else {
+                    if !buffer_output.is_empty() {
+                        log_file.write_all(buffer_output.as_bytes())?;
+                        log_file.flush()?;
+                    }
+                    drop(log_file);
+                    rollover_log_file(self.log_file_path, self.session_dir, self.fs, self.id_gen)?;
                 }
-                drop(log_file);
-                rollover_log_file(self.log_file_path, self.session_dir, self.fs, self.id_gen)?;
             }
             SessionEvent::SigUsr2 => {
-                drop(log_file);
-                self.fs.truncate_file(self.log_file_path)?;
+                if muted {
+                    // ミュート中は truncate も行わない
+                    return Ok(log_file);
+                } else {
+                    drop(log_file);
+                    self.fs.truncate_file(self.log_file_path)?;
+                }
             }
             SessionEvent::SigWinch => {
                 // PTY winsize は shell 側で処理（ここでは何もしない）

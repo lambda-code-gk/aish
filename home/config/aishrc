@@ -21,8 +21,9 @@ __aish_calc_part_size() {
         return
     fi
 
-    # ミュート中はサイズを表示しない（旧実装互換）
-    if [ -f "$AISH_SESSION/mute" ]; then
+    # ミュート中はサイズを表示しない
+    # Rust 実装側では session_dir/console.muted をフラグとして使用する
+    if [ -f "$AISH_SESSION/console.muted" ]; then
         echo -n "---"
         return
     fi

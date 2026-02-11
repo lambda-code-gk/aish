@@ -1,7 +1,6 @@
 //! aish コマンドの enum（Command Pattern）
 //!
 //! 引数解析の結果を enum に落とし、match でディスパッチする。
-//! 未実装コマンドは各分岐として明示する。
 
 /// aish のサブコマンド
 ///
@@ -17,23 +16,23 @@ pub enum Command {
     /// 実装済み: コンソールバッファ・ログのロールオーバー
     TruncateConsoleLog,
 
-    // --- 未実装（usage に記載されているもの）---
-    /// 未実装: セッション再開
-    Resume,
-    /// 未実装: セッション一覧
-    Sessions,
-    /// 未実装: ロールアウト
-    Rollout,
-    /// 未実装: クリア
+    /// 実装済み: セッションのクリア
     Clear,
-    /// 未実装: 一覧表示
-    Ls,
-    /// 未実装: 最後の part 削除
-    RmLast,
-    /// 未実装: メモリ操作
-    Memory,
-    /// 未実装: モデル一覧
-    Models,
+
+    /// コンソールログのロールアウト（SIGUSR1 相当）
+    Rollout,
+
+    /// コンソールログの記録を停止（rollout 後に mute）
+    Mute,
+
+    /// コンソールログの記録を再開
+    Unmute,
+
+    /// セッション再開（resume [<id>]）
+    Resume { id: Option<String> },
+
+    /// セッション一覧
+    Sessions,
 
     /// システムプロンプト一覧（sysq list）
     SysqList,
@@ -47,8 +46,12 @@ pub enum Command {
 }
 
 impl Command {
-    /// コマンド名と引数から Command に解析する（sysq サブコマンドは args を使用）
+    /// コマンド名と引数から Command に解析する（sysq / resume は args を使用）
     pub fn parse_with_args(name: &str, args: &[String]) -> Self {
+        if name == "resume" {
+            let id = args.first().cloned();
+            return Command::Resume { id };
+        }
         if name == "sysq" {
             match args.first().map(|s| s.as_str()) {
                 Some("list") => return Command::SysqList,
@@ -67,57 +70,13 @@ impl Command {
     pub fn parse(s: &str) -> Self {
         match s {
             "truncate_console_log" => Command::TruncateConsoleLog,
-            "resume" => Command::Resume,
-            "sessions" => Command::Sessions,
-            "rollout" => Command::Rollout,
             "clear" => Command::Clear,
-            "ls" => Command::Ls,
-            "rm_last" => Command::RmLast,
-            "memory" => Command::Memory,
-            "models" => Command::Models,
+            "rollout" => Command::Rollout,
+            "mute" => Command::Mute,
+            "unmute" => Command::Unmute,
+            "resume" => Command::Resume { id: None },
+            "sessions" => Command::Sessions,
             _ => Command::Unknown(s.to_string()),
-        }
-    }
-
-    /// 未実装かどうか
-    #[allow(dead_code)] // 将来のディスパッチ簡略化で使用
-    pub fn is_unimplemented(&self) -> bool {
-        matches!(
-            self,
-            Command::Resume
-                | Command::Sessions
-                | Command::Rollout
-                | Command::Ls
-                | Command::RmLast
-                | Command::Memory
-                | Command::Models
-        )
-    }
-
-    /// 実装済みかどうか
-    #[allow(dead_code)] // 将来のディスパッチ簡略化で使用
-    pub fn is_implemented(&self) -> bool {
-        matches!(self, Command::TruncateConsoleLog | Command::Clear)
-    }
-
-    /// エラーメッセージ用の名前
-    pub fn as_str(&self) -> &str {
-        match self {
-            Command::Help => "(help)",
-            Command::Shell => "(shell)",
-            Command::TruncateConsoleLog => "truncate_console_log",
-            Command::Resume => "resume",
-            Command::Sessions => "sessions",
-            Command::Rollout => "rollout",
-            Command::Clear => "clear",
-            Command::Ls => "ls",
-            Command::RmLast => "rm_last",
-            Command::Memory => "memory",
-            Command::Models => "models",
-            Command::SysqList => "sysq list",
-            Command::SysqEnable { .. } => "sysq enable",
-            Command::SysqDisable { .. } => "sysq disable",
-            Command::Unknown(s) => s.as_str(),
         }
     }
 
@@ -136,14 +95,36 @@ mod tests {
     fn test_parse_truncate_console_log() {
         let cmd = Command::parse("truncate_console_log");
         assert_eq!(cmd, Command::TruncateConsoleLog);
-        assert!(cmd.is_implemented());
     }
 
     #[test]
-    fn test_parse_unimplemented_commands() {
-        assert_eq!(Command::parse("resume"), Command::Resume);
-        assert_eq!(Command::parse("sessions"), Command::Sessions);
-        assert!(Command::parse("resume").is_unimplemented());
+    fn test_parse_rollout() {
+        let cmd = Command::parse("rollout");
+        assert_eq!(cmd, Command::Rollout);
+    }
+
+    #[test]
+    fn test_parse_mute() {
+        let cmd = Command::parse("mute");
+        assert_eq!(cmd, Command::Mute);
+    }
+
+    #[test]
+    fn test_parse_unmute() {
+        let cmd = Command::parse("unmute");
+        assert_eq!(cmd, Command::Unmute);
+    }
+
+    #[test]
+    fn test_parse_resume() {
+        let cmd = Command::parse("resume");
+        assert_eq!(cmd, Command::Resume { id: None });
+    }
+
+    #[test]
+    fn test_parse_sessions() {
+        let cmd = Command::parse("sessions");
+        assert_eq!(cmd, Command::Sessions);
     }
 
     #[test]

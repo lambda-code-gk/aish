@@ -10,7 +10,10 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, PathResolver, Signal
 
 use crate::adapter::{StdShellRunner, StdSysqRepository, UnixPtySpawn, UnixSignal};
 use crate::ports::outbound::{ShellRunner, SysqRepository};
-use crate::usecase::{ClearUseCase, ShellUseCase, SysqUseCase, TruncateConsoleLogUseCase};
+use crate::usecase::{
+    ClearUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase, ShellUseCase,
+    SysqUseCase, TruncateConsoleLogUseCase, MuteUseCase, UnmuteUseCase,
+};
 
 /// 配線で組み立てたポート群とユースケース（main の Command ディスパッチで利用）
 #[cfg(unix)]
@@ -29,6 +32,11 @@ pub struct App {
     pub shell_use_case: ShellUseCase,
     pub clear_use_case: ClearUseCase,
     pub truncate_console_log_use_case: TruncateConsoleLogUseCase,
+    pub rollout_use_case: RolloutUseCase,
+    pub mute_use_case: MuteUseCase,
+    pub unmute_use_case: UnmuteUseCase,
+    pub resume_use_case: ResumeUseCase,
+    pub sessions_use_case: SessionsUseCase,
     /// 構造化ログ（ファイルへ JSONL）。エラー時のコンソール表示とは別。main で lifecycle/error に利用予定。
     #[allow(dead_code)]
     pub logger: Arc<dyn Log>,
@@ -63,6 +71,27 @@ pub fn wire_aish() -> App {
         Arc::clone(&fs),
         Arc::clone(&signal),
     );
+    let rollout_use_case = RolloutUseCase::new(
+        Arc::clone(&path_resolver),
+        Arc::clone(&fs),
+        Arc::clone(&signal),
+    );
+    let mute_use_case = MuteUseCase::new(
+        Arc::clone(&path_resolver),
+        Arc::clone(&fs),
+        Arc::clone(&signal),
+    );
+    let unmute_use_case = UnmuteUseCase::new(
+        Arc::clone(&path_resolver),
+        Arc::clone(&fs),
+    );
+    let resume_use_case =
+        ResumeUseCase::new(Arc::clone(&path_resolver), Arc::clone(&fs), Arc::clone(&shell_runner));
+    let sessions_use_case = SessionsUseCase::new(
+        Arc::clone(&path_resolver),
+        Arc::clone(&fs),
+        Arc::clone(&env_resolver),
+    );
     App {
         path_resolver,
         fs,
@@ -73,6 +102,11 @@ pub fn wire_aish() -> App {
         shell_use_case,
         clear_use_case,
         truncate_console_log_use_case,
+        rollout_use_case,
+        mute_use_case,
+        unmute_use_case,
+        resume_use_case,
+        sessions_use_case,
         logger,
     }
 }

@@ -36,9 +36,22 @@ impl UseCaseRunner for Runner {
             }
             Command::Shell => self.app.shell_use_case.run(&path_input),
             Command::TruncateConsoleLog => self.app.truncate_console_log_use_case.run(&path_input),
+            Command::Rollout => self.app.rollout_use_case.run(&path_input),
+            Command::Mute => self.app.mute_use_case.run(&path_input),
+            Command::Unmute => self.app.unmute_use_case.run(&path_input),
             Command::Clear => {
                 let session_explicitly_specified = is_session_explicitly_specified(&config);
                 self.app.clear_use_case.run(&path_input, session_explicitly_specified)
+            }
+            Command::Resume { id } => {
+                self.app.resume_use_case.run(&path_input, id.as_deref())
+            }
+            Command::Sessions => {
+                let ids = self.app.sessions_use_case.list(&path_input)?;
+                for id in ids {
+                    println!("{}", id);
+                }
+                Ok(0)
             }
             Command::SysqList => {
                 let entries = self.app.sysq_use_case.list()?;
@@ -53,16 +66,6 @@ impl UseCaseRunner for Runner {
                 self.app.sysq_use_case.disable(&ids)?;
                 Ok(0)
             }
-            Command::Resume
-            | Command::Sessions
-            | Command::Rollout
-            | Command::Ls
-            | Command::RmLast
-            | Command::Memory
-            | Command::Models => Err(Error::invalid_argument(format!(
-                "Command '{}' is not implemented.",
-                command.as_str()
-            ))),
             Command::Unknown(name) => Err(Error::invalid_argument(format!(
                 "Command '{}' is not implemented.",
                 name
@@ -134,12 +137,13 @@ fn print_help() {
     println!("Implemented commands:");
     println!("  clear                  Clear all part files in the session directory (delete conversation history).");
     println!("  truncate_console_log   Truncate console buffer and log file (used by ai command).");
+    println!("  rollout                Flush console buffer and rollover console log (same as sending SIGUSR1 to aish).");
+    println!("  mute                   Rollout console log and stop recording console.txt.");
+    println!("  unmute                 Resume recording console.txt.");
     println!();
     println!("  sysq list              List system prompts and their enabled state.");
     println!("  sysq enable <id>...    Enable system prompt(s).");
     println!("  sysq disable <id>...   Disable system prompt(s).");
-    println!();
-    println!("Not yet implemented: resume, sessions, rollout, ls, rm_last, memory, models.");
 }
 
 #[cfg(unix)]
@@ -211,25 +215,27 @@ mod tests {
             Command::Help => Ok(0),
             Command::Shell => app.shell_use_case.run(&path_input),
             Command::TruncateConsoleLog => app.truncate_console_log_use_case.run(&path_input),
+            Command::Rollout => app.rollout_use_case.run(&path_input),
+            Command::Mute => app.mute_use_case.run(&path_input),
+            Command::Unmute => app.unmute_use_case.run(&path_input),
             Command::Clear => {
                 let session_explicitly_specified = is_session_explicitly_specified_for_test(&config);
                 app.clear_use_case.run(&path_input, session_explicitly_specified)
+            }
+            Command::Resume { .. } => Err(Error::invalid_argument(
+                "resume command is not available in run_app (use aish binary).".to_string(),
+            )),
+            Command::Sessions => {
+                let ids = app.sessions_use_case.list(&path_input)?;
+                // run_app では標準出力の内容は検証しないため、結果の有無にかかわらず成功とみなす
+                let _ = ids;
+                Ok(0)
             }
             Command::SysqList
             | Command::SysqEnable { .. }
             | Command::SysqDisable { .. } => Err(Error::invalid_argument(
                 "sysq commands are not available in run_app (use aish binary).".to_string(),
             )),
-            Command::Resume
-            | Command::Sessions
-            | Command::Rollout
-            | Command::Ls
-            | Command::RmLast
-            | Command::Memory
-            | Command::Models => Err(Error::invalid_argument(format!(
-                "Command '{}' is not implemented.",
-                command.as_str()
-            ))),
             Command::Unknown(name) => Err(Error::invalid_argument(format!(
                 "Command '{}' is not implemented.",
                 name
@@ -252,31 +258,6 @@ mod tests {
         let result = run_app(config);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
-    }
-
-    #[test]
-    fn test_run_app_with_unimplemented_command() {
-        use std::fs;
-        let temp_dir = std::env::temp_dir();
-        let home_path = temp_dir.join("aish_test_home_unimpl");
-
-        if home_path.exists() {
-            fs::remove_dir_all(&home_path).unwrap();
-        }
-        fs::create_dir_all(&home_path).unwrap();
-
-        let config = Config {
-            command_name: Some("sessions".to_string()),
-            home_dir: Some(home_path.to_string_lossy().to_string()),
-            ..Default::default()
-        };
-        let result = run_app(config);
-        assert!(result.is_err(), "unimplemented command must return error");
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("not implemented"));
-        assert_eq!(err.exit_code(), 64);
-
-        fs::remove_dir_all(&home_path).unwrap();
     }
 
     #[test]

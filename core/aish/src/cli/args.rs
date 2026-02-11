@@ -110,17 +110,33 @@ fn build_clap_command() -> clap::Command {
                     .about("Truncate console buffer and log file (used by ai command)"),
             )
             .subcommand(
+                clap::Command::new("rollout")
+                    .about("Flush console buffer and rollover console log (SIGUSR1 equivalent)"),
+            )
+            .subcommand(
+                clap::Command::new("mute")
+                    .about("Rollout console log and stop recording console.txt"),
+            )
+            .subcommand(
+                clap::Command::new("unmute")
+                    .about("Resume recording console.txt"),
+            )
+            .subcommand(
                 clap::Command::new("clear")
                     .about("Clear all part files in the session directory (delete conversation history)"),
             )
             .subcommand(sysq)
-            .subcommand(clap::Command::new("resume").about("(Not yet implemented) Resume session"))
-            .subcommand(clap::Command::new("sessions").about("(Not yet implemented) List sessions"))
-            .subcommand(clap::Command::new("rollout").about("(Not yet implemented) Rollout"))
-            .subcommand(clap::Command::new("ls").about("(Not yet implemented) List"))
-            .subcommand(clap::Command::new("rm_last").about("(Not yet implemented) Remove last part"))
-            .subcommand(clap::Command::new("memory").about("(Not yet implemented) Memory"))
-            .subcommand(clap::Command::new("models").about("(Not yet implemented) List models")),
+            .subcommand(
+                clap::Command::new("resume")
+                    .about("Resume last or specified session")
+                    .arg(
+                        clap::Arg::new("id")
+                            .value_name("id")
+                            .help("Session id to resume (omit for latest)")
+                            .num_args(0..=1),
+                    ),
+            )
+            .subcommand(clap::Command::new("sessions").about("List sessions")),
     )
 }
 
@@ -137,7 +153,15 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         Some(("help", _)) => (None, Vec::new()),
         Some(("shell", _)) => (None, Vec::new()),
         Some(("truncate_console_log", _)) => (Some("truncate_console_log".to_string()), vec![]),
+        Some(("rollout", _)) => (Some("rollout".to_string()), vec![]),
+        Some(("mute", _)) => (Some("mute".to_string()), vec![]),
+        Some(("unmute", _)) => (Some("unmute".to_string()), vec![]),
         Some(("clear", _)) => (Some("clear".to_string()), vec![]),
+        Some(("resume", m)) => {
+            let id = m.get_one::<String>("id").cloned();
+            let args = id.into_iter().collect::<Vec<_>>();
+            (Some("resume".to_string()), args)
+        }
         Some(("sysq", sysq_m)) => {
             let (sub, args) = match sysq_m.subcommand() {
                 Some(("list", _)) => ("list", vec![]),
@@ -194,8 +218,7 @@ pub fn print_completion(shell: Shell) {
 
 fn emit_fallback_completion(shell: Shell) {
     let subcommands = [
-        "clear", "help", "ls", "memory", "models", "resume", "rollout", "rm_last",
-        "sessions", "shell", "sysq", "truncate_console_log",
+        "clear", "help", "resume", "rollout", "sessions", "shell", "sysq", "truncate_console_log",
     ];
     match shell {
         Shell::Bash => {
@@ -287,5 +310,23 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config_to_command(&config), Command::TruncateConsoleLog);
+    }
+
+    #[test]
+    fn test_config_to_command_with_mute() {
+        let config = Config {
+            command_name: Some("mute".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(config_to_command(&config), Command::Mute);
+    }
+
+    #[test]
+    fn test_config_to_command_with_unmute() {
+        let config = Config {
+            command_name: Some("unmute".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(config_to_command(&config), Command::Unmute);
     }
 }
