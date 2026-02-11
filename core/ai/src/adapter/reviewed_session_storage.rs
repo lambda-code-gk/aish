@@ -12,11 +12,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// reviewed ファイル形式でセッション履歴を読み込むアダプタ（leakscan 有効時用）
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct ReviewedSessionStorage {
     fs: Arc<dyn FileSystem>,
 }
 
 impl ReviewedSessionStorage {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
         Self { fs }
     }

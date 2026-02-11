@@ -12,11 +12,12 @@ use common::tool::EchoTool;
 
 use crate::adapter::{
     CliContinuePrompt, CliToolApproval, FileAgentStateStorage, GrepTool, LeakscanPrepareSession,
-    NoContinuePrompt, NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage,
-    PassThroughReducer, ReadFileTool, ReplaceFileTool, ReviewedSessionStorage, SigintChecker,
-    StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory,
-    StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
+    ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, NoContinuePrompt, NoopInterruptChecker,
+    NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer, ReadFileTool,
+    ReplaceFileTool, ReviewedTailViewStrategy, SigintChecker, StdCommandAllowRulesLoader, StdContextMessageBuilder,
+    StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
     StdResolveSystemInstruction, StdTaskRunner, ShellTool, TailWindowReducer, WriteFileTool,
+    HistoryGetTool, HistorySearchTool,
 };
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
@@ -91,6 +92,18 @@ fn context_strategy_from_env() -> (Arc<dyn crate::domain::HistoryReducer>, Conte
     (reducer, budget)
 }
 
+fn history_load_max_from_budget(budget: ContextBudget) -> usize {
+    std::env::var("AISH_HISTORY_LOAD_MAX_MESSAGES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or_else(|| {
+            let a = budget.max_messages.saturating_add(16);
+            let b = budget.max_messages.saturating_mul(2);
+            a.max(b)
+        })
+}
+
 /// leakscan バイナリと rules のパスを解決する。両方存在すれば Some((binary, rules))、でなければ None。
 ///
 /// rules.json の検索先: `$AISH_HOME/config/rules.json`（他の設定ファイルと同様 config/ 配下）。
@@ -137,6 +150,8 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
             .map(Arc::new)
             .map(|a| a as Arc<dyn crate::ports::outbound::InterruptChecker>)
             .unwrap_or_else(|_| Arc::new(NoopInterruptChecker::new()));
+    let (reducer, budget) = context_strategy_from_env();
+    let history_load_max = history_load_max_from_budget(budget);
 
     let (history_loader, response_saver, prepare_session_for_sensitive_check) =
         if let Some((leakscan_binary, rules_path)) = resolve_leakscan_paths(&fs, &env_resolver) {
@@ -149,7 +164,12 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
                     non_interactive,
                 ),
             );
-            let reviewed_storage = Arc::new(ReviewedSessionStorage::new(Arc::clone(&fs)));
+            let reviewed_storage = Arc::new(ManifestReviewedSessionStorage::with_strategies(
+                Arc::clone(&fs),
+                history_load_max,
+                Arc::new(ManifestTailCompactionViewStrategy),
+                Arc::new(ReviewedTailViewStrategy),
+            ));
             let history: Arc<dyn SessionHistoryLoader> =
                 Arc::clone(&reviewed_storage) as Arc<dyn SessionHistoryLoader>;
             // response_saver は part_* に書くので PartSessionStorage のまま
@@ -178,6 +198,8 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         Arc::new(WriteFileTool::new()),
         Arc::new(ReplaceFileTool::new()),
         Arc::new(GrepTool::new()),
+        Arc::new(HistoryGetTool::new()),
+        Arc::new(HistorySearchTool::new()),
     ];
     let approver: Arc<dyn crate::ports::outbound::ToolApproval> = if non_interactive {
         Arc::new(NonInteractiveToolApproval::new())
@@ -204,7 +226,6 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let llm_stream_factory: Arc<dyn crate::ports::outbound::LlmEventStreamFactory> =
         Arc::new(StdLlmEventStreamFactory::new(Arc::clone(&fs), Arc::clone(&env_resolver)));
 
-    let (reducer, budget) = context_strategy_from_env();
     let context_message_builder: Arc<dyn ContextMessageBuilder> =
         Arc::new(StdContextMessageBuilder::new(reducer, budget));
 

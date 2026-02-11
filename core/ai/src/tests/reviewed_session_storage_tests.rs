@@ -1,6 +1,6 @@
 //! ReviewedSessionStorage（reviewed_* ファイルのみ読み込み）のテスト。
 
-use crate::adapter::ReviewedSessionStorage;
+use crate::adapter::reviewed_session_storage::ReviewedSessionStorage;
 use crate::ports::outbound::SessionHistoryLoader;
 use common::adapter::StdFileSystem;
 use common::domain::SessionDir;

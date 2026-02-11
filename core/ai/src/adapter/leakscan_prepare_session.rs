@@ -3,11 +3,17 @@
 //! セッション dir 内の part_* を leakscan し、ヒット時はユーザーに問い合わせ、
 //! 通過分は reviewed_<id>_... にコピー、元 part は leakscan_evacuated/ に移動する。
 
+use crate::adapter::compactor_deterministic::maybe_compact;
 use crate::ports::outbound::{InterruptChecker, PrepareSessionForSensitiveCheck};
+use crate::{adapter::session_manifest, domain::ManifestRecordV1};
+use crate::domain::{
+    hash64, ManifestDecision, ManifestRole, MessageRecordV1,
+};
 use common::domain::SessionDir;
 use common::error::Error;
+use common::ports::outbound::now_iso8601;
 use common::ports::outbound::FileSystem;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -15,7 +21,7 @@ use std::sync::Arc;
 const EVACUATED_DIR: &str = "leakscan_evacuated";
 
 /// Deny 時に reviewed に書き込む固定文（機微情報を含めない）
-const DENY_PLACEHOLDER_CONTENT: &str = "[REDACTED] content denied by user.\n";
+pub(crate) const DENY_PLACEHOLDER_CONTENT: &str = "[REDACTED] content denied by user.\n";
 
 /// leakscan のユーザー選択（y/n/a/m）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +55,14 @@ fn parse_part_filename(name: &str) -> Option<(String, &'static str)> {
 /// reviewed ファイル名を生成
 fn reviewed_filename(id: &str, role: &str) -> String {
     format!("reviewed_{}_{}.txt", id, role)
+}
+
+fn role_from_str(role: &str) -> Result<ManifestRole, Error> {
+    match role {
+        "user" => Ok(ManifestRole::User),
+        "assistant" => Ok(ManifestRole::Assistant),
+        _ => Err(Error::io_msg(format!("Unknown role: {}", role))),
+    }
 }
 
 pub struct LeakscanPrepareSession {
@@ -87,9 +101,11 @@ impl LeakscanPrepareSession {
             .stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| Error::io_msg(e.to_string()))?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(content.as_bytes())
-                .map_err(|e| Error::io_msg(e.to_string()))?;
+            if let Err(e) = stdin.write_all(content.as_bytes()) {
+                if e.kind() != ErrorKind::BrokenPipe {
+                    return Err(Error::io_msg(e.to_string()));
+                }
+            }
         }
         let mut stdout = String::new();
         child
@@ -113,9 +129,11 @@ impl LeakscanPrepareSession {
             .stderr(Stdio::null());
         let mut child = cmd.spawn().map_err(|e| Error::io_msg(e.to_string()))?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(content.as_bytes())
-                .map_err(|e| Error::io_msg(e.to_string()))?;
+            if let Err(e) = stdin.write_all(content.as_bytes()) {
+                if e.kind() != ErrorKind::BrokenPipe {
+                    return Err(Error::io_msg(e.to_string()));
+                }
+            }
         }
         let mut stdout = String::new();
         child
@@ -193,8 +211,8 @@ impl LeakscanPrepareSession {
         let evacuated_dir = session_dir.join(EVACUATED_DIR);
         let dest_part_in_evacuated = evacuated_dir.join(name);
 
-        let (should_allow, content_for_reviewed) = match self.leakscan_check(&content)? {
-            (false, _) => (true, content),
+        let (decision, content_for_reviewed) = match self.leakscan_check(&content)? {
+            (false, _) => (ManifestDecision::Allow, content),
             (true, verbose_output) => {
                 let choice = if self.non_interactive {
                     SensitiveChoice::Deny
@@ -202,29 +220,35 @@ impl LeakscanPrepareSession {
                     self.prompt_sensitive_choice(&verbose_output)?
                 };
                 match choice {
-                    SensitiveChoice::Allow => (true, content),
+                    SensitiveChoice::Allow => (ManifestDecision::Allow, content),
                     SensitiveChoice::Deny => {
-                        let reviewed_name = reviewed_filename(&id, role);
-                        let reviewed_path = session_dir.join(&reviewed_name);
-                        self.fs
-                            .write(&reviewed_path, DENY_PLACEHOLDER_CONTENT)?;
-                        self.fs.rename(part_path, &dest_part_in_evacuated)?;
-                        return Ok(());
+                        (ManifestDecision::Deny, DENY_PLACEHOLDER_CONTENT.to_string())
                     }
                     SensitiveChoice::Mask => {
                         let masked = self.leakscan_mask(&content)?;
-                        (true, masked)
+                        (ManifestDecision::Mask, masked)
                     }
                 }
             }
         };
 
-        if should_allow {
-            let reviewed_name = reviewed_filename(&id, role);
-            let reviewed_path = session_dir.join(&reviewed_name);
-            self.fs.write(&reviewed_path, &content_for_reviewed)?;
-            self.fs.rename(part_path, &dest_part_in_evacuated)?;
-        }
+        let reviewed_name = reviewed_filename(&id, role);
+        let reviewed_path = session_dir.join(&reviewed_name);
+        self.fs.write(&reviewed_path, &content_for_reviewed)?;
+        self.fs.rename(part_path, &dest_part_in_evacuated)?;
+
+        let rec = ManifestRecordV1::Message(MessageRecordV1 {
+            v: 1,
+            ts: now_iso8601(),
+            id,
+            role: role_from_str(role)?,
+            part_path: name.to_string(),
+            reviewed_path: reviewed_name,
+            decision,
+            bytes: content_for_reviewed.len() as u64,
+            hash64: hash64(&content_for_reviewed),
+        });
+        session_manifest::append(self.fs.as_ref(), session_dir, &rec)?;
         Ok(())
     }
 }
@@ -257,12 +281,8 @@ impl PrepareSessionForSensitiveCheck for LeakscanPrepareSession {
             .collect();
         part_files.sort();
 
-        if part_files.is_empty() {
-            return Ok(());
-        }
-
         let evacuated_dir = dir.join(EVACUATED_DIR);
-        if !self.fs.exists(&evacuated_dir) {
+        if !part_files.is_empty() && !self.fs.exists(&evacuated_dir) {
             self.fs.create_dir_all(&evacuated_dir)?;
         }
 
@@ -282,6 +302,7 @@ impl PrepareSessionForSensitiveCheck for LeakscanPrepareSession {
                 return Err(e);
             }
         }
+        maybe_compact(self.fs.as_ref(), dir)?;
         Ok(())
     }
 }
@@ -289,6 +310,7 @@ impl PrepareSessionForSensitiveCheck for LeakscanPrepareSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{parse_lines, ManifestDecision};
     use common::adapter::StdFileSystem;
     use std::io::Write;
 
@@ -303,7 +325,9 @@ mod tests {
         {
             f.write_all(b"echo HIT\n")?;
         }
+        f.flush()?;
         f.sync_all()?;
+        drop(f);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -347,5 +371,16 @@ mod tests {
 
         let evacuated_path = session_dir.join(EVACUATED_DIR).join("part_ABC12_user.txt");
         assert!(fs.exists(&evacuated_path), "part should be in evacuated");
+
+        let manifest_path = session_dir.join("manifest.jsonl");
+        assert!(fs.exists(&manifest_path), "manifest should exist");
+        let manifest_body = std::fs::read_to_string(manifest_path).unwrap();
+        let records = parse_lines(&manifest_body);
+        assert!(!records.is_empty(), "manifest should contain at least one line");
+        let first = records.first().and_then(|r| r.message()).unwrap();
+        assert_eq!(first.id, "ABC12");
+        assert_eq!(first.role, ManifestRole::User);
+        assert_eq!(first.decision, ManifestDecision::Deny);
+        assert_eq!(first.reviewed_path, "reviewed_ABC12_user.txt");
     }
 }

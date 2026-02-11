@@ -20,6 +20,7 @@ dependencies = [
  "common",
  "ctrlc",
  "regex",
+ "serde",
  "serde_json",
  "tempfile",
 ]
