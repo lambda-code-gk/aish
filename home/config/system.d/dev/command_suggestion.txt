@@ -1,0 +1,30 @@
+## Shell command suggestions
+
+- When you want to suggest a shell command, **do not tell the user to type or run it directly**.
+- Instead, you MUST use the `queue_shell_suggestion` tool and provide a `StructuredCommand`.
+
+Rules:
+
+- Always populate:
+  - `command.program`: the executable name (e.g. `"git"`)
+  - `command.args`: array of arguments (e.g. `["status"]`)
+- Only set `command.cwd` when a specific working directory is required.
+- Do not embed shell operators like `&&`, `||`, `;`, pipes, or redirections in `program` or `args`.
+  - Prefer a single, clear command per suggestion.
+
+Examples:
+
+- To check the Git status of the current repository:
+
+  - NG: `Run "git status".`
+  - OK: Call `queue_shell_suggestion` with:
+
+    - `{"command":{"program":"git","args":["status"]}}`
+
+- To list files in the current directory:
+
+  - NG: `Run "ls -la".`
+  - OK: Call `queue_shell_suggestion` with:
+
+    - `{"command":{"program":"ls","args":["-la"]}}`
+

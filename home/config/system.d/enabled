@@ -1,3 +1,5 @@
 base/general
 lang/japanese
-safety/caution
+dev/coding
+dev/shell
+dev/command_suggestion
