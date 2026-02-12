@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub struct MuteUseCase {
     path_resolver: Arc<dyn PathResolver>,
     fs: Arc<dyn FileSystem>,
+    #[allow(dead_code)] // 将来 SIGUSR1 送信等で使用予定
     signal: Arc<dyn Signal>,
 }
 

@@ -2,6 +2,7 @@ pub(crate) mod aish_adapter;
 pub(crate) mod console_handler;
 pub(crate) mod logfmt;
 pub(crate) mod platform;
+pub(crate) mod prompt_ready_detector;
 pub(crate) mod shell;
 pub(crate) mod sysq;
 pub(crate) mod terminal;

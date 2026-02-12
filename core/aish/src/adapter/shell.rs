@@ -3,15 +3,20 @@ use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use common::domain::{PendingInput, PolicyStatus};
 use common::error::Error;
 use common::ports::outbound::{FileSystem, PtyProcessStatus, PtySpawn, Signal, Winsize};
 use common::part_id::IdGenerator;
 use crate::adapter::console_handler::ConsoleLogHandler;
 use crate::adapter::platform::{get_winsize, TermMode};
+use crate::adapter::prompt_ready_detector::PromptReadyDetector;
 use crate::adapter::terminal::TerminalBuffer;
 use crate::domain::SessionEvent;
 use crate::ports::outbound::ShellRunner;
 use libc;
+
+const AGENT_STATE_FILENAME: &str = "agent_state.json";
+const PENDING_MAX_LEN: usize = 4096;
 
 /// ShellRunner の標準実装（run_shell をラップ）
 #[cfg(unix)]
@@ -90,6 +95,86 @@ fn libc_winsize_to_common(ws: libc::winsize) -> Winsize {
     }
 }
 
+/// agent_state.json から pending_input を読み出す。無い・不正なら None。
+fn try_load_pending_input(session_dir: &Path, fs: &dyn FileSystem) -> Result<Option<PendingInput>, Error> {
+    let path = session_dir.join(AGENT_STATE_FILENAME);
+    if !fs.exists(&path) {
+        return Ok(None);
+    }
+    let s = fs.read_to_string(&path)?;
+    let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| Error::json(e.to_string()))?;
+    let obj = match v {
+        serde_json::Value::Object(m) => m,
+        _ => return Ok(None),
+    };
+    let pending = match obj.get("pending_input") {
+        Some(serde_json::Value::Null) | None => return Ok(None),
+        Some(p) => p.clone(),
+    };
+    let p: PendingInput = serde_json::from_value(pending).map_err(|e| Error::json(e.to_string()))?;
+    Ok(Some(p))
+}
+
+/// agent_state.json の pending_input を null にして保存（messages は維持）
+fn clear_pending_input(session_dir: &Path, fs: &dyn FileSystem) -> Result<(), Error> {
+    let path = session_dir.join(AGENT_STATE_FILENAME);
+    if !fs.exists(&path) {
+        return Ok(());
+    }
+    let s = fs.read_to_string(&path)?;
+    let mut v: serde_json::Value = serde_json::from_str(&s).map_err(|e| Error::json(e.to_string()))?;
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("pending_input".to_string(), serde_json::Value::Null);
+        let out = serde_json::to_string(&v).map_err(|e| Error::json(e.to_string()))?;
+        fs.write(&path, &out)?;
+    }
+    Ok(())
+}
+
+/// 注入用 1 行をサニタイズ（改行・ESC・制御文字除去、最大長）
+fn sanitize_one_line_for_inject(s: &str) -> String {
+    let mut out = String::with_capacity(s.len().min(PENDING_MAX_LEN));
+    let mut count = 0usize;
+    for ch in s.chars() {
+        if ch == '\n' || ch == '\r' || ch == '\x1b' {
+            break;
+        }
+        if (ch as u32) < 0x20 && ch != '\t' {
+            continue;
+        }
+        out.push(ch);
+        count += 1;
+        if count >= PENDING_MAX_LEN {
+            out.push('…');
+            break;
+        }
+    }
+    out
+}
+
+/// PTY master に pending を注入（Ctrl-U で行クリア → Bracketed Paste）
+fn inject_pending_to_pty(master_fd: libc::c_int, pending: &PendingInput) -> Result<(), Error> {
+    let mut text = sanitize_one_line_for_inject(&pending.text);
+    if let PolicyStatus::Blocked { ref reason } = pending.policy {
+        let _ = reason; // 理由はログ等に含まれているため、ここでは表示しない
+        text = format!("# {}", text);
+        text = sanitize_one_line_for_inject(&text);
+    }
+    if text.is_empty() {
+        return Ok(());
+    }
+    const CTRL_U: u8 = 0x15;
+    const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+    const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
+    unsafe {
+        let _ = libc::write(master_fd, [CTRL_U].as_ptr() as *const libc::c_void, 1);
+        let _ = libc::write(master_fd, BRACKETED_PASTE_START.as_ptr() as *const libc::c_void, BRACKETED_PASTE_START.len());
+        let _ = libc::write(master_fd, text.as_ptr() as *const libc::c_void, text.len());
+        let _ = libc::write(master_fd, BRACKETED_PASTE_END.as_ptr() as *const libc::c_void, BRACKETED_PASTE_END.len());
+    }
+    Ok(())
+}
+
 /// アダプター経由でシェルを起動（Unix 専用）
 #[cfg(unix)]
 pub fn run_shell(
@@ -147,6 +232,9 @@ pub fn run_shell(
 
     // イベントハンドラ（flush / rollover / truncate を集約）
     let handler = ConsoleLogHandler::new(&log_file_path, session_dir, fs, id_gen);
+
+    // PromptReady マーカー検知（次のプロンプトで pending を注入するため）
+    let mut prompt_ready_detector = PromptReadyDetector::new();
     
     // メインループ用のバッファ
     const MAX_CHUNK: usize = 32768;
@@ -260,6 +348,13 @@ pub fn run_shell(
                 let _ = io::stdout().flush();
                 // ターミナルバッファで処理（ANSIエスケープシーケンスを処理してプレーンテキストに変換）
                 terminal_buffer.process_data(chunk);
+                // PromptReady マーカー検知 → pending があればプロンプト行に注入
+                if prompt_ready_detector.feed(chunk) {
+                    if let Ok(Some(pending)) = try_load_pending_input(session_dir, fs) {
+                        let _ = inject_pending_to_pty(master_fd, &pending);
+                        let _ = clear_pending_input(session_dir, fs);
+                    }
+                }
             } else if n <= 0 {
                 // EOFまたはエラー - 子プロセスがまだ生きているかチェック
                 let err = if n < 0 { Some(io::Error::last_os_error()) } else { None };

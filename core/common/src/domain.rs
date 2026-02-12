@@ -3,6 +3,7 @@
 //! String / PathBuf を直接運ばず、意味のある型に包んで境界を明確にする。
 
 use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
 
 /// セッションディレクトリのパス
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,4 +160,43 @@ impl AsRef<str> for ModelName {
     fn as_ref(&self) -> &str {
         &self.0
     }
+}
+
+// --- Shell suggestion / pending input ---------------------------------------------------------
+
+/// LLM から受け取る構造化シェルコマンド
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StructuredCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+/// Shell への提案（構造化コマンド + 任意の表示用ヒント）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShellSuggestion {
+    pub command: StructuredCommand,
+    pub display_hint: Option<String>,
+}
+
+/// コマンドポリシー評価結果（allowlist / denylist 判定を抽象化）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PolicyStatus {
+    Allowed,
+    NeedsWarning { reason: String },
+    Blocked { reason: String },
+}
+
+/// 次回 PromptReady 時に注入する 1 行入力
+///
+/// - text: aish 側で生成・サニタイズ済みの 1 行のみ（改行・制御文字なし、タブは許可）
+/// - policy: allowlist/deny に基づく評価結果
+/// - created_at_unix_ms: 生成時刻（監査・デバッグ用）
+/// - source: "tool:queue_shell_suggestion" 等の由来識別子
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingInput {
+    pub text: String,
+    pub policy: PolicyStatus,
+    pub created_at_unix_ms: i64,
+    pub source: String,
 }

@@ -11,6 +11,8 @@ pub trait AgentStateSaver: Send + Sync {
     fn save(&self, session_dir: &SessionDir, messages: &[Msg]) -> Result<(), Error>;
     /// 続き用状態を削除する（正常終了時に呼ぶ）
     fn clear(&self, session_dir: &SessionDir) -> Result<(), Error>;
+    /// 続き用メッセージのみ削除し、pending_input は残す（aish のプロンプト注入用）
+    fn clear_resume_keep_pending(&self, session_dir: &SessionDir) -> Result<(), Error>;
 }
 
 /// 保存された会話状態を読み込む能力

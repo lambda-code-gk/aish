@@ -1,6 +1,6 @@
 # システムプロンプト（sysq）と system.d
 
-`ai` 実行時に、`-S/--system` でシステムインストラクションを指定しない場合、**有効な sysq（システムプロンプト）** が結合され、LLM の system instruction として使われます。  
+`ai` 実行時に、`-S/--system` でシステムインストラクションを指定できますが、指定しない場合は、**有効な sysq（システムプロンプト）** が結合され、LLM の system instruction として使われます。  
 sysq の格納場所・有効/無効の切り替え・優先順位を説明します。
 
 ## 格納場所とスコープ
@@ -58,3 +58,14 @@ dev/shell
 - プロジェクトごとに `.aish/system.d` を作り、そのプロジェクト専用のルール（例: 「このリポジトリは Rust 1.80 以上」）を別 ID で追加し、`enabled` に並べる。
 
 詳細なパスやマージ順は、実装では `core/common/src/system_prompt.rs` の `merge_enabled_ordered` および `core/ai/src/adapter/resolve_system_instruction.rs` を参照してください。
+
+## 提案コマンド注入（PromptReady マーカー）
+
+`ai` の `queue_shell_suggestion` ツールでキューしたコマンドを、次にシェルがプロンプト入力待ちになったタイミングで **未実行の 1 行として差し込む** 機能では、aish が PTY 出力から「プロンプト表示完了」を検知するために **不可視マーカー** を使います。
+
+- **マーカー**: OSC シーケンス `ESC ] 999 ; aish-prompt-ready BEL`（`\x1b]999;aish-prompt-ready\x07`）
+- **設定**: `aish` が `--rcfile` で読み込む **.aishrc**（`$AISH_HOME/config/aishrc`）のプロンプト末尾に、このマーカーを埋め込んでください。
+  - **bash**: `PS1='... \[\e]999;aish-prompt-ready\a\]'`（`\[` / `\]` で幅 0 扱い）
+  - **zsh**: `PROMPT='... %{\e]999;aish-prompt-ready\a%}'`
+
+マーカーを入れていない環境では、キューされた提案コマンドは検知タイミングが取れないため注入されません。既存の SIGUSR1 フック（ロールオーバー等）はそのままでよく、PromptReady 検知はこのマーカー経由のみです。

@@ -261,7 +261,9 @@ impl AiUseCase {
                 AgentLoopOutcome::Done(_msgs, assistant_text) => {
                     if self.session_is_valid(&session_dir) {
                         let dir = session_dir.as_ref().expect("session_dir is Some");
-                        self.deps.session.agent_state_saver.clear(dir)?;
+                        self.deps.session
+                            .agent_state_saver
+                            .clear_resume_keep_pending(dir)?;
                         if !assistant_text.trim().is_empty() {
                             self.deps.session.response_saver.save_assistant(dir, &assistant_text)?;
                             self.truncate_console_log(dir)?;

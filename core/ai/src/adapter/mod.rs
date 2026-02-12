@@ -41,6 +41,6 @@ pub(crate) use sigint_checker::{NoopInterruptChecker, SigintChecker};
 pub(crate) use sinks::StdEventSinkFactory;
 pub(crate) use task::StdTaskRunner;
 pub(crate) use tools::{
-    GrepTool, HistoryGetTool, HistorySearchTool, ReadFileTool, ReplaceFileTool, ShellTool,
-    WriteFileTool,
+    GrepTool, HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, ReadFileTool,
+    ReplaceFileTool, ShellTool, WriteFileTool,
 };

@@ -18,7 +18,7 @@ use crate::adapter::{
     ReplaceFileTool, ReviewedTailViewStrategy, SigintChecker, StdCommandAllowRulesLoader, StdContextMessageBuilder,
     StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
     StdResolveSystemInstruction, StdTaskRunner, ShellTool, TailWindowReducer, WriteFileTool,
-    HistoryGetTool, HistorySearchTool,
+    HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool,
 };
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
@@ -232,6 +232,7 @@ fn build_tooling_deps(verbose: bool) -> ToolingDeps {
     let tools: Vec<Arc<dyn common::tool::Tool>> = vec![
         Arc::new(EchoTool::new()),
         Arc::new(ShellTool::new()),
+        Arc::new(QueueShellSuggestionTool::new()),
         Arc::new(ReadFileTool::new()),
         Arc::new(WriteFileTool::new()),
         Arc::new(ReplaceFileTool::new()),
