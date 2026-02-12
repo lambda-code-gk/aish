@@ -15,7 +15,7 @@ use crate::domain::SessionEvent;
 use crate::ports::outbound::ShellRunner;
 use libc;
 
-const AGENT_STATE_FILENAME: &str = "agent_state.json";
+const PENDING_INPUT_FILENAME: &str = "pending_input.json";
 const PENDING_MAX_LEN: usize = 4096;
 
 /// ShellRunner の標準実装（run_shell をラップ）
@@ -95,38 +95,22 @@ fn libc_winsize_to_common(ws: libc::winsize) -> Winsize {
     }
 }
 
-/// agent_state.json から pending_input を読み出す。無い・不正なら None。
+/// pending_input.json から PendingInput を読み出す。無い・不正なら None。agent_state.json は読まない。
 fn try_load_pending_input(session_dir: &Path, fs: &dyn FileSystem) -> Result<Option<PendingInput>, Error> {
-    let path = session_dir.join(AGENT_STATE_FILENAME);
+    let path = session_dir.join(PENDING_INPUT_FILENAME);
     if !fs.exists(&path) {
         return Ok(None);
     }
     let s = fs.read_to_string(&path)?;
-    let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| Error::json(e.to_string()))?;
-    let obj = match v {
-        serde_json::Value::Object(m) => m,
-        _ => return Ok(None),
-    };
-    let pending = match obj.get("pending_input") {
-        Some(serde_json::Value::Null) | None => return Ok(None),
-        Some(p) => p.clone(),
-    };
-    let p: PendingInput = serde_json::from_value(pending).map_err(|e| Error::json(e.to_string()))?;
+    let p: PendingInput = serde_json::from_str(&s).map_err(|e| Error::json(e.to_string()))?;
     Ok(Some(p))
 }
 
-/// agent_state.json の pending_input を null にして保存（messages は維持）
+/// pending_input.json を削除する。agent_state.json は触らない。
 fn clear_pending_input(session_dir: &Path, fs: &dyn FileSystem) -> Result<(), Error> {
-    let path = session_dir.join(AGENT_STATE_FILENAME);
-    if !fs.exists(&path) {
-        return Ok(());
-    }
-    let s = fs.read_to_string(&path)?;
-    let mut v: serde_json::Value = serde_json::from_str(&s).map_err(|e| Error::json(e.to_string()))?;
-    if let Some(obj) = v.as_object_mut() {
-        obj.insert("pending_input".to_string(), serde_json::Value::Null);
-        let out = serde_json::to_string(&v).map_err(|e| Error::json(e.to_string()))?;
-        fs.write(&path, &out)?;
+    let path = session_dir.join(PENDING_INPUT_FILENAME);
+    if fs.exists(&path) {
+        fs.remove_file(&path)?;
     }
     Ok(())
 }
@@ -473,5 +457,59 @@ mod tests {
         let core = &name[prefix.len()..name.len() - suffix.len()];
         assert_eq!(core.len(), 8);
         assert!(core.chars().all(|c: char| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn test_try_load_pending_input_none_when_missing() {
+        let tmp = std::env::temp_dir().join("aish_test_pending_missing");
+        if tmp.exists() {
+            let _ = fs::remove_dir_all(&tmp);
+        }
+        fs::create_dir_all(&tmp).unwrap();
+        let fs = StdFileSystem;
+        let got = try_load_pending_input(&tmp, &fs).unwrap();
+        assert!(got.is_none());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_try_load_pending_input_some_when_file_exists() {
+        let tmp = std::env::temp_dir().join("aish_test_pending_exists");
+        if tmp.exists() {
+            let _ = fs::remove_dir_all(&tmp);
+        }
+        fs::create_dir_all(&tmp).unwrap();
+        let fs = StdFileSystem;
+        let path = tmp.join(PENDING_INPUT_FILENAME);
+        let payload = serde_json::json!({
+            "text": "git status",
+            "policy": "Allowed",
+            "created_at_unix_ms": 0,
+            "source": "test"
+        });
+        fs.write(&path, &payload.to_string()).unwrap();
+        let got = try_load_pending_input(&tmp, &fs).unwrap();
+        assert!(got.is_some());
+        let p = got.unwrap();
+        assert_eq!(p.text, "git status");
+        assert!(matches!(p.policy, PolicyStatus::Allowed));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_clear_pending_input_removes_file() {
+        let tmp = std::env::temp_dir().join("aish_test_pending_clear");
+        if tmp.exists() {
+            let _ = fs::remove_dir_all(&tmp);
+        }
+        fs::create_dir_all(&tmp).unwrap();
+        let fs = StdFileSystem;
+        let path = tmp.join(PENDING_INPUT_FILENAME);
+        fs.write(&path, r#"{"text":"x","policy":"Allowed","created_at_unix_ms":0,"source":"t"}"#)
+            .unwrap();
+        assert!(fs.exists(&path));
+        clear_pending_input(&tmp, &fs).unwrap();
+        assert!(!fs.exists(&path));
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

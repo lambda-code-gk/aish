@@ -2,7 +2,7 @@
 //!
 //! - StructuredCommand を受け取り、安全な 1 行コマンドへ shell-quote
 //! - command_rules によるポリシー評価
-//! - SessionDir 配下の agent_state.json に PendingInput を保存
+//! - SessionDir 配下の pending_input.json に PendingInput を保存（AISH が読んで注入後に削除）
 
 use crate::adapter::agent_state_storage::FileAgentStateStorage;
 use common::adapter::StdFileSystem;
@@ -179,35 +179,41 @@ impl Tool for QueueShellSuggestionTool {
             source: "tool:queue_shell_suggestion".to_string(),
         };
 
-        // 4) セッション dir に pending_input を保存
-        // ToolContext.session_dir が無い場合でも、aish 上から実行されていれば
-        // AISH_SESSION 環境変数が指すディレクトリに保存できるようにする。
+        // 4) セッション dir に pending_input.json を保存（session が無い場合は queued: false）
         let session_path_opt = ctx
             .session_dir
             .as_ref()
             .map(|p| p.to_path_buf())
             .or_else(|| std::env::var("AISH_SESSION").ok().map(Into::into));
 
-        if let Some(session_dir) = session_path_opt.as_ref() {
+        let (queued, no_session_reason) = if let Some(session_dir) = session_path_opt.as_ref() {
             let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
             let storage = FileAgentStateStorage::new(Arc::clone(&fs));
-            let save_result = storage.save_pending_input(
+            match storage.save_pending_input(
                 &common::domain::SessionDir::new(session_dir.clone()),
                 Some(pending.clone()),
-            );
-            save_result.map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-        }
+            ) {
+                Ok(()) => (true, None),
+                Err(e) => return Err(ToolError::ExecutionFailed(e.to_string())),
+            }
+        } else {
+            (false, Some("no session dir"))
+        };
 
         // 5) LLM への軽量応答
-        Ok(serde_json::json!({
-            "queued": true,
+        let mut out = serde_json::json!({
+            "queued": queued,
             "policy": match pending.policy {
                 PolicyStatus::Allowed => "allowed",
                 PolicyStatus::NeedsWarning { .. } => "needs_warning",
                 PolicyStatus::Blocked { .. } => "blocked",
             },
             "text": pending.text,
-        }))
+        });
+        if let Some(reason) = no_session_reason {
+            out["reason"] = serde_json::Value::String(reason.to_string());
+        }
+        Ok(out)
     }
 }
 
@@ -233,8 +239,10 @@ mod tests {
 
     #[test]
     fn test_queue_shell_suggestion_allows_basic_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let session_dir = tmp.path().to_path_buf();
         let tool = QueueShellSuggestionTool::new();
-        let ctx = ToolContext::new(None).with_allow_unsafe(true);
+        let ctx = ToolContext::new(Some(session_dir.clone())).with_allow_unsafe(true);
         let args = serde_json::json!({
             "command": {
                 "program": "git",
@@ -247,6 +255,22 @@ mod tests {
         // command_rules が空のため allowlist 判定では Blocked になる
         assert_eq!(result["policy"], "blocked");
         assert!(result["text"].as_str().unwrap().starts_with("git 'status'"));
+    }
+
+    #[test]
+    fn test_queue_shell_suggestion_no_session_dir_returns_queued_false() {
+        let tool = QueueShellSuggestionTool::new();
+        let ctx = ToolContext::new(None).with_allow_unsafe(true);
+        let args = serde_json::json!({
+            "command": {
+                "program": "echo",
+                "args": ["hi"],
+                "cwd": null
+            }
+        });
+        let result = tool.call(args, &ctx).unwrap();
+        assert_eq!(result["queued"], false);
+        assert_eq!(result["reason"], "no session dir");
     }
 }
 
