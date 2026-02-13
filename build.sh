@@ -35,19 +35,19 @@ rg "crate::cli" core/**/src/usecase && (echo "illigal dependency" ; exit 1)
 
 
 # aish-captureをビルド
-echo "Building aish-capture..."
-cd "$PROJECT_ROOT/tools/aish-capture"
-$BUILD_CMD
+#echo "Building aish-capture..."
+#cd "$PROJECT_ROOT/tools/aish-capture"
+#$BUILD_CMD
 
 # aish-renderをビルド
-echo "Building aish-render..."
-cd "$PROJECT_ROOT/tools/aish-render"
-$BUILD_CMD
+#echo "Building aish-render..."
+#cd "$PROJECT_ROOT/tools/aish-render"
+#$BUILD_CMD
 
 # aish-scriptをビルド
-echo "Building aish-script..."
-cd "$PROJECT_ROOT/tools/aish-script"
-$BUILD_CMD
+#echo "Building aish-script..."
+#cd "$PROJECT_ROOT/tools/aish-script"
+#$BUILD_CMD
 
 # leakscanをビルド
 echo "Building leakscan..."

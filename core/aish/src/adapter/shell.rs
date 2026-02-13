@@ -115,15 +115,15 @@ fn clear_pending_input(session_dir: &Path, fs: &dyn FileSystem) -> Result<(), Er
     Ok(())
 }
 
-/// 注入用 1 行をサニタイズ（改行・ESC・制御文字除去、最大長）
-fn sanitize_one_line_for_inject(s: &str) -> String {
+/// 注入用文字列をサニタイズ（ESC・危険な制御文字除去、最大長）。改行・CR・タブは許可。
+fn sanitize_for_inject(s: &str) -> String {
     let mut out = String::with_capacity(s.len().min(PENDING_MAX_LEN));
     let mut count = 0usize;
     for ch in s.chars() {
-        if ch == '\n' || ch == '\r' || ch == '\x1b' {
-            break;
+        if (ch as u32) < 0x20 && ch != '\t' && ch != '\n' && ch != '\r' {
+            continue;
         }
-        if (ch as u32) < 0x20 && ch != '\t' {
+        if ch == '\x7f' {
             continue;
         }
         out.push(ch);
@@ -138,11 +138,11 @@ fn sanitize_one_line_for_inject(s: &str) -> String {
 
 /// PTY master に pending を注入（Ctrl-U で行クリア → Bracketed Paste）
 fn inject_pending_to_pty(master_fd: libc::c_int, pending: &PendingInput) -> Result<(), Error> {
-    let mut text = sanitize_one_line_for_inject(&pending.text);
+    let mut text = sanitize_for_inject(&pending.text);
     if let PolicyStatus::Blocked { ref reason } = pending.policy {
         let _ = reason; // 理由はログ等に含まれているため、ここでは表示しない
         text = format!("# {}", text);
-        text = sanitize_one_line_for_inject(&text);
+        text = sanitize_for_inject(&text);
     }
     if text.is_empty() {
         return Ok(());

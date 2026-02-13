@@ -1,6 +1,6 @@
 //! queue_shell_suggestion ツール実装（adapter 層）
 //!
-//! - StructuredCommand を受け取り、安全な 1 行コマンドへ shell-quote
+//! - StructuredCommand を受け取り、安全な 1 コマンドへ shell-quote（引数内改行は許可）
 //! - command_rules によるポリシー評価
 //! - SessionDir 配下の pending_input.json に PendingInput を保存（AISH が読んで注入後に削除）
 
@@ -39,47 +39,67 @@ impl Default for QueueShellSuggestionTool {
 }
 
 fn shell_quote(arg: &str) -> Result<String, ToolError> {
-    // 制御文字チェック（tab を除く ASCII < 0x20 は拒否）
-    if arg
-        .chars()
-        .any(|c| (c as u32) < 0x20 && c != '\t')
-    {
+    // 制御文字チェック（タブ・改行・CR は許可し、ESC 等の危険な制御文字のみ拒否）
+    if arg.chars().any(|c| {
+        ((c as u32) < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == '\x7f'
+    }) {
         return Err(ToolError::InvalidArgs(
-            "command contains control characters".to_string(),
+            "command contains control characters (newlines in arguments are allowed)".to_string(),
         ));
     }
+    // ダブルクォートで囲む。\n \r \t は実際の制御文字に変換（Bracketed Paste ではシェルが \n を解釈しないため）。
+    // " $ ` と、\ の直後が ", $, `, \ のときは \ を前置。それ以外の \ は \\ に。
     if arg.is_empty() {
-        return Ok("''".to_string());
+        return Ok("\"\"".to_string());
     }
-    if !arg.contains('\'') {
-        return Ok(format!("'{}'", arg));
-    }
-    // ' を含む場合の安全クォート: 'foo'"'"'bar'
-    let mut out = String::from("'");
-    let mut first = true;
-    for part in arg.split('\'') {
-        if !first {
-            out.push_str("'\"'\"'");
+    let mut out = String::from("\"");
+    let mut chars = arg.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => {
+                match chars.peek().copied() {
+                    Some('n') => {
+                        chars.next();
+                        out.push('\n');
+                    }
+                    Some('r') => {
+                        chars.next();
+                        out.push('\r');
+                    }
+                    Some('t') => {
+                        chars.next();
+                        out.push('\t');
+                    }
+                    Some('"') | Some('$') | Some('`') | Some('\\') => {
+                        out.push('\\');
+                        out.push(chars.next().unwrap());
+                    }
+                    _ => out.push_str("\\\\"),
+                }
+            }
+            '$' => out.push_str("\\$"),
+            '`' => out.push_str("\\`"),
+            _ => out.push(ch),
         }
-        out.push_str(part);
-        first = false;
     }
-    out.push('\'');
+    out.push('"');
     Ok(out)
 }
 
-fn sanitize_one_line(s: &str, max_len: usize) -> Result<String, ToolError> {
+/// 注入用文字列をサニタイズ。改行・CR・タブは許可し、ESC 等の危険な制御文字のみ拒否。長さ制限あり。
+fn sanitize_for_inject(s: &str, max_len: usize) -> Result<String, ToolError> {
     let mut out = String::with_capacity(s.len().min(max_len));
     let mut count = 0usize;
     for ch in s.chars() {
-        if ch == '\n' || ch == '\r' || ch == '\x1b' {
+        if (ch as u32) < 0x20 && ch != '\t' && ch != '\n' && ch != '\r' {
             return Err(ToolError::InvalidArgs(
-                "command must be single-line printable (no newline/ESC)".to_string(),
+                "command contains control characters (ESC etc.). Newlines in arguments are allowed.".to_string(),
             ));
         }
-        if (ch as u32) < 0x20 && ch != '\t' {
+        if ch == '\x7f' {
             return Err(ToolError::InvalidArgs(
-                "command contains control characters".to_string(),
+                "command contains control characters (DEL). Newlines in arguments are allowed.".to_string(),
             ));
         }
         out.push(ch);
@@ -98,7 +118,7 @@ impl Tool for QueueShellSuggestionTool {
     }
 
     fn description(&self) -> &'static str {
-        "Queue a shell command suggestion to be injected into the next shell prompt (without executing it)."
+        "Queue a shell command suggestion to be injected into the next shell prompt (without executing it). Arguments may contain newlines (e.g. multi-line commit messages); control characters such as ESC are not allowed."
     }
 
     fn parameters_schema(&self) -> Option<Value> {
@@ -134,8 +154,14 @@ impl Tool for QueueShellSuggestionTool {
                 "command.program must not be empty".to_string(),
             ));
         }
+        // program に改行を含めると注入後に別コマンドとして実行されるため禁止
+        if program.contains('\n') || program.contains('\r') {
+            return Err(ToolError::InvalidArgs(
+                "command.program must not contain newlines".to_string(),
+            ));
+        }
 
-        // 1) StructuredCommand → shell-quoted 1 行文字列（注入用）
+        // 1) StructuredCommand → shell-quoted 1 コマンド文字列（注入用。引数内改行は引用内に含まれる）
         //    program は /^[A-Za-z0-9_./-]+$/ の場合のみクォートを省略する
         let mut line = if program
             .chars()
@@ -149,7 +175,7 @@ impl Tool for QueueShellSuggestionTool {
             line.push(' ');
             line.push_str(&shell_quote(arg)?);
         }
-        let line = sanitize_one_line(&line, 4096)?;
+        let line = sanitize_for_inject(&line, 4096)?;
 
         // 2) policy 判定（command_rules は「引用なし」のコマンド行で比較する）
         let line_for_allowlist: String =
@@ -223,18 +249,55 @@ mod tests {
     use common::tool::ToolContext;
 
     #[test]
-    fn test_shell_quote_basic_and_single_quote() {
-        assert_eq!(shell_quote("echo").unwrap(), "'echo'");
-        assert_eq!(
-            shell_quote("a'b").unwrap(),
-            "'a'\"'\"'b'"
-        );
+    fn test_shell_quote_double_quote_and_escape() {
+        assert_eq!(shell_quote("echo").unwrap(), "\"echo\"");
+        assert_eq!(shell_quote("a'b").unwrap(), "\"a'b\""); // ' はダブルクォート内ではそのまま
+        // 入力 a + " + b → 出力は " で囲み、内部の " は \" にエスケープ
+        let q = shell_quote("a\"b").unwrap();
+        assert!(q.starts_with('"') && q.ends_with('"'));
+        assert!(q.contains("\\\""));
+        // 入力 a + \ + b → \ の次が n,r,t," 等でないので \\ にエスケープ
+        let r = shell_quote("a\\b").unwrap();
+        assert!(r.starts_with('"') && r.ends_with('"'));
+        assert!(r.contains("\\\\"));
+        // \n は実際の改行文字に変換（Bracketed Paste で確実に改行になる）
+        let s = shell_quote("line1\\n\\nline2").unwrap();
+        assert!(s.contains('\n'));
+        assert!(s.starts_with('"') && s.ends_with('"'));
     }
 
     #[test]
-    fn test_sanitize_one_line_rejects_newline_and_esc() {
-        assert!(sanitize_one_line("echo\nx", 100).is_err());
-        assert!(sanitize_one_line("echo\x1b[31m", 100).is_err());
+    fn test_sanitize_for_inject_allows_newline_rejects_esc() {
+        assert!(sanitize_for_inject("echo\nx", 100).is_ok());
+        assert_eq!(sanitize_for_inject("echo\nx", 100).unwrap(), "echo\nx");
+        assert!(sanitize_for_inject("echo\x1b[31m", 100).is_err());
+    }
+
+    #[test]
+    fn test_shell_quote_allows_newline_in_arg() {
+        let q = shell_quote("line1\n\nline2").unwrap();
+        assert!(q.starts_with('"'));
+        assert!(q.ends_with('"'));
+        assert!(q.contains("line1"));
+        assert!(q.contains("line2"));
+        assert!(q.contains('\n')); // 改行はそのまま（シェルで \n として解釈される）
+    }
+
+    #[test]
+    fn test_queue_shell_suggestion_rejects_program_with_newline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let session_dir = tmp.path().to_path_buf();
+        let tool = QueueShellSuggestionTool::new();
+        let ctx = ToolContext::new(Some(session_dir)).with_allow_unsafe(true);
+        let args = serde_json::json!({
+            "command": {
+                "program": "git\nrm",
+                "args": ["-rf", "/"],
+                "cwd": null
+            }
+        });
+        let result = tool.call(args, &ctx);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -254,7 +317,7 @@ mod tests {
         assert_eq!(result["queued"], true);
         // command_rules が空のため allowlist 判定では Blocked になる
         assert_eq!(result["policy"], "blocked");
-        assert!(result["text"].as_str().unwrap().starts_with("git 'status'"));
+        assert!(result["text"].as_str().unwrap().starts_with("git \"status\""));
     }
 
     #[test]

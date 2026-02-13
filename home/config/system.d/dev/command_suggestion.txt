@@ -11,6 +11,7 @@ Rules:
 - Only set `command.cwd` when a specific working directory is required.
 - Do not embed shell operators like `&&`, `||`, `;`, pipes, or redirections in `program` or `args`.
   - Prefer a single, clear command per suggestion.
+- Arguments may contain newlines (e.g. for `git commit -m "line1\n\nline2"`). Control characters (ESC etc.) are not allowed.
 
 Examples:
 
