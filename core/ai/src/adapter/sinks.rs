@@ -1,6 +1,6 @@
 //! ストリーミングの「消費」実装（表示・保存の分離）
 //!
-//! StdoutSink: assistant text 表示、tool は "Running tool: <name>..." と args を表示
+//! StdoutSink: assistant text 表示、tool は完了時に "Tool <name> args: <args>" を1行で表示（長い場合は省略）
 //! JsonlLogSink: AgentEvent を JSONL で追記
 //! PartFileSink: 完了時に assistant テキストを part_*_assistant.txt に保存
 //! StdEventSinkFactory: EventSinkFactory の標準実装（StdoutSink のみ）
@@ -16,8 +16,10 @@ use std::path::Path;
 const DARK_GREY: &str = "\x1b[90m";
 /// ANSI: リセット
 const RESET: &str = "\x1b[0m";
+/// ツール args を1行表示するときの最大文字数（超えたら省略）
+const MAX_ARGS_DISPLAY: usize = 80;
 
-/// 標準出力へ表示（TextDelta と tool の args を表示）
+/// 標準出力へ表示（TextDelta と tool 完了時の args を1行で表示）
 pub struct StdoutSink {
     /// 不具合調査用: true のとき冗長なデバッグ行を stderr に出す
     verbose: bool,
@@ -63,10 +65,9 @@ impl EventSink for StdoutSink {
             }
             AgentEvent::Llm(LlmEvent::ToolCallBegin {
                 call_id,
-                name,
+                name: _,
                 thought_signature,
             }) => {
-                eprintln!("{}Running tool: {}...{}", DARK_GREY, name, RESET);
                 if self.verbose {
                     eprintln!(
                         "{}  [verbose] call_id={} thought_signature={:?}{}",
@@ -112,7 +113,13 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::ToolResult { name, args, result, .. } => {
-                eprintln!("{}Tool {} args: {}{}", DARK_GREY, name, args, RESET);
+                let args_str = args.to_string();
+                let args_display = if args_str.len() > MAX_ARGS_DISPLAY {
+                    format!("{}...", &args_str[..args_str.floor_char_boundary(MAX_ARGS_DISPLAY)])
+                } else {
+                    args_str
+                };
+                eprintln!("{}Tool {} args: {}{}", DARK_GREY, name, args_display, RESET);
                 if self.verbose {
                     let result_str = result.to_string();
                     let snippet = if result_str.len() > 200 {
@@ -127,7 +134,18 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::ToolError { name, args, message, .. } => {
-                eprintln!("{}Tool {} args: {} failed: {}{}", DARK_GREY, name, args, message, RESET);
+                let args_str = args.to_string();
+                let args_display = if args_str.len() > MAX_ARGS_DISPLAY {
+                    format!("{}...", &args_str[..args_str.floor_char_boundary(MAX_ARGS_DISPLAY)])
+                } else {
+                    args_str
+                };
+                let msg_display = if message.len() > 40 {
+                    format!("{}...", &message[..message.floor_char_boundary(37)])
+                } else {
+                    message.clone()
+                };
+                eprintln!("{}Tool {} args: {} failed: {}{}", DARK_GREY, name, args_display, msg_display, RESET);
             }
         }
         Ok(())
