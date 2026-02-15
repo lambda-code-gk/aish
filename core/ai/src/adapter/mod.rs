@@ -4,7 +4,9 @@ pub(crate) mod compactor_deterministic;
 pub(crate) mod config;
 pub(crate) mod context_message_builder;
 pub(crate) mod continue_prompt;
+pub(crate) mod lifecycle;
 pub(crate) mod leakscan_prepare_session;
+pub(crate) mod llm_completion;
 pub(crate) mod llm_event_stream_factory;
 pub(crate) mod manifest_reviewed_session_storage;
 pub(crate) mod memory_storage;
@@ -30,6 +32,8 @@ pub(crate) use config::StdCommandAllowRulesLoader;
 pub(crate) use context_message_builder::StdContextMessageBuilder;
 pub(crate) use continue_prompt::{CliContinuePrompt, NoContinuePrompt};
 pub(crate) use leakscan_prepare_session::LeakscanPrepareSession;
+pub(crate) use lifecycle::{CompositeLifecycleHooks, SelfImproveHandler};
+pub(crate) use llm_completion::StdLlmCompletion;
 pub(crate) use manifest_reviewed_session_storage::{
     ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, ReviewedTailViewStrategy,
 };

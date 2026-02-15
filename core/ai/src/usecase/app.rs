@@ -1,8 +1,10 @@
+use crate::domain::{LifecycleEvent, QueryOutcome};
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContextMessageBuilder,
-    ContinueAfterLimitPrompt, EventSinkFactory, InterruptChecker, LlmEventStreamFactory,
-    PrepareSessionForSensitiveCheck, ProfileLister, QueryPlacement, ResolveMemoryDir,
-    ResolveProfileAndModel, RunQuery, SessionHistoryLoader, SessionResponseSaver, ToolApproval,
+    ContinueAfterLimitPrompt, EventSinkFactory, InterruptChecker, LifecycleHooks,
+    LlmEventStreamFactory, PrepareSessionForSensitiveCheck, ProfileLister, QueryPlacement,
+    ResolveMemoryDir, ResolveProfileAndModel, RunQuery, SessionHistoryLoader, SessionResponseSaver,
+    ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
@@ -23,6 +25,7 @@ pub struct AiDeps {
     pub model: ModelDeps,
     pub system: SystemDeps,
     pub obs: ObsDeps,
+    pub lifecycle_hooks: Arc<dyn LifecycleHooks>,
 }
 
 pub struct SessionDeps {
@@ -264,7 +267,7 @@ impl AiUseCase {
             };
 
             match outcome {
-                AgentLoopOutcome::Done(_msgs, assistant_text) => {
+                AgentLoopOutcome::Done(msgs_done, assistant_text) => {
                     if self.session_is_valid(&session_dir) {
                         let dir = session_dir.as_ref().expect("session_dir is Some");
                         self.deps.session
@@ -273,6 +276,25 @@ impl AiUseCase {
                         if !assistant_text.trim().is_empty() {
                             self.deps.session.response_saver.save_assistant(dir, &assistant_text)?;
                             self.truncate_console_log(dir)?;
+                        }
+                        if let Ok((mem_proj, mem_global)) = self.deps.policy.resolve_memory_dir.resolve() {
+                            let event = LifecycleEvent::QueryEnd {
+                                session_dir: dir.clone(),
+                                memory_dir_project: mem_proj,
+                                memory_dir_global: mem_global,
+                                outcome: QueryOutcome::Done,
+                                messages: msgs_done.clone(),
+                            };
+                            if let Err(e) = self.deps.lifecycle_hooks.on_event(&event) {
+                                let _ = self.deps.obs.log.log(&LogRecord {
+                                    ts: now_iso8601(),
+                                    level: LogLevel::Warn,
+                                    message: format!("lifecycle hook failed: {}", e),
+                                    layer: Some("usecase".to_string()),
+                                    kind: Some("lifecycle".to_string()),
+                                    fields: None,
+                                });
+                            }
                         }
                     }
                     let _ = self.deps.obs.log.log(&LogRecord {
@@ -300,6 +322,25 @@ impl AiUseCase {
                             if !assistant_text.trim().is_empty() {
                                 self.deps.session.response_saver.save_assistant(dir, &assistant_text)?;
                                 self.truncate_console_log(dir)?;
+                            }
+                            if let Ok((mem_proj, mem_global)) = self.deps.policy.resolve_memory_dir.resolve() {
+                                let event = LifecycleEvent::QueryEnd {
+                                    session_dir: dir.clone(),
+                                    memory_dir_project: mem_proj,
+                                    memory_dir_global: mem_global,
+                                    outcome: QueryOutcome::ReachedLimit,
+                                    messages: msgs.clone(),
+                                };
+                                if let Err(e) = self.deps.lifecycle_hooks.on_event(&event) {
+                                    let _ = self.deps.obs.log.log(&LogRecord {
+                                        ts: now_iso8601(),
+                                        level: LogLevel::Warn,
+                                        message: format!("lifecycle hook failed: {}", e),
+                                        layer: Some("usecase".to_string()),
+                                        kind: Some("lifecycle".to_string()),
+                                        fields: None,
+                                    });
+                                }
                             }
                         }
                         let _ = self.deps.obs.log.log(&LogRecord {

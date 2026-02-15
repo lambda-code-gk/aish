@@ -11,19 +11,22 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliContinuePrompt, CliToolApproval, DeterministicCompactionStrategy, FileAgentStateStorage, GetMemoryContentTool,
-    GrepTool, LeakscanPrepareSession, ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy,
-    NoContinuePrompt, NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
-    ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SigintChecker, StdCommandAllowRulesLoader,
-    StdContextMessageBuilder, StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister,
-    StdResolveMemoryDir, StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner, ShellTool,
-    TailWindowReducer, WriteFileTool, HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool,
-    SaveMemoryTool, SearchMemoryTool,
+    CliContinuePrompt, CliToolApproval, CompositeLifecycleHooks, DeterministicCompactionStrategy,
+    FileAgentStateStorage, GetMemoryContentTool, GrepTool, LeakscanPrepareSession,
+    ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, NoContinuePrompt,
+    NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
+    ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler, SigintChecker,
+    StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory, StdLlmCompletion,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveProfileAndModel,
+    StdResolveSystemInstruction, StdTaskRunner, ShellTool, TailWindowReducer, WriteFileTool,
+    HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, SaveMemoryTool, SearchMemoryTool,
 };
+use crate::adapter::lifecycle::LifecycleHandler;
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
-    AgentStateLoader, AgentStateSaver, ContextMessageBuilder, PrepareSessionForSensitiveCheck,
-    ResolveSystemInstruction, RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
+    AgentStateLoader, AgentStateSaver, ContextMessageBuilder, LifecycleHooks, LlmCompletion,
+    PrepareSessionForSensitiveCheck, ResolveSystemInstruction, RunQuery, SessionHistoryLoader,
+    SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::{AiDeps, AiUseCase, ModelDeps, ObsDeps, PolicyDeps, SessionDeps, SystemDeps, ToolingDeps};
 use crate::usecase::task::TaskUseCase;
@@ -288,6 +291,23 @@ fn build_obs_deps(logger: &Arc<dyn Log>) -> ObsDeps {
     }
 }
 
+/// ライフサイクルフックを組み立てる。AISH_SELF_IMPROVE=0 または false のときは自己改善ハンドラを登録しない。
+fn build_lifecycle_hooks(
+    llm_stream_factory: &Arc<dyn crate::ports::outbound::LlmEventStreamFactory>,
+) -> Arc<dyn LifecycleHooks> {
+    let disabled = std::env::var("AISH_SELF_IMPROVE")
+        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    let handlers: Vec<Arc<dyn LifecycleHandler>> = if disabled {
+        vec![]
+    } else {
+        let llm_completion: Arc<dyn LlmCompletion> =
+            Arc::new(StdLlmCompletion::new(Arc::clone(llm_stream_factory)));
+        vec![Arc::new(SelfImproveHandler::new(llm_completion))]
+    };
+    Arc::new(CompositeLifecycleHooks::new(handlers))
+}
+
 fn build_resolve_system_instruction(
     env_resolver: &Arc<dyn EnvResolver>,
     fs: &Arc<dyn FileSystem>,
@@ -321,6 +341,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let model = build_model_deps(&fs, &env_resolver);
     let system = build_system_deps(&process);
     let obs = build_obs_deps(&logger);
+    let lifecycle_hooks = build_lifecycle_hooks(&model.llm_stream_factory);
 
     let ai_use_case = Arc::new(AiUseCase::new(AiDeps {
         session,
@@ -329,6 +350,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         model,
         system,
         obs,
+        lifecycle_hooks,
     }));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_runner: Arc<dyn TaskRunner> = build_task_runner(&fs, &process);
