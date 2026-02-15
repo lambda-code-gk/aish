@@ -137,6 +137,7 @@ impl AiUseCase {
         query: Option<&Query>,
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
+        tool_allowlist: Option<&[String]>,
     ) -> Result<i32, Error> {
         let (profile_name, model_name) = self
             .deps.model.resolve_profile_and_model
@@ -230,9 +231,17 @@ impl AiUseCase {
 
         let mut messages = messages;
         let ctx = ctx.0;
+        let allowlist: Option<std::collections::HashSet<&str>> = tool_allowlist
+            .map(|s| s.iter().map(String::as_str).collect());
         loop {
             let mut registry = ToolRegistry::new();
             for t in &self.deps.tooling.tools {
+                let name = t.name();
+                if let Some(ref list) = allowlist {
+                    if !list.contains(name) {
+                        continue;
+                    }
+                }
                 registry.register(Arc::clone(t));
             }
             let (memory_project, memory_global) = match self.deps.policy.resolve_memory_dir.resolve() {
@@ -369,6 +378,7 @@ impl RunQuery for AiUseCase {
         query: Option<&Query>,
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
+        tool_allowlist: Option<&[String]>,
     ) -> Result<i32, Error> {
         self.run_query_impl(
             session_dir,
@@ -377,6 +387,7 @@ impl RunQuery for AiUseCase {
             query,
             system_instruction,
             max_turns_override,
+            tool_allowlist,
         )
     }
 }

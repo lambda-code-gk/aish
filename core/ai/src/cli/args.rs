@@ -21,6 +21,10 @@ pub struct Config {
     pub profile: Option<ProviderName>,
     pub model: Option<ModelName>,
     pub system: Option<String>,
+    /// モード名（--mode）。main で解決し system/profile/model/tool_allowlist にマージする
+    pub mode: Option<String>,
+    /// モード解決後に main が設定。config_to_command で AiCommand に渡す
+    pub tool_allowlist: Option<Vec<String>>,
     pub task: Option<TaskName>,
     pub message_args: Vec<String>,
 }
@@ -37,6 +41,8 @@ impl Default for Config {
             profile: None,
             model: None,
             system: None,
+            mode: None,
+            tool_allowlist: None,
             task: None,
             message_args: Vec::new(),
         }
@@ -121,6 +127,13 @@ fn build_clap_command() -> clap::Command {
                 .num_args(1),
         )
         .arg(
+            clap::Arg::new("mode")
+                .long("mode")
+                .value_name("name")
+                .help("Use preset mode (system prompt, profile, tools from config/mode.d/<name>.json)")
+                .num_args(1),
+        )
+        .arg(
             clap::Arg::new("generate")
                 .long("generate")
                 .value_name("shell")
@@ -157,6 +170,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         .get_one::<String>("model")
         .map(|s| ModelName::new(s.clone()));
     let system = matches.get_one::<String>("system").cloned();
+    let mode = matches.get_one::<String>("mode").cloned();
     let positional: Vec<String> = matches
         .get_many::<String>("positional")
         .map(|i| i.cloned().collect())
@@ -179,6 +193,8 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         profile,
         model,
         system,
+        mode,
+        tool_allowlist: None,
         task,
         message_args,
     }
@@ -286,6 +302,7 @@ pub fn config_to_command(config: Config) -> AiCommand {
             profile: config.profile,
             model: config.model,
             system: config.system,
+            tool_allowlist: config.tool_allowlist,
         };
     }
 
@@ -294,12 +311,14 @@ pub fn config_to_command(config: Config) -> AiCommand {
         let profile = config.profile;
         let model = config.model;
         let system = config.system;
+        let tool_allowlist = config.tool_allowlist;
         return AiCommand::Task {
             name: task,
             args,
             profile,
             model,
             system,
+            tool_allowlist,
         };
     }
 
@@ -309,6 +328,7 @@ pub fn config_to_command(config: Config) -> AiCommand {
         model: config.model,
         query,
         system: config.system,
+        tool_allowlist: config.tool_allowlist,
     }
 }
 
@@ -326,6 +346,8 @@ mod tests {
         assert!(config.profile.is_none());
         assert!(config.model.is_none());
         assert!(config.system.is_none());
+        assert!(config.mode.is_none());
+        assert!(config.tool_allowlist.is_none());
         assert!(config.task.is_none());
         assert_eq!(config.message_args.len(), 0);
     }
@@ -500,6 +522,14 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.to_string().contains("argument") || err.to_string().contains("required"));
         assert_eq!(err.exit_code(), 64);
+    }
+
+    #[test]
+    fn test_parse_args_mode() {
+        let args = vec!["ai".to_string(), "--mode".to_string(), "plan".to_string(), "hello".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert_eq!(config.mode.as_deref(), Some("plan"));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("hello"));
     }
 
     #[test]

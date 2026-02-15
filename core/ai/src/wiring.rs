@@ -17,16 +17,16 @@ use crate::adapter::{
     NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
     ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler, SigintChecker,
     StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory, StdLlmCompletion,
-    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveProfileAndModel,
-    StdResolveSystemInstruction, StdTaskRunner, ShellTool, TailWindowReducer, WriteFileTool,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir,     StdResolveModeConfig, StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner,
+    ShellTool, TailWindowReducer, WriteFileTool,
     HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, SaveMemoryTool, SearchMemoryTool,
 };
 use crate::adapter::lifecycle::LifecycleHandler;
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, ContextMessageBuilder, LifecycleHooks, LlmCompletion,
-    PrepareSessionForSensitiveCheck, ResolveSystemInstruction, RunQuery, SessionHistoryLoader,
-    SessionResponseSaver, TaskRunner,
+    PrepareSessionForSensitiveCheck, ResolveModeConfig, ResolveSystemInstruction, RunQuery,
+    SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::{AiDeps, AiUseCase, ModelDeps, ObsDeps, PolicyDeps, SessionDeps, SystemDeps, ToolingDeps};
 use crate::usecase::task::TaskUseCase;
@@ -42,6 +42,7 @@ impl RunQuery for AiRunQuery {
         query: Option<&Query>,
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
+        tool_allowlist: Option<&[String]>,
     ) -> Result<i32, common::error::Error> {
         self.0.run_query(
             session_dir,
@@ -50,6 +51,7 @@ impl RunQuery for AiRunQuery {
             query,
             system_instruction,
             max_turns_override,
+            tool_allowlist,
         )
     }
 }
@@ -60,6 +62,7 @@ pub struct App {
     pub task_use_case: TaskUseCase,
     pub run_query: Arc<dyn RunQuery>,
     pub resolve_system_instruction: Arc<dyn ResolveSystemInstruction>,
+    pub resolve_mode_config: Arc<dyn ResolveModeConfig>,
     /// 構造化ログ（ファイルへ JSONL）。エラー時のコンソール表示とは別。
     pub logger: Arc<dyn Log>,
     /// テスト用に露出（Query 実行・session/history の単体テストで利用）
@@ -318,6 +321,13 @@ fn build_resolve_system_instruction(
     ))
 }
 
+fn build_resolve_mode_config(
+    env_resolver: &Arc<dyn EnvResolver>,
+    fs: &Arc<dyn FileSystem>,
+) -> Arc<dyn ResolveModeConfig> {
+    Arc::new(StdResolveModeConfig::new(Arc::clone(env_resolver), Arc::clone(fs)))
+}
+
 /// 配線: 標準アダプタで AiUseCase / TaskUseCase を組み立て、App を返す。
 ///
 /// `non_interactive`: true のとき確認プロンプトを出さない（ツール承認は常に拒否・続行はしない・leakscan ヒットは拒否）。CI 向け。
@@ -355,12 +365,14 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_runner: Arc<dyn TaskRunner> = build_task_runner(&fs, &process);
     let resolve_system_instruction = build_resolve_system_instruction(&env_resolver, &fs);
+    let resolve_mode_config = build_resolve_mode_config(&env_resolver, &fs);
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));
     App {
         env_resolver,
         task_use_case,
         run_query,
         resolve_system_instruction,
+        resolve_mode_config,
         logger,
         ai_use_case,
     }

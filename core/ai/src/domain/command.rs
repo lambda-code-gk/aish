@@ -24,6 +24,8 @@ pub enum AiCommand {
         model: Option<ModelName>,
         /// タスク未ヒット時に run_query へ委譲する際に渡すシステムプロンプト（-S/--system）
         system: Option<String>,
+        /// モードで指定したツール許可リスト。None のときは全ツール
+        tool_allowlist: Option<Vec<String>>,
     },
     /// 保存された会話状態から再開（-c/--continue 指定時のみ）
     Resume {
@@ -31,6 +33,8 @@ pub enum AiCommand {
         model: Option<ModelName>,
         /// システムプロンプト（-S/--system で指定）
         system: Option<String>,
+        /// モードで指定したツール許可リスト。None のときは全ツール
+        tool_allowlist: Option<Vec<String>>,
     },
     /// LLM クエリ（タスク未指定、またはタスクが見つからなかった場合）
     Query {
@@ -39,5 +43,7 @@ pub enum AiCommand {
         query: Query,
         /// システムプロンプト（-S/--system で指定）
         system: Option<String>,
+        /// モードで指定したツール許可リスト。None のときは全ツール
+        tool_allowlist: Option<Vec<String>>,
     },
 }

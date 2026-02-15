@@ -9,6 +9,7 @@ mod wiring;
 mod tests;
 
 use std::process;
+use common::domain::{ModelName, ProviderName};
 use common::error::Error;
 use common::ports::outbound::{now_iso8601, LogLevel, LogRecord};
 use cli::{config_to_command, parse_args, print_completion, Config, ParseOutcome};
@@ -22,7 +23,24 @@ struct Runner {
 }
 
 impl UseCaseRunner for Runner {
-    fn run(&self, config: Config) -> Result<i32, Error> {
+    fn run(&self, mut config: Config) -> Result<i32, Error> {
+        if let Some(ref mode_name) = config.mode {
+            let mode_cfg = self.app.resolve_mode_config.resolve(mode_name)?;
+            if let Some(mc) = mode_cfg {
+                if config.system.is_none() {
+                    config.system = mc.system;
+                }
+                if config.profile.is_none() {
+                    config.profile = mc.profile.map(ProviderName::new);
+                }
+                if config.model.is_none() {
+                    config.model = mc.model.map(ModelName::new);
+                }
+                if config.tool_allowlist.is_none() {
+                    config.tool_allowlist = mc.tools;
+                }
+            }
+        }
         let session_dir = self.app.env_resolver.session_dir_from_env();
         let verbose = config.verbose;
         let non_interactive = config.non_interactive;
@@ -121,6 +139,7 @@ impl UseCaseRunner for Runner {
                 profile,
                 model,
                 system,
+                tool_allowlist,
             } => self.app.task_use_case.run(
                 session_dir,
                 &name,
@@ -128,11 +147,13 @@ impl UseCaseRunner for Runner {
                 profile,
                 model,
                 system_instruction(system).as_deref(),
+                tool_allowlist.as_deref(),
             ),
             AiCommand::Resume {
                 profile,
                 model,
                 system,
+                tool_allowlist,
             } => {
                 let max_turns = std::env::var("AI_MAX_TURNS")
                     .ok()
@@ -144,6 +165,7 @@ impl UseCaseRunner for Runner {
                     None,
                     system_instruction(system).as_deref(),
                     max_turns,
+                    tool_allowlist.as_deref(),
                 )
             }
             AiCommand::Query {
@@ -151,6 +173,7 @@ impl UseCaseRunner for Runner {
                 model,
                 query,
                 system,
+                tool_allowlist,
             } => {
                 if query.trim().is_empty() {
                     return Err(Error::invalid_argument(
@@ -167,6 +190,7 @@ impl UseCaseRunner for Runner {
                     Some(&query),
                     system_instruction(system).as_deref(),
                     max_turns,
+                    tool_allowlist.as_deref(),
                 )
             }
         };
@@ -262,12 +286,13 @@ fn print_help() {
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
     println!("                                If omitted, enabled system prompts from aish sysq are used.");
+    println!("  --mode <name>                 Use preset (system, profile, tools from $AISH_HOME/config/mode.d/<name>.json). CLI -p/-m/-S override mode.");
     println!("  --generate <shell>             Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
     println!("  --list-tasks                   List available task names (used by shell completion).");
     println!();
     println!("Environment:");
     println!("  AISH_SESSION    Session directory for resume/continue. Set by aish when running ai from the shell.");
-    println!("  AISH_HOME       Home directory. Profiles: $AISH_HOME/config/profiles.json; tasks: $AISH_HOME/config/task.d/");
+    println!("  AISH_HOME       Home directory. Profiles: $AISH_HOME/config/profiles.json; tasks: $AISH_HOME/config/task.d/; modes: $AISH_HOME/config/mode.d/");
     println!("                 If unset, $XDG_CONFIG_HOME/aish (e.g. ~/.config/aish) is used.");
     println!();
     println!("Description:");

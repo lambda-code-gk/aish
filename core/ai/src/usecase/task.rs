@@ -36,6 +36,7 @@ impl TaskUseCase {
         provider: Option<ProviderName>,
         model: Option<ModelName>,
         system_instruction: Option<&str>,
+        tool_allowlist: Option<&[String]>,
     ) -> Result<i32, Error> {
         if let Some(code) = self.task_runner.run_if_exists(name.as_ref(), args)? {
             return Ok(code);
@@ -55,6 +56,7 @@ impl TaskUseCase {
             Some(&query),
             system_instruction,
             None,
+            tool_allowlist,
         )
     }
 }

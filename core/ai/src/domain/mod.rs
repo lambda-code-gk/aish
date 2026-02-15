@@ -3,6 +3,7 @@
 pub mod approval;
 pub mod command;
 pub mod compaction;
+pub mod mode_config;
 pub mod context_budget;
 pub mod history;
 pub mod history_reducer;
@@ -13,6 +14,7 @@ pub mod query;
 pub mod task_name;
 pub use approval::{Approval, ToolApproval};
 pub use command::AiCommand;
+pub use mode_config::ModeConfig;
 pub use compaction::CompactionRecord;
 pub use context_budget::ContextBudget;
 pub use history::History;
