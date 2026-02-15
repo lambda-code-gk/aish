@@ -5,7 +5,7 @@ use crate::adapter::memory_storage;
 use crate::domain::{LifecycleEvent, MemoryEntry};
 use common::error::Error;
 use common::msg::Msg;
-use common::ports::outbound::now_iso8601;
+use common::ports::outbound::{now_iso8601, Log};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -33,11 +33,12 @@ const RESULT_TRUNCATE: usize = 500;
 /// クエリ終了時にセッション履歴を LLM で要約し、知見があれば永続メモリに保存する
 pub struct SelfImproveHandler {
     llm: Arc<dyn LlmCompletion>,
+    log: Arc<dyn Log>,
 }
 
 impl SelfImproveHandler {
-    pub fn new(llm: Arc<dyn LlmCompletion>) -> Self {
-        Self { llm }
+    pub fn new(llm: Arc<dyn LlmCompletion>, log: Arc<dyn Log>) -> Self {
+        Self { llm, log }
     }
 }
 
@@ -103,7 +104,7 @@ impl LifecycleHandler for SelfImproveHandler {
             .unwrap_or(memory_dir_global.as_path());
         let timestamp = now_iso8601();
         let entry = MemoryEntry::new("", content, category, keywords, subject, timestamp);
-        let _ = memory_storage::save_entry(dir, &entry)?;
+        let _ = memory_storage::save_entry(dir, &entry, Some(self.log.as_ref()))?;
         Ok(())
     }
 }

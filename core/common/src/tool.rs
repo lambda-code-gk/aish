@@ -3,6 +3,7 @@
 //! ToolRegistry で name -> Box<dyn Tool> を解決し、ToolContext は session dir / fs / process / clock 等の port を束ねる。
 //! Tool trait は Outbound ポートとして ports/outbound からも re-export される。
 
+use crate::ports::outbound::Log;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -44,6 +45,8 @@ pub struct ToolContext {
     pub memory_dir_project: Option<std::path::PathBuf>,
     /// メモリ用: グローバル記憶ディレクトリ（例: $AISH_HOME/memory）
     pub memory_dir_global: Option<std::path::PathBuf>,
+    /// メモリ読み書き等のログ記録用（オプション）
+    pub log: Option<Arc<dyn Log>>,
 }
 
 /// コマンド実行許可ルール
@@ -67,6 +70,7 @@ impl ToolContext {
             allow_unsafe: false,
             memory_dir_project: None,
             memory_dir_global: None,
+            log: None,
         }
     }
 
@@ -89,6 +93,12 @@ impl ToolContext {
     ) -> Self {
         self.memory_dir_project = project;
         self.memory_dir_global = global;
+        self
+    }
+
+    /// ログ記録用の Log を設定（メモリ読み書き等の記録に利用）
+    pub fn with_log(mut self, log: Option<Arc<dyn Log>>) -> Self {
+        self.log = log;
         self
     }
 }

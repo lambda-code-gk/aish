@@ -59,6 +59,7 @@ impl Tool for GetMemoryContentTool {
             project_dir.as_deref(),
             &global_dir,
             &memory_id,
+            ctx.log.as_deref(),
         )
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 

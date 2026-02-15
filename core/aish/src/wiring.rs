@@ -8,7 +8,10 @@ use common::adapter::{
 use common::part_id::{IdGenerator, StdIdGenerator};
 use common::ports::outbound::{EnvResolver, FileSystem, Log, PathResolver, Signal};
 
-use crate::adapter::{StdMemoryRepository, StdShellRunner, StdSysqRepository, UnixPtySpawn, UnixSignal};
+use crate::adapter::{
+    LoggingMemoryRepository, StdMemoryRepository, StdShellRunner, StdSysqRepository, UnixPtySpawn,
+    UnixSignal,
+};
 use crate::ports::outbound::{MemoryRepository, ShellRunner, SysqRepository};
 use crate::usecase::{
     ClearUseCase, MemoryUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase, ShellUseCase,
@@ -65,8 +68,10 @@ pub fn wire_aish() -> App {
     let sysq_repository: Arc<dyn SysqRepository> =
         Arc::new(StdSysqRepository::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     let sysq_use_case = SysqUseCase::new(Arc::clone(&sysq_repository));
-    let memory_repository: Arc<dyn MemoryRepository> =
-        Arc::new(StdMemoryRepository::new(Arc::clone(&env_resolver)));
+    let memory_repository: Arc<dyn MemoryRepository> = Arc::new(LoggingMemoryRepository::new(
+        Arc::new(StdMemoryRepository::new(Arc::clone(&env_resolver))),
+        Arc::clone(&logger),
+    ));
     let memory_use_case = MemoryUseCase::new(memory_repository);
     let shell_use_case = ShellUseCase::new(Arc::clone(&path_resolver), Arc::clone(&shell_runner));
     let clear_use_case = ClearUseCase::new(Arc::clone(&path_resolver), Arc::clone(&fs));

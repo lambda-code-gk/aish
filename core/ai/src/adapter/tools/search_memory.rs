@@ -62,6 +62,7 @@ impl Tool for SearchMemoryTool {
             category.as_deref(),
             limit,
             true,
+            ctx.log.as_deref(),
         )
         .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 

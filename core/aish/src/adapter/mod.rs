@@ -1,6 +1,7 @@
 pub(crate) mod aish_adapter;
 pub(crate) mod console_handler;
 pub(crate) mod logfmt;
+pub(crate) mod logging_memory_repository;
 pub(crate) mod memory_repository;
 pub(crate) mod platform;
 pub(crate) mod prompt_ready_detector;
@@ -8,6 +9,7 @@ pub(crate) mod shell;
 pub(crate) mod sysq;
 pub(crate) mod terminal;
 pub(crate) use aish_adapter::{UnixPtySpawn, UnixSignal};
+pub(crate) use logging_memory_repository::LoggingMemoryRepository;
 pub(crate) use memory_repository::StdMemoryRepository;
 pub(crate) use shell::StdShellRunner;
 pub(crate) use sysq::StdSysqRepository;

@@ -77,8 +77,12 @@ impl Tool for SaveMemoryTool {
         let timestamp = common::ports::outbound::now_iso8601();
         let entry = MemoryEntry::new("", content, category, keywords, subject, timestamp);
 
-        let id = memory_storage::save_entry(dir.as_path(), &entry)
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        let id = memory_storage::save_entry(
+            dir.as_path(),
+            &entry,
+            ctx.log.as_deref(),
+        )
+        .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         Ok(serde_json::json!({
             "memory_id": id,
             "memory_dir": dir.to_string_lossy()

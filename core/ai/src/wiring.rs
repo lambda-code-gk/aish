@@ -297,6 +297,7 @@ fn build_obs_deps(logger: &Arc<dyn Log>) -> ObsDeps {
 /// ライフサイクルフックを組み立てる。AISH_SELF_IMPROVE=0 または false のときは自己改善ハンドラを登録しない。
 fn build_lifecycle_hooks(
     llm_stream_factory: &Arc<dyn crate::ports::outbound::LlmEventStreamFactory>,
+    logger: &Arc<dyn Log>,
 ) -> Arc<dyn LifecycleHooks> {
     let disabled = std::env::var("AISH_SELF_IMPROVE")
         .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
@@ -306,7 +307,10 @@ fn build_lifecycle_hooks(
     } else {
         let llm_completion: Arc<dyn LlmCompletion> =
             Arc::new(StdLlmCompletion::new(Arc::clone(llm_stream_factory)));
-        vec![Arc::new(SelfImproveHandler::new(llm_completion))]
+        vec![Arc::new(SelfImproveHandler::new(
+            llm_completion,
+            Arc::clone(logger),
+        ))]
     };
     Arc::new(CompositeLifecycleHooks::new(handlers))
 }
@@ -351,7 +355,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let model = build_model_deps(&fs, &env_resolver);
     let system = build_system_deps(&process);
     let obs = build_obs_deps(&logger);
-    let lifecycle_hooks = build_lifecycle_hooks(&model.llm_stream_factory);
+    let lifecycle_hooks = build_lifecycle_hooks(&model.llm_stream_factory, &logger);
 
     let ai_use_case = Arc::new(AiUseCase::new(AiDeps {
         session,

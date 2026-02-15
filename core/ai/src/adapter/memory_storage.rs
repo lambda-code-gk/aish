@@ -1,10 +1,13 @@
 //! 永続メモリのファイル読み書き（metadata.json + entries/<id>.json）
 //!
 //! 旧実装と互換の形式。ツールから利用する stateless なヘルパー。
+//! オプションで Log を渡すとメモリの読み書きをログに記録する。
 
 use crate::domain::{MemoryEntry, MemoryMeta};
 use common::error::Error;
+use common::ports::outbound::{Log, LogLevel, LogRecord, now_iso8601};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -39,7 +42,12 @@ fn generate_memory_id() -> String {
 }
 
 /// 1 件保存。dir を初期化し、entries/<id>.json と metadata に追加。
-pub fn save_entry(dir: &Path, entry: &MemoryEntry) -> Result<String, Error> {
+/// log に Some を渡すとメモリ書き込みをログに記録する。
+pub fn save_entry(
+    dir: &Path,
+    entry: &MemoryEntry,
+    log: Option<&dyn Log>,
+) -> Result<String, Error> {
     init_memory_dir(dir)?;
     let id = if entry.id.is_empty() {
         generate_memory_id()
@@ -69,6 +77,21 @@ pub fn save_entry(dir: &Path, entry: &MemoryEntry) -> Result<String, Error> {
         score: None,
     });
     write_metadata(&meta_path, &memories, dir)?;
+    if let Some(logger) = log {
+        let mut fields = BTreeMap::new();
+        fields.insert("operation".to_string(), serde_json::json!("write"));
+        fields.insert("memory_id".to_string(), serde_json::json!(id));
+        fields.insert("dir".to_string(), serde_json::json!(dir.to_string_lossy().to_string()));
+        fields.insert("category".to_string(), serde_json::json!(e.category));
+        let _ = logger.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "memory write".to_string(),
+            layer: Some("adapter".to_string()),
+            kind: Some("memory".to_string()),
+            fields: Some(fields),
+        });
+    }
     Ok(id)
 }
 
@@ -100,15 +123,31 @@ fn write_metadata(path: &Path, memories: &[MemoryMeta], memory_dir: &Path) -> Re
     Ok(())
 }
 
-/// 1 ディレクトリ内の全メタデータを読み込み
-pub fn load_metadata(dir: &Path) -> Result<Vec<MemoryMeta>, Error> {
+/// 1 ディレクトリ内の全メタデータを読み込み。
+/// log に Some を渡すとメモリ読み込みをログに記録する。
+pub fn load_metadata(dir: &Path, log: Option<&dyn Log>) -> Result<Vec<MemoryMeta>, Error> {
     let path = dir.join(METADATA_FILENAME);
     let meta = read_metadata(&path)?;
+    if let Some(logger) = log {
+        let mut fields = BTreeMap::new();
+        fields.insert("operation".to_string(), serde_json::json!("load_metadata"));
+        fields.insert("dir".to_string(), serde_json::json!(dir.to_string_lossy().to_string()));
+        fields.insert("count".to_string(), serde_json::json!(meta.memories.len()));
+        let _ = logger.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "memory read".to_string(),
+            layer: Some("adapter".to_string()),
+            kind: Some("memory".to_string()),
+            fields: Some(fields),
+        });
+    }
     Ok(meta.memories)
 }
 
 /// 複数ディレクトリ（project, global）を検索し、キーワード・subject でマッチするものをスコア付きで返す。
 /// include_content が true のときは entries/<id>.json から content を補完する。
+/// log に Some を渡すとメモリ読み込みをログに記録する。
 pub fn search_entries(
     project_dir: Option<&Path>,
     global_dir: &Path,
@@ -116,6 +155,7 @@ pub fn search_entries(
     category_filter: Option<&str>,
     limit: usize,
     include_content: bool,
+    log: Option<&dyn Log>,
 ) -> Result<Vec<MemoryEntry>, Error> {
     let query_lower = query.to_lowercase();
     let mut scored: Vec<(MemoryMeta, std::path::PathBuf, String, u64)> =
@@ -126,7 +166,7 @@ pub fn search_entries(
         if project_dir == Some(global_dir) && source == "global" {
             continue;
         }
-        let metas = load_metadata(d)?;
+        let metas = load_metadata(d, None)?;
         for m in metas {
             if let Some(cat) = category_filter {
                 if !cat.is_empty() && m.category != cat {
@@ -161,6 +201,20 @@ pub fn search_entries(
         }
         out.push(entry);
     }
+    if let Some(logger) = log {
+        let mut fields = BTreeMap::new();
+        fields.insert("operation".to_string(), serde_json::json!("search"));
+        fields.insert("query".to_string(), serde_json::json!(query));
+        fields.insert("result_count".to_string(), serde_json::json!(out.len()));
+        let _ = logger.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "memory read".to_string(),
+            layer: Some("adapter".to_string()),
+            kind: Some("memory".to_string()),
+            fields: Some(fields),
+        });
+    }
     Ok(out)
 }
 
@@ -193,20 +247,50 @@ fn get_entry_by_id_single(dir: &Path, id: &str) -> Result<MemoryEntry, Error> {
     Ok(e)
 }
 
-/// プロジェクト優先で ID に一致するエントリを取得
+/// プロジェクト優先で ID に一致するエントリを取得。
+/// log に Some を渡すとメモリ読み込みをログに記録する。
 pub fn get_entry_by_id(
     project_dir: Option<&Path>,
     global_dir: &Path,
     id: &str,
+    log: Option<&dyn Log>,
 ) -> Result<MemoryEntry, Error> {
     if let Some(d) = project_dir {
         if let Ok(mut e) = get_entry_by_id_single(d, id) {
             e.source = Some("project".to_string());
+            if let Some(logger) = log {
+                let mut fields = BTreeMap::new();
+                fields.insert("operation".to_string(), serde_json::json!("get"));
+                fields.insert("memory_id".to_string(), serde_json::json!(id));
+                fields.insert("source".to_string(), serde_json::json!("project"));
+                let _ = logger.log(&LogRecord {
+                    ts: now_iso8601(),
+                    level: LogLevel::Info,
+                    message: "memory read".to_string(),
+                    layer: Some("adapter".to_string()),
+                    kind: Some("memory".to_string()),
+                    fields: Some(fields),
+                });
+            }
             return Ok(e);
         }
     }
     let mut e = get_entry_by_id_single(global_dir, id)?;
     e.source = Some("global".to_string());
+    if let Some(logger) = log {
+        let mut fields = BTreeMap::new();
+        fields.insert("operation".to_string(), serde_json::json!("get"));
+        fields.insert("memory_id".to_string(), serde_json::json!(id));
+        fields.insert("source".to_string(), serde_json::json!("global"));
+        let _ = logger.log(&LogRecord {
+            ts: now_iso8601(),
+            level: LogLevel::Info,
+            message: "memory read".to_string(),
+            layer: Some("adapter".to_string()),
+            kind: Some("memory".to_string()),
+            fields: Some(fields),
+        });
+    }
     Ok(e)
 }
 
@@ -231,15 +315,15 @@ mod tests {
             "subject",
             "2025-01-01T00:00:00Z",
         );
-        let id = save_entry(&dir, &entry).unwrap();
+        let id = save_entry(&dir, &entry, None).unwrap();
         assert!(!id.is_empty());
         assert!(dir.join(ENTRIES_DIR).join(format!("{}.json", id)).exists());
 
-        let metas = load_metadata(&dir).unwrap();
+        let metas = load_metadata(&dir, None).unwrap();
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].subject, "subject");
 
-        let found = get_entry_by_id(Some(&dir), &dir, &id).unwrap();
+        let found = get_entry_by_id(Some(&dir), &dir, &id, None).unwrap();
         assert_eq!(found.content, "test content");
 
         let _ = std::fs::remove_dir_all(&dir);

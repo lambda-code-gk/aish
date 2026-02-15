@@ -252,7 +252,8 @@ impl AiUseCase {
                 session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()),
             )
             .with_command_allow_rules(allow_rules.clone())
-            .with_memory_dirs(memory_project, memory_global);
+            .with_memory_dirs(memory_project, memory_global)
+            .with_log(Some(Arc::clone(&self.deps.obs.log)));
             let sinks = self.deps.tooling.sink_factory.create_sinks();
             let mut agent_loop = AgentLoop::new(
                 Arc::clone(&stream),
