@@ -96,8 +96,26 @@ fn build_sysq_subcommand() -> clap::Command {
         )
 }
 
+fn build_memory_subcommand() -> clap::Command {
+    clap::Command::new("memory")
+        .about("Memory list / get / remove (persistent knowledge used by ai)")
+        .subcommand_required(true)
+        .subcommand(clap::Command::new("list").about("List all memories (id, category, subject)"))
+        .subcommand(
+            clap::Command::new("get")
+                .about("Get memory content by ID(s)")
+                .arg(clap::Arg::new("ids").num_args(1..).value_name("id").required(true)),
+        )
+        .subcommand(
+            clap::Command::new("remove")
+                .about("Remove memory by ID(s)")
+                .arg(clap::Arg::new("ids").num_args(1..).value_name("id").required(true)),
+        )
+}
+
 fn build_clap_command() -> clap::Command {
     let sysq = build_sysq_subcommand();
+    let memory = build_memory_subcommand();
 
     global_args(
         clap::Command::new("aish")
@@ -126,6 +144,7 @@ fn build_clap_command() -> clap::Command {
                     .about("Clear all part files in the session directory (delete conversation history)"),
             )
             .subcommand(sysq)
+            .subcommand(memory)
             .subcommand(
                 clap::Command::new("resume")
                     .about("Resume last or specified session")
@@ -183,6 +202,27 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
             command_args.extend(args);
             (Some("sysq".to_string()), command_args)
         }
+        Some(("memory", memory_m)) => {
+            let (sub, args) = match memory_m.subcommand() {
+                Some(("list", _)) => ("list", vec![]),
+                Some(("get", m)) => (
+                    "get",
+                    m.get_many::<String>("ids")
+                        .map(|i| i.cloned().collect())
+                        .unwrap_or_default(),
+                ),
+                Some(("remove", m)) => (
+                    "remove",
+                    m.get_many::<String>("ids")
+                        .map(|i| i.cloned().collect())
+                        .unwrap_or_default(),
+                ),
+                _ => ("", vec![]),
+            };
+            let mut command_args = vec![sub.to_string()];
+            command_args.extend(args);
+            (Some("memory".to_string()), command_args)
+        }
         Some((name, _)) => (Some(name.to_string()), vec![]),
     };
 
@@ -218,7 +258,7 @@ pub fn print_completion(shell: Shell) {
 
 fn emit_fallback_completion(shell: Shell) {
     let subcommands = [
-        "clear", "help", "resume", "rollout", "sessions", "shell", "sysq", "truncate_console_log",
+        "clear", "help", "memory", "resume", "rollout", "sessions", "shell", "sysq", "truncate_console_log",
     ];
     match shell {
         Shell::Bash => {

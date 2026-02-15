@@ -7,9 +7,11 @@ pub(crate) mod continue_prompt;
 pub(crate) mod leakscan_prepare_session;
 pub(crate) mod llm_event_stream_factory;
 pub(crate) mod manifest_reviewed_session_storage;
+pub(crate) mod memory_storage;
 pub(crate) mod part_session_storage;
 pub(crate) mod profile_lister;
 pub(crate) mod reducer;
+pub(crate) mod resolve_memory_dir;
 pub(crate) mod reviewed_session_storage;
 pub(crate) mod resolve_profile_and_model;
 pub(crate) mod resolve_system_instruction;
@@ -35,12 +37,13 @@ pub(crate) use reducer::{PassThroughReducer, TailWindowReducer};
 pub(crate) use llm_event_stream_factory::StdLlmEventStreamFactory;
 pub(crate) use part_session_storage::PartSessionStorage;
 pub(crate) use profile_lister::StdProfileLister;
+pub(crate) use resolve_memory_dir::StdResolveMemoryDir;
 pub(crate) use resolve_profile_and_model::StdResolveProfileAndModel;
 pub(crate) use resolve_system_instruction::StdResolveSystemInstruction;
 pub(crate) use sigint_checker::{NoopInterruptChecker, SigintChecker};
 pub(crate) use sinks::StdEventSinkFactory;
 pub(crate) use task::StdTaskRunner;
 pub(crate) use tools::{
-    GrepTool, HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, ReadFileTool,
-    ReplaceFileTool, ShellTool, WriteFileTool,
+    GetMemoryContentTool, GrepTool, HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool,
+    ReadFileTool, ReplaceFileTool, SaveMemoryTool, SearchMemoryTool, ShellTool, WriteFileTool,
 };

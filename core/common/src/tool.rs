@@ -40,6 +40,10 @@ pub struct ToolContext {
     /// 危険操作を許可するフラグ（承認済みの場合に true）
     /// デフォルトは false。usecase が承認を得た後に with_allow_unsafe(true) で複製する。
     pub allow_unsafe: bool,
+    /// メモリ用: プロジェクト固有の記憶ディレクトリ（.aish/memory）。None のときはグローバルのみ使用。
+    pub memory_dir_project: Option<std::path::PathBuf>,
+    /// メモリ用: グローバル記憶ディレクトリ（例: $AISH_HOME/memory）
+    pub memory_dir_global: Option<std::path::PathBuf>,
 }
 
 /// コマンド実行許可ルール
@@ -61,6 +65,8 @@ impl ToolContext {
             session_dir,
             command_allow_rules: Vec::new(),
             allow_unsafe: false,
+            memory_dir_project: None,
+            memory_dir_global: None,
         }
     }
 
@@ -72,6 +78,17 @@ impl ToolContext {
     /// 危険操作を許可するコンテキストを返す（承認済みの場合に使用）
     pub fn with_allow_unsafe(mut self, allow: bool) -> Self {
         self.allow_unsafe = allow;
+        self
+    }
+
+    /// メモリ用ディレクトリを設定（プロジェクト優先・グローバル）
+    pub fn with_memory_dirs(
+        mut self,
+        project: Option<std::path::PathBuf>,
+        global: Option<std::path::PathBuf>,
+    ) -> Self {
+        self.memory_dir_project = project;
+        self.memory_dir_global = global;
         self
     }
 }

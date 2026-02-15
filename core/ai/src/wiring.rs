@@ -11,14 +11,14 @@ use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
 
 use crate::adapter::{
-    CliContinuePrompt, CliToolApproval, DeterministicCompactionStrategy, FileAgentStateStorage, GrepTool,
-    LeakscanPrepareSession, ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, NoContinuePrompt,
-    NoopInterruptChecker,
-    NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer, ReadFileTool,
-    ReplaceFileTool, ReviewedTailViewStrategy, SigintChecker, StdCommandAllowRulesLoader, StdContextMessageBuilder,
-    StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister, StdResolveProfileAndModel,
-    StdResolveSystemInstruction, StdTaskRunner, ShellTool, TailWindowReducer, WriteFileTool,
-    HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool,
+    CliContinuePrompt, CliToolApproval, DeterministicCompactionStrategy, FileAgentStateStorage, GetMemoryContentTool,
+    GrepTool, LeakscanPrepareSession, ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy,
+    NoContinuePrompt, NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
+    ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SigintChecker, StdCommandAllowRulesLoader,
+    StdContextMessageBuilder, StdEventSinkFactory, StdLlmEventStreamFactory, StdProfileLister,
+    StdResolveMemoryDir, StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner, ShellTool,
+    TailWindowReducer, WriteFileTool, HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool,
+    SaveMemoryTool, SearchMemoryTool,
 };
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
@@ -221,6 +221,7 @@ fn build_policy_deps(
     PolicyDeps {
         continue_prompt,
         env_resolver: Arc::clone(env_resolver),
+        resolve_memory_dir: Arc::new(StdResolveMemoryDir::new(Arc::clone(env_resolver))),
         command_allow_rules_loader,
         approver,
         interrupt_checker: Arc::clone(interrupt_checker),
@@ -239,6 +240,9 @@ fn build_tooling_deps(verbose: bool) -> ToolingDeps {
         Arc::new(GrepTool::new()),
         Arc::new(HistoryGetTool::new()),
         Arc::new(HistorySearchTool::new()),
+        Arc::new(SaveMemoryTool::new()),
+        Arc::new(SearchMemoryTool::new()),
+        Arc::new(GetMemoryContentTool::new()),
     ];
 
     ToolingDeps {

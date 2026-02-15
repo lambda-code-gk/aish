@@ -8,10 +8,10 @@ use common::adapter::{
 use common::part_id::{IdGenerator, StdIdGenerator};
 use common::ports::outbound::{EnvResolver, FileSystem, Log, PathResolver, Signal};
 
-use crate::adapter::{StdShellRunner, StdSysqRepository, UnixPtySpawn, UnixSignal};
-use crate::ports::outbound::{ShellRunner, SysqRepository};
+use crate::adapter::{StdMemoryRepository, StdShellRunner, StdSysqRepository, UnixPtySpawn, UnixSignal};
+use crate::ports::outbound::{MemoryRepository, ShellRunner, SysqRepository};
 use crate::usecase::{
-    ClearUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase, ShellUseCase,
+    ClearUseCase, MemoryUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase, ShellUseCase,
     SysqUseCase, TruncateConsoleLogUseCase, MuteUseCase, UnmuteUseCase,
 };
 
@@ -29,6 +29,7 @@ pub struct App {
     #[allow(dead_code)] // sysq_use_case 構築に使用。main からは sysq_use_case 経由で利用
     pub sysq_repository: Arc<dyn SysqRepository>,
     pub sysq_use_case: SysqUseCase,
+    pub memory_use_case: MemoryUseCase,
     pub shell_use_case: ShellUseCase,
     pub clear_use_case: ClearUseCase,
     pub truncate_console_log_use_case: TruncateConsoleLogUseCase,
@@ -64,6 +65,9 @@ pub fn wire_aish() -> App {
     let sysq_repository: Arc<dyn SysqRepository> =
         Arc::new(StdSysqRepository::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     let sysq_use_case = SysqUseCase::new(Arc::clone(&sysq_repository));
+    let memory_repository: Arc<dyn MemoryRepository> =
+        Arc::new(StdMemoryRepository::new(Arc::clone(&env_resolver)));
+    let memory_use_case = MemoryUseCase::new(memory_repository);
     let shell_use_case = ShellUseCase::new(Arc::clone(&path_resolver), Arc::clone(&shell_runner));
     let clear_use_case = ClearUseCase::new(Arc::clone(&path_resolver), Arc::clone(&fs));
     let truncate_console_log_use_case = TruncateConsoleLogUseCase::new(
@@ -99,6 +103,7 @@ pub fn wire_aish() -> App {
         shell_runner,
         sysq_repository,
         sysq_use_case,
+        memory_use_case,
         shell_use_case,
         clear_use_case,
         truncate_console_log_use_case,

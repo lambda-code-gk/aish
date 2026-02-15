@@ -41,6 +41,13 @@ pub enum Command {
     /// システムプロンプトを無効化（sysq disable id [id...]）
     SysqDisable { ids: Vec<String> },
 
+    /// メモリ一覧（memory list）
+    MemoryList,
+    /// メモリ取得（memory get id [id...]）
+    MemoryGet { ids: Vec<String> },
+    /// メモリ削除（memory remove id [id...]）
+    MemoryRemove { ids: Vec<String> },
+
     /// 未知のコマンド（エラー用）
     Unknown(String),
 }
@@ -60,6 +67,17 @@ impl Command {
                 _ => {
                     let sub = args.first().cloned().unwrap_or_else(|| "".to_string());
                     return Command::Unknown(format!("sysq {}", sub).trim_end().to_string());
+                }
+            }
+        }
+        if name == "memory" {
+            match args.first().map(|s| s.as_str()) {
+                Some("list") => return Command::MemoryList,
+                Some("get") => return Command::MemoryGet { ids: args[1..].to_vec() },
+                Some("remove") => return Command::MemoryRemove { ids: args[1..].to_vec() },
+                _ => {
+                    let sub = args.first().cloned().unwrap_or_else(|| "".to_string());
+                    return Command::Unknown(format!("memory {}", sub).trim_end().to_string());
                 }
             }
         }
@@ -157,5 +175,23 @@ mod tests {
     fn test_parse_with_args_sysq_unknown_subcommand() {
         let cmd = Command::parse_with_args("sysq", &["invalid".to_string()]);
         assert!(matches!(cmd, Command::Unknown(_)));
+    }
+
+    #[test]
+    fn test_parse_with_args_memory_list() {
+        let cmd = Command::parse_with_args("memory", &["list".to_string()]);
+        assert_eq!(cmd, Command::MemoryList);
+    }
+
+    #[test]
+    fn test_parse_with_args_memory_get() {
+        let cmd = Command::parse_with_args("memory", &["get".to_string(), "id1".to_string(), "id2".to_string()]);
+        assert!(matches!(&cmd, Command::MemoryGet { ids } if ids == &["id1".to_string(), "id2".to_string()]));
+    }
+
+    #[test]
+    fn test_parse_with_args_memory_remove() {
+        let cmd = Command::parse_with_args("memory", &["remove".to_string(), "abc".to_string()]);
+        assert!(matches!(&cmd, Command::MemoryRemove { ids } if ids == &["abc".to_string()]));
     }
 }

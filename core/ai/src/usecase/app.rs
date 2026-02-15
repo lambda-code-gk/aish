@@ -1,8 +1,8 @@
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContextMessageBuilder,
     ContinueAfterLimitPrompt, EventSinkFactory, InterruptChecker, LlmEventStreamFactory,
-    PrepareSessionForSensitiveCheck, ProfileLister, QueryPlacement, ResolveProfileAndModel, RunQuery,
-    SessionHistoryLoader, SessionResponseSaver, ToolApproval,
+    PrepareSessionForSensitiveCheck, ProfileLister, QueryPlacement, ResolveMemoryDir,
+    ResolveProfileAndModel, RunQuery, SessionHistoryLoader, SessionResponseSaver, ToolApproval,
 };
 use crate::usecase::agent_loop::{AgentLoop, AgentLoopOutcome};
 use common::ports::outbound::EnvResolver;
@@ -38,6 +38,7 @@ pub struct SessionDeps {
 pub struct PolicyDeps {
     pub continue_prompt: Arc<dyn ContinueAfterLimitPrompt>,
     pub env_resolver: Arc<dyn EnvResolver>,
+    pub resolve_memory_dir: Arc<dyn ResolveMemoryDir>,
     pub command_allow_rules_loader: Arc<dyn CommandAllowRulesLoader>,
     pub approver: Arc<dyn ToolApproval>,
     pub interrupt_checker: Arc<dyn InterruptChecker>,
@@ -231,10 +232,15 @@ impl AiUseCase {
             for t in &self.deps.tooling.tools {
                 registry.register(Arc::clone(t));
             }
+            let (memory_project, memory_global) = match self.deps.policy.resolve_memory_dir.resolve() {
+                Ok((p, g)) => (p, Some(g)),
+                Err(_) => (None, None),
+            };
             let tool_context = ToolContext::new(
                 session_dir.as_ref().map(|s: &SessionDir| s.as_ref().to_path_buf()),
             )
-            .with_command_allow_rules(allow_rules.clone());
+            .with_command_allow_rules(allow_rules.clone())
+            .with_memory_dirs(memory_project, memory_global);
             let sinks = self.deps.tooling.sink_factory.create_sinks();
             let mut agent_loop = AgentLoop::new(
                 Arc::clone(&stream),

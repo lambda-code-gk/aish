@@ -68,9 +68,9 @@ $BUILD_CMD
 echo "Deploying binaries to home/bin/..."
 # 使用中のバイナリを上書きできるよう、一度削除してからコピーする
 rm -f "$BIN_DIR/aish-capture" "$BIN_DIR/aish-render" "$BIN_DIR/aish-script" "$BIN_DIR/leakscan" "$BIN_DIR/ai" "$BIN_DIR/aish"
-cp "$PROJECT_ROOT/tools/aish-capture/target/$TARGET_DIR/aish-capture" "$BIN_DIR/"
-cp "$PROJECT_ROOT/tools/aish-render/target/$TARGET_DIR/aish-render" "$BIN_DIR/"
-cp "$PROJECT_ROOT/tools/aish-script/target/$TARGET_DIR/aish-script" "$BIN_DIR/"
+#cp "$PROJECT_ROOT/tools/aish-capture/target/$TARGET_DIR/aish-capture" "$BIN_DIR/"
+#cp "$PROJECT_ROOT/tools/aish-render/target/$TARGET_DIR/aish-render" "$BIN_DIR/"
+#cp "$PROJECT_ROOT/tools/aish-script/target/$TARGET_DIR/aish-script" "$BIN_DIR/"
 cp "$PROJECT_ROOT/tools/leakscan/target/$TARGET_DIR/leakscan" "$BIN_DIR/"
 cp "$PROJECT_ROOT/core/ai/target/$TARGET_DIR/ai" "$BIN_DIR/"
 cp "$PROJECT_ROOT/core/aish/target/$TARGET_DIR/aish" "$BIN_DIR/"

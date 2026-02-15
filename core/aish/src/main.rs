@@ -66,6 +66,26 @@ impl UseCaseRunner for Runner {
                 self.app.sysq_use_case.disable(&ids)?;
                 Ok(0)
             }
+            Command::MemoryList => {
+                let entries = self.app.memory_use_case.list()?;
+                print_memory_list(&entries);
+                Ok(0)
+            }
+            Command::MemoryGet { ids } => {
+                if ids.is_empty() {
+                    return Err(Error::invalid_argument("memory get requires at least one id".to_string()));
+                }
+                let entries = self.app.memory_use_case.get(&ids)?;
+                print_memory_get(&entries);
+                Ok(0)
+            }
+            Command::MemoryRemove { ids } => {
+                if ids.is_empty() {
+                    return Err(Error::invalid_argument("memory remove requires at least one id".to_string()));
+                }
+                self.app.memory_use_case.remove(&ids)?;
+                Ok(0)
+            }
             Command::Unknown(name) => Err(Error::invalid_argument(format!(
                 "Command '{}' is not implemented.",
                 name
@@ -144,6 +164,10 @@ fn print_help() {
     println!("  sysq list              List system prompts and their enabled state.");
     println!("  sysq enable <id>...    Enable system prompt(s).");
     println!("  sysq disable <id>...   Disable system prompt(s).");
+    println!();
+    println!("  memory list            List all memories (id, category, subject).");
+    println!("  memory get <id> [id...] Get memory content by ID(s).");
+    println!("  memory remove <id> [id...] Remove memory by ID(s).");
 }
 
 #[cfg(unix)]
@@ -153,6 +177,36 @@ fn print_sysq_list(entries: &[crate::ports::outbound::SysqListEntry]) {
         let enabled = if e.enabled { "yes" } else { "no" };
         let title = if e.title.len() > 40 { format!("{}...", &e.title[..e.title.floor_char_boundary(37)]) } else { e.title.clone() };
         println!("{:8} {:7} {:<20} {}", e.scope.as_str(), enabled, e.id, title);
+    }
+}
+
+#[cfg(unix)]
+fn print_memory_list(entries: &[crate::domain::MemoryListEntry]) {
+    if entries.is_empty() {
+        println!("(no memories)");
+        return;
+    }
+    println!("{:18} {:<16} {}", "ID", "CATEGORY", "SUBJECT");
+    for e in entries {
+        let subject = if e.subject.len() > 50 {
+            format!("{}...", &e.subject[..e.subject.floor_char_boundary(47)])
+        } else {
+            e.subject.clone()
+        };
+        println!("{:18} {:<16} {}", e.id, e.category, subject);
+    }
+}
+
+#[cfg(unix)]
+fn print_memory_get(entries: &[crate::domain::MemoryEntry]) {
+    for (i, e) in entries.iter().enumerate() {
+        if entries.len() > 1 {
+            println!("--- {} (id={}) ---", e.subject, e.id);
+        }
+        println!("{}", e.content);
+        if i + 1 < entries.len() {
+            println!();
+        }
     }
 }
 
@@ -236,6 +290,24 @@ mod tests {
             | Command::SysqDisable { .. } => Err(Error::invalid_argument(
                 "sysq commands are not available in run_app (use aish binary).".to_string(),
             )),
+            Command::MemoryList => {
+                let _ = app.memory_use_case.list()?;
+                Ok(0)
+            }
+            Command::MemoryGet { ids } => {
+                if ids.is_empty() {
+                    return Err(Error::invalid_argument("memory get requires at least one id".to_string()));
+                }
+                let _ = app.memory_use_case.get(&ids)?;
+                Ok(0)
+            }
+            Command::MemoryRemove { ids } => {
+                if ids.is_empty() {
+                    return Err(Error::invalid_argument("memory remove requires at least one id".to_string()));
+                }
+                app.memory_use_case.remove(&ids)?;
+                Ok(0)
+            }
             Command::Unknown(name) => Err(Error::invalid_argument(format!(
                 "Command '{}' is not implemented.",
                 name

@@ -7,6 +7,7 @@ pub mod context_budget;
 pub mod history;
 pub mod history_reducer;
 pub mod manifest;
+pub mod memory_entry;
 pub mod query;
 pub mod task_name;
 pub use approval::{Approval, ToolApproval};
@@ -18,5 +19,6 @@ pub use history_reducer::HistoryReducer;
 pub use manifest::{
     hash64, parse_lines, ManifestDecision, ManifestRecordV1, ManifestRole, MessageRecordV1,
 };
+pub use memory_entry::{MemoryEntry, MemoryMeta};
 pub use query::Query;
 pub use task_name::TaskName;

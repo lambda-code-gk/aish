@@ -19,6 +19,7 @@ dependencies = [
  "clap_complete",
  "common",
  "libc",
+ "serde",
  "serde_json",
 ]
 
