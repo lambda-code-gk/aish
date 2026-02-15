@@ -7,6 +7,10 @@ use crate::tool::ToolDef;
 use serde_json::{json, Value};
 use std::env;
 use std::io::{BufRead, BufReader};
+use std::time::Duration;
+
+/// 429 リトライの最大回数
+const MAX_RETRIES_ON_RATE_LIMIT: u32 = 5;
 
 /// Gemini 3 Flashプロバイダ
 pub struct GeminiProvider {
@@ -42,25 +46,39 @@ impl LlmProvider for GeminiProvider {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
         );
-        
         let client = reqwest::blocking::Client::new();
-        let response = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .body(request_json.to_string())
-            .send()
-            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
-        
-        let status = response.status();
-        let response_text = response
-            .text()
-            .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
-        
-        if !status.is_success() {
-            // エラーレスポンスを解析してメッセージを抽出
+        let mut attempt = 0u32;
+        loop {
+            let response = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(request_json.to_string())
+                .send()
+                .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
+            let status = response.status();
+            let status_code = status.as_u16();
+            let response_text = response
+                .text()
+                .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
+            if status.is_success() {
+                return Ok(response_text);
+            }
+            let retry_delay = GeminiProvider::parse_retry_delay(status_code, &response_text);
+            if retry_delay.is_some() && attempt < MAX_RETRIES_ON_RATE_LIMIT {
+                let delay = retry_delay.unwrap();
+                eprintln!(
+                    "ai: Gemini rate limited (429), retrying in {:.0}s (attempt {}/{})",
+                    delay.as_secs_f64(),
+                    attempt + 1,
+                    MAX_RETRIES_ON_RATE_LIMIT
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+                continue;
+            }
             let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
-                v["error"]["message"]
-                    .as_str()
+                let err = v.get("error").or_else(|| v.as_array().and_then(|a| a.first()).and_then(|e| e.get("error")));
+                err.and_then(|e| e["message"].as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
             } else {
@@ -68,8 +86,6 @@ impl LlmProvider for GeminiProvider {
             };
             return Err(Error::http(format!("Gemini API error: {}", error_msg)));
         }
-        
-        Ok(response_text)
     }
 
     fn parse_response_text(&self, response_json: &str) -> Result<Option<String>, Error> {
@@ -239,32 +255,47 @@ impl LlmProvider for GeminiProvider {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
             self.model, self.api_key
         );
-        
         let client = reqwest::blocking::Client::new();
-        let response = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-            .body(request_json.to_string())
-            .send()
-            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
-        
-        let status = response.status();
-        if !status.is_success() {
+        let mut attempt = 0u32;
+        let response = loop {
+            let response = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .body(request_json.to_string())
+                .send()
+                .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
+            let status = response.status();
+            let status_code = status.as_u16();
+            if status.is_success() {
+                break response;
+            }
             let response_text = response
                 .text()
                 .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
+            let retry_delay = GeminiProvider::parse_retry_delay(status_code, &response_text);
+            if retry_delay.is_some() && attempt < MAX_RETRIES_ON_RATE_LIMIT {
+                let delay = retry_delay.unwrap();
+                eprintln!(
+                    "ai: Gemini rate limited (429), retrying in {:.0}s (attempt {}/{})",
+                    delay.as_secs_f64(),
+                    attempt + 1,
+                    MAX_RETRIES_ON_RATE_LIMIT
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+                continue;
+            }
             let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
-                v["error"]["message"]
-                    .as_str()
+                let err = v.get("error").or_else(|| v.as_array().and_then(|a| a.first()).and_then(|e| e.get("error")));
+                err.and_then(|e| e["message"].as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
             } else {
                 format!("HTTP {}: {}", status, response_text)
             };
             return Err(Error::http(format!("Gemini API error: {}", error_msg)));
-        }
-        
+        };
         // Gemini APIはJSON配列形式でストリーミングレスポンスを返す
         // 形式: [ {JSON1} , {JSON2} , ... ]
         // ブレースカウントで完全なJSONオブジェクトを検出
@@ -329,28 +360,46 @@ impl LlmProvider for GeminiProvider {
             self.model, self.api_key
         );
         let client = reqwest::blocking::Client::new();
-        let response = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-            .body(request_json.to_string())
-            .send()
-            .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
-        let status = response.status();
-        if !status.is_success() {
+        let mut attempt = 0u32;
+        let response = loop {
+            let response = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .body(request_json.to_string())
+                .send()
+                .map_err(|e| Error::http(format!("HTTP request failed: {}", e)))?;
+            let status = response.status();
+            let status_code = status.as_u16();
+            if status.is_success() {
+                break response;
+            }
             let response_text = response
                 .text()
                 .map_err(|e| Error::http(format!("Failed to read response: {}", e)))?;
+            let retry_delay = GeminiProvider::parse_retry_delay(status_code, &response_text);
+            if retry_delay.is_some() && attempt < MAX_RETRIES_ON_RATE_LIMIT {
+                let delay = retry_delay.unwrap();
+                eprintln!(
+                    "ai: Gemini rate limited (429), retrying in {:.0}s (attempt {}/{})",
+                    delay.as_secs_f64(),
+                    attempt + 1,
+                    MAX_RETRIES_ON_RATE_LIMIT
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+                continue;
+            }
             let error_msg = if let Ok(v) = serde_json::from_str::<Value>(&response_text) {
-                v["error"]["message"]
-                    .as_str()
+                let err = v.get("error").or_else(|| v.as_array().and_then(|a| a.first()).and_then(|e| e.get("error")));
+                err.and_then(|e| e["message"].as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("HTTP {}: {}", status, response_text))
             } else {
                 format!("HTTP {}: {}", status, response_text)
             };
             return Err(Error::http(format!("Gemini API error: {}", error_msg)));
-        }
+        };
         let reader = BufReader::new(response);
         let mut json_buffer = String::new();
         let mut brace_count = 0;
@@ -409,6 +458,30 @@ impl LlmProvider for GeminiProvider {
 const GEMINI_THOUGHT_SIGNATURE_FALLBACK: &str = "skip_thought_signature_validator";
 
 impl GeminiProvider {
+    /// 429 の場合に RetryInfo から待機時間をパースする。
+    /// レスポンスが配列の場合は先頭要素の error を参照する。
+    fn parse_retry_delay(status: u16, response_text: &str) -> Option<Duration> {
+        if status != 429 {
+            return None;
+        }
+        let v: Value = serde_json::from_str(response_text).ok()?;
+        let error = v
+            .get("error")
+            .or_else(|| v.as_array().and_then(|a| a.first()).and_then(|e| e.get("error")))?;
+        let details = error.get("details").and_then(|d| d.as_array())?;
+        for d in details {
+            let type_url = d.get("@type").and_then(|t| t.as_str()).unwrap_or("");
+            if type_url.contains("RetryInfo") {
+                let delay_str = d.get("retryDelay").and_then(|s| s.as_str())?;
+                let secs = delay_str.trim_end_matches('s').parse::<f64>().ok()?;
+                let secs = secs.max(1.0);
+                return Some(Duration::from_secs_f64(secs));
+            }
+        }
+        // RetryInfo が無くても 429 の場合は既定で 10 秒待ってリトライ
+        Some(Duration::from_secs(10))
+    }
+
     fn thought_signature_fallback() -> &'static str {
         GEMINI_THOUGHT_SIGNATURE_FALLBACK
     }
