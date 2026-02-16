@@ -159,15 +159,14 @@ impl Session {
     /// セッション管理構造体、またはエラー
     ///
     /// # Errors
-    /// ディレクトリの作成に失敗した場合、エラーを返します。
+    /// セッションディレクトリの作成に失敗した場合、エラーを返します。
+    ///
+    /// ホームディレクトリは存在しなくてもよい（AISH_HOME 未設定時など）。
     pub fn new(session_dir: impl Into<PathBuf>, home_dir: impl Into<PathBuf>) -> Result<Self, Error> {
         // セッションディレクトリを作成（存在しない場合は作成）
         let session_path = SessionPath::new(session_dir)?;
         let session_dir = SessionDir::new(session_path.path().clone());
-        
-        // ホームディレクトリを検証（存在しない場合はエラー）
-        let home_path = HomePath::new(home_dir.into())?;
-        let home_dir = HomeDir::new(home_path.path().clone());
+        let home_dir = HomeDir::new(home_dir.into());
 
         Ok(Session { session_dir, home_dir })
     }
@@ -312,30 +311,25 @@ mod tests {
             fs::remove_dir_all(&home_path).unwrap();
         }
         
-        // ホームディレクトリが存在しない場合はエラーを返す
+        // ホームディレクトリが存在しなくてもセッションは作成できる（AISH_HOME 未設定時用）
         let session = Session::new(&test_path, &home_path);
-        assert!(session.is_err());
+        assert!(session.is_ok());
+        let session = session.unwrap();
+        assert!(test_path.exists());
+        assert!(session.aish_home().as_ref() == home_path.as_path());
+        fs::remove_dir_all(&test_path).unwrap();
         
         // ホームディレクトリを作成してから再度試行
         fs::create_dir_all(&home_path).unwrap();
-        
-        // ホームディレクトリが存在する場合は成功
         let session = Session::new(&test_path, &home_path);
         assert!(session.is_ok());
-        
         let session = session.unwrap();
-        // セッションディレクトリが作成されたことを確認
         assert!(test_path.exists());
         assert!(test_path.is_dir());
-        // ホームディレクトリは既に存在していたことを確認
         assert!(home_path.exists());
         assert!(home_path.is_dir());
+        assert_eq!(session.aish_home().as_ref(), home_path.as_path());
         
-        // フルパスに展開されているため、canonicalizeしたパスと比較
-        let canonical_home = std::fs::canonicalize(&home_path).unwrap();
-        assert_eq!(session.aish_home().as_ref(), canonical_home.as_path());
-        
-        // クリーンアップ
         fs::remove_dir_all(&test_path).unwrap();
         fs::remove_dir_all(&home_path).unwrap();
     }

@@ -3,7 +3,7 @@
 //! セッションディレクトリ・ホームディレクトリを環境変数から解決する。
 //! usecase はこの trait 経由でのみ環境変数にアクセスする。
 
-use crate::domain::{HomeDir, SessionDir};
+use crate::domain::{Dirs, HomeDir, SessionDir};
 use crate::error::Error;
 use std::path::PathBuf;
 
@@ -21,6 +21,12 @@ pub trait EnvResolver: Send + Sync {
     /// 2. $XDG_CONFIG_HOME/aish（XDG_CONFIG_HOME が設定されていれば）
     /// 3. $HOME/.config/aish
     fn resolve_home_dir(&self) -> Result<HomeDir, Error>;
+
+    /// config / data / state / cache を一括解決する
+    ///
+    /// AISH_HOME があればその配下の config, data, state, cache。
+    /// なければ XDG に従い $XDG_CONFIG_HOME/aish, $XDG_DATA_HOME/aish, $XDG_STATE_HOME/aish, $XDG_CACHE_HOME/aish。
+    fn resolve_dirs(&self) -> Result<Dirs, Error>;
 
     /// カレントディレクトリを返す（プロジェクトスコープ探索用）
     fn current_dir(&self) -> Result<PathBuf, Error>;

@@ -15,3 +15,18 @@ target/
 *.pdb
 
 .vscode
+
+# Build artifacts
+dist/
+out/
+
+# Dev sandbox (runtime data isolated for development)
+.sandbox/
+
+# Runtime artifacts (legacy dev layout)
+home/bin/
+home/state/
+home/cache/
+home/tmp/
+home/logs/
+home/data/

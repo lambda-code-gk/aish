@@ -1,0 +1,34 @@
+#!/bin/bash
+set -euo pipefail
+
+# fixit: Extract issues and suggestions from session history using LLM
+
+SESSION_DIR="${AISH_SESSION:-}"
+if [[ -z "$SESSION_DIR" ]]; then
+    echo >&2 "Error: AISH_SESSION is not set. Run this via 'aish' or set AISH_SESSION."
+    exit 1
+fi
+
+MANIFEST="$SESSION_DIR/manifest.jsonl"
+if [[ ! -f "$MANIFEST" ]]; then
+    echo >&2 "No session history found at $MANIFEST"
+    exit 1
+fi
+
+# Summarize session history (like in SelfImproveHandler)
+SUMMARY=$(awk '
+    /"role":"user"/ { print "USER:", $0 }
+    /"role":"assistant"/ { print "ASSISTANT:", $0 }
+    /"role":"tool_call"/ { print "TOOL_CALL:", $0 }
+    /"role":"tool_result"/ { print "TOOL_RESULT:", $0 }
+' "$MANIFEST")
+
+if [[ -z "$SUMMARY" ]]; then
+    echo "No messages found in session history."
+    exit 0
+fi
+
+PROMPT="Review the following terminal session and identify any issues or areas for improvement. Provide concise suggestions.\n\nSession:\n$SUMMARY"
+
+# Use ai with a special profile if desired, or default
+ai -S "You are a code reviewer. Analyze the session and suggest improvements." "$PROMPT"

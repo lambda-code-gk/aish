@@ -53,6 +53,32 @@ impl UseCaseRunner for Runner {
                 }
                 Ok(0)
             }
+            Command::Init {
+                force,
+                dry_run,
+                defaults_dir: defaults_dir_opt,
+            } => {
+                let defaults_dir = defaults_dir_opt
+                    .or_else(|| std::env::var("AISH_DEFAULTS_DIR").ok())
+                    .ok_or_else(|| Error::invalid_argument(
+                        "Defaults directory required: set AISH_DEFAULTS_DIR or use --defaults-dir".to_string(),
+                    ))?;
+                let input = crate::usecase::InitInput {
+                    defaults_dir: std::path::PathBuf::from(&defaults_dir),
+                    force,
+                    dry_run,
+                };
+                let result = self.app.init_use_case.run(&input)?;
+                if result.dry_run {
+                    for p in &result.copied_paths {
+                        println!("  {}", p.display());
+                    }
+                    println!("Would copy {} file(s) to {}", result.copied_count, result.config_dir.display());
+                } else {
+                    println!("Initialized config at {} ({} file(s))", result.config_dir.display(), result.copied_count);
+                }
+                Ok(0)
+            }
             Command::SysqList => {
                 let entries = self.app.sysq_use_case.list()?;
                 print_sysq_list(&entries);
@@ -160,6 +186,7 @@ fn print_help() {
     println!("  rollout                Flush console buffer and rollover console log (same as sending SIGUSR1 to aish).");
     println!("  mute                   Rollout console log and stop recording console.txt.");
     println!("  unmute                 Resume recording console.txt.");
+    println!("  init                   Copy default config (set AISH_DEFAULTS_DIR or use --defaults-dir).");
     println!();
     println!("  sysq list              List system prompts and their enabled state.");
     println!("  sysq enable <id>...    Enable system prompt(s).");
@@ -221,6 +248,10 @@ pub fn run() -> Result<i32, Error> {
     };
     #[cfg(unix)]
     {
+        // -d/--home-dir 指定時は AISH_HOME を設定し、resolve_dirs() がその配下を使うようにする
+        if let Some(ref h) = config.home_dir {
+            std::env::set_var("AISH_HOME", h);
+        }
         let app = wire_aish();
         let runner = Runner { app };
         runner.run(config)
@@ -283,6 +314,20 @@ mod tests {
                 let ids = app.sessions_use_case.list(&path_input)?;
                 // run_app では標準出力の内容は検証しないため、結果の有無にかかわらず成功とみなす
                 let _ = ids;
+                Ok(0)
+            }
+            Command::Init { force, dry_run, defaults_dir: defaults_dir_opt } => {
+                let defaults_dir = defaults_dir_opt
+                    .or_else(|| std::env::var("AISH_DEFAULTS_DIR").ok())
+                    .ok_or_else(|| Error::invalid_argument(
+                        "Defaults directory required in test: set AISH_DEFAULTS_DIR or use init_defaults_dir in config".to_string(),
+                    ))?;
+                let input = crate::usecase::InitInput {
+                    defaults_dir: std::path::PathBuf::from(&defaults_dir),
+                    force,
+                    dry_run,
+                };
+                let _ = app.init_use_case.run(&input)?;
                 Ok(0)
             }
             Command::SysqList

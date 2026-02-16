@@ -299,9 +299,10 @@ fn print_help() {
     println!("  Send a message to the LLM and display the response.");
     println!("  If a matching task script exists, execute it instead of sending a query.");
     println!();
-    println!("Task search paths:");
+    println!("Task search paths (first existing wins):");
     println!("  $AISH_HOME/config/task.d/");
-    println!("  $XDG_CONFIG_HOME/aish/task.d");
+    println!("  $XDG_CONFIG_HOME/aish/task.d/");
+    println!("  ~/.config/aish/task.d/");
     println!();
     println!("Examples:");
     println!("  ai Hello, how are you?");

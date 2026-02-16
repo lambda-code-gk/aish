@@ -1,6 +1,6 @@
 //! 標準環境変数解決実装（std::env を委譲）
 
-use crate::domain::{HomeDir, SessionDir};
+use crate::domain::{Dirs, HomeDir, SessionDir};
 use crate::error::Error;
 use crate::ports::outbound::EnvResolver;
 use std::env;
@@ -12,6 +12,10 @@ const PROFILES_CONFIG_FILENAME: &str = "profiles.json";
 const CONFIG_PROFILES: &str = "config/profiles.json";
 const LOG_FILENAME: &str = "log.jsonl";
 const STATE_SUBDIR: &str = "state";
+const CONFIG_SUBDIR: &str = "config";
+const DATA_SUBDIR: &str = "data";
+const CACHE_SUBDIR: &str = "cache";
+const AISH_SUBDIR: &str = "aish";
 
 /// 標準環境変数解決実装
 #[derive(Debug, Clone, Default)]
@@ -97,29 +101,56 @@ impl EnvResolver for StdEnvResolver {
     }
 
     fn resolve_log_file_path(&self) -> Result<PathBuf, Error> {
-        if let Ok(home) = env::var("AISH_HOME") {
-            if !home.is_empty() {
-                let mut p = PathBuf::from(home);
-                p.push(STATE_SUBDIR);
-                p.push(LOG_FILENAME);
-                return Ok(p);
-            }
-        }
-        let xdg_state_home = env::var("XDG_STATE_HOME")
+        let dirs = self.resolve_dirs()?;
+        Ok(dirs.state_dir.join(LOG_FILENAME))
+    }
+
+    fn resolve_dirs(&self) -> Result<Dirs, Error> {
+        let home = env::var("HOME")
             .ok()
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .or_else(|| {
-                env::var("HOME")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .map(|h| PathBuf::from(h).join(".local").join("state"))
-            })
             .ok_or_else(|| Error::env("HOME is not set"))?;
-        let mut path = xdg_state_home;
-        path.push("aish");
-        path.push(LOG_FILENAME);
-        Ok(path)
+
+        if let Ok(aish_home) = env::var("AISH_HOME") {
+            if !aish_home.is_empty() {
+                let base = PathBuf::from(aish_home);
+                return Ok(Dirs {
+                    config_dir: base.join(CONFIG_SUBDIR),
+                    data_dir: base.join(DATA_SUBDIR),
+                    state_dir: base.join(STATE_SUBDIR),
+                    cache_dir: base.join(CACHE_SUBDIR),
+                });
+            }
+        }
+
+        let config_dir = env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        let data_dir = env::var("XDG_DATA_HOME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local").join("share"));
+        let state_dir = env::var("XDG_STATE_HOME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local").join("state"));
+        let cache_dir = env::var("XDG_CACHE_HOME")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".cache"));
+
+        Ok(Dirs {
+            config_dir: config_dir.join(AISH_SUBDIR),
+            data_dir: data_dir.join(AISH_SUBDIR),
+            state_dir: state_dir.join(AISH_SUBDIR),
+            cache_dir: cache_dir.join(AISH_SUBDIR),
+        })
     }
 }
 
@@ -166,6 +197,48 @@ mod tests {
                         path.to_string_lossy(),
                         "/tmp/xdg_state_log/aish/log.jsonl"
                     );
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn test_resolve_dirs_aish_home() {
+        let r = StdEnvResolver;
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("HOME", Some("/home/user"), || {
+                with_env_var("AISH_HOME", Some("/opt/aish_home"), || {
+                    let dirs = r.resolve_dirs().unwrap();
+                    assert_eq!(dirs.config_dir.to_string_lossy(), "/opt/aish_home/config");
+                    assert_eq!(dirs.data_dir.to_string_lossy(), "/opt/aish_home/data");
+                    assert_eq!(dirs.state_dir.to_string_lossy(), "/opt/aish_home/state");
+                    assert_eq!(dirs.cache_dir.to_string_lossy(), "/opt/aish_home/cache");
+                    assert_eq!(
+                        dirs.sessions_dir().to_string_lossy(),
+                        "/opt/aish_home/state/session"
+                    );
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn test_resolve_dirs_xdg() {
+        let r = StdEnvResolver;
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("XDG_CONFIG_HOME", Some("/xdg/config"), || {
+                with_env_var("XDG_DATA_HOME", Some("/xdg/data"), || {
+                    with_env_var("XDG_STATE_HOME", Some("/xdg/state"), || {
+                        with_env_var("XDG_CACHE_HOME", Some("/xdg/cache"), || {
+                            with_env_var("HOME", Some("/home/user"), || {
+                                let dirs = r.resolve_dirs().unwrap();
+                                assert_eq!(dirs.config_dir.to_string_lossy(), "/xdg/config/aish");
+                                assert_eq!(dirs.data_dir.to_string_lossy(), "/xdg/data/aish");
+                                assert_eq!(dirs.state_dir.to_string_lossy(), "/xdg/state/aish");
+                                assert_eq!(dirs.cache_dir.to_string_lossy(), "/xdg/cache/aish");
+                            });
+                        });
+                    });
                 });
             });
         });

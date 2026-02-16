@@ -15,6 +15,10 @@ pub struct Config {
     /// コマンド名（None の場合は Shell）
     pub command_name: Option<String>,
     pub command_args: Vec<String>,
+    /// aish init 用（サブコマンド init のときのみ有効）
+    pub init_force: bool,
+    pub init_dry_run: bool,
+    pub init_defaults_dir: Option<String>,
 }
 
 impl Default for Config {
@@ -26,6 +30,9 @@ impl Default for Config {
             verbose: false,
             command_name: None,
             command_args: Vec::new(),
+            init_force: false,
+            init_dry_run: false,
+            init_defaults_dir: None,
         }
     }
 }
@@ -122,7 +129,6 @@ fn build_clap_command() -> clap::Command {
             .about("CUI automation framework with LLM integration")
             .subcommand_required(false)
             .subcommand(clap::Command::new("shell").about("Start the interactive shell (default)"))
-            .subcommand(clap::Command::new("help").about("Display this help message"))
             .subcommand(
                 clap::Command::new("truncate_console_log")
                     .about("Truncate console buffer and log file (used by ai command)"),
@@ -155,32 +161,61 @@ fn build_clap_command() -> clap::Command {
                             .num_args(0..=1),
                     ),
             )
-            .subcommand(clap::Command::new("sessions").about("List sessions")),
+            .subcommand(clap::Command::new("sessions").about("List sessions"))
+            .subcommand(
+                clap::Command::new("init")
+                    .about("Copy default config from AISH_DEFAULTS_DIR or --defaults-dir to config directory")
+                    .arg(
+                        clap::Arg::new("force")
+                            .long("force")
+                            .help("Overwrite existing files")
+                            .action(ArgAction::SetTrue),
+                    )
+                    .arg(
+                        clap::Arg::new("dry-run")
+                            .long("dry-run")
+                            .help("Only print what would be copied")
+                            .action(ArgAction::SetTrue),
+                    )
+                    .arg(
+                        clap::Arg::new("defaults-dir")
+                            .long("defaults-dir")
+                            .value_name("directory")
+                            .help("Template root (default: AISH_DEFAULTS_DIR env)")
+                            .num_args(1),
+                    ),
+            ),
     )
 }
 
 fn matches_to_config(matches: &clap::ArgMatches) -> Config {
-    let help = matches.get_flag("help") || matches.subcommand_matches("help").is_some();
+    let help = matches.get_flag("help");
     let session_dir = matches
         .get_one::<String>("session-dir")
         .cloned();
     let home_dir = matches.get_one::<String>("home-dir").cloned();
     let verbose = matches.get_flag("verbose");
 
-    let (command_name, command_args) = match matches.subcommand() {
-        None => (None, Vec::new()),
-        Some(("help", _)) => (None, Vec::new()),
-        Some(("shell", _)) => (None, Vec::new()),
-        Some(("truncate_console_log", _)) => (Some("truncate_console_log".to_string()), vec![]),
-        Some(("rollout", _)) => (Some("rollout".to_string()), vec![]),
-        Some(("mute", _)) => (Some("mute".to_string()), vec![]),
-        Some(("unmute", _)) => (Some("unmute".to_string()), vec![]),
-        Some(("clear", _)) => (Some("clear".to_string()), vec![]),
+    let (command_name, command_args, init_force, init_dry_run, init_defaults_dir) = match matches.subcommand() {
+        None => (None, Vec::new(), false, false, None),
+        Some(("shell", _)) => (None, Vec::new(), false, false, None),
+        Some(("truncate_console_log", _)) => (Some("truncate_console_log".to_string()), vec![], false, false, None),
+        Some(("rollout", _)) => (Some("rollout".to_string()), vec![], false, false, None),
+        Some(("mute", _)) => (Some("mute".to_string()), vec![], false, false, None),
+        Some(("unmute", _)) => (Some("unmute".to_string()), vec![], false, false, None),
+        Some(("clear", _)) => (Some("clear".to_string()), vec![], false, false, None),
         Some(("resume", m)) => {
             let id = m.get_one::<String>("id").cloned();
             let args = id.into_iter().collect::<Vec<_>>();
-            (Some("resume".to_string()), args)
+            (Some("resume".to_string()), args, false, false, None)
         }
+        Some(("init", m)) => (
+            Some("init".to_string()),
+            vec![],
+            m.get_flag("force"),
+            m.get_flag("dry-run"),
+            m.get_one::<String>("defaults-dir").cloned(),
+        ),
         Some(("sysq", sysq_m)) => {
             let (sub, args) = match sysq_m.subcommand() {
                 Some(("list", _)) => ("list", vec![]),
@@ -200,7 +235,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
             };
             let mut command_args = vec![sub.to_string()];
             command_args.extend(args);
-            (Some("sysq".to_string()), command_args)
+            (Some("sysq".to_string()), command_args, false, false, None)
         }
         Some(("memory", memory_m)) => {
             let (sub, args) = match memory_m.subcommand() {
@@ -221,9 +256,9 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
             };
             let mut command_args = vec![sub.to_string()];
             command_args.extend(args);
-            (Some("memory".to_string()), command_args)
+            (Some("memory".to_string()), command_args, false, false, None)
         }
-        Some((name, _)) => (Some(name.to_string()), vec![]),
+        Some((name, _)) => (Some(name.to_string()), vec![], false, false, None),
     };
 
     Config {
@@ -233,6 +268,9 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         verbose,
         command_name,
         command_args,
+        init_force,
+        init_dry_run,
+        init_defaults_dir,
     }
 }
 
@@ -258,7 +296,7 @@ pub fn print_completion(shell: Shell) {
 
 fn emit_fallback_completion(shell: Shell) {
     let subcommands = [
-        "clear", "help", "memory", "resume", "rollout", "sessions", "shell", "sysq", "truncate_console_log",
+        "clear", "init", "memory", "resume", "rollout", "sessions", "shell", "sysq", "truncate_console_log",
     ];
     match shell {
         Shell::Bash => {
@@ -302,6 +340,11 @@ pub fn config_to_command(config: &Config) -> Command {
         return Command::Help;
     }
     match &config.command_name {
+        Some(name) if name == "init" => Command::Init {
+            force: config.init_force,
+            dry_run: config.init_dry_run,
+            defaults_dir: config.init_defaults_dir.clone(),
+        },
         Some(name) => Command::parse_with_args(name, &config.command_args),
         None => Command::Shell,
     }

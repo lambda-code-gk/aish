@@ -25,7 +25,8 @@ aish [options] [<command> [args...]]
 `aish` を起動するたびに、通常は新しいセッションディレクトリが作成されます。
 
 - セッションディレクトリのパス:  
-  `AISH_HOME/state/sessions/<id>/`
+  - **AISH_HOME 指定時**: `$AISH_HOME/state/session/<id>/`
+  - **未指定時（XDG）**: `$XDG_STATE_HOME/aish/session/<id>/`（例: `~/.local/state/aish/session/<id>/`）
 - `<id>` は日時などから生成される一意な識別子です。
 
 ### 典型的な利用フロー
@@ -78,7 +79,7 @@ aish [options] [<command> [args...]]
 `aish` には、既存のセッションディレクトリを指定して再開するオプションがあります。
 
 ```bash
-aish -s "$AISH_HOME/state/sessions/<id>"
+aish -s "<session_dir>"   # 例: aish -s "$HOME/.local/state/aish/session/<id>"
 ```
 
 - `-s, --session-dir` : 再開したいセッションディレクトリを明示します。

@@ -34,6 +34,13 @@ pub enum Command {
     /// セッション一覧
     Sessions,
 
+    /// 初期設定の展開（init [--force] [--dry-run] [--defaults-dir DIR]）
+    Init {
+        force: bool,
+        dry_run: bool,
+        defaults_dir: Option<String>,
+    },
+
     /// システムプロンプト一覧（sysq list）
     SysqList,
     /// システムプロンプトを有効化（sysq enable id [id...]）
@@ -84,7 +91,7 @@ impl Command {
         Self::parse(name)
     }
 
-    /// 文字列を Command に解析する（サブコマンドなし）
+    /// 文字列を Command に解析する（サブコマンドなし）。init は parse_with_args で解析する。
     pub fn parse(s: &str) -> Self {
         match s {
             "truncate_console_log" => Command::TruncateConsoleLog,
@@ -94,6 +101,11 @@ impl Command {
             "unmute" => Command::Unmute,
             "resume" => Command::Resume { id: None },
             "sessions" => Command::Sessions,
+            "init" => Command::Init {
+                force: false,
+                dry_run: false,
+                defaults_dir: None,
+            },
             _ => Command::Unknown(s.to_string()),
         }
     }

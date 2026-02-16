@@ -58,7 +58,33 @@ impl ShellRunner for StdShellRunner {
     }
 }
 
-/// シェル起動コマンドを構築（aishrc の有無は fs で判定）
+/// AISH_HOME 未設定時用の aishrc 候補パスを返す（$XDG_CONFIG_HOME/aish/aishrc, ~/.config/aish/aishrc, ~/.aishrc）
+fn default_aishrc_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let config_base = env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|h| PathBuf::from(h).join(".config"))
+        });
+    if let Some(mut p) = config_base {
+        p.push("aish");
+        p.push("aishrc");
+        candidates.push(p);
+    }
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            candidates.push(PathBuf::from(home).join(".aishrc"));
+        }
+    }
+    candidates
+}
+
+/// シェル起動コマンドを構築（aishrc の有無は fs で判定。AISH_HOME 未設定時は候補をフォールバック）
 fn build_shell_command<F: FileSystem + ?Sized>(
     shell_path: &str,
     aish_home: &Path,
@@ -70,16 +96,21 @@ fn build_shell_command<F: FileSystem + ?Sized>(
         .and_then(|s| s.to_str())
         .unwrap_or(shell_path);
 
-    let aishrc_path: PathBuf = aish_home.join("config").join("aishrc");
-    let use_aishrc = shell_name == "bash"
-        && fs.exists(&aishrc_path)
-        && fs.metadata(&aishrc_path).map(|m| m.is_file()).unwrap_or(false);
+    let primary: PathBuf = aish_home.join("config").join("aishrc");
+    let mut candidates = vec![primary.clone()];
+    candidates.extend(default_aishrc_candidates());
 
-    if use_aishrc {
+    let aishrc_path = (shell_name == "bash").then(|| {
+        candidates.into_iter().find(|p| {
+            fs.exists(p) && fs.metadata(p).map(|m| m.is_file()).unwrap_or(false)
+        })
+    }).flatten();
+
+    if let Some(path) = aishrc_path {
         vec![
             shell,
             "--rcfile".to_string(),
-            aishrc_path.to_string_lossy().to_string(),
+            path.to_string_lossy().to_string(),
         ]
     } else {
         vec![shell]

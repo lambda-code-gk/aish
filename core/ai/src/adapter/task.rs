@@ -31,9 +31,12 @@ impl TaskRunner for StdTaskRunner {
 
 /// タスクを解決して実行する（アダプター経由）
 ///
-/// - `$AISH_HOME/config/task.d/` を最優先で探索
-/// - それが無ければ `$XDG_CONFIG_HOME/aish/task.d/` を探索
-/// - `task_name.sh` または `task_name/execute` が存在すればそれを実行する
+/// task.d の検索順:
+/// - AISH_HOME 設定時: `$AISH_HOME/config/task.d/` または `$AISH_HOME/task.d/`（先に存在する方）
+///   （aish から渡る AISH_HOME が aish config ルートのときは task.d 直下）
+/// - `$XDG_CONFIG_HOME/aish/task.d/`（XDG_CONFIG_HOME 設定時）
+/// - `~/.config/aish/task.d/`（上記未設定時のデフォルト）
+/// タスクは `task_name.sh` または `task_name/execute` で解決する。
 ///
 /// 戻り値:
 /// - `Ok(Some(code))`  : タスクを実行し、その終了コードを返した
@@ -70,22 +73,43 @@ where
 
 fn find_task_dir<F: FileSystem + ?Sized>(fs: &F) -> Option<PathBuf> {
     if let Ok(aish_home) = env::var("AISH_HOME") {
-        let dir = Path::new(&aish_home).join("config").join("task.d");
-        if fs.exists(&dir) {
-            if let Ok(m) = fs.metadata(&dir) {
-                if m.is_dir() {
-                    return Some(dir);
+        if !aish_home.is_empty() {
+            let base = Path::new(&aish_home);
+            // 2 通り: AISH_HOME が「ルート」のとき config/task.d、aish config ルートのとき task.d 直下
+            for candidate in [base.join("config").join("task.d"), base.join("task.d")] {
+                if fs.exists(&candidate) {
+                    if let Ok(m) = fs.metadata(&candidate) {
+                        if m.is_dir() {
+                            return Some(candidate);
+                        }
+                    }
                 }
             }
         }
     }
 
     if let Ok(xdg_config_home) = env::var("XDG_CONFIG_HOME") {
-        let dir = Path::new(&xdg_config_home).join("aish").join("task.d");
-        if fs.exists(&dir) {
-            if let Ok(m) = fs.metadata(&dir) {
-                if m.is_dir() {
-                    return Some(dir);
+        if !xdg_config_home.is_empty() {
+            let dir = Path::new(&xdg_config_home).join("aish").join("task.d");
+            if fs.exists(&dir) {
+                if let Ok(m) = fs.metadata(&dir) {
+                    if m.is_dir() {
+                        return Some(dir);
+                    }
+                }
+            }
+        }
+    }
+
+    // AISH_HOME / XDG_CONFIG_HOME 未設定時: ~/.config/aish/task.d（新構成のデフォルト）
+    if let Ok(home) = env::var("HOME") {
+        if !home.is_empty() {
+            let dir = Path::new(&home).join(".config").join("aish").join("task.d");
+            if fs.exists(&dir) {
+                if let Ok(m) = fs.metadata(&dir) {
+                    if m.is_dir() {
+                        return Some(dir);
+                    }
                 }
             }
         }
@@ -250,6 +274,27 @@ mod tests {
         assert_eq!(resolved, execute_path);
     }
 
+    /// AISH_HOME が aish config ルート（task.d が直下、.sandbox/xdg/config/aish 相当）のときタスクを解決する
+    #[test]
+    fn test_find_task_dir_when_aish_home_is_config_root() {
+        let _guard = TASK_ENV_MUTEX.lock().unwrap();
+        let tmp = create_temp_dir("aish_task_test_config_root");
+        let aish_config_root = tmp.join("xdg").join("config").join("aish");
+        let task_d = aish_config_root.join("task.d");
+        fs::create_dir_all(&task_d).unwrap();
+        let script = task_d.join("commit_staged.sh");
+        File::create(&script).unwrap();
+
+        env::set_var("AISH_HOME", &aish_config_root);
+        env::remove_var("XDG_CONFIG_HOME");
+
+        let fs = StdFileSystem;
+        let dir = find_task_dir(&fs).expect("task dir should be found when AISH_HOME is config root");
+        assert_eq!(dir, task_d);
+        let resolved = resolve_task_path(&fs, &dir, "commit_staged").expect("task should resolve");
+        assert_eq!(resolved, script);
+    }
+
     #[test]
     fn test_run_task_not_found() {
         let _guard = TASK_ENV_MUTEX.lock().unwrap();
@@ -291,6 +336,43 @@ mod tests {
         assert!(names.contains(&"foo".to_string()));
         assert!(names.contains(&"bar".to_string()));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn test_list_task_names_finds_default_config_aish_task_d() {
+        let _guard = TASK_ENV_MUTEX.lock().unwrap();
+        let tmp = create_temp_dir("aish_task_test_default");
+        let aish_task_d = tmp.join(".config").join("aish").join("task.d");
+        fs::create_dir_all(&aish_task_d).unwrap();
+        let script = aish_task_d.join("hello.sh");
+        File::create(&script).unwrap();
+
+        let orig_home = env::var("HOME").ok();
+        let orig_aish = env::var("AISH_HOME").ok();
+        let orig_xdg = env::var("XDG_CONFIG_HOME").ok();
+        env::set_var("HOME", &tmp);
+        env::remove_var("AISH_HOME");
+        env::remove_var("XDG_CONFIG_HOME");
+
+        let fs = StdFileSystem;
+        let names = list_task_names(&fs).unwrap();
+        assert!(names.contains(&"hello".to_string()), "names={:?}", names);
+
+        if let Some(h) = orig_home {
+            env::set_var("HOME", h);
+        } else {
+            env::remove_var("HOME");
+        }
+        if let Some(h) = orig_aish {
+            env::set_var("AISH_HOME", h);
+        } else {
+            env::remove_var("AISH_HOME");
+        }
+        if let Some(h) = orig_xdg {
+            env::set_var("XDG_CONFIG_HOME", h);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
     }
 }
 

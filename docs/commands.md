@@ -32,6 +32,7 @@ aish [options] [<command> [args...]]
 | `sysq list` | 利用可能なシステムプロンプトと有効状態を一覧表示します。 |
 | `sysq enable <id>...` | 指定したシステムプロンプト ID を有効化します。 |
 | `sysq disable <id>...` | 指定したシステムプロンプト ID を無効化します。 |
+| `init [--force] [--dry-run] [--defaults-dir DIR]` | テンプレ（`AISH_DEFAULTS_DIR` または `--defaults-dir`）を XDG/AISH_HOME の config にコピーします。 |
 
 > 詳細: `aish` の起動・セッション・sysq の挙動については `aish-usage.md` および `system-prompts.md` を参照してください。
 
@@ -75,7 +76,7 @@ ai [options] [task] [message...]
 
 ### サポートツール
 
-ビルド時に、AISH 本体とは別の補助ツールも `home/bin/` に配置されます。
+ビルド時に、AISH 本体とは別の補助ツールも `dist/bin/` に配置されます。
 
 代表的なもの:
 

@@ -14,8 +14,8 @@ use crate::adapter::{
 };
 use crate::ports::outbound::{MemoryRepository, ShellRunner, SysqRepository};
 use crate::usecase::{
-    ClearUseCase, MemoryUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase, ShellUseCase,
-    SysqUseCase, TruncateConsoleLogUseCase, MuteUseCase, UnmuteUseCase,
+    ClearUseCase, InitUseCase, MemoryUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase,
+    ShellUseCase, SysqUseCase, TruncateConsoleLogUseCase, MuteUseCase, UnmuteUseCase,
 };
 
 /// 配線で組み立てたポート群とユースケース（main の Command ディスパッチで利用）
@@ -41,6 +41,7 @@ pub struct App {
     pub unmute_use_case: UnmuteUseCase,
     pub resume_use_case: ResumeUseCase,
     pub sessions_use_case: SessionsUseCase,
+    pub init_use_case: InitUseCase,
     /// 構造化ログ（ファイルへ JSONL）。エラー時のコンソール表示とは別。main で lifecycle/error に利用予定。
     #[allow(dead_code)]
     pub logger: Arc<dyn Log>,
@@ -56,7 +57,8 @@ pub fn wire_aish() -> App {
         .map(|path| Arc::new(FileJsonLog::new(Arc::clone(&fs), path)) as Arc<dyn Log>)
         .unwrap_or_else(|_| Arc::new(NoopLog));
     let id_gen: Arc<dyn IdGenerator> = Arc::new(StdIdGenerator::new(Arc::new(StdClock)));
-    let path_resolver: Arc<dyn PathResolver> = Arc::new(StdPathResolver);
+    let path_resolver: Arc<dyn PathResolver> =
+        Arc::new(StdPathResolver::new(Arc::clone(&env_resolver)));
     let signal: Arc<dyn Signal> = Arc::new(UnixSignal);
     let pty_spawn = Arc::new(UnixPtySpawn);
     let shell_runner: Arc<dyn ShellRunner> = Arc::new(StdShellRunner::new(
@@ -101,6 +103,7 @@ pub fn wire_aish() -> App {
         Arc::clone(&fs),
         Arc::clone(&env_resolver),
     );
+    let init_use_case = InitUseCase::new(Arc::clone(&env_resolver), Arc::clone(&fs));
     App {
         path_resolver,
         fs,
@@ -117,6 +120,7 @@ pub fn wire_aish() -> App {
         unmute_use_case,
         resume_use_case,
         sessions_use_case,
+        init_use_case,
         logger,
     }
 }

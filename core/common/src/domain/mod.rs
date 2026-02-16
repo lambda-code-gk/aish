@@ -2,8 +2,12 @@
 //!
 //! String / PathBuf を直接運ばず、意味のある型に包んで境界を明確にする。
 
+pub mod dirs;
+
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+
+pub use dirs::Dirs;
 
 /// セッションディレクトリのパス
 #[derive(Debug, Clone, PartialEq, Eq)]

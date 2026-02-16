@@ -1,16 +1,25 @@
 //! 標準パス解決実装（環境変数・CLI オプションに基づく）
 //!
 //! ホームディレクトリ・セッションディレクトリの解決を adapter 層で行う。
-//! usecase は解決済みのパスを受け取り、ロジックに集中する。
+//! セッション配下パスは EnvResolver::resolve_dirs() の Dirs に統一する。
 
 use crate::error::Error;
-use crate::ports::outbound::{PathResolver, PathResolverInput};
+use crate::ports::outbound::{EnvResolver, PathResolver, PathResolverInput};
 use std::env;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// 標準パス解決実装（環境変数・CLI に基づく）
-#[derive(Debug, Clone, Default)]
-pub struct StdPathResolver;
+/// セッション新規作成時は EnvResolver::resolve_dirs() の sessions_dir を使用する。
+pub struct StdPathResolver {
+    env_resolver: Arc<dyn EnvResolver>,
+}
+
+impl StdPathResolver {
+    pub fn new(env_resolver: Arc<dyn EnvResolver>) -> Self {
+        Self { env_resolver }
+    }
+}
 
 impl PathResolver for StdPathResolver {
     /// ホームディレクトリ（論理的な AISH_HOME）を解決する
@@ -44,12 +53,12 @@ impl PathResolver for StdPathResolver {
     /// 優先順位:
     /// 1. コマンドラインオプション -s/--session-dir（指定ディレクトリをそのまま使用・再開用）
     /// 2. 環境変数 AISH_SESSION（既存セッションを参照する場合）
-    /// 3. 環境変数 AISH_HOME が設定されている場合: その配下の state/session/{ユニークID}
-    /// 4. XDG_STATE_HOME（未設定時は ~/.local/state）の aish/session/{ユニークID}
+    /// 3. それ以外: Dirs（EnvResolver::resolve_dirs）の sessions_dir に新規 ID を生成
+    ///    （AISH_HOME または -d 設定時はその配下、なければ XDG）
     fn resolve_session_dir(
         &self,
         input: &PathResolverInput,
-        home_dir: &str,
+        _home_dir: &str,
     ) -> Result<String, Error> {
         // 1. CLI オプション -s/--session-dir が最優先
         if let Some(ref session_dir) = input.session_dir {
@@ -63,29 +72,9 @@ impl PathResolver for StdPathResolver {
             }
         }
 
-        // 3. AISH_HOME または -d が設定されている場合: その配下に新規セッション生成
-        let env_home = env::var("AISH_HOME").ok().filter(|h| !h.is_empty());
-        if input.home_dir.is_some() || env_home.is_some() {
-            let mut path = PathBuf::from(home_dir);
-            path.push("state");
-            path.push("session");
-            path.push(generate_session_dirname());
-            return Ok(path.to_string_lossy().to_string());
-        }
-
-        // 4. XDG_STATE_HOME フォールバック
-        let xdg_state_home = env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
-            let mut path = dirs_home().unwrap_or_else(|| PathBuf::from("~"));
-            path.push(".local");
-            path.push("state");
-            path.to_string_lossy().to_string()
-        });
-
-        let mut path = PathBuf::from(xdg_state_home.trim_end_matches('/'));
-        path.push("aish");
-        path.push("session");
-        path.push(generate_session_dirname());
-
+        // 3. Dirs 経由で新規セッションディレクトリを生成（AISH_HOME/XDG は resolve_dirs に集約）
+        let dirs = self.env_resolver.resolve_dirs()?;
+        let path = dirs.sessions_dir().join(generate_session_dirname());
         Ok(path.to_string_lossy().to_string())
     }
 }
@@ -129,6 +118,12 @@ fn generate_session_dirname() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapter::StdEnvResolver;
+    use crate::ports::outbound::EnvResolver;
+
+    fn resolver() -> StdPathResolver {
+        StdPathResolver::new(Arc::new(StdEnvResolver))
+    }
 
     fn with_env_var<F: FnOnce()>(key: &str, value: Option<&str>, f: F) {
         let original = env::var(key).ok();
@@ -145,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_resolve_home_dir_prefers_cli() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput {
             home_dir: Some("/tmp/aish_cli_home".to_string()),
             ..Default::default()
@@ -159,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_resolve_home_dir_uses_aish_home_env() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput::default();
 
         with_env_var("AISH_HOME", Some("/tmp/aish_env_home2"), || {
@@ -170,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_resolve_home_dir_uses_xdg_config_home() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput::default();
 
         with_env_var("AISH_HOME", None, || {
@@ -183,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_resolve_session_dir_prefers_cli() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput {
             session_dir: Some("/tmp/aish_session_cli".to_string()),
             ..Default::default()
@@ -196,37 +191,42 @@ mod tests {
 
     #[test]
     fn test_resolve_session_dir_under_explicit_home() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput {
             home_dir: Some("/tmp/aish_cli_home3".to_string()),
             ..Default::default()
         };
         let home_dir = resolver.resolve_home_dir(&input).unwrap();
 
+        // 新規セッションは resolve_dirs() の sessions_dir。AISH_HOME を設定するとその配下になる
         with_env_var("AISH_SESSION", None, || {
-            let session = resolver.resolve_session_dir(&input, &home_dir).unwrap();
-            let prefix = "/tmp/aish_cli_home3/state/session/";
-            assert!(session.starts_with(prefix));
+            with_env_var("AISH_HOME", Some("/tmp/aish_cli_home3"), || {
+                with_env_var("HOME", Some("/tmp/fallback"), || {
+                    let session = resolver.resolve_session_dir(&input, &home_dir).unwrap();
+                    let prefix = "/tmp/aish_cli_home3/state/session/";
+                    assert!(session.starts_with(prefix));
 
-            let suffix = &session[prefix.len()..];
-            assert_eq!(suffix.len(), 8);
-            for c in suffix.chars() {
-                assert!(
-                    ('A'..='Z').contains(&c)
-                        || ('a'..='z').contains(&c)
-                        || ('0'..='9').contains(&c)
-                        || c == '-'
-                        || c == '_',
-                    "invalid base64url char in session id: {}",
-                    c
-                );
-            }
+                    let suffix = &session[prefix.len()..];
+                    assert_eq!(suffix.len(), 8);
+                    for c in suffix.chars() {
+                        assert!(
+                            ('A'..='Z').contains(&c)
+                                || ('a'..='z').contains(&c)
+                                || ('0'..='9').contains(&c)
+                                || c == '-'
+                                || c == '_',
+                            "invalid base64url char in session id: {}",
+                            c
+                        );
+                    }
+                });
+            });
         });
     }
 
     #[test]
     fn test_resolve_session_dir_uses_xdg_state_home() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput::default();
 
         with_env_var("AISH_SESSION", None, || {
@@ -257,34 +257,35 @@ mod tests {
     #[test]
     fn test_generate_session_dirname_format() {
         // generate_session_dirname is private, test via resolve_session_dir
-        let resolver = StdPathResolver;
-        let input = PathResolverInput {
-            home_dir: Some("/tmp/test".to_string()),
-            ..Default::default()
-        };
+        let resolver = resolver();
+        let input = PathResolverInput::default();
         with_env_var("AISH_SESSION", None, || {
-            let session = resolver
-                .resolve_session_dir(&input, "/tmp/test")
-                .unwrap();
-            let suffix = session.strip_prefix("/tmp/test/state/session/").unwrap();
-            assert_eq!(suffix.len(), 8);
-            for c in suffix.chars() {
-                assert!(
-                    ('A'..='Z').contains(&c)
-                        || ('a'..='z').contains(&c)
-                        || ('0'..='9').contains(&c)
-                        || c == '-'
-                        || c == '_',
-                    "invalid base64url char in session dirname: {}",
-                    c
-                );
-            }
+            with_env_var("AISH_HOME", Some("/tmp/test"), || {
+                with_env_var("HOME", Some("/tmp/fallback"), || {
+                    let session = resolver
+                        .resolve_session_dir(&input, "/tmp/test")
+                        .unwrap();
+                    let suffix = session.strip_prefix("/tmp/test/state/session/").unwrap();
+                    assert_eq!(suffix.len(), 8);
+                    for c in suffix.chars() {
+                        assert!(
+                            ('A'..='Z').contains(&c)
+                                || ('a'..='z').contains(&c)
+                                || ('0'..='9').contains(&c)
+                                || c == '-'
+                                || c == '_',
+                            "invalid base64url char in session dirname: {}",
+                            c
+                        );
+                    }
+                });
+            });
         });
     }
 
     #[test]
     fn test_resolve_session_dir_uses_aish_session_env() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput::default();
         let home_dir = "/tmp/some_home".to_string();
 
@@ -298,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_resolve_session_dir_cli_overrides_aish_session_env() {
-        let resolver = StdPathResolver;
+        let resolver = resolver();
         let input = PathResolverInput {
             session_dir: Some("/tmp/aish_session_cli".to_string()),
             ..Default::default()

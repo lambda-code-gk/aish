@@ -61,29 +61,21 @@ Rust 製の `ai` / `aish` バイナリとして提供され、ターミナルの
     ./build.sh --debug  # デバッグビルド
     ```
 
-    これにより、以下がビルドされます。
+    ビルド成果物は **`dist/bin/`** に配置されます（リポジトリは汚れません）。
 
-    - `core/common` / `core/ai` / `core/aish`
-    - `tools/aish-capture` / `tools/aish-render` / `tools/aish-script` / `tools/leakscan`
+3. **開発時の実行環境（推奨）**:
 
-    ビルド成果物は `home/bin/` に配置されます。
-
-3. **AISH_HOME と PATH の設定**:
-
-    よく使うシェル（例: `~/.bashrc`）に、次のような設定を追加します。
+    実行時データ（設定・セッション・ログ）をリポジトリ直下に作らず、`.sandbox/xdg/` に隔離して使う場合:
 
     ```bash
-    # AISH のインストールディレクトリに合わせてパスを書き換えてください
-    export AISH_HOME="/path/to/aish/home"
-    export PATH="$PATH:$AISH_HOME/bin"
+    source scripts/dev/env.sh   # XDG_* と PATH を設定
+    ./build.sh --debug
+    aish init                   # 必要なら初期設定を展開（AISH_DEFAULTS_DIR は env.sh で設定済み）
+    aish                        # セッション開始
     ```
 
-    リポジトリ直下でビルドしている場合は、開発用として:
-
-    ```bash
-    export AISH_HOME="$PWD/home"
-    export PATH="$PATH:$AISH_HOME/bin"
-    ```
+    通常利用（インストール後）では、設定・セッションは **XDG ベース**（`~/.config/aish`, `~/.local/state/aish` 等）に保存されます。  
+    **AISH_HOME** を指定した場合のみ、その1ディレクトリ配下に完結します（ポータブル/開発用）。
 
 4. **LLM API キーの設定**:
 
@@ -119,10 +111,10 @@ $ aish
 - 履歴のインデックス情報の作成
 - ツールからの参照
 
-セッションの実体は、`AISH_HOME/state/sessions/<id>/` に置かれます。
-`<id>`は日時を元に生成されるユニークな名前が自動的に振られます。
+セッションの実体は、**AISH_HOME 指定時**は `$AISH_HOME/state/session/<id>/`、**未指定時**は `$XDG_STATE_HOME/aish/session/<id>/`（例: `~/.local/state/aish/session/<id>/`）に置かれます。
+`<id>` は日時を元に生成されるユニークな名前が自動的に振られます。
 
-`aish -s "$AISH_HOME/state/sessions/<id>"` のようにパスを指定すると、セッションを再開する事ができます。
+`aish -s "<session_dir>"` のようにパスを指定すると、セッションを再開できます。
 
 ## 🛠 Available Tasks
 
@@ -136,7 +128,7 @@ $ aish
 
 ## 🧰 Support Tools
 
-補助的なコマンドラインツールが `tools/` 以下にまとまっています。`build.sh` 実行時にビルドされ、`home/bin/` に配置されます。
+補助的なコマンドラインツールが `tools/` 以下にまとまっています。`build.sh` 実行時にビルドされ、`dist/bin/` に配置されます。
 
 * **`leakscan`**: 秘密情報の誤送信を防ぐための検査エンジン。キーワード・正規表現・Shannon エントロピー等でログやファイルをスキャンします。
 
@@ -150,11 +142,12 @@ aish/
 │   ├── common/           # ai / aish 共通ドメイン・ポート・LLM ドライバ等
 │   ├── ai/               # 'ai' コマンド本体
 │   └── aish/             # 'aish' コマンド本体
-├── home/                 # 実行時ホーム相当（build.sh で構築）
-│   ├── bin/              # ai / aish / aish-capture / leakscan などのバイナリ
-│   └── config/           # aishrc, system.d, task.d など
+├── assets/defaults/      # 初期設定テンプレ（aish init で XDG/AISH_HOME に展開）
+├── dist/                 # ビルド成果物（dist/bin/。.gitignore 済み）
+├── .sandbox/             # 開発用サンドボックス（scripts/dev/env.sh で使用。.gitignore 済み）
 ├── tools/                # サブツール
 │   └── leakscan/
+├── scripts/dev/          # 開発用スクリプト（env.sh, reset.sh）
 ├── old_impl/             # 旧シェル実装（Bash + Python ベース）
 └── tests/                # アーキテクチャ・ユニット・統合テストスクリプト
 ```
