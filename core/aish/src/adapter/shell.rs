@@ -84,20 +84,26 @@ fn default_aishrc_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// シェル起動コマンドを構築（aishrc の有無は fs で判定。AISH_HOME 未設定時は候補をフォールバック）
-fn build_shell_command<F: FileSystem + ?Sized>(
-    shell_path: &str,
-    aish_home: &Path,
-    fs: &F,
-) -> Vec<String> {
+/// シェル起動コマンドを構築（aishrc の有無は fs で判定）
+///
+/// - AISH_HOME が設定されている場合のみ、$AISH_HOME/config/aishrc を最優先候補にする
+/// - AISH_HOME 未設定時は XDG / HOME ベースのフォールバック候補のみを使う
+fn build_shell_command<F: FileSystem + ?Sized>(shell_path: &str, fs: &F) -> Vec<String> {
     let shell = shell_path.to_string();
     let shell_name = Path::new(shell_path)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(shell_path);
 
-    let primary: PathBuf = aish_home.join("config").join("aishrc");
-    let mut candidates = vec![primary.clone()];
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // AISH_HOME がある場合のみ $AISH_HOME/config/aishrc を優先候補に追加
+    if let Ok(aish_home) = env::var("AISH_HOME") {
+        if !aish_home.is_empty() {
+            candidates.push(PathBuf::from(aish_home).join("config").join("aishrc"));
+        }
+    }
+
     candidates.extend(default_aishrc_candidates());
 
     let aishrc_path = (shell_name == "bash").then(|| {
@@ -194,7 +200,7 @@ fn inject_pending_to_pty(master_fd: libc::c_int, pending: &PendingInput) -> Resu
 #[cfg(unix)]
 pub fn run_shell(
     session_dir: &Path,
-    home_dir: &Path,
+    _home_dir: &Path,
     fs: &dyn FileSystem,
     id_gen: &dyn IdGenerator,
     signal: &dyn Signal,
@@ -215,11 +221,17 @@ pub fn run_shell(
 
     let mut env_vars = Vec::new();
     env_vars.push(("AISH_SESSION".to_string(), session_dir.to_string_lossy().to_string()));
-    env_vars.push(("AISH_HOME".to_string(), home_dir.to_string_lossy().to_string()));
     env_vars.push(("AISH_PID".to_string(), aish_pid.to_string()));
 
+    // 親プロセス環境に既に AISH_HOME がある場合のみ、それを子プロセスに伝播する
+    if let Ok(aish_home) = env::var("AISH_HOME") {
+        if !aish_home.is_empty() {
+            env_vars.push(("AISH_HOME".to_string(), aish_home));
+        }
+    }
+
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let cmd = build_shell_command(&shell, home_dir, fs);
+    let cmd = build_shell_command(&shell, fs);
 
     let cwd = std::env::current_dir()
         .ok()
@@ -421,6 +433,7 @@ mod tests {
     use common::adapter::StdFileSystem;
     use common::domain::PartId;
     use std::fs;
+    use std::env;
 
     #[test]
     fn test_shell_detection() {
@@ -430,6 +443,8 @@ mod tests {
 
     #[test]
     fn test_build_shell_command_uses_aishrc_for_bash() {
+        let prev_aish_home = env::var("AISH_HOME").ok();
+
         let temp_dir = std::env::temp_dir().join("aish_test_aishrc_bash");
         let config_dir = temp_dir.join("config");
         let aishrc = config_dir.join("aishrc");
@@ -444,11 +459,14 @@ mod tests {
             let _ = fs::remove_dir_all(&temp_dir);
         }
 
+        // AISH_HOME を temp_dir に固定して、$AISH_HOME/config/aishrc が優先されることを確認
+        env::set_var("AISH_HOME", &temp_dir);
+
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(&aishrc, b"# test aishrc").unwrap();
 
         let fs_adapter = StdFileSystem;
-        let cmd = build_shell_command("/bin/bash", &temp_dir, &fs_adapter);
+        let cmd = build_shell_command("/bin/bash", &fs_adapter);
         assert_eq!(cmd.len(), 3);
         assert_eq!(cmd[0], "/bin/bash");
         assert_eq!(cmd[1], "--rcfile");
@@ -456,24 +474,55 @@ mod tests {
 
         let _ = fs::remove_file(&aishrc);
         let _ = fs::remove_dir_all(&temp_dir);
+
+        // 環境変数を元に戻す
+        if let Some(v) = prev_aish_home {
+            env::set_var("AISH_HOME", v);
+        } else {
+            env::remove_var("AISH_HOME");
+        }
     }
 
     #[test]
     fn test_build_shell_command_without_aishrc_falls_back() {
+        let prev_aish_home = env::var("AISH_HOME").ok();
+        let prev_xdg_config = env::var("XDG_CONFIG_HOME").ok();
+        let prev_home = env::var("HOME").ok();
+
         let temp_dir = std::env::temp_dir().join("aish_test_no_aishrc");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
         }
         fs::create_dir_all(&temp_dir).unwrap();
 
+        // AISH_HOME / XDG_CONFIG_HOME / HOME をテスト用にアイソレートして、
+        // 実環境の aishrc に依存しないようにする
+        env::remove_var("AISH_HOME");
+        env::set_var("XDG_CONFIG_HOME", temp_dir.join("xdg_config"));
+        env::set_var("HOME", temp_dir.join("home"));
+
         let fs_adapter = StdFileSystem;
-        let cmd = build_shell_command("/bin/bash", &temp_dir, &fs_adapter);
+        let cmd = build_shell_command("/bin/bash", &fs_adapter);
         assert_eq!(cmd, vec!["/bin/bash".to_string()]);
 
-        let cmd_sh = build_shell_command("/bin/sh", &temp_dir, &fs_adapter);
+        let cmd_sh = build_shell_command("/bin/sh", &fs_adapter);
         assert_eq!(cmd_sh, vec!["/bin/sh".to_string()]);
 
         let _ = fs::remove_dir_all(&temp_dir);
+
+        // 環境変数を元に戻す
+        match prev_aish_home {
+            Some(v) => env::set_var("AISH_HOME", v),
+            None => env::remove_var("AISH_HOME"),
+        }
+        match prev_xdg_config {
+            Some(v) => env::set_var("XDG_CONFIG_HOME", v),
+            None => env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match prev_home {
+            Some(v) => env::set_var("HOME", v),
+            None => env::remove_var("HOME"),
+        }
     }
 
     #[test]

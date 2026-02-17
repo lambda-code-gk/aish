@@ -11,8 +11,6 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// グローバルメモリディレクトリ（$AISH_HOME からの相対）
-const GLOBAL_MEMORY_RELATIVE: &str = "data/memory";
 const MEMORY_SUBDIR: &str = "memory";
 const AISH_DIR: &str = ".aish";
 const METADATA_FILENAME: &str = "metadata.json";
@@ -30,7 +28,9 @@ impl StdMemoryRepository {
 
 impl MemoryRepository for StdMemoryRepository {
     fn resolve(&self) -> Result<(Option<PathBuf>, PathBuf), Error> {
-        let global = self.env.resolve_home_dir()?.as_ref().to_path_buf().join(GLOBAL_MEMORY_RELATIVE);
+        // ディレクトリ解決は EnvResolver::resolve_dirs() に集約し、home を data/config の「root」として扱わない
+        let dirs = self.env.resolve_dirs()?;
+        let global = dirs.data_dir.join(MEMORY_SUBDIR);
         let project = find_project_memory_dir(self.env.current_dir()?.as_path())?;
         Ok((project, global))
     }

@@ -102,8 +102,8 @@ impl InitUseCase {
                     copied_paths.push(dest_path.clone());
                 } else {
                     self.fs.create_dir_all(dest_path.parent().unwrap_or(dest_root))?;
-                    let contents = self.fs.read_to_string(&src_path)?;
-                    self.fs.write(&dest_path, &contents)?;
+                    // 標準 FS 実装ではパーミッションを保持したままコピーする
+                    self.fs.copy_file(&src_path, &dest_path)?;
                     copied_paths.push(dest_path.clone());
                 }
             }

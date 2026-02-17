@@ -1,0 +1,5 @@
+{
+  "system": "You are a helpful assistant.",
+  "profile": "echo",
+  "tools": ["read_file", "grep"]
+}

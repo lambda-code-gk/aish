@@ -51,6 +51,13 @@ pub trait FileSystem: Send + Sync {
     /// ファイルを空にする（存在しなければ作成）
     fn truncate_file(&self, path: &Path) -> Result<(), Error>;
 
+    /// 単一ファイルをコピーする。デフォルト実装はテキストとして読み書きする（パーミッションは保持しない）。
+    /// 標準実装（StdFileSystem）では std::fs::copy + set_permissions で元のパーミッションを維持する。
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), Error> {
+        let contents = self.read_to_string(from)?;
+        self.write(to, &contents)
+    }
+
     /// パスが存在するか（metadata が取れれば true）
     fn exists(&self, path: &Path) -> bool {
         self.metadata(path).is_ok()

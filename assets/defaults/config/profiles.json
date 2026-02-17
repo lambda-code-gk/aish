@@ -1,0 +1,16 @@
+{
+  "default_provider": "echo",
+  "providers": {
+    "echo": {
+      "type": "echo"
+    },
+    "gemini": {
+      "type": "gemini",
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    "gpt": {
+      "type": "openai",
+      "api_key_env": "OPENAI_API_KEY"
+    }
+  }
+}

@@ -322,6 +322,12 @@ mod tests {
 
     #[test]
     fn test_queue_shell_suggestion_no_session_dir_returns_queued_false() {
+        // 実行環境に AISH_SESSION が設定されていると、ToolContext::new(None) でも
+        // env 経由でセッションディレクトリが解決されてしまい、テストが不安定になる。
+        // 明示的に AISH_SESSION を一時的に無効化して「セッションなし」状態を再現する。
+        let prev_aish_session = std::env::var("AISH_SESSION").ok();
+        std::env::remove_var("AISH_SESSION");
+
         let tool = QueueShellSuggestionTool::new();
         let ctx = ToolContext::new(None).with_allow_unsafe(true);
         let args = serde_json::json!({
@@ -334,6 +340,13 @@ mod tests {
         let result = tool.call(args, &ctx).unwrap();
         assert_eq!(result["queued"], false);
         assert_eq!(result["reason"], "no session dir");
+
+        // 環境変数を元に戻す
+        if let Some(v) = prev_aish_session {
+            std::env::set_var("AISH_SESSION", v);
+        } else {
+            std::env::remove_var("AISH_SESSION");
+        }
     }
 }
 

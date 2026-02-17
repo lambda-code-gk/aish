@@ -35,8 +35,12 @@ impl ResolveModeConfig for StdResolveModeConfig {
                 mode_name
             )));
         }
-        let home = self.env.resolve_home_dir()?;
-        let path = home.as_ref().join("config").join("mode.d").join(format!("{}.json", mode_name));
+        // home を root として扱わず、EnvResolver::resolve_dirs() が返す config_dir 配下を参照する
+        let dirs = self.env.resolve_dirs()?;
+        let path = dirs
+            .config_dir
+            .join("mode.d")
+            .join(format!("{}.json", mode_name));
         if !self.fs.exists(&path) {
             return Ok(None);
         }

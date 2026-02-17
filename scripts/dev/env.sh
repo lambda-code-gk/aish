@@ -15,6 +15,10 @@ export XDG_STATE_HOME="$SANDBOX_XDG/state"
 export XDG_CACHE_HOME="$SANDBOX_XDG/cache"
 export PATH="$PROJECT_ROOT/dist/bin:$PATH"
 
+# 開発用サンドボックスではデフォルトで「root モード」（AISH_HOME 配下）を使わない。
+# 既に AISH_HOME が設定されている環境であっても、ここで明示的に解除する。
+unset AISH_HOME
+
 # テンプレ展開時に repo 内の assets/defaults を参照する
 export AISH_DEFAULTS_DIR="$PROJECT_ROOT/assets/defaults"
 

@@ -120,4 +120,40 @@ impl FileSystem for StdFileSystem {
             })?;
         Ok(())
     }
+
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), Error> {
+        use std::fs;
+
+        let metadata = fs::metadata(from).map_err(|e| {
+            Error::io_msg(format!(
+                "Failed to get metadata for '{}': {}",
+                from.display(),
+                e
+            ))
+        })?;
+
+        fs::copy(from, to).map_err(|e| {
+            Error::io_msg(format!(
+                "Failed to copy '{}' to '{}': {}",
+                from.display(),
+                to.display(),
+                e
+            ))
+        })?;
+
+        // Unix では元ファイルのパーミッションを明示的に引き継ぐ
+        #[cfg(unix)]
+        {
+            let perms = metadata.permissions();
+            fs::set_permissions(to, perms).map_err(|e| {
+                Error::io_msg(format!(
+                    "Failed to set permissions on '{}': {}",
+                    to.display(),
+                    e
+                ))
+            })?;
+        }
+
+        Ok(())
+    }
 }

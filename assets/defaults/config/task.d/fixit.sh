@@ -32,3 +32,4 @@ PROMPT="Review the following terminal session and identify any issues or areas f
 
 # Use ai with a special profile if desired, or default
 ai -S "You are a code reviewer. Analyze the session and suggest improvements." "$PROMPT"
+

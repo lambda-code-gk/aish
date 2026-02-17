@@ -12,6 +12,31 @@ fn run_app(config: Config) -> Result<i32, Error> {
     runner.run(config)
 }
 
+/// テスト実行時の外部環境（特に AISH_* 系）の影響を避けるためのヘルパ。
+/// AISH_HOME を一時的なディレクトリに固定し、AISH_SESSION を無効化する。
+fn with_isolated_aish_env<F: FnOnce()>(f: F) {
+    use std::env;
+
+    let prev_aish_home = env::var("AISH_HOME").ok();
+    let prev_aish_session = env::var("AISH_SESSION").ok();
+
+    let tmp_home = tempfile::tempdir().expect("failed to create temp dir for AISH_HOME");
+    env::set_var("AISH_HOME", tmp_home.path());
+    env::remove_var("AISH_SESSION");
+
+    f();
+
+    // 元の環境を復元（tmp_home は drop 時に削除される）
+    match prev_aish_home {
+        Some(v) => env::set_var("AISH_HOME", v),
+        None => env::remove_var("AISH_HOME"),
+    }
+    match prev_aish_session {
+        Some(v) => env::set_var("AISH_SESSION", v),
+        None => env::remove_var("AISH_SESSION"),
+    }
+}
+
 #[test]
 fn test_run_app_with_help() {
     let config = Config {
@@ -41,42 +66,55 @@ fn test_run_app_without_query() {
 
 #[test]
 fn test_run_app_continue_without_state() {
-    // ai -c で再開を要求したが保存状態がない場合はエラー
-    let config = Config {
-        continue_flag: true,
-        ..Default::default()
-    };
-    let result = run_app(config);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("No continuation state"));
-    assert_eq!(err.exit_code(), 64);
+    // ai -c で再開を要求したが保存状態がない場合はエラー。
+    // 実行環境の AISH_HOME / AISH_SESSION / profiles.json に依存しないよう、
+    // エコープロファイル + アイソレートされた AISH_HOME で実行する。
+    with_isolated_aish_env(|| {
+        let config = Config {
+            continue_flag: true,
+            profile: Some(ProviderName::new("echo")),
+            ..Default::default()
+        };
+        let result = run_app(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("No continuation state"),
+            "unexpected error message: {}",
+            err
+        );
+        assert_eq!(err.exit_code(), 64);
+    });
 }
 
 #[test]
 fn test_run_app_with_message() {
     // echoプロファイルを使用してネットワーク不要で高速に実行
     // （profile未指定だとGeminiが使われ、APIキー欠如でHTTPタイムアウトまで数秒かかる）
-    let config = Config {
-        profile: Some(ProviderName::new("echo")),
-        message_args: vec!["Hello".to_string()],
-        ..Default::default()
-    };
-    let result = run_app(config);
-    assert!(result.is_ok(), "echo profile should succeed without API key");
+    with_isolated_aish_env(|| {
+        let config = Config {
+            profile: Some(ProviderName::new("echo")),
+            message_args: vec!["Hello".to_string()],
+            ..Default::default()
+        };
+        let result = run_app(config);
+        assert!(result.is_ok(), "echo profile should succeed without API key");
+    });
 }
 
 #[test]
 fn test_run_app_with_task_and_message() {
     // echoプロファイルを使用（agentタスクは存在しない想定なのでLLMパスに入る）
-    let config = Config {
-        profile: Some(ProviderName::new("echo")),
-        task: Some(TaskName::new("agent")),
-        message_args: vec!["hello".to_string(), "world".to_string()],
-        ..Default::default()
-    };
-    let result = run_app(config);
-    assert!(result.is_ok(), "echo profile should succeed without API key");
+    with_isolated_aish_env(|| {
+        let config = Config {
+            profile: Some(ProviderName::new("echo")),
+            task: Some(TaskName::new("agent")),
+            message_args: vec!["hello".to_string(), "world".to_string()],
+            ..Default::default()
+        };
+        let result = run_app(config);
+        assert!(result.is_ok(), "echo profile should succeed without API key");
+    });
 }
 
 #[test]
