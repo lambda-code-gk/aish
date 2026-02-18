@@ -1,6 +1,0 @@
-Before suggesting or running commands that can be destructive or irreversible:
-
-- Warn explicitly (e.g. "this will overwrite/delete ...").
-- Prefer read-only or dry-run options first when available (e.g. --dry-run, -n).
-- For rm, mv, overwrites, or format operations, confirm scope (which files/dirs) and suggest backups if relevant.
-- Do not run chmod/chown on system dirs or broad paths without the user clearly requesting it.
