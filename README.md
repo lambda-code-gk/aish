@@ -17,10 +17,11 @@ Rust 製の `ai` / `aish` バイナリとして提供され、ターミナルの
 ## ✨ Features
 
 * **Context-aware interactions**: `aish` がターミナルの入出力を記録し、`ai` コマンドがそのコンテキストを踏まえて応答できます。
-* **AI Agent**: ツール使用により簡易的なエージェントとして振る舞う事ができます。
-* **Memory / Session System**: セッションログや履歴を扱う仕組みを Rust のドメイン / usecase として再設計中です。
+* **AI Agent**: ツール使用により簡易的なエージェントとして振る舞えます。
+* **Memory / Session System**: セッションログ・Part 履歴を Rust の usecase / adapter で管理し、LLM コンテキストやツールから参照します。
+* **システムプロンプト（sysq）**: グローバル・ユーザー・プロジェクトの system.d でシステムプロンプトを管理し、`aish sysq list` / `enable` / `disable` で有効化を切り替えられます。`ai` 実行時に有効な sysq をマージして system instruction として利用します。
 * **Security Scanning**: `tools/leakscan` による高速な秘密情報検出エンジン（キーワード・正規表現・エントロピー）を統合可能です。
-* **Task-oriented workflows**: コードレビュー・コミットメッセージ生成・バグ修正支援など、タスク指向のワークフローを `ai <task>` で呼び出せます。
+* **Task-oriented workflows**: `ai <task>` でタスクスクリプトを実行。タスクは `task.d` に配置し、`ai --list-tasks` で一覧できます。
 
 ## 📚 Documentation
 
@@ -118,19 +119,25 @@ $ aish
 
 ## 🛠 Available Tasks
 
-`ai <task>` 形式で、さまざまなタスク指向の操作を呼び出せます（一部は旧実装から順次 Rust 化中です）。
+`ai <task> [message...]` 形式で、タスクスクリプトを実行できます。タスクは次のパス（先に存在する方）から検索されます。
 
-| Task | Description |
+- `$AISH_HOME/config/task.d/`
+- `$XDG_CONFIG_HOME/aish/task.d/`（例: `~/.config/aish/task.d/`）
+
+| 例 | 説明 |
 | :--- | :--- |
-| `ai commit_msg` | ステージ済み変更からコミットメッセージを生成します。 |
+| `ai commit_staged` | ステージ済み変更からコミットメッセージを生成しコミットを行う |
+| `ai <task> ...` | 任意のタスク名とメッセージ。タスクが存在しない場合は LLM への通常問い合わせとして扱われます。 |
 
-実際に利用可能なタスクやオプションは、`ai --help` で確認してください。
+利用可能なタスク一覧は `ai --list-tasks`、オプションは `ai --help` で確認してください。
 
 ## 🧰 Support Tools
 
-補助的なコマンドラインツールが `tools/` 以下にまとまっています。`build.sh` 実行時にビルドされ、`dist/bin/` に配置されます。
+補助ツールは `tools/` 以下にあります。`build.sh` 実行時に **leakscan** がビルドされ、`dist/bin/` に配置されます。
 
 * **`leakscan`**: 秘密情報の誤送信を防ぐための検査エンジン。キーワード・正規表現・Shannon エントロピー等でログやファイルをスキャンします。
+
+その他、`tools/aish-capture` / `aish-render` / `aish-script` 等のサブプロジェクトは存在しますが、現状の `build.sh` では旧実装で使用していたもので今はビルド対象外です（必要に応じて個別にビルド可能）。
 
 ## 📂 Project Structure
 
@@ -145,12 +152,23 @@ aish/
 ├── assets/defaults/      # 初期設定テンプレ（aish init で XDG/AISH_HOME に展開）
 ├── dist/                 # ビルド成果物（dist/bin/。.gitignore 済み）
 ├── .sandbox/             # 開発用サンドボックス（scripts/dev/env.sh で使用。.gitignore 済み）
-├── tools/                # サブツール
-│   └── leakscan/
+├── tools/                # サブツール（build.sh では leakscan をビルド）
+│   ├── leakscan/
+│   └── aish-capture/ 等  # サブプロジェクト（必要に応じて個別ビルド）
 ├── scripts/dev/          # 開発用スクリプト（env.sh, reset.sh）
 ├── old_impl/             # 旧シェル実装（Bash + Python ベース）
-└── tests/                # アーキテクチャ・ユニット・統合テストスクリプト
+└── tests/                # アーキテクチャ・ユニット・統合テスト（architecture.sh, units.sh, integration.sh）
 ```
+
+### 開発・テスト
+
+コード変更前後には、ルートで次を実行して既存機能が壊れていないことを確認してください。
+
+```bash
+./tests/architecture.sh && ./tests/units.sh && ./tests/integration.sh
+```
+
+詳細なアーキテクチャや開発ルールは [AGENTS.md](AGENTS.md) を参照してください。
 
 ## 🧭 Roadmap & Future Plans
 
