@@ -59,13 +59,14 @@ dev/shell
 
 詳細なパスやマージ順は、実装では `core/common/src/system_prompt.rs` の `merge_enabled_ordered` および `core/ai/src/adapter/resolve_system_instruction.rs` を参照してください。
 
-## 提案コマンド注入（PromptReady マーカー）
+## 提案コマンド（PromptReady マーカー・Alt+S 注入）
 
-`ai` の `queue_shell_suggestion` ツールでキューしたコマンドを、次にシェルがプロンプト入力待ちになったタイミングで **未実行の 1 コマンドとして差し込む** 機能では、aish が PTY 出力から「プロンプト表示完了」を検知するために **不可視マーカー** を使います。引数内の改行（例: `git commit -m` の複数行メッセージ）は許可されます。
+`ai` の `queue_shell_suggestion` ツールでキューしたコマンドは **自動では注入されません**。提案がある場合、aish はプロンプト表示完了（PromptReady マーカー検知）時に **ベルを鳴らし**、プロンプトの `(aish:...)` 部分に **提案コマンドの先頭5文字 + `..`**（例: `git co..`）を表示します。ユーザーが **Alt+S** を押したタイミングで、そのコマンドが未実行の 1 行としてシェルに注入されます。
 
 - **マーカー**: OSC シーケンス `ESC ] 999 ; aish-prompt-ready BEL`（`\x1b]999;aish-prompt-ready\x07`）
-- **設定**: `aish` が `--rcfile` で読み込む **.aishrc**（`$AISH_HOME/config/aishrc`）のプロンプト末尾に、このマーカーを埋め込んでください。
-  - **bash**: `PS1='... \[\e]999;aish-prompt-ready\a\]'`（`\[` / `\]` で幅 0 扱い）
-  - **zsh**: `PROMPT='... %{\e]999;aish-prompt-ready\a%}'`
+- **設定**: `aish` が `--rcfile` で読み込む **.aishrc**（`$AISH_HOME/config/aishrc`）のプロンプト末尾にこのマーカーを埋め込み、`(aish:...)` には `__aish_prompt_label`（提案あり時は `prompt_suggestion.txt` の内容、通常時は part サイズ）を使います。
+  - **bash**: 既定の aishrc を参照。
+  - **zsh**: 同様に `__aish_prompt_label` とマーカーを組み合わせてください。
+- **注入**: **Alt+S**（`\x1b s`）でキューされたコマンドをそのまま注入。blocked の概念は廃止されています。
 
-マーカーを入れていない環境では、キューされた提案コマンドは検知タイミングが取れないため注入されません。既存の SIGUSR1 フック（ロールオーバー等）はそのままでよく、PromptReady 検知はこのマーカー経由のみです。
+マーカーを入れていない環境では、提案時のベル・プロンプト表示・Alt+S 注入は期待どおりに動作しません。既存の SIGUSR1 フック（ロールオーバー等）はそのままでよく、PromptReady 検知はこのマーカー経由のみです。

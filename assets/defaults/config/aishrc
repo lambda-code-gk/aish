@@ -42,6 +42,19 @@ __aish_calc_part_size() {
         grep 'total$' | sed -e 's/[ \t]\+total$//'
 }
 
+# プロンプトの (aish:...) 部分を返す。提案コマンドがあれば先頭5文字+..、なければ part サイズ
+__aish_prompt_label() {
+    if [ -z "$AISH_SESSION" ]; then
+        echo -n "---"
+        return
+    fi
+    if [ -s "$AISH_SESSION/prompt_suggestion.txt" ]; then
+        head -c 20 "$AISH_SESSION/prompt_suggestion.txt" 2>/dev/null || echo -n "---"
+        return
+    fi
+    __aish_calc_part_size
+}
+
 # コマンド終了時に自動でpartファイルを作成しつつ、プロンプトにサイズを表示
 if [ -n "$AISH_PID" ]; then
     # 元のPS1を保存（多重定義を避ける）
@@ -50,11 +63,12 @@ if [ -n "$AISH_PID" ]; then
     fi
 
     # 既存のPROMPT_COMMANDを保持しつつ、SIGUSR1送信とPS1更新を行う。
+    # PS1 の (aish:...) は __aish_prompt_label（提案あり時は先頭5文字+..、通常時は part サイズ）。
     # PS1 末尾には PromptReady マーカー（OSC 999, BEL 終端）を埋め込む。
     if [ -n "$PROMPT_COMMAND" ]; then
-        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; PS1=\"(aish:\$(__aish_calc_part_size))$AISH_PS1_ORG\\[\\e]999;aish-prompt-ready\\a\\]\"; $PROMPT_COMMAND"
+        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; PS1=\"(aish:\$(__aish_prompt_label))$AISH_PS1_ORG\\[\\e]999;aish-prompt-ready\\a\\]\"; $PROMPT_COMMAND"
     else
-        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; PS1=\"(aish:\$(__aish_calc_part_size))$AISH_PS1_ORG\\[\\e]999;aish-prompt-ready\\a\\]\""
+        export PROMPT_COMMAND="kill -usr1 $AISH_PID 2>/dev/null; PS1=\"(aish:\$(__aish_prompt_label))$AISH_PS1_ORG\\[\\e]999;aish-prompt-ready\\a\\]\""
     fi
 fi
 
@@ -63,7 +77,7 @@ if [ -n "$AISH_PID" ] && [ -n "$ZSH_VERSION" ]; then
     precmd() {
         kill -usr1 $AISH_PID 2>/dev/null
     }
-    PROMPT="(aish:\$(__aish_calc_part_size))$PROMPT%{\e]999;aish-prompt-ready\a%}"
+    PROMPT="(aish:\$(__aish_prompt_label))$PROMPT%{\e]999;aish-prompt-ready\a%}"
 fi
 
 # Ctrl+L: 画面クリア + aish clear（partファイル削除）

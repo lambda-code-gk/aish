@@ -1,14 +1,14 @@
 //! queue_shell_suggestion ツール実装（adapter 層）
 //!
 //! - StructuredCommand を受け取り、安全な 1 コマンドへ shell-quote（引数内改行は許可）
-//! - command_rules によるポリシー評価
-//! - SessionDir 配下の pending_input.json に PendingInput を保存（AISH が読んで注入後に削除）
+//! - SessionDir 配下の pending_input.json に PendingInput を保存（aish が Alt+S で注入）
+//! - プロンプト表示用に prompt_suggestion.txt に先頭5文字+".." を書き出す
 
 use crate::adapter::agent_state_storage::FileAgentStateStorage;
 use common::adapter::StdFileSystem;
 use common::domain::{PendingInput, PolicyStatus, StructuredCommand};
 use common::ports::outbound::FileSystem;
-use common::tool::{is_command_allowed, Tool, ToolContext, ToolError};
+use common::tool::{Tool, ToolContext, ToolError};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -177,22 +177,7 @@ impl Tool for QueueShellSuggestionTool {
         }
         let line = sanitize_for_inject(&line, 4096)?;
 
-        // 2) policy 判定（command_rules は「引用なし」のコマンド行で比較する）
-        let line_for_allowlist: String =
-            std::iter::once(program.as_str())
-                .chain(args.iter().map(String::as_str))
-                .collect::<Vec<_>>()
-                .join(" ");
-        let allowed = is_command_allowed(line_for_allowlist.trim(), &ctx.command_allow_rules);
-        let policy = if allowed {
-            PolicyStatus::Allowed
-        } else {
-            PolicyStatus::Blocked {
-                reason: "not in command_rules allowlist".to_string(),
-            }
-        };
-
-        // 3) PendingInput を構築
+        // 2) PendingInput を構築（blocked は廃止し、常に保存して Alt+S でそのまま注入する）
         let created_at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -200,12 +185,12 @@ impl Tool for QueueShellSuggestionTool {
 
         let pending = PendingInput {
             text: line.clone(),
-            policy,
+            policy: PolicyStatus::Allowed,
             created_at_unix_ms,
             source: "tool:queue_shell_suggestion".to_string(),
         };
 
-        // 4) セッション dir に pending_input.json を保存（session が無い場合は queued: false）
+        // 3) セッション dir に pending_input.json と prompt_suggestion.txt（先頭5文字+".."）を保存
         let session_path_opt = ctx
             .session_dir
             .as_ref()
@@ -215,25 +200,30 @@ impl Tool for QueueShellSuggestionTool {
         let (queued, no_session_reason) = if let Some(session_dir) = session_path_opt.as_ref() {
             let fs: Arc<dyn FileSystem> = Arc::new(StdFileSystem);
             let storage = FileAgentStateStorage::new(Arc::clone(&fs));
-            match storage.save_pending_input(
-                &common::domain::SessionDir::new(session_dir.clone()),
-                Some(pending.clone()),
-            ) {
-                Ok(()) => (true, None),
-                Err(e) => return Err(ToolError::ExecutionFailed(e.to_string())),
-            }
+            storage
+                .save_pending_input(
+                    &common::domain::SessionDir::new(session_dir.clone()),
+                    Some(pending.clone()),
+                )
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            // プロンプト用プレビュー（引用なしのコマンド行の先頭5文字+".."。例: git co..）
+            let display: String =
+                std::iter::once(program.as_str())
+                    .chain(args.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            let preview = display.chars().take(5).collect::<String>() + "..";
+            let suggestion_path = session_dir.join("prompt_suggestion.txt");
+            let _ = fs.as_ref().write(&suggestion_path, &preview);
+            (true, None)
         } else {
             (false, Some("no session dir"))
         };
 
-        // 5) LLM への軽量応答
+        // 4) LLM への軽量応答
         let mut out = serde_json::json!({
             "queued": queued,
-            "policy": match pending.policy {
-                PolicyStatus::Allowed => "allowed",
-                PolicyStatus::NeedsWarning { .. } => "needs_warning",
-                PolicyStatus::Blocked { .. } => "blocked",
-            },
+            "policy": "allowed",
             "text": pending.text,
         });
         if let Some(reason) = no_session_reason {
@@ -315,8 +305,7 @@ mod tests {
         });
         let result = tool.call(args, &ctx).unwrap();
         assert_eq!(result["queued"], true);
-        // command_rules が空のため allowlist 判定では Blocked になる
-        assert_eq!(result["policy"], "blocked");
+        assert_eq!(result["policy"], "allowed");
         assert!(result["text"].as_str().unwrap().starts_with("git \"status\""));
     }
 

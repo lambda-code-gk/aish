@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use common::domain::{PendingInput, PolicyStatus};
+use common::domain::PendingInput;
 use common::error::Error;
 use common::ports::outbound::{FileSystem, PtyProcessStatus, PtySpawn, Signal, Winsize};
 use common::part_id::IdGenerator;
@@ -16,6 +16,7 @@ use crate::ports::outbound::ShellRunner;
 use libc;
 
 const PENDING_INPUT_FILENAME: &str = "pending_input.json";
+const PROMPT_SUGGESTION_FILENAME: &str = "prompt_suggestion.txt";
 const PENDING_MAX_LEN: usize = 4096;
 
 /// ShellRunner の標準実装（run_shell をラップ）
@@ -152,6 +153,15 @@ fn clear_pending_input(session_dir: &Path, fs: &dyn FileSystem) -> Result<(), Er
     Ok(())
 }
 
+/// prompt_suggestion.txt を削除する（Alt+S 注入後にプロンプトを通常表示に戻すため）。
+fn clear_prompt_suggestion(session_dir: &Path, fs: &dyn FileSystem) -> Result<(), Error> {
+    let path = session_dir.join(PROMPT_SUGGESTION_FILENAME);
+    if fs.exists(&path) {
+        fs.remove_file(&path)?;
+    }
+    Ok(())
+}
+
 /// 注入用文字列をサニタイズ（ESC・危険な制御文字除去、最大長）。改行・CR・タブは許可。
 fn sanitize_for_inject(s: &str) -> String {
     let mut out = String::with_capacity(s.len().min(PENDING_MAX_LEN));
@@ -173,14 +183,9 @@ fn sanitize_for_inject(s: &str) -> String {
     out
 }
 
-/// PTY master に pending を注入（Ctrl-U で行クリア → Bracketed Paste）
+/// PTY master に pending をそのまま注入（Ctrl-U で行クリア → Bracketed Paste）。blocked は廃止し常にそのまま注入する。
 fn inject_pending_to_pty(master_fd: libc::c_int, pending: &PendingInput) -> Result<(), Error> {
-    let mut text = sanitize_for_inject(&pending.text);
-    if let PolicyStatus::Blocked { ref reason } = pending.policy {
-        let _ = reason; // 理由はログ等に含まれているため、ここでは表示しない
-        text = format!("# {}", text);
-        text = sanitize_for_inject(&text);
-    }
+    let text = sanitize_for_inject(&pending.text);
     if text.is_empty() {
         return Ok(());
     }
@@ -263,12 +268,13 @@ pub fn run_shell(
     // PromptReady マーカー検知（次のプロンプトで pending を注入するため）
     let mut prompt_ready_detector = PromptReadyDetector::new();
     
-    // メインループ用のバッファ
+    // メインループ用のバッファ（Alt+S = \x1b s 検出用に 1 バイト保留）
     const MAX_CHUNK: usize = 32768;
     let mut stdin_buf = vec![0u8; MAX_CHUNK];
     let mut pty_buf = vec![0u8; MAX_CHUNK];
     let mut stdin_eof = false;
-    
+    let mut stdin_esc_pending: Option<u8> = None;
+
     loop {
         // シグナルをイベントに変換してハンドラに渡す
         let events: Vec<SessionEvent> = [
@@ -350,14 +356,40 @@ pub fn run_shell(
             continue;
         }
         
-        // 標準入力から読み取り
+        // 標準入力から読み取り（Alt+S = \x1b s のときは注入し、キーはシェルに渡さない）
         if let Some(idx) = stdin_idx {
             if (pollfds[idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
                 let n = unsafe { libc::read(stdin_fd, stdin_buf.as_mut_ptr() as *mut libc::c_void, MAX_CHUNK) };
                 if n > 0 {
-                    let chunk = &stdin_buf[..n as usize];
-                    let _ = unsafe { libc::write(master_fd, chunk.as_ptr() as *const libc::c_void, n as usize) };
-                    // 標準入力はログに記録しない（プレーンテキストログでは不要）
+                    let n = n as usize;
+                    let mut chunk = Vec::with_capacity(stdin_esc_pending.as_ref().map(|_| 1).unwrap_or(0) + n);
+                    if let Some(b) = stdin_esc_pending.take() {
+                        chunk.push(b);
+                    }
+                    chunk.extend_from_slice(&stdin_buf[..n]);
+
+                    let mut i = 0;
+                    while i + 2 <= chunk.len() && chunk[i] == 0x1b && chunk[i + 1] == b's' {
+                        if let Ok(Some(pending)) = try_load_pending_input(session_dir, fs) {
+                            let _ = inject_pending_to_pty(master_fd, &pending);
+                            let _ = clear_pending_input(session_dir, fs);
+                            let _ = clear_prompt_suggestion(session_dir, fs);
+                        }
+                        i += 2;
+                    }
+                    let to_forward: &[u8] = if i >= chunk.len() {
+                        &[]
+                    } else if chunk.len() == i + 1 && chunk[i] == 0x1b {
+                        stdin_esc_pending = Some(0x1b);
+                        &chunk[..i]
+                    } else {
+                        &chunk[i..]
+                    };
+                    if !to_forward.is_empty() {
+                        let _ = unsafe {
+                            libc::write(master_fd, to_forward.as_ptr() as *const libc::c_void, to_forward.len())
+                        };
+                    }
                 } else if n == 0 {
                     // EOF
                     stdin_eof = true;
@@ -375,11 +407,11 @@ pub fn run_shell(
                 let _ = io::stdout().flush();
                 // ターミナルバッファで処理（ANSIエスケープシーケンスを処理してプレーンテキストに変換）
                 terminal_buffer.process_data(chunk);
-                // PromptReady マーカー検知 → pending があればプロンプト行に注入
+                // PromptReady マーカー検知 → 注入は行わず、pending があればベルを鳴らす
                 if prompt_ready_detector.feed(chunk) {
-                    if let Ok(Some(pending)) = try_load_pending_input(session_dir, fs) {
-                        let _ = inject_pending_to_pty(master_fd, &pending);
-                        let _ = clear_pending_input(session_dir, fs);
+                    if let Ok(Some(_)) = try_load_pending_input(session_dir, fs) {
+                        let _ = io::stdout().write_all(b"\x07");
+                        let _ = io::stdout().flush();
                     }
                 }
             } else if n <= 0 {
@@ -431,9 +463,9 @@ mod tests {
     use super::*;
     use crate::adapter::console_handler::part_filename_from_id;
     use common::adapter::StdFileSystem;
-    use common::domain::PartId;
-    use std::fs;
+    use common::domain::{PartId, PolicyStatus};
     use std::env;
+    use std::fs;
 
     #[test]
     fn test_shell_detection() {
