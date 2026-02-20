@@ -1,6 +1,7 @@
 //! 許可コマンド設定の読み込み（adapter 層）
+//!
+//! パスは EnvResolver::resolve_command_rules_path() で解決する（AISH_HOME / XDG 対応）。
 
-use common::domain::HomeDir;
 use common::error::Error;
 use common::tool::CommandAllowRule;
 use regex::Regex;
@@ -9,26 +10,25 @@ use std::path::Path;
 
 use crate::ports::outbound::CommandAllowRulesLoader;
 
-/// CommandAllowRulesLoader の標準実装（load_command_allow_rules をラップ）
+/// CommandAllowRulesLoader の標準実装（解決済みパスから読み込む）
 pub struct StdCommandAllowRulesLoader;
 
 impl CommandAllowRulesLoader for StdCommandAllowRulesLoader {
-    fn load_rules(&self, home_dir: &HomeDir) -> Vec<CommandAllowRule> {
-        load_command_allow_rules(home_dir)
+    fn load_rules(&self, path: &Path) -> Vec<CommandAllowRule> {
+        load_command_allow_rules(path)
     }
 }
 
-/// 許可コマンドのルールリストを AISH_HOME/config/command_rules.txt から読み込む
-pub fn load_command_allow_rules(home_dir: &HomeDir) -> Vec<CommandAllowRule> {
-    let config_path = home_dir.as_ref().join("config/command_rules.txt");
-    if !config_path.exists() {
+/// 許可コマンドのルールリストを指定パスから読み込む。
+/// ファイルが無い場合や読み込み失敗時は空 Vec を返す。
+pub fn load_command_allow_rules(path: &Path) -> Vec<CommandAllowRule> {
+    if !path.exists() {
         return Vec::new();
     }
-
-    match read_rules_from_file(&config_path) {
+    match read_rules_from_file(path) {
         Ok(rules) => rules,
         Err(e) => {
-            eprintln!("Warning: Failed to load command_rules.txt: {}", e);
+            eprintln!("Warning: Failed to load command_rules: {} ({})", path.display(), e);
             Vec::new()
         }
     }
@@ -36,6 +36,10 @@ pub fn load_command_allow_rules(home_dir: &HomeDir) -> Vec<CommandAllowRule> {
 
 fn read_rules_from_file(path: &Path) -> Result<Vec<CommandAllowRule>, Error> {
     let content = fs::read_to_string(path).map_err(Error::from)?;
+    read_rules_from_str(&content)
+}
+
+fn read_rules_from_str(content: &str) -> Result<Vec<CommandAllowRule>, Error> {
     let mut rules = Vec::new();
 
     for line in content.lines() {
@@ -62,7 +66,7 @@ fn read_rules_from_file(path: &Path) -> Result<Vec<CommandAllowRule>, Error> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Invalid regex in command_rules.txt: '{}' ({})", regex_str, e);
+                    eprintln!("Warning: Invalid regex in command_rules: '{}' ({})", regex_str, e);
                 }
             }
         } else {
@@ -82,6 +86,30 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_load_command_allow_rules_missing_file_returns_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nonexistent_command_rules.txt");
+        let rules = load_command_allow_rules(&path);
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_load_command_allow_rules_reads_from_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("command_rules.txt");
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "git diff").unwrap();
+        writeln!(file, "ls").unwrap();
+        let rules = load_command_allow_rules(&path);
+        assert_eq!(rules.len(), 2);
+        let has_git_diff = rules.iter().any(|r| match r {
+            CommandAllowRule::Prefix(p) => p == "git diff",
+            _ => false,
+        });
+        assert!(has_git_diff);
+    }
 
     #[test]
     fn test_read_rules_from_file() {

@@ -248,6 +248,9 @@ fn prefix_matches(prefix: &str, command: &str) -> bool {
 
 /// コマンドが許可リストにマッチするか判定する（純粋関数）
 ///
+/// 判定前にコマンド文字列は trim する。これにより LLM やツールから渡される
+/// 前後の空白付きコマンド（例: `"  git diff  "`）も allowlist で正しく許可される。
+///
 /// denylist（NotRegex/NotPrefix）が先に評価され、一致すれば即座に false。
 /// 次に allowlist（Regex/Prefix）のいずれかに一致すれば true。
 /// どちらにも一致しなければ false。
@@ -255,6 +258,7 @@ fn prefix_matches(prefix: &str, command: &str) -> bool {
 /// Prefix/NotPrefix の前方一致は、ルール文字列の後ろにスペースを付けて判定する。
 /// 例: ルール `ls` はコマンド行が `ls` または `ls ` で始まる場合にマッチ（`lss` はマッチしない）。
 pub fn is_command_allowed(command: &str, rules: &[CommandAllowRule]) -> bool {
+    let command = command.trim();
     // 否定ルールが一つでもマッチしたら即座に不許可
     let denied = rules.iter().any(|rule| match rule {
         CommandAllowRule::NotRegex(re) => re.is_match(command),
@@ -357,6 +361,17 @@ mod tests {
         assert!(!is_command_allowed("rm -rf /", &rules));
         // 前方一致は「ルール+スペース」で判定するため、ls では lss はマッチしない
         assert!(!is_command_allowed("lss", &rules));
+    }
+
+    #[test]
+    fn test_is_command_allowed_trimmed_command() {
+        // 前後の空白は trim してから判定する（ツール呼び出しで "  git diff  " 等が渡っても許可される）
+        let rules = vec![CommandAllowRule::Prefix("git diff".to_string())];
+        assert!(is_command_allowed("git diff", &rules));
+        assert!(is_command_allowed("git diff --cached", &rules));
+        assert!(is_command_allowed("  git diff  ", &rules));
+        assert!(is_command_allowed("  git diff --cached  ", &rules));
+        assert!(!is_command_allowed("  git checkout  ", &rules));
     }
 
     #[test]

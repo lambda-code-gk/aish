@@ -1,11 +1,11 @@
 //! 許可コマンドルール読み込みの Outbound ポート
 //!
-//! HomeDir から許可ルール一覧を返す。
+//! 解決済みパス（XDG / AISH_HOME に従う）から許可ルール一覧を返す。
 
-use common::domain::HomeDir;
 use common::tool::CommandAllowRule;
+use std::path::Path;
 
-/// ホームディレクトリからコマンド許可ルールを読み込む
+/// コマンド許可ルール設定ファイルのパスからルールを読み込む
 pub trait CommandAllowRulesLoader: Send + Sync {
-    fn load_rules(&self, home_dir: &HomeDir) -> Vec<CommandAllowRule>;
+    fn load_rules(&self, path: &Path) -> Vec<CommandAllowRule>;
 }

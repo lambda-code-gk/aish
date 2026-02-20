@@ -10,6 +10,8 @@ const SYSTEM_D_SUBDIR: &str = "system.d";
 const CONFIG_SYSTEM_D: &str = "config/system.d";
 const PROFILES_CONFIG_FILENAME: &str = "profiles.json";
 const CONFIG_PROFILES: &str = "config/profiles.json";
+const COMMAND_RULES_FILENAME: &str = "command_rules.txt";
+const CONFIG_COMMAND_RULES: &str = "config/command_rules.txt";
 const LOG_FILENAME: &str = "log.jsonl";
 const TRANSCRIPT_FILENAME: &str = "transcript.jsonl";
 const STATE_SUBDIR: &str = "state";
@@ -99,6 +101,18 @@ impl EnvResolver for StdEnvResolver {
         }
         let home_dir = self.resolve_home_dir()?;
         Ok(home_dir.as_ref().join(PROFILES_CONFIG_FILENAME))
+    }
+
+    fn resolve_command_rules_path(&self) -> Result<PathBuf, Error> {
+        if let Ok(home) = env::var("AISH_HOME") {
+            if !home.is_empty() {
+                let mut p = PathBuf::from(home);
+                p.push(CONFIG_COMMAND_RULES);
+                return Ok(p);
+            }
+        }
+        let home_dir = self.resolve_home_dir()?;
+        Ok(home_dir.as_ref().join(COMMAND_RULES_FILENAME))
     }
 
     fn resolve_log_file_path(&self) -> Result<PathBuf, Error> {
@@ -274,6 +288,33 @@ mod tests {
                             });
                         });
                     });
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn test_resolve_command_rules_path() {
+        let r = StdEnvResolver;
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("HOME", Some("/home/user"), || {
+                with_env_var("AISH_HOME", Some("/opt/aish"), || {
+                    let path = r.resolve_command_rules_path().unwrap();
+                    assert_eq!(
+                        path.to_string_lossy(),
+                        "/opt/aish/config/command_rules.txt"
+                    );
+                });
+            });
+        });
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("XDG_CONFIG_HOME", Some("/xdg/config"), || {
+                with_env_var("HOME", Some("/home/user"), || {
+                    let path = r.resolve_command_rules_path().unwrap();
+                    assert_eq!(
+                        path.to_string_lossy(),
+                        "/xdg/config/aish/command_rules.txt"
+                    );
                 });
             });
         });

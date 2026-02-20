@@ -283,13 +283,13 @@ impl AiUseCase {
 
         const DEFAULT_MAX_TURNS: usize = 16;
         let max_turns = max_turns_override.unwrap_or(DEFAULT_MAX_TURNS);
-        let home_dir = match self.deps.policy.env_resolver.resolve_home_dir() {
-            Ok(h) => h,
+        let command_rules_path = match self.deps.policy.env_resolver.resolve_command_rules_path() {
+            Ok(p) => p,
             Err(e) => {
                 let elapsed_ms = run_start.elapsed().as_millis() as u64;
                 if let Some(ref hub) = event_hub {
                     let mut payload = serde_json::json!({
-                        "reason": "resolve_home_dir",
+                        "reason": "resolve_command_rules_path",
                         "message": e.to_string(),
                         "exit_code": e.exit_code(),
                         "error_kind": format!("{:?}", e),
@@ -310,7 +310,7 @@ impl AiUseCase {
                 return Err(e);
             }
         };
-        let allow_rules = self.deps.policy.command_allow_rules_loader.load_rules(&home_dir);
+        let allow_rules = self.deps.policy.command_allow_rules_loader.load_rules(&command_rules_path);
 
         let mut messages = messages;
         let ctx = ctx.0;

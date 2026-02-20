@@ -42,6 +42,10 @@ pub trait EnvResolver: Send + Sync {
     /// AISH_HOME があれば $AISH_HOME/config/profiles.json、なければ resolve_home_dir() 直下の profiles.json（例: ~/.config/aish/profiles.json）
     fn resolve_profiles_config_path(&self) -> Result<PathBuf, Error>;
 
+    /// コマンド許可ルール設定ファイルのパス（command_rules.txt）
+    /// AISH_HOME があれば $AISH_HOME/config/command_rules.txt、なければ resolve_home_dir() 直下の command_rules.txt（例: $XDG_CONFIG_HOME/aish/command_rules.txt または ~/.config/aish/command_rules.txt）
+    fn resolve_command_rules_path(&self) -> Result<PathBuf, Error>;
+
     /// ログファイルのパス（JSONL 出力先）
     /// AISH_HOME が設定されていれば $AISH_HOME/state/log.jsonl。
     /// 未設定なら $XDG_STATE_HOME/aish/log.jsonl（XDG_STATE_HOME 未設定時は ~/.local/state/aish/log.jsonl）。
