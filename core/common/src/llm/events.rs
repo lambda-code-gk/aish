@@ -22,6 +22,8 @@ pub enum FinishReason {
 pub enum LlmEvent {
     /// アシスタントテキストの増分
     TextDelta(String),
+    /// 思考過程（推論）の増分（表示はグレーにする想定）
+    ReasoningDelta(String),
     /// ツール呼び出し開始
     ToolCallBegin {
         call_id: String,
@@ -56,6 +58,12 @@ mod tests {
     fn test_llm_event_text_delta() {
         let ev = LlmEvent::TextDelta("hello".to_string());
         assert!(matches!(ev, LlmEvent::TextDelta(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_llm_event_reasoning_delta() {
+        let ev = LlmEvent::ReasoningDelta("thinking...".to_string());
+        assert!(matches!(ev, LlmEvent::ReasoningDelta(s) if s == "thinking..."));
     }
 
     #[test]

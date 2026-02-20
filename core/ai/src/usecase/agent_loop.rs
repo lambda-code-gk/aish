@@ -296,7 +296,7 @@ impl AgentLoop {
 
         for ev in collected.borrow().iter() {
             match ev {
-                LlmEvent::TextDelta(s) => assistant_text.push_str(s),
+                LlmEvent::TextDelta(s) | LlmEvent::ReasoningDelta(s) => assistant_text.push_str(s),
                 LlmEvent::ToolCallBegin { call_id, name, thought_signature } => {
                     accumulator.on_begin(call_id.clone(), name.clone(), thought_signature.clone());
                 }

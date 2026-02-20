@@ -31,7 +31,7 @@ impl LlmCompletion for StdLlmCompletion {
             None,
             &mut |ev| {
                 match ev {
-                    LlmEvent::TextDelta(s) => out.push_str(&s),
+                    LlmEvent::TextDelta(s) | LlmEvent::ReasoningDelta(s) => out.push_str(&s),
                     LlmEvent::Completed { .. } => {}
                     LlmEvent::Failed { message } => err_msg = Some(message),
                     _ => {}

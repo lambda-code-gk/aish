@@ -365,9 +365,14 @@ impl LlmProvider for OpenAiCompatProvider {
                 }
             } else if let Some(parts) = delta["content"].as_array() {
                 for part in parts {
+                    let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
                     if let Some(text) = part["text"].as_str() {
                         if !text.is_empty() {
-                            callback(LlmEvent::TextDelta(text.to_string()))?;
+                            if part_type == "reasoning" {
+                                callback(LlmEvent::ReasoningDelta(text.to_string()))?;
+                            } else {
+                                callback(LlmEvent::TextDelta(text.to_string()))?;
+                            }
                             _found_any = true;
                         }
                     }
@@ -375,10 +380,10 @@ impl LlmProvider for OpenAiCompatProvider {
             }
 
             // reasoning_content: DeepSeek R1 系の推論モデルが使用するフィールド。
-            // content が空のとき、reasoning_content にテキストが入る場合がある。
+            // content が空のとき、reasoning_content にテキストが入る場合がある。思考過程として ReasoningDelta で送出する。
             if let Some(s) = delta["reasoning_content"].as_str() {
                 if !s.is_empty() {
-                    callback(LlmEvent::TextDelta(s.to_string()))?;
+                    callback(LlmEvent::ReasoningDelta(s.to_string()))?;
                     _found_any = true;
                 }
             }

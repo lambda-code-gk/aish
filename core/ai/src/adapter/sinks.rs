@@ -23,11 +23,27 @@ const MAX_ARGS_DISPLAY: usize = 80;
 pub struct StdoutSink {
     /// 不具合調査用: true のとき冗長なデバッグ行を stderr に出す
     verbose: bool,
+    /// 思考過程ブロック（<<< ... >>>）の表示中か
+    in_reasoning_block: bool,
 }
 
 impl StdoutSink {
     pub fn new(verbose: bool) -> Self {
-        Self { verbose }
+        Self {
+            verbose,
+            in_reasoning_block: false,
+        }
+    }
+
+    fn close_reasoning_block_if_open(&mut self) -> Result<(), Error> {
+        if self.in_reasoning_block {
+            self.in_reasoning_block = false;
+            print!("{} >>>{}\n", DARK_GREY, RESET);
+            io::stdout()
+                .flush()
+                .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
+        }
+        Ok(())
     }
 }
 
@@ -58,7 +74,22 @@ impl EventSink for StdoutSink {
     fn on_event(&mut self, ev: &AgentEvent) -> Result<(), Error> {
         match ev {
             AgentEvent::Llm(LlmEvent::TextDelta(s)) => {
+                self.close_reasoning_block_if_open()?;
                 print!("{}", s);
+                io::stdout()
+                    .flush()
+                    .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
+            }
+            AgentEvent::Llm(LlmEvent::ReasoningDelta(s)) => {
+                if !self.in_reasoning_block {
+                    self.in_reasoning_block = true;
+                    print!("{}<<< {}", DARK_GREY, RESET);
+                    io::stdout()
+                        .flush()
+                        .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
+                }
+                // 思考過程はグレーで表示
+                print!("{}{}{}", DARK_GREY, s, RESET);
                 io::stdout()
                     .flush()
                     .map_err(|e| Error::io_msg(format!("Failed to flush stdout: {}", e)))?;
@@ -68,6 +99,7 @@ impl EventSink for StdoutSink {
                 name: _,
                 thought_signature,
             }) => {
+                self.close_reasoning_block_if_open()?;
                 if self.verbose {
                     eprintln!(
                         "{}  [verbose] call_id={} thought_signature={:?}{}",
@@ -79,6 +111,7 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::Llm(LlmEvent::ToolCallArgsDelta { call_id, json_fragment }) => {
+                self.close_reasoning_block_if_open()?;
                 if self.verbose {
                     let snippet = if json_fragment.len() > 120 {
                         format!("{}...", &json_fragment[..json_fragment.floor_char_boundary(120)])
@@ -92,11 +125,13 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::Llm(LlmEvent::ToolCallEnd { call_id }) => {
+                self.close_reasoning_block_if_open()?;
                 if self.verbose {
                     eprintln!("{}  [verbose] ToolCallEnd call_id={}{}", DARK_GREY, call_id, RESET);
                 }
             }
             AgentEvent::Llm(LlmEvent::Completed { finish }) => {
+                self.close_reasoning_block_if_open()?;
                 if self.verbose {
                     eprintln!(
                         "{}  [verbose] LlmEvent::Completed finish={:?}{}",
@@ -105,6 +140,7 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::Llm(LlmEvent::Failed { message }) => {
+                self.close_reasoning_block_if_open()?;
                 if self.verbose {
                     eprintln!(
                         "{}  [verbose] LlmEvent::Failed message={}{}",
@@ -113,6 +149,7 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::ToolResult { name, args, result, .. } => {
+                self.close_reasoning_block_if_open()?;
                 let args_str = args.to_string();
                 let args_display = if args_str.len() > MAX_ARGS_DISPLAY {
                     format!("{}...", &args_str[..args_str.floor_char_boundary(MAX_ARGS_DISPLAY)])
@@ -134,6 +171,7 @@ impl EventSink for StdoutSink {
                 }
             }
             AgentEvent::ToolError { name, args, message, .. } => {
+                self.close_reasoning_block_if_open()?;
                 let args_str = args.to_string();
                 let args_display = if args_str.len() > MAX_ARGS_DISPLAY {
                     format!("{}...", &args_str[..args_str.floor_char_boundary(MAX_ARGS_DISPLAY)])
@@ -152,6 +190,7 @@ impl EventSink for StdoutSink {
     }
 
     fn on_end(&mut self) -> Result<(), Error> {
+        self.close_reasoning_block_if_open()?;
         println!();
         io::stdout()
             .flush()
@@ -210,8 +249,11 @@ impl PartFileSink {
 
 impl EventSink for PartFileSink {
     fn on_event(&mut self, ev: &AgentEvent) -> Result<(), Error> {
-        if let AgentEvent::Llm(LlmEvent::TextDelta(s)) = ev {
-            self.buffer.push_str(s);
+        match ev {
+            AgentEvent::Llm(LlmEvent::TextDelta(s)) | AgentEvent::Llm(LlmEvent::ReasoningDelta(s)) => {
+                self.buffer.push_str(s);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -239,6 +281,23 @@ mod tests {
     }
 
     #[test]
+    fn test_stdout_sink_reasoning_then_text_wrapped_with_angle_brackets() {
+        let mut sink = StdoutSink::new(false);
+        sink.on_event(&AgentEvent::Llm(LlmEvent::ReasoningDelta(
+            "User asks 1+1. Answer: 2.".to_string(),
+        )))
+        .unwrap();
+        sink.on_event(&AgentEvent::Llm(LlmEvent::TextDelta("1 + 1 は **2** です。".to_string())))
+            .unwrap();
+        // 実際の出力は <<< \x1b[90m...\x1b[0m >>>\n1 + 1 は **2** です。 となる（ANSI 含む）
+        // ここでは in_reasoning_block が false に戻っていることだけ確認
+        sink.on_event(&AgentEvent::Llm(LlmEvent::Completed {
+            finish: common::llm::events::FinishReason::Stop,
+        }))
+        .unwrap();
+    }
+
+    #[test]
     fn test_part_file_sink_buffer() {
         let mut sink = PartFileSink::new("/tmp", "part_xxx_assistant.txt");
         sink.on_event(&AgentEvent::Llm(LlmEvent::TextDelta("a".to_string())))
@@ -246,5 +305,15 @@ mod tests {
         sink.on_event(&AgentEvent::Llm(LlmEvent::TextDelta("b".to_string())))
             .unwrap();
         assert_eq!(sink.assistant_text(), "ab");
+    }
+
+    #[test]
+    fn test_part_file_sink_buffer_includes_reasoning() {
+        let mut sink = PartFileSink::new("/tmp", "part_xxx_assistant.txt");
+        sink.on_event(&AgentEvent::Llm(LlmEvent::ReasoningDelta("think ".to_string())))
+            .unwrap();
+        sink.on_event(&AgentEvent::Llm(LlmEvent::TextDelta("answer".to_string())))
+            .unwrap();
+        assert_eq!(sink.assistant_text(), "think answer");
     }
 }
