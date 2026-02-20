@@ -15,6 +15,7 @@ use common::ports::outbound::{now_iso8601, LogLevel, LogRecord};
 use cli::{config_to_command, parse_args, print_completion, Config, ParseOutcome};
 use domain::AiCommand;
 use ports::inbound::UseCaseRunner;
+use common::event_hub::build_event_hub;
 use wiring::{wire_ai, App};
 
 /// Command をディスパッチする Runner（match は main レイヤーに集約）
@@ -95,6 +96,13 @@ impl UseCaseRunner for Runner {
             explicit.or_else(|| self.app.resolve_system_instruction.resolve().ok().flatten())
         };
 
+        let event_hub = build_event_hub(
+            session_dir.as_ref(),
+            self.app.env_resolver.clone(),
+            self.app.fs.clone(),
+            verbose,
+        );
+
         let result = match cmd {
             AiCommand::Help => {
                 print_help();
@@ -148,6 +156,7 @@ impl UseCaseRunner for Runner {
                 model,
                 system_instruction(system).as_deref(),
                 tool_allowlist.as_deref(),
+                Some(event_hub.clone()),
             ),
             AiCommand::Resume {
                 profile,
@@ -166,6 +175,7 @@ impl UseCaseRunner for Runner {
                     system_instruction(system).as_deref(),
                     max_turns,
                     tool_allowlist.as_deref(),
+                    Some(event_hub.clone()),
                 )
             }
             AiCommand::Query {
@@ -191,6 +201,7 @@ impl UseCaseRunner for Runner {
                     system_instruction(system).as_deref(),
                     max_turns,
                     tool_allowlist.as_deref(),
+                    Some(event_hub.clone()),
                 )
             }
         };

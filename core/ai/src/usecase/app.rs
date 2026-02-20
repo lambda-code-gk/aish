@@ -12,6 +12,8 @@ use common::ports::outbound::{now_iso8601, FileSystem, Log, LogLevel, LogRecord,
 use common::error::Error;
 use crate::domain::Query;
 use common::msg::Msg;
+use common::domain::event::{Event, RunId, SessionId};
+use common::event_hub::EventHubHandle;
 use common::domain::SessionDir;
 use common::tool::{Tool, ToolContext, ToolRegistry};
 use std::sync::Arc;
@@ -26,6 +28,8 @@ pub struct AiDeps {
     pub system: SystemDeps,
     pub obs: ObsDeps,
     pub lifecycle_hooks: Arc<dyn LifecycleHooks>,
+    /// CI 等で true のとき確認プロンプトを出さない（run イベントの payload に載せる）
+    pub non_interactive: bool,
 }
 
 pub struct SessionDeps {
@@ -138,7 +142,46 @@ impl AiUseCase {
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
         tool_allowlist: Option<&[String]>,
+        event_hub: Option<EventHubHandle>,
     ) -> Result<i32, Error> {
+        let session_id = session_dir
+            .as_ref()
+            .map(|d| {
+                let p = d.as_ref();
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                SessionId::new(name)
+            })
+            .unwrap_or_else(|| SessionId::new("global"));
+        let sessionless = session_dir.is_none();
+        let run_id = RunId::new(format!(
+            "run_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let run_start = std::time::Instant::now();
+        let query_len = query.as_ref().map(|q| q.len()).unwrap_or(0);
+        if let Some(ref hub) = event_hub {
+            let mut payload = serde_json::json!({
+                "query_len": query_len,
+                "non_interactive": self.deps.non_interactive,
+            });
+            if sessionless {
+                payload["sessionless"] = serde_json::json!(true);
+            }
+            hub.emit(Event {
+                v: 1,
+                session_id: session_id.clone(),
+                run_id: run_id.clone(),
+                kind: "run.started".to_string(),
+                payload,
+            });
+        }
+
         let (profile_name, model_name) = self
             .deps.model.resolve_profile_and_model
             .resolve(provider.as_ref(), model.as_ref())?;
@@ -213,6 +256,26 @@ impl AiUseCase {
         ) {
             Ok(s) => s,
             Err(e) => {
+                let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                if let Some(ref hub) = event_hub {
+                    let mut payload = serde_json::json!({
+                        "reason": "create_stream",
+                        "message": e.to_string(),
+                        "exit_code": e.exit_code(),
+                        "error_kind": format!("{:?}", e),
+                        "elapsed_ms": elapsed_ms,
+                    });
+                    if sessionless {
+                        payload["sessionless"] = serde_json::json!(true);
+                    }
+                    hub.emit(Event {
+                        v: 1,
+                        session_id: session_id.clone(),
+                        run_id: run_id.clone(),
+                        kind: "run.failed".to_string(),
+                        payload,
+                    });
+                }
                 self.try_save_agent_state_on_error(&session_dir, &messages);
                 return Err(e);
             }
@@ -223,6 +286,26 @@ impl AiUseCase {
         let home_dir = match self.deps.policy.env_resolver.resolve_home_dir() {
             Ok(h) => h,
             Err(e) => {
+                let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                if let Some(ref hub) = event_hub {
+                    let mut payload = serde_json::json!({
+                        "reason": "resolve_home_dir",
+                        "message": e.to_string(),
+                        "exit_code": e.exit_code(),
+                        "error_kind": format!("{:?}", e),
+                        "elapsed_ms": elapsed_ms,
+                    });
+                    if sessionless {
+                        payload["sessionless"] = serde_json::json!(true);
+                    }
+                    hub.emit(Event {
+                        v: 1,
+                        session_id: session_id.clone(),
+                        run_id: run_id.clone(),
+                        kind: "run.failed".to_string(),
+                        payload,
+                    });
+                }
                 self.try_save_agent_state_on_error(&session_dir, &messages);
                 return Err(e);
             }
@@ -253,7 +336,12 @@ impl AiUseCase {
             )
             .with_command_allow_rules(allow_rules.clone())
             .with_memory_dirs(memory_project, memory_global)
-            .with_log(Some(Arc::clone(&self.deps.obs.log)));
+            .with_log(Some(Arc::clone(&self.deps.obs.log)))
+            .with_event_emitter(
+                event_hub.clone(),
+                Some(session_id.clone()),
+                Some(run_id.clone()),
+            );
             let sinks = self.deps.tooling.sink_factory.create_sinks();
             let mut agent_loop = AgentLoop::new(
                 Arc::clone(&stream),
@@ -263,6 +351,9 @@ impl AiUseCase {
                 Arc::clone(&self.deps.policy.approver),
                 Some("run_shell"),
                 Some(Arc::clone(&self.deps.policy.interrupt_checker)),
+                event_hub.clone(),
+                session_id.clone(),
+                run_id.clone(),
             );
 
             let outcome = match agent_loop
@@ -271,6 +362,26 @@ impl AiUseCase {
             {
                 Ok(o) => o,
                 Err(e) => {
+                    let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                    if let Some(ref hub) = event_hub {
+                        let mut payload = serde_json::json!({
+                            "reason": "agent_loop",
+                            "message": e.to_string(),
+                            "exit_code": e.exit_code(),
+                            "error_kind": format!("{:?}", e),
+                            "elapsed_ms": elapsed_ms,
+                        });
+                        if sessionless {
+                            payload["sessionless"] = serde_json::json!(true);
+                        }
+                        hub.emit(Event {
+                            v: 1,
+                            session_id: session_id.clone(),
+                            run_id: run_id.clone(),
+                            kind: "run.failed".to_string(),
+                            payload,
+                        });
+                    }
                     self.try_save_agent_state_on_error(&session_dir, &messages);
                     return Err(e);
                 }
@@ -307,6 +418,24 @@ impl AiUseCase {
                             }
                         }
                     }
+                    let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                    if let Some(ref hub) = event_hub {
+                        let mut payload = serde_json::json!({
+                            "outcome": "done",
+                            "exit_code": 0,
+                            "elapsed_ms": elapsed_ms,
+                        });
+                        if sessionless {
+                            payload["sessionless"] = serde_json::json!(true);
+                        }
+                        hub.emit(Event {
+                            v: 1,
+                            session_id: session_id.clone(),
+                            run_id: run_id.clone(),
+                            kind: "run.completed".to_string(),
+                            payload,
+                        });
+                    }
                     let _ = self.deps.obs.log.log(&LogRecord {
                         ts: now_iso8601(),
                         level: LogLevel::Info,
@@ -321,6 +450,26 @@ impl AiUseCase {
                     let continue_ = match self.deps.policy.continue_prompt.ask_continue() {
                         Ok(c) => c,
                         Err(e) => {
+                            let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                            if let Some(ref hub) = event_hub {
+                                let mut payload = serde_json::json!({
+                                    "reason": "continue_prompt",
+                                    "message": e.to_string(),
+                                    "exit_code": e.exit_code(),
+                                    "error_kind": format!("{:?}", e),
+                                    "elapsed_ms": elapsed_ms,
+                                });
+                                if sessionless {
+                                    payload["sessionless"] = serde_json::json!(true);
+                                }
+                                hub.emit(Event {
+                                    v: 1,
+                                    session_id: session_id.clone(),
+                                    run_id: run_id.clone(),
+                                    kind: "run.failed".to_string(),
+                                    payload,
+                                });
+                            }
                             self.try_save_agent_state_on_error(&session_dir, &msgs);
                             return Err(e);
                         }
@@ -353,6 +502,24 @@ impl AiUseCase {
                                 }
                             }
                         }
+                        let elapsed_ms = run_start.elapsed().as_millis() as u64;
+                        if let Some(ref hub) = event_hub {
+                            let mut payload = serde_json::json!({
+                                "outcome": "reached_limit_saved",
+                                "exit_code": 0,
+                                "elapsed_ms": elapsed_ms,
+                            });
+                            if sessionless {
+                                payload["sessionless"] = serde_json::json!(true);
+                            }
+                            hub.emit(Event {
+                                v: 1,
+                                session_id: session_id.clone(),
+                                run_id: run_id.clone(),
+                                kind: "run.completed".to_string(),
+                                payload,
+                            });
+                        }
                         let _ = self.deps.obs.log.log(&LogRecord {
                             ts: now_iso8601(),
                             level: LogLevel::Info,
@@ -380,6 +547,7 @@ impl RunQuery for AiUseCase {
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
         tool_allowlist: Option<&[String]>,
+        event_hub: Option<EventHubHandle>,
     ) -> Result<i32, Error> {
         self.run_query_impl(
             session_dir,
@@ -389,6 +557,7 @@ impl RunQuery for AiUseCase {
             system_instruction,
             max_turns_override,
             tool_allowlist,
+            event_hub,
         )
     }
 }

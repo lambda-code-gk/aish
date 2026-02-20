@@ -1,5 +1,68 @@
-# command_rules.txt - 自動承認するコマンドのルール（1行1パターン）
-# 前方一致または /正規表現/ 。先頭 ! で否定。
-# 例:
+# 読み込み専用・非破壊的なコマンドの許可リスト
+
+# ファイル・ディレクトリ一覧
 ls
+dir
 pwd
+
+# sed (破壊的な -i オプションは禁止)
+sed
+!/sed .*-i /
+
+# ファイル内容の閲覧
+cat
+head
+tail
+less
+more
+grep
+rg
+awk
+sed -n
+
+# ファイル情報・検索
+file
+stat
+find
+locate
+which
+whereis
+type
+
+# システム情報
+uname
+hostname
+date
+uptime
+free
+df -h
+du -sh
+ps aux
+top -b -n 1
+htop --version
+
+# ネットワーク情報 (読み取りのみ)
+ping -c
+ip addr
+ifconfig
+netstat -nr
+route -n
+curl -I
+wget --spider
+
+# 開発ツール (情報表示)
+git status
+git log
+git diff
+git branch
+rustc --version
+cargo --version
+python --version
+python3 --version
+node --version
+npm --version
+gcc --version
+make --version
+
+# 正規表現による制限例 (必要に応じて有効化)
+# /^ls -l [a-zA-Z0-9_\-\.\/]+$/

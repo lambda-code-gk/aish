@@ -6,6 +6,7 @@ use std::sync::Arc;
 use common::adapter::{
     FileJsonLog, NoopLog, StdClock, StdEnvResolver, StdFileSystem, StdProcess,
 };
+use common::event_hub::EventHubHandle;
 use common::part_id::StdIdGenerator;
 use common::ports::outbound::{EnvResolver, FileSystem, Log, Process};
 use common::tool::EchoTool;
@@ -43,6 +44,7 @@ impl RunQuery for AiRunQuery {
         system_instruction: Option<&str>,
         max_turns_override: Option<usize>,
         tool_allowlist: Option<&[String]>,
+        event_hub: Option<EventHubHandle>,
     ) -> Result<i32, common::error::Error> {
         self.0.run_query(
             session_dir,
@@ -52,6 +54,7 @@ impl RunQuery for AiRunQuery {
             system_instruction,
             max_turns_override,
             tool_allowlist,
+            event_hub,
         )
     }
 }
@@ -59,6 +62,7 @@ impl RunQuery for AiRunQuery {
 /// 配線で組み立てた use case 群（main の Command ディスパッチで利用）
 pub struct App {
     pub env_resolver: Arc<dyn EnvResolver>,
+    pub fs: Arc<dyn FileSystem>,
     pub task_use_case: TaskUseCase,
     pub run_query: Arc<dyn RunQuery>,
     pub resolve_system_instruction: Arc<dyn ResolveSystemInstruction>,
@@ -69,6 +73,7 @@ pub struct App {
     #[cfg_attr(not(test), allow(dead_code))]
     pub ai_use_case: Arc<AiUseCase>,
 }
+
 
 /// AISH_CONTEXT_STRATEGY / AISH_CONTEXT_MAX_MESSAGES / AISH_CONTEXT_MAX_CHARS から reducer と budget を決定する。
 /// 未設定時は tail（TailWindow + 実用 budget）。legacy を指定すると従来の PassThrough + 大きめ budget。
@@ -365,6 +370,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         system,
         obs,
         lifecycle_hooks,
+        non_interactive,
     }));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_runner: Arc<dyn TaskRunner> = build_task_runner(&fs, &process);
@@ -373,6 +379,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));
     App {
         env_resolver,
+        fs,
         task_use_case,
         run_query,
         resolve_system_instruction,

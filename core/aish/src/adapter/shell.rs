@@ -3,9 +3,11 @@ use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use common::domain::PendingInput;
+use common::domain::event::{Event, RunId, SessionId};
+use common::domain::{PendingInput, PolicyStatus};
 use common::error::Error;
-use common::ports::outbound::{FileSystem, PtyProcessStatus, PtySpawn, Signal, Winsize};
+use common::event_hub::build_event_hub;
+use common::ports::outbound::{EnvResolver, FileSystem, PtyProcessStatus, PtySpawn, Signal, Winsize};
 use common::part_id::IdGenerator;
 use crate::adapter::console_handler::ConsoleLogHandler;
 use crate::adapter::platform::{get_winsize, TermMode};
@@ -22,6 +24,7 @@ const PENDING_MAX_LEN: usize = 4096;
 /// ShellRunner の標準実装（run_shell をラップ）
 #[cfg(unix)]
 pub struct StdShellRunner {
+    env_resolver: Arc<dyn EnvResolver>,
     fs: Arc<dyn FileSystem>,
     id_gen: Arc<dyn IdGenerator>,
     signal: Arc<dyn Signal>,
@@ -31,12 +34,14 @@ pub struct StdShellRunner {
 #[cfg(unix)]
 impl StdShellRunner {
     pub fn new(
+        env_resolver: Arc<dyn EnvResolver>,
         fs: Arc<dyn FileSystem>,
         id_gen: Arc<dyn IdGenerator>,
         signal: Arc<dyn Signal>,
         pty_spawn: Arc<dyn PtySpawn>,
     ) -> Self {
         Self {
+            env_resolver,
             fs,
             id_gen,
             signal,
@@ -51,7 +56,8 @@ impl ShellRunner for StdShellRunner {
         run_shell(
             session_dir,
             home_dir,
-            self.fs.as_ref(),
+            self.env_resolver.clone(),
+            self.fs.clone(),
             self.id_gen.as_ref(),
             self.signal.as_ref(),
             self.pty_spawn.as_ref(),
@@ -201,20 +207,35 @@ fn inject_pending_to_pty(master_fd: libc::c_int, pending: &PendingInput) -> Resu
     Ok(())
 }
 
+fn policy_status_str(p: &PolicyStatus) -> &'static str {
+    match p {
+        PolicyStatus::Allowed => "allowed",
+        PolicyStatus::NeedsWarning { .. } => "warn",
+        PolicyStatus::Blocked { .. } => "blocked",
+    }
+}
+
 /// アダプター経由でシェルを起動（Unix 専用）
 #[cfg(unix)]
 pub fn run_shell(
     session_dir: &Path,
     _home_dir: &Path,
-    fs: &dyn FileSystem,
+    env: Arc<dyn EnvResolver>,
+    fs: Arc<dyn FileSystem>,
     id_gen: &dyn IdGenerator,
     signal: &dyn Signal,
     pty_spawn: &dyn PtySpawn,
 ) -> Result<i32, Error> {
+    let session_dir_value = common::domain::SessionDir::new(session_dir.to_path_buf());
+    let event_hub = build_event_hub(Some(&session_dir_value), env, fs.clone(), false);
+    let fs_ref = fs.as_ref();
+    let session_id = SessionId::new(session_dir.display().to_string());
+    let run_id = RunId::new("inject");
+
     let log_file_path = session_dir.join("console.txt");
     let mute_flag_path = session_dir.join("console.muted");
 
-    let mut log_file = fs.open_append(&log_file_path)?;
+    let mut log_file = fs_ref.open_append(&log_file_path)?;
 
     signal.setup_sigwinch()?;
     signal.setup_sigusr1()?;
@@ -222,7 +243,7 @@ pub fn run_shell(
 
     let aish_pid = std::process::id();
     let pid_file_path = session_dir.join("AISH_PID");
-    fs.write(&pid_file_path, &aish_pid.to_string())?;
+    fs_ref.write(&pid_file_path, &aish_pid.to_string())?;
 
     let mut env_vars = Vec::new();
     env_vars.push(("AISH_SESSION".to_string(), session_dir.to_string_lossy().to_string()));
@@ -236,7 +257,7 @@ pub fn run_shell(
     }
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    let cmd = build_shell_command(&shell, fs);
+    let cmd = build_shell_command(&shell, fs_ref);
 
     let cwd = std::env::current_dir()
         .ok()
@@ -263,7 +284,7 @@ pub fn run_shell(
     let mut terminal_buffer = TerminalBuffer::new();
 
     // イベントハンドラ（flush / rollover / truncate を集約）
-    let handler = ConsoleLogHandler::new(&log_file_path, session_dir, fs, id_gen);
+    let handler = ConsoleLogHandler::new(&log_file_path, session_dir, fs_ref, id_gen);
 
     // PromptReady マーカー検知（次のプロンプトで pending を注入するため）
     let mut prompt_ready_detector = PromptReadyDetector::new();
@@ -305,12 +326,12 @@ pub fn run_shell(
         match pty.wait_nonblocking() {
             Ok(Some(status)) => {
                 let output = terminal_buffer.output();
-                if !output.is_empty() && !fs.exists(&mute_flag_path) {
+                if !output.is_empty() && !fs_ref.exists(&mute_flag_path) {
                     let _ = log_file.write_all(output.as_bytes());
                     let _ = log_file.write_all(b"\n");
                     let _ = log_file.flush();
                 }
-                let _ = fs.remove_file(&pid_file_path);
+                let _ = fs_ref.remove_file(&pid_file_path);
                 return Ok(match status {
                     PtyProcessStatus::Exited(code) => code,
                     PtyProcessStatus::Signaled(sig) => 128 + sig,
@@ -318,7 +339,7 @@ pub fn run_shell(
             }
             Ok(None) => {}
             Err(e) => {
-                let _ = fs.remove_file(&pid_file_path);
+                let _ = fs_ref.remove_file(&pid_file_path);
                 return Err(e);
             }
         }
@@ -370,10 +391,21 @@ pub fn run_shell(
 
                     let mut i = 0;
                     while i + 2 <= chunk.len() && chunk[i] == 0x1b && chunk[i + 1] == b's' {
-                        if let Ok(Some(pending)) = try_load_pending_input(session_dir, fs) {
+                        if let Ok(Some(pending)) = try_load_pending_input(session_dir, fs_ref) {
                             let _ = inject_pending_to_pty(master_fd, &pending);
-                            let _ = clear_pending_input(session_dir, fs);
-                            let _ = clear_prompt_suggestion(session_dir, fs);
+                            event_hub.emit(Event {
+                                v: 1,
+                                session_id: session_id.clone(),
+                                run_id: run_id.clone(),
+                                kind: "shell.suggestion.injected".to_string(),
+                                payload: serde_json::json!({
+                                    "ok": true,
+                                    "policy": policy_status_str(&pending.policy),
+                                    "bytes": pending.text.len(),
+                                }),
+                            });
+                            let _ = clear_pending_input(session_dir, fs_ref);
+                            let _ = clear_prompt_suggestion(session_dir, fs_ref);
                         }
                         i += 2;
                     }
@@ -409,7 +441,7 @@ pub fn run_shell(
                 terminal_buffer.process_data(chunk);
                 // PromptReady マーカー検知 → 注入は行わず、pending があればベルを鳴らす
                 if prompt_ready_detector.feed(chunk) {
-                    if let Ok(Some(_)) = try_load_pending_input(session_dir, fs) {
+                    if let Ok(Some(_)) = try_load_pending_input(session_dir, fs_ref) {
                         let _ = io::stdout().write_all(b"\x07");
                         let _ = io::stdout().flush();
                     }
@@ -430,12 +462,12 @@ pub fn run_shell(
                     while wait_count < 20 {
                         if let Ok(Some(status)) = pty.wait_nonblocking() {
                             let output = terminal_buffer.output();
-                            if !output.is_empty() && !fs.exists(&mute_flag_path) {
+                            if !output.is_empty() && !fs_ref.exists(&mute_flag_path) {
                                 let _ = log_file.write_all(output.as_bytes());
                                 let _ = log_file.write_all(b"\n");
                                 let _ = log_file.flush();
                             }
-                            let _ = fs.remove_file(&pid_file_path);
+                            let _ = fs_ref.remove_file(&pid_file_path);
                             return Ok(match status {
                                 PtyProcessStatus::Exited(code) => code,
                                 PtyProcessStatus::Signaled(sig) => 128 + sig,
@@ -445,12 +477,12 @@ pub fn run_shell(
                         wait_count += 1;
                     }
                     let output = terminal_buffer.output();
-                    if !output.is_empty() && !fs.exists(&mute_flag_path) {
+                    if !output.is_empty() && !fs_ref.exists(&mute_flag_path) {
                         let _ = log_file.write_all(output.as_bytes());
                         let _ = log_file.write_all(b"\n");
                         let _ = log_file.flush();
                     }
-                    let _ = fs.remove_file(&pid_file_path);
+                    let _ = fs_ref.remove_file(&pid_file_path);
                     return Ok(0);
                 }
             }
@@ -466,6 +498,12 @@ mod tests {
     use common::domain::{PartId, PolicyStatus};
     use std::env;
     use std::fs;
+    use std::sync::{Mutex, OnceLock};
+
+    fn aish_home_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_shell_detection() {
@@ -475,6 +513,7 @@ mod tests {
 
     #[test]
     fn test_build_shell_command_uses_aishrc_for_bash() {
+        let _guard = aish_home_test_lock().lock().expect("lock poisoned");
         let prev_aish_home = env::var("AISH_HOME").ok();
 
         let temp_dir = std::env::temp_dir().join("aish_test_aishrc_bash");
@@ -491,9 +530,7 @@ mod tests {
             let _ = fs::remove_dir_all(&temp_dir);
         }
 
-        // AISH_HOME を temp_dir に固定して、$AISH_HOME/config/aishrc が優先されることを確認
         env::set_var("AISH_HOME", &temp_dir);
-
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(&aishrc, b"# test aishrc").unwrap();
 
@@ -507,7 +544,6 @@ mod tests {
         let _ = fs::remove_file(&aishrc);
         let _ = fs::remove_dir_all(&temp_dir);
 
-        // 環境変数を元に戻す
         if let Some(v) = prev_aish_home {
             env::set_var("AISH_HOME", v);
         } else {
@@ -517,6 +553,7 @@ mod tests {
 
     #[test]
     fn test_build_shell_command_without_aishrc_falls_back() {
+        let _guard = aish_home_test_lock().lock().expect("lock poisoned");
         let prev_aish_home = env::var("AISH_HOME").ok();
         let prev_xdg_config = env::var("XDG_CONFIG_HOME").ok();
         let prev_home = env::var("HOME").ok();

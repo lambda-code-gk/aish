@@ -37,3 +37,6 @@ pub mod sink;
 
 /// ツール実行（ToolDef / ToolRegistry；Tool trait は ports に定義）
 pub mod tool;
+
+/// イベント配信 dispatcher（1回の emit で複数 sink へ配信）
+pub mod event_hub;

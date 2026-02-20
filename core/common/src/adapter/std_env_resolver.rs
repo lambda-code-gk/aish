@@ -11,6 +11,7 @@ const CONFIG_SYSTEM_D: &str = "config/system.d";
 const PROFILES_CONFIG_FILENAME: &str = "profiles.json";
 const CONFIG_PROFILES: &str = "config/profiles.json";
 const LOG_FILENAME: &str = "log.jsonl";
+const TRANSCRIPT_FILENAME: &str = "transcript.jsonl";
 const STATE_SUBDIR: &str = "state";
 const CONFIG_SUBDIR: &str = "config";
 const DATA_SUBDIR: &str = "data";
@@ -105,6 +106,11 @@ impl EnvResolver for StdEnvResolver {
         Ok(dirs.state_dir.join(LOG_FILENAME))
     }
 
+    fn resolve_transcript_file_path(&self) -> Result<PathBuf, Error> {
+        let dirs = self.resolve_dirs()?;
+        Ok(dirs.state_dir.join(TRANSCRIPT_FILENAME))
+    }
+
     fn resolve_dirs(&self) -> Result<Dirs, Error> {
         let home = env::var("HOME")
             .ok()
@@ -196,6 +202,35 @@ mod tests {
                     assert_eq!(
                         path.to_string_lossy(),
                         "/tmp/xdg_state_log/aish/log.jsonl"
+                    );
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn test_resolve_transcript_file_path() {
+        let r = StdEnvResolver;
+        // 1) AISH_HOME が設定されていれば state/transcript.jsonl を返す
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("XDG_STATE_HOME", None, || {
+                with_env_var("AISH_HOME", Some("/tmp/aish_transcript_home"), || {
+                    let path = r.resolve_transcript_file_path().unwrap();
+                    assert_eq!(
+                        path.to_string_lossy(),
+                        "/tmp/aish_transcript_home/state/transcript.jsonl"
+                    );
+                });
+            });
+        });
+        // 2) XDG のみの場合は XDG_STATE_HOME/aish/transcript.jsonl
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("XDG_STATE_HOME", Some("/tmp/xdg_state_transcript"), || {
+                with_env_var("HOME", Some("/tmp/fallback"), || {
+                    let path = r.resolve_transcript_file_path().unwrap();
+                    assert_eq!(
+                        path.to_string_lossy(),
+                        "/tmp/xdg_state_transcript/aish/transcript.jsonl"
                     );
                 });
             });

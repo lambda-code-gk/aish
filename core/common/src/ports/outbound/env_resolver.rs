@@ -46,4 +46,9 @@ pub trait EnvResolver: Send + Sync {
     /// AISH_HOME が設定されていれば $AISH_HOME/state/log.jsonl。
     /// 未設定なら $XDG_STATE_HOME/aish/log.jsonl（XDG_STATE_HOME 未設定時は ~/.local/state/aish/log.jsonl）。
     fn resolve_log_file_path(&self) -> Result<PathBuf, Error>;
+
+    /// グローバル transcript ファイルのパス（セッション無し実行時の出力先）
+    /// AISH_HOME が設定されていれば $AISH_HOME/state/transcript.jsonl。
+    /// 未設定なら $XDG_STATE_HOME/aish/transcript.jsonl（XDG_STATE_HOME 未設定時は ~/.local/state/aish/transcript.jsonl）。
+    fn resolve_transcript_file_path(&self) -> Result<PathBuf, Error>;
 }

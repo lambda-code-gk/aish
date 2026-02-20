@@ -4,17 +4,21 @@
 //! wiring がここから実装（Std* 等）を取得して注入する。
 
 pub mod file_json_log;
+pub mod human_log_sink;
 pub mod std_clock;
 pub mod std_env_resolver;
 pub mod std_fs;
 pub mod std_id_generator;
 pub mod std_path_resolver;
 pub mod std_process;
+pub mod transcript_sink;
 
 pub use file_json_log::{FileJsonLog, NoopLog};
+pub use human_log_sink::HumanLogSink;
 pub use std_clock::StdClock;
 pub use std_id_generator::StdIdGenerator;
 pub use std_env_resolver::StdEnvResolver;
 pub use std_fs::StdFileSystem;
 pub use std_path_resolver::StdPathResolver;
 pub use std_process::StdProcess;
+pub use transcript_sink::TranscriptSink;

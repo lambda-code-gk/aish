@@ -4,6 +4,7 @@ use crate::domain::{Query, TaskName};
 use crate::ports::outbound::{RunQuery, TaskRunner};
 use common::domain::{ModelName, ProviderName, SessionDir};
 use common::error::Error;
+use common::event_hub::EventHubHandle;
 use std::sync::Arc;
 
 /// タスク実行のユースケース
@@ -37,6 +38,7 @@ impl TaskUseCase {
         model: Option<ModelName>,
         system_instruction: Option<&str>,
         tool_allowlist: Option<&[String]>,
+        event_hub: Option<EventHubHandle>,
     ) -> Result<i32, Error> {
         if let Some(code) = self.task_runner.run_if_exists(name.as_ref(), args)? {
             return Ok(code);
@@ -57,6 +59,7 @@ impl TaskUseCase {
             system_instruction,
             None,
             tool_allowlist,
+            event_hub,
         )
     }
 }

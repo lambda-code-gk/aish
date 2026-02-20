@@ -62,6 +62,7 @@ pub fn wire_aish() -> App {
     let signal: Arc<dyn Signal> = Arc::new(UnixSignal);
     let pty_spawn = Arc::new(UnixPtySpawn);
     let shell_runner: Arc<dyn ShellRunner> = Arc::new(StdShellRunner::new(
+        Arc::clone(&env_resolver),
         Arc::clone(&fs),
         Arc::clone(&id_gen),
         Arc::clone(&signal) as Arc<dyn Signal>,

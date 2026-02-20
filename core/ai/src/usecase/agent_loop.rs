@@ -4,8 +4,10 @@
 //! LLM から ToolCallEnd が来たら tool 実行フェーズへ遷移し、結果を messages に注入する。
 
 use crate::ports::outbound::{Approval, InterruptChecker, LlmEventStream, ToolApproval};
+use common::domain::event::{Event, RunId, SessionId};
 use common::error::Error;
-use common::llm::events::LlmEvent;
+use common::event_hub::EventHubHandle;
+use common::llm::events::{FinishReason, LlmEvent};
 use common::llm::provider::Message;
 use common::msg::Msg;
 use common::sink::{AgentEvent, EventSink};
@@ -169,6 +171,10 @@ pub struct AgentLoop {
     shell_tool_name: Option<&'static str>,
     /// Ctrl+C 等の割り込み検知。Some のときストリームコールバック内でチェックする
     interrupt_checker: Option<Arc<dyn InterruptChecker>>,
+    /// transcript / HumanLog 用。Some のとき provider.* / policy.* を emit
+    event_hub: Option<EventHubHandle>,
+    session_id: SessionId,
+    run_id: RunId,
 }
 
 impl AgentLoop {
@@ -180,6 +186,9 @@ impl AgentLoop {
         approver: Arc<dyn ToolApproval>,
         shell_tool_name: Option<&'static str>,
         interrupt_checker: Option<Arc<dyn InterruptChecker>>,
+        event_hub: Option<EventHubHandle>,
+        session_id: SessionId,
+        run_id: RunId,
     ) -> Self {
         Self {
             stream,
@@ -189,6 +198,9 @@ impl AgentLoop {
             approver,
             shell_tool_name,
             interrupt_checker,
+            event_hub,
+            session_id,
+            run_id,
         }
     }
 
@@ -217,6 +229,17 @@ impl AgentLoop {
     ) -> Result<(Vec<Msg>, RunState, String), Error> {
         let (system_opt, query, history) = msgs_to_provider(messages);
         let system_instruction = system_opt.as_deref();
+        let messages_count = history.len() + if query.is_empty() { 0 } else { 1 };
+        if let Some(ref hub) = self.event_hub {
+            hub.emit(Event {
+                v: 1,
+                session_id: self.session_id.clone(),
+                run_id: self.run_id.clone(),
+                kind: "provider.requested".to_string(),
+                payload: serde_json::json!({ "messages_count": messages_count }),
+            });
+        }
+        let provider_start = std::time::Instant::now();
         let tool_defs = self.tool_registry.list_definitions();
         let tools_ref = if tool_defs.is_empty() {
             None
@@ -244,6 +267,27 @@ impl AgentLoop {
         };
         self.stream.as_ref()
             .stream_events(&query, system_instruction, &history, tools_ref, &mut cb)?;
+        let latency_ms = provider_start.elapsed().as_millis() as u64;
+        if let Some(ref hub) = self.event_hub {
+            let finish_reason = collected
+                .borrow()
+                .iter()
+                .rev()
+                .find_map(|ev| match ev {
+                    LlmEvent::Completed { finish } => Some(finish.clone()),
+                    _ => None,
+                });
+            hub.emit(Event {
+                v: 1,
+                session_id: self.session_id.clone(),
+                run_id: self.run_id.clone(),
+                kind: "provider.completed".to_string(),
+                payload: serde_json::json!({
+                    "finish_reason": format!("{:?}", finish_reason.unwrap_or(FinishReason::Other("unknown".into()))),
+                    "latency_ms": latency_ms,
+                }),
+            });
+        }
 
         let mut assistant_text = String::new();
         let mut accumulator = ToolCallAccumulator::new();
@@ -292,18 +336,60 @@ impl AgentLoop {
                 // シェル系ツールの場合は allowlist 判定と承認を行う
                 let effective_ctx = if self.shell_tool_name.map_or(false, |s| s == name.as_str()) {
                     let command = args.get("command").and_then(Value::as_str).unwrap_or("");
-                    if is_command_allowed(command, &self.tool_context.command_allow_rules) {
-                        // allowlist に一致 → 通常の context で実行
+                    let effective = if is_command_allowed(command, &self.tool_context.command_allow_rules) {
+                        if let Some(ref hub) = self.event_hub {
+                            hub.emit(Event {
+                                v: 1,
+                                session_id: self.session_id.clone(),
+                                run_id: self.run_id.clone(),
+                                kind: "policy.evaluated".to_string(),
+                                payload: serde_json::json!({
+                                    "tool": name.as_str(),
+                                    "status": "allowed",
+                                    "reason": "allowlist",
+                                    "program": command.split_whitespace().next().unwrap_or(""),
+                                    "args_preview": command.split_whitespace().skip(1).take(3).collect::<Vec<_>>().join(" "),
+                                }),
+                            });
+                        }
                         self.tool_context.clone()
                     } else {
                         // allowlist 不一致 → 承認を求める（Ctrl+C で Err が返る）
                         match self.approver.approve_unsafe_shell(command) {
                             Ok(Approval::Approved) => {
-                                // 承認された → allow_unsafe=true の context で実行
+                                if let Some(ref hub) = self.event_hub {
+                                    hub.emit(Event {
+                                        v: 1,
+                                        session_id: self.session_id.clone(),
+                                        run_id: self.run_id.clone(),
+                                        kind: "policy.evaluated".to_string(),
+                                        payload: serde_json::json!({
+                                            "tool": name.as_str(),
+                                            "status": "warn",
+                                            "reason": "user_approved",
+                                            "program": command.split_whitespace().next().unwrap_or(""),
+                                            "args_preview": command.split_whitespace().skip(1).take(3).collect::<Vec<_>>().join(" "),
+                                        }),
+                                    });
+                                }
                                 self.tool_context.clone().with_allow_unsafe(true)
                             }
                             Ok(Approval::Denied) => {
-                                // 拒否された → ツールを実行せず ToolError として履歴に積む
+                                if let Some(ref hub) = self.event_hub {
+                                    hub.emit(Event {
+                                        v: 1,
+                                        session_id: self.session_id.clone(),
+                                        run_id: self.run_id.clone(),
+                                        kind: "policy.evaluated".to_string(),
+                                        payload: serde_json::json!({
+                                            "tool": name.as_str(),
+                                            "status": "blocked",
+                                            "reason": "denied by user",
+                                            "program": command.split_whitespace().next().unwrap_or(""),
+                                            "args_preview": command.split_whitespace().skip(1).take(3).collect::<Vec<_>>().join(" "),
+                                        }),
+                                    });
+                                }
                                 let msg = "denied by user".to_string();
                                 self.emit(&AgentEvent::ToolError {
                                     call_id: call_id.clone(),
@@ -320,7 +406,8 @@ impl AgentLoop {
                             }
                             Err(e) => return Err(e),
                         }
-                    }
+                    };
+                    effective
                 } else {
                     // シェル系以外はそのまま実行
                     self.tool_context.clone()

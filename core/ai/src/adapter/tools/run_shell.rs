@@ -3,6 +3,7 @@
 //! OS 副作用（sh -c 実行）を伴うため、common ではなく adapter に配置。
 //! allowlist 判定を行い、allow_unsafe=false かつ不一致なら PermissionDenied を返す。
 
+use common::domain::event::Event;
 use common::tool::{is_command_allowed, Tool, ToolContext, ToolError};
 use serde_json::Value;
 
@@ -60,8 +61,37 @@ impl Tool for ShellTool {
             ));
         }
 
+        let tool_start = std::time::Instant::now();
+        if let (Some(ref hub), Some(ref sid), Some(ref rid)) =
+            (&ctx.event_hub, &ctx.session_id, &ctx.run_id)
+        {
+            hub.emit(Event {
+                v: 1,
+                session_id: sid.clone(),
+                run_id: rid.clone(),
+                kind: "tool.started".to_string(),
+                payload: serde_json::json!({ "tool": Self::NAME }),
+            });
+        }
+
         // allowlist 判定: allow_unsafe=false かつ不一致なら PermissionDenied
         if !ctx.allow_unsafe && !self.is_allowed(&command, ctx) {
+            let duration_ms = tool_start.elapsed().as_millis() as u64;
+            if let (Some(ref hub), Some(ref sid), Some(ref rid)) =
+                (&ctx.event_hub, &ctx.session_id, &ctx.run_id)
+            {
+                hub.emit(Event {
+                    v: 1,
+                    session_id: sid.clone(),
+                    run_id: rid.clone(),
+                    kind: "tool.failed".to_string(),
+                    payload: serde_json::json!({
+                        "tool": Self::NAME,
+                        "reason": "permission_denied",
+                        "duration_ms": duration_ms,
+                    }),
+                });
+            }
             return Err(ToolError::PermissionDenied(format!(
                 "Command not in allowlist: {}",
                 command
@@ -69,12 +99,46 @@ impl Tool for ShellTool {
         }
 
         // コマンド実行
-        let output = std::process::Command::new("sh")
+        let result = std::process::Command::new("sh")
             .arg("-c")
             .arg(&command)
             .output()
-            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()));
 
+        let duration_ms = tool_start.elapsed().as_millis() as u64;
+        if let (Some(ref hub), Some(ref sid), Some(ref rid)) =
+            (&ctx.event_hub, &ctx.session_id, &ctx.run_id)
+        {
+            match &result {
+                Ok(_) => {
+                    hub.emit(Event {
+                        v: 1,
+                        session_id: sid.clone(),
+                        run_id: rid.clone(),
+                        kind: "tool.finished".to_string(),
+                        payload: serde_json::json!({
+                            "tool": Self::NAME,
+                            "duration_ms": duration_ms,
+                            "ok": true,
+                        }),
+                    });
+                }
+                Err(_) => {
+                    hub.emit(Event {
+                        v: 1,
+                        session_id: sid.clone(),
+                        run_id: rid.clone(),
+                        kind: "tool.failed".to_string(),
+                        payload: serde_json::json!({
+                            "tool": Self::NAME,
+                            "duration_ms": duration_ms,
+                        }),
+                    });
+                }
+            }
+        }
+
+        let output = result?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(1);

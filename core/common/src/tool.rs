@@ -3,6 +3,8 @@
 //! ToolRegistry で name -> Box<dyn Tool> を解決し、ToolContext は session dir / fs / process / clock 等の port を束ねる。
 //! Tool trait は Outbound ポートとして ports/outbound からも re-export される。
 
+use crate::domain::event::{RunId, SessionId};
+use crate::event_hub::EventHubHandle;
 use crate::ports::outbound::Log;
 use regex::Regex;
 use serde_json::Value;
@@ -47,6 +49,10 @@ pub struct ToolContext {
     pub memory_dir_global: Option<std::path::PathBuf>,
     /// メモリ読み書き等のログ記録用（オプション）
     pub log: Option<Arc<dyn Log>>,
+    /// transcript / HumanLog 用。Some のとき tool.* を emit（adapter が使用）
+    pub event_hub: Option<EventHubHandle>,
+    pub session_id: Option<SessionId>,
+    pub run_id: Option<RunId>,
 }
 
 /// コマンド実行許可ルール
@@ -71,6 +77,9 @@ impl ToolContext {
             memory_dir_project: None,
             memory_dir_global: None,
             log: None,
+            event_hub: None,
+            session_id: None,
+            run_id: None,
         }
     }
 
@@ -99,6 +108,19 @@ impl ToolContext {
     /// ログ記録用の Log を設定（メモリ読み書き等の記録に利用）
     pub fn with_log(mut self, log: Option<Arc<dyn Log>>) -> Self {
         self.log = log;
+        self
+    }
+
+    /// transcript 用の EventHub と run 識別子を設定（tool.started / tool.finished の emit に利用）
+    pub fn with_event_emitter(
+        mut self,
+        event_hub: Option<EventHubHandle>,
+        session_id: Option<SessionId>,
+        run_id: Option<RunId>,
+    ) -> Self {
+        self.event_hub = event_hub;
+        self.session_id = session_id;
+        self.run_id = run_id;
         self
     }
 }

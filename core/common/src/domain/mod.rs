@@ -3,6 +3,7 @@
 //! String / PathBuf を直接運ばず、意味のある型に包んで境界を明確にする。
 
 pub mod dirs;
+pub mod event;
 
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
