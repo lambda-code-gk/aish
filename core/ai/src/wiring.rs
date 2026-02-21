@@ -18,7 +18,7 @@ use crate::adapter::{
     NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
     ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler, SigintChecker,
     StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory, StdLlmCompletion,
-    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveModeConfig, StdResolveProfileAndModel, StdTaskRunner,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveModeConfig, StdResolveProfileAndModel, StdResolveSystemPromptFromHooks, StdTaskRunner,
     ShellTool, TailWindowReducer, WriteFileTool,
     HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, SaveMemoryTool, SearchMemoryTool,
 };
@@ -26,7 +26,7 @@ use crate::adapter::lifecycle::LifecycleHandler;
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, ContextMessageBuilder, LifecycleHooks, LlmCompletion,
-    PrepareSessionForSensitiveCheck, ResolveModeConfig, RunQuery,
+    PrepareSessionForSensitiveCheck, ResolveModeConfig, ResolveSystemPromptFromHooks, RunQuery,
     SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::{AiDeps, AiUseCase, ModelDeps, ObsDeps, PolicyDeps, SessionDeps, SystemDeps, ToolingDeps};
@@ -66,6 +66,8 @@ pub struct App {
     pub task_use_case: TaskUseCase,
     pub run_query: Arc<dyn RunQuery>,
     pub resolve_mode_config: Arc<dyn ResolveModeConfig>,
+    /// -S 未指定時にフックからシステムプロンプトを解決する
+    pub resolve_system_prompt_from_hooks: Arc<dyn ResolveSystemPromptFromHooks>,
     /// 構造化ログ（ファイルへ JSONL）。エラー時のコンソール表示とは別。
     pub logger: Arc<dyn Log>,
     /// テスト用に露出（Query 実行・session/history の単体テストで利用）
@@ -364,6 +366,8 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_runner: Arc<dyn TaskRunner> = build_task_runner(&fs, &process);
     let resolve_mode_config = build_resolve_mode_config(&env_resolver, &fs);
+    let resolve_system_prompt_from_hooks: Arc<dyn ResolveSystemPromptFromHooks> =
+        Arc::new(StdResolveSystemPromptFromHooks::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));
     App {
         env_resolver,
@@ -371,6 +375,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         task_use_case,
         run_query,
         resolve_mode_config,
+        resolve_system_prompt_from_hooks,
         logger,
         ai_use_case,
     }

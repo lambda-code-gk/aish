@@ -42,6 +42,12 @@ impl UseCaseRunner for Runner {
                 }
             }
         }
+        // -S 未指定かつモードでも未設定のとき、フックからシステムプロンプトを解決
+        if config.system.is_none() {
+            if let Some(s) = self.app.resolve_system_prompt_from_hooks.resolve_system_prompt_from_hooks()? {
+                config.system = Some(s);
+            }
+        }
         let session_dir = self.app.env_resolver.session_dir_from_env();
         let verbose = config.verbose;
         let non_interactive = config.non_interactive;
@@ -91,7 +97,7 @@ impl UseCaseRunner for Runner {
             });
         }
 
-        // -S 未指定時は system instruction なし（明示指定分のみ使用）
+        // システムプロンプトは -S / モード / フックのいずれかで設定された config.system を渡す
         let system_instruction = |explicit: Option<String>| explicit;
 
         let event_hub = build_event_hub(
