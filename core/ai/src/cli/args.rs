@@ -18,6 +18,8 @@ pub struct Config {
     pub non_interactive: bool,
     /// -v / --verbose: 不具合調査用の冗長ログを stderr 等に出力する
     pub verbose: bool,
+    /// --dry-run: LLM を呼ばず、採用されるプロファイル・モデル・プロンプト等を表示する
+    pub dry_run: bool,
     pub profile: Option<ProviderName>,
     pub model: Option<ModelName>,
     pub system: Option<String>,
@@ -38,6 +40,7 @@ impl Default for Config {
             continue_flag: false,
             non_interactive: false,
             verbose: false,
+            dry_run: false,
             profile: None,
             model: None,
             system: None,
@@ -102,6 +105,12 @@ fn build_clap_command() -> clap::Command {
                 .short('v')
                 .long("verbose")
                 .help("Emit verbose debug logs to stderr (for troubleshooting)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("dry-run")
+                .long("dry-run")
+                .help("Show resolved profile, model, system prompt and messages that would be sent (no LLM call)")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -172,6 +181,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
     let continue_flag = matches.get_flag("continue");
     let non_interactive = matches.get_flag("no-interactive");
     let verbose = matches.get_flag("verbose");
+    let dry_run = matches.get_flag("dry-run");
     let profile = matches
         .get_one::<String>("profile")
         .map(|s| ProviderName::new(s.clone()));
@@ -199,6 +209,7 @@ fn matches_to_config(matches: &clap::ArgMatches) -> Config {
         continue_flag,
         non_interactive,
         verbose,
+        dry_run,
         profile,
         model,
         system,
@@ -247,7 +258,7 @@ pub fn print_completion(shell: Shell) {
 }
 
 fn emit_fallback_completion(shell: Shell) {
-    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose -p --profile -S --system -m --model -M --mode --generate --list-tasks --list-modes";
+    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose --dry-run -p --profile -S --system -m --model -M --mode --generate --list-tasks --list-modes";
     match shell {
         Shell::Bash => {
             println!(
@@ -372,6 +383,7 @@ mod tests {
         assert!(!config.list_profiles);
         assert!(!config.continue_flag);
         assert!(!config.verbose);
+        assert!(!config.dry_run);
         assert!(config.profile.is_none());
         assert!(config.model.is_none());
         assert!(config.system.is_none());
@@ -660,6 +672,30 @@ mod tests {
         let args = vec!["ai".to_string(), "--verbose".to_string()];
         let config = parse_args_from(&args).unwrap();
         assert!(config.verbose);
+    }
+
+    #[test]
+    fn test_parse_args_dry_run() {
+        let args = vec!["ai".to_string(), "--dry-run".to_string(), "hello".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.dry_run);
+        // 単一の位置引数はタスク名として解釈される
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("hello"));
+        assert!(config.message_args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_args_dry_run_with_message() {
+        let args = vec![
+            "ai".to_string(),
+            "--dry-run".to_string(),
+            "mytask".to_string(),
+            "hello".to_string(),
+        ];
+        let config = parse_args_from(&args).unwrap();
+        assert!(config.dry_run);
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("mytask"));
+        assert_eq!(config.message_args, vec!["hello"]);
     }
 
     #[test]

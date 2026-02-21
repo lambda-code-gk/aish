@@ -1,4 +1,4 @@
-use crate::domain::{LifecycleEvent, QueryOutcome};
+use crate::domain::{DryRunInfo, LifecycleEvent, QueryOutcome};
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContextMessageBuilder,
     ContinueAfterLimitPrompt, EventSinkFactory, InterruptChecker, LifecycleHooks,
@@ -101,6 +101,84 @@ impl AiUseCase {
             .iter()
             .map(|t| (t.name().to_string(), t.description().to_string()))
             .collect()
+    }
+
+    /// dry run: LLM を呼ばず、採用されるプロファイル・モデル・システムプロンプト・メッセージ列・有効ツールを返す。
+    /// 保存は行わない（save_user しない）。
+    pub fn dry_run_query(
+        &self,
+        session_dir: Option<SessionDir>,
+        provider: Option<common::domain::ProviderName>,
+        model: Option<common::domain::ModelName>,
+        query: Option<&Query>,
+        system_instruction: Option<&str>,
+        tool_allowlist: Option<&[String]>,
+        mode_name: Option<String>,
+    ) -> Result<DryRunInfo, Error> {
+        let (profile_name, model_name) = self
+            .deps.model.resolve_profile_and_model
+            .resolve(provider.as_ref(), model.as_ref())?;
+
+        let messages: Vec<Msg> = match query {
+            None => {
+                let dir = session_dir.as_ref().ok_or_else(|| {
+                    Error::invalid_argument("No continuation state. Use -c with a session or provide a message.")
+                })?;
+                if !self.session_is_valid(&session_dir) {
+                    return Err(Error::invalid_argument(
+                        "No continuation state. Use -c with a session or provide a message.",
+                    ));
+                }
+                self.deps.session.agent_state_loader
+                    .load(dir)?
+                    .ok_or_else(|| {
+                        Error::invalid_argument("No continuation state. Use -c with a session or provide a message.")
+                    })?
+            }
+            Some(q) => {
+                let (history_messages, query_placement) = if self.session_is_valid(&session_dir) {
+                    let dir = session_dir.as_ref().expect("session_dir is Some");
+                    let loaded = self.deps.session.history_loader.load(dir);
+                    match loaded {
+                        Ok(history) => (history.messages().to_vec(), QueryPlacement::AppendAtEnd),
+                        Err(_) => (Vec::new(), QueryPlacement::AppendAtEnd),
+                    }
+                } else {
+                    (Vec::new(), QueryPlacement::AppendAtEnd)
+                };
+                self.deps.session.context_message_builder.build(
+                    &history_messages,
+                    Some(q),
+                    system_instruction,
+                    query_placement,
+                )
+            }
+        };
+
+        let allowlist: Option<std::collections::HashSet<&str>> =
+            tool_allowlist.map(|s| s.iter().map(String::as_str).collect());
+        let tools_enabled: Vec<String> = self
+            .deps
+            .tooling
+            .tools
+            .iter()
+            .filter(|t| {
+                allowlist
+                    .as_ref()
+                    .map_or(true, |list| list.contains(t.name()))
+            })
+            .map(|t| t.name().to_string())
+            .collect();
+
+        Ok(DryRunInfo {
+            profile_name,
+            model_name,
+            system_instruction: system_instruction.map(String::from),
+            mode_name,
+            tool_allowlist: tool_allowlist.map(|s| s.to_vec()),
+            tools_enabled,
+            messages,
+        })
     }
 
     fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {

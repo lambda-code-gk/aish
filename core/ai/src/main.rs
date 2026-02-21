@@ -13,7 +13,7 @@ use common::domain::{ModelName, ProviderName};
 use common::error::Error;
 use common::ports::outbound::{now_iso8601, LogLevel, LogRecord};
 use cli::{config_to_command, parse_args, print_completion, Config, ParseOutcome};
-use domain::AiCommand;
+use domain::{AiCommand, DryRunInfo};
 use ports::inbound::UseCaseRunner;
 use common::event_hub::build_event_hub;
 use wiring::{wire_ai, App};
@@ -55,6 +55,8 @@ impl UseCaseRunner for Runner {
         let model_for_log = config.model.as_ref().map(|m| m.as_ref().to_string());
         let task_for_log = config.task.as_ref().map(|t| t.as_ref().to_string());
         let message_args_len = config.message_args.len();
+        let dry_run = config.dry_run;
+        let mode_name_for_dry_run = config.mode.clone();
         let cmd = config_to_command(config);
         let command_name = cmd_name_for_log(&cmd);
         let _ = self.app.logger.log(&LogRecord {
@@ -106,6 +108,81 @@ impl UseCaseRunner for Runner {
             self.app.fs.clone(),
             verbose,
         );
+
+        if dry_run {
+            let (profile, model, query_opt, system_opt, tool_allowlist, mode_name) = match &cmd {
+                AiCommand::Task {
+                    name,
+                    args,
+                    profile,
+                    model,
+                    system,
+                    tool_allowlist,
+                } => {
+                    let q = crate::domain::Query::new(
+                        [name.as_ref().to_string()]
+                            .into_iter()
+                            .chain(args.iter().cloned())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    );
+                    (
+                        profile.clone(),
+                        model.clone(),
+                        Some(q),
+                        system.clone(),
+                        tool_allowlist.as_deref(),
+                        mode_name_for_dry_run.clone(),
+                    )
+                }
+                AiCommand::Resume {
+                    profile,
+                    model,
+                    system,
+                    tool_allowlist,
+                } => (
+                    profile.clone(),
+                    model.clone(),
+                    None,
+                    system.clone(),
+                    tool_allowlist.as_deref(),
+                    mode_name_for_dry_run.clone(),
+                ),
+                AiCommand::Query {
+                    profile,
+                    model,
+                    query,
+                    system,
+                    tool_allowlist,
+                } => (
+                    profile.clone(),
+                    model.clone(),
+                    Some(query.clone()),
+                    system.clone(),
+                    tool_allowlist.as_deref(),
+                    mode_name_for_dry_run.clone(),
+                ),
+                _ => return Ok(0),
+            };
+            if let Some(ref q) = query_opt {
+                if q.trim().is_empty() {
+                    return Err(Error::invalid_argument(
+                        "No query provided. Use -c or --continue to resume, or provide a message.",
+                    ));
+                }
+            }
+            let info = self.app.ai_use_case.dry_run_query(
+                session_dir,
+                profile,
+                model,
+                query_opt.as_ref(),
+                system_opt.as_deref(),
+                tool_allowlist,
+                mode_name,
+            )?;
+            print_dry_run(&info);
+            return Ok(0);
+        }
 
         let result = match cmd {
             AiCommand::Help => {
@@ -237,6 +314,52 @@ impl UseCaseRunner for Runner {
     }
 }
 
+fn print_dry_run(info: &DryRunInfo) {
+    println!("=== ai dry run ===");
+    println!("profile: {}", info.profile_name);
+    println!("model: {}", info.model_name);
+    if let Some(ref s) = info.system_instruction {
+        println!("system_instruction: |");
+        for line in s.lines() {
+            println!("  {}", line);
+        }
+    } else {
+        println!("system_instruction: (none)");
+    }
+    match &info.mode_name {
+        Some(m) => println!("mode: {}", m),
+        None => println!("mode: (none)"),
+    }
+    match &info.tool_allowlist {
+        Some(list) => println!("tool_allowlist: [{}]", list.join(", ")),
+        None => println!("tool_allowlist: (all)"),
+    }
+    println!("tools_enabled: [{}]", info.tools_enabled.join(", "));
+    println!("--- messages ({} total) ---", info.messages.len());
+    for (i, m) in info.messages.iter().enumerate() {
+        let (role, content) = match m {
+            common::msg::Msg::System(s) => ("system", s.as_str()),
+            common::msg::Msg::User(s) => ("user", s.as_str()),
+            common::msg::Msg::Assistant(s) => ("assistant", s.as_str()),
+            common::msg::Msg::ToolCall { call_id, name, args, .. } => {
+                let args_str = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
+                println!("  [{}] tool_call id={} name={} args={}", i, call_id, name, args_str);
+                continue;
+            }
+            common::msg::Msg::ToolResult { call_id, name, result } => {
+                let res_str = serde_json::to_string(result).unwrap_or_else(|_| "{}".to_string());
+                println!("  [{}] tool_result id={} name={} result={}", i, call_id, name, res_str);
+                continue;
+            }
+        };
+        println!("  [{}] {}:", i, role);
+        for line in content.lines() {
+            println!("    {}", line);
+        }
+    }
+    println!("=== end dry run ===");
+}
+
 fn cmd_name_for_log(cmd: &AiCommand) -> &'static str {
     match cmd {
         AiCommand::Help => "help",
@@ -305,6 +428,7 @@ fn print_help() {
     println!("  -c, --continue                Resume the agent loop from the last saved state (after turn limit or error). Uses AISH_SESSION when set.");
     println!("  --no-interactive              Do not prompt for confirmations (CI-friendly: tool approval denied, no continue, leakscan deny).");
     println!("  -v, --verbose                 Emit verbose debug logs to stderr (for troubleshooting).");
+    println!("  --dry-run                     Show profile, model, system prompt and messages that would be sent (no LLM call).");
     println!("  -p, --profile <profile>         Specify LLM profile (gemini, gpt, echo, etc.). Default: profiles.json default, or gemini if not set.");
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
