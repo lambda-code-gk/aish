@@ -135,63 +135,11 @@ impl HistoryViewStrategy for ReviewedTailViewStrategy {
     }
 }
 
-/// manifest/reviewed が無い場合のフォールバック: part_* を読んで直近 load_max 件を返す。
-pub(crate) struct PartTailViewStrategy;
-
-impl HistoryViewStrategy for PartTailViewStrategy {
-    fn build_history(
-        &self,
-        fs: &dyn FileSystem,
-        dir: &Path,
-        load_max: usize,
-    ) -> Result<History, Error> {
-        let mut part_files: Vec<PathBuf> = fs
-            .read_dir(dir)?
-            .into_iter()
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .map_or(false, |s| s.starts_with("part_"))
-                    && fs.metadata(path).map(|m| m.is_file()).unwrap_or(false)
-            })
-            .collect();
-        part_files.sort();
-        let mut full = History::new();
-        for part_file in &part_files {
-            if let Ok(content) = fs.read_to_string(part_file) {
-                if let Some(name_str) = part_file.file_name().and_then(|n| n.to_str()) {
-                    if name_str.ends_with("_user.txt") {
-                        full.push_user(content);
-                    } else if name_str.ends_with("_assistant.txt") {
-                        full.push_assistant(content);
-                    }
-                }
-            }
-        }
-        let messages = full.messages();
-        if messages.len() <= load_max {
-            return Ok(full);
-        }
-        let start = messages.len().saturating_sub(load_max);
-        let mut tail = History::new();
-        for m in &messages[start..] {
-            if m.role == "user" {
-                tail.push_user(&m.content);
-            } else {
-                tail.push_assistant(&m.content);
-            }
-        }
-        Ok(tail)
-    }
-}
-
 pub struct ManifestReviewedSessionStorage {
     fs: Arc<dyn FileSystem>,
     load_max: usize,
     manifest_view_strategy: Arc<dyn HistoryViewStrategy>,
     fallback_view_strategy: Arc<dyn HistoryViewStrategy>,
-    /// manifest/reviewed が空のとき part_* から履歴を読む（leakscan 有効でも既存 part のみセッションで履歴を出せるようにする）
-    part_fallback_strategy: Option<Arc<dyn HistoryViewStrategy>>,
 }
 
 impl ManifestReviewedSessionStorage {
@@ -202,7 +150,6 @@ impl ManifestReviewedSessionStorage {
             load_max,
             Arc::new(ManifestTailCompactionViewStrategy),
             Arc::new(ReviewedTailViewStrategy),
-            None,
         )
     }
 
@@ -211,14 +158,12 @@ impl ManifestReviewedSessionStorage {
         load_max: usize,
         manifest_view_strategy: Arc<dyn HistoryViewStrategy>,
         fallback_view_strategy: Arc<dyn HistoryViewStrategy>,
-        part_fallback_strategy: Option<Arc<dyn HistoryViewStrategy>>,
     ) -> Self {
         Self {
             fs,
             load_max,
             manifest_view_strategy,
             fallback_view_strategy,
-            part_fallback_strategy,
         }
     }
 }
@@ -238,19 +183,13 @@ impl SessionHistoryLoader for ManifestReviewedSessionStorage {
         }
         let dir = session_dir.as_ref();
         let manifest_path = session_manifest::manifest_path(dir);
-        let primary = if self.fs.exists(&manifest_path) {
+        if self.fs.exists(&manifest_path) {
             self.manifest_view_strategy
-                .build_history(self.fs.as_ref(), dir, self.load_max)?
+                .build_history(self.fs.as_ref(), dir, self.load_max)
         } else {
             self.fallback_view_strategy
-                .build_history(self.fs.as_ref(), dir, self.load_max)?
-        };
-        if primary.is_empty() {
-            if let Some(ref part_fallback) = self.part_fallback_strategy {
-                return part_fallback.build_history(self.fs.as_ref(), dir, self.load_max);
-            }
+                .build_history(self.fs.as_ref(), dir, self.load_max)
         }
-        Ok(primary)
     }
 }
 

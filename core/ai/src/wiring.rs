@@ -15,9 +15,8 @@ use crate::adapter::{
     CliContinuePrompt, CliToolApproval, CompositeLifecycleHooks, DeterministicCompactionStrategy,
     FileAgentStateStorage, GetMemoryContentTool, GrepTool, LeakscanPrepareSession,
     ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, NoContinuePrompt,
-    NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PartTailViewStrategy,
-    PassThroughReducer, ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler,
-    SigintChecker,
+    NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
+    ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler, SigintChecker,
     StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory, StdLlmCompletion,
     StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveModeConfig, StdResolveProfileAndModel, StdResolveSystemPromptFromHooks, StdoutDryRunReportSink, StdTaskRunner,
     ShellTool, TailWindowReducer, WriteFileTool,
@@ -158,15 +157,20 @@ fn build_session_deps(
     let (reducer, budget) = context_strategy_from_env();
     let history_load_max = history_load_max_from_budget(budget);
 
-    // 履歴ローダの選択:
-    // - resolve_leakscan_paths が Some を返す（rules.json 存在 & leakscan バイナリ存在）場合のみ、
-    //   PrepareSessionForSensitiveCheck（leakscan で part を監査→reviewed 作成）と
-    //   ManifestReviewedSessionStorage（manifest.jsonl + reviewed/ から履歴を読む）を使う。
-    // - そうでない場合（leakscan がない）は PartSessionStorage のみを使う。
-    //   理由: manifest/reviewed は LeakscanPrepareSession::prepare() が part を処理した結果として
-    //   書き足されるため、leakscan が無い環境では reviewed が生成されず、履歴は part_* のみで
-    //   完結する。そのため履歴ローダも part_* だけを読む PartSessionStorage で十分となる。
-    let (history_loader, response_saver, prepare_session_for_sensitive_check, leakscan_enabled) =
+    // 履歴ローダは常に ManifestReviewedSessionStorage（manifest.jsonl + reviewed/ のみ参照。part_* は読まない）。
+    // leakscan あり: PrepareSessionForSensitiveCheck も有効。leakscan なし: 履歴は空になりうるが、response_saver は part_* に書く。
+    let reviewed_storage = Arc::new(ManifestReviewedSessionStorage::with_strategies(
+        Arc::clone(fs),
+        history_load_max,
+        Arc::new(ManifestTailCompactionViewStrategy),
+        Arc::new(ReviewedTailViewStrategy),
+    ));
+    let history_loader: Arc<dyn SessionHistoryLoader> =
+        Arc::clone(&reviewed_storage) as Arc<dyn SessionHistoryLoader>;
+    let response_saver: Arc<dyn SessionResponseSaver> =
+        Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
+
+    let (prepare_session_for_sensitive_check, leakscan_enabled) =
         if let Some((leakscan_binary, rules_path)) = resolve_leakscan_paths(fs, env_resolver) {
             let leakscan_prepare: Arc<dyn PrepareSessionForSensitiveCheck> = Arc::new(
                 LeakscanPrepareSession::new(
@@ -178,30 +182,12 @@ fn build_session_deps(
                     Some(Arc::new(DeterministicCompactionStrategy)),
                 ),
             );
-            let reviewed_storage = Arc::new(ManifestReviewedSessionStorage::with_strategies(
-                Arc::clone(fs),
-                history_load_max,
-                Arc::new(ManifestTailCompactionViewStrategy),
-                Arc::new(ReviewedTailViewStrategy),
-                Some(Arc::new(PartTailViewStrategy)),
-            ));
-            let history: Arc<dyn SessionHistoryLoader> =
-                Arc::clone(&reviewed_storage) as Arc<dyn SessionHistoryLoader>;
-            // response_saver は part_* に書くので PartSessionStorage のまま
-            let response_saver: Arc<dyn SessionResponseSaver> =
-                Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
             (
-                history,
-                response_saver,
                 Some(leakscan_prepare) as Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
                 true,
             )
         } else {
-            let history_loader: Arc<dyn SessionHistoryLoader> =
-                Arc::clone(&part_storage) as Arc<dyn SessionHistoryLoader>;
-            let response_saver: Arc<dyn SessionResponseSaver> =
-                Arc::clone(&part_storage) as Arc<dyn SessionResponseSaver>;
-            (history_loader, response_saver, None, false)
+            (None, false)
         };
 
     let agent_state_storage = Arc::new(FileAgentStateStorage::new(Arc::clone(fs)));
