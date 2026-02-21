@@ -49,13 +49,15 @@ impl Default for Config {
     }
 }
 
-/// 解析結果: 通常の Config / 補完スクリプト生成 / タスク一覧表示
+/// 解析結果: 通常の Config / 補完スクリプト生成 / タスク一覧表示 / モード一覧表示
 #[derive(Debug, Clone)]
 pub enum ParseOutcome {
     Config(Config),
     GenerateCompletion(Shell),
     /// --list-tasks が指定された（main でタスク一覧を表示して終了）
     ListTasks,
+    /// --list-modes が指定された（main でモード名一覧を表示して終了、補完用）
+    ListModes,
 }
 
 fn build_clap_command() -> clap::Command {
@@ -149,6 +151,12 @@ fn build_clap_command() -> clap::Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            clap::Arg::new("list-modes")
+                .long("list-modes")
+                .help("List available mode names (for completion)")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             clap::Arg::new("positional")
                 .index(1)
                 .help("Task name then message/args, or just message words")
@@ -216,6 +224,10 @@ pub fn parse_args() -> Result<ParseOutcome, Error> {
         return Ok(ParseOutcome::ListTasks);
     }
 
+    if matches.get_flag("list-modes") {
+        return Ok(ParseOutcome::ListModes);
+    }
+
     Ok(ParseOutcome::Config(matches_to_config(&matches)))
 }
 
@@ -235,16 +247,23 @@ pub fn print_completion(shell: Shell) {
 }
 
 fn emit_fallback_completion(shell: Shell) {
-    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose -p --profile -S --system -m --model -M --mode --generate --list-tasks";
+    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose -p --profile -S --system -m --model -M --mode --generate --list-tasks --list-modes";
     match shell {
         Shell::Bash => {
             println!(
-                r#"# Fallback completion for ai (options + task names via ai --list-tasks)
+                r#"# Fallback completion for ai (options + task names via ai --list-tasks, mode after -M, profile after -p)
 _ai() {{
   local cur="${{COMP_WORDS[COMP_CWORD]}}"
-  local tasks
-  tasks=$(ai --list-tasks 2>/dev/null)
-  COMPREPLY=($(compgen -W "$tasks {opts}" -- "$cur"))
+  local prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+  if [[ "$prev" == "-M" || "$prev" == "--mode" ]]; then
+    COMPREPLY=($(compgen -W "$(ai --list-modes 2>/dev/null)" -- "$cur"))
+  elif [[ "$prev" == "-p" || "$prev" == "--profile" ]]; then
+    COMPREPLY=($(compgen -W "$(ai --list-profiles 2>/dev/null | sed 's/ (default)$//')" -- "$cur"))
+  else
+    local tasks
+    tasks=$(ai --list-tasks 2>/dev/null)
+    COMPREPLY=($(compgen -W "$tasks {opts}" -- "$cur"))
+  fi
 }}
 complete -F _ai ai
 "#,
@@ -253,10 +272,17 @@ complete -F _ai ai
         }
         Shell::Zsh => {
             println!(
-                r#"# Fallback completion for ai (options + task names via ai --list-tasks)
+                r#"# Fallback completion for ai (options + task names via ai --list-tasks, mode after -M, profile after -p)
 #compdef ai
 local -a reply
-reply=($(ai --list-tasks 2>/dev/null) {opts})
+local prev="${{words[CURRENT-1]}}"
+if [[ "$prev" == -M || "$prev" == --mode ]]; then
+  reply=($(ai --list-modes 2>/dev/null))
+elif [[ "$prev" == -p || "$prev" == --profile ]]; then
+  reply=($(ai --list-profiles 2>/dev/null | sed 's/ (default)$//'))
+else
+  reply=($(ai --list-tasks 2>/dev/null) {opts})
+fi
 _describe 'ai' reply
 "#,
                 opts = opts
@@ -264,17 +290,18 @@ _describe 'ai' reply
         }
         Shell::Fish => {
             println!(
-                r#"# Fallback completion for ai (options + task names)
+                r#"# Fallback completion for ai (options + task names, mode after -M, profile after -p)
 complete -c ai -l help -s h -d "Show help"
 complete -c ai -l list-profiles -s L -d "List profiles"
 complete -c ai -l continue -s c -d "Resume session"
 complete -c ai -l no-interactive -d "Do not prompt (CI-friendly)"
-complete -c ai -l profile -s p -d "LLM profile" -r
+complete -c ai -l profile -s p -d "LLM profile" -r -a "(ai --list-profiles 2>/dev/null | sed 's/ (default)\$//')"
 complete -c ai -l system -s S -d "System instruction" -r
 complete -c ai -l model -s m -d "Model name" -r
-complete -c ai -l mode -s M -d "Preset mode (config/mode.d/<name>.json)" -r
+complete -c ai -l mode -s M -d "Preset mode (config/mode.d/<name>.json)" -r -a "(ai --list-modes 2>/dev/null)"
 complete -c ai -l generate -d "Generate completion script" -r -a "bash zsh fish"
 complete -c ai -l list-tasks -d "List task names"
+complete -c ai -l list-modes -d "List mode names"
 complete -c ai -a "(ai --list-tasks 2>/dev/null)"
 "#
             );
@@ -540,6 +567,14 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.mode.as_deref(), Some("agent"));
         assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("run"));
+    }
+
+    #[test]
+    fn test_parse_args_list_modes_flag() {
+        let cmd = super::build_clap_command();
+        let args = vec!["ai".to_string(), "--list-modes".to_string()];
+        let matches = cmd.try_get_matches_from(args).unwrap();
+        assert!(matches.get_flag("list-modes"));
     }
 
     #[test]

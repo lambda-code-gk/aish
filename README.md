@@ -22,6 +22,7 @@ Rust 製の `ai` / `aish` バイナリとして提供され、ターミナルの
 * **システムプロンプト（sysq）**: グローバル・ユーザー・プロジェクトの system.d でシステムプロンプトを管理し、`aish sysq list` / `enable` / `disable` で有効化を切り替えられます。`ai` 実行時に有効な sysq をマージして system instruction として利用します。
 * **Security Scanning**: `tools/leakscan` による高速な秘密情報検出エンジン（キーワード・正規表現・エントロピー）を統合可能です。
 * **Task-oriented workflows**: `ai <task>` でタスクスクリプトを実行。タスクは `task.d` に配置し、`ai --list-tasks` で一覧できます。
+* **TAB 補完**: `ai --generate bash` / `zsh` / `fish` で補完スクリプトを生成し、シェルに読み込むと、タスク名・`-p` プロファイル・`-M` モードなどを TAB キーで補完できます。
 
 ## 📚 Documentation
 

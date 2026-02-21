@@ -274,6 +274,14 @@ pub fn run() -> Result<i32, Error> {
             }
             return Ok(0);
         }
+        ParseOutcome::ListModes => {
+            let app = wire_ai(false, false);
+            let names = app.resolve_mode_config.list_names()?;
+            for n in &names {
+                println!("{}", n);
+            }
+            return Ok(0);
+        }
     };
     let app = wire_ai(config.non_interactive, config.verbose);
     let runner = Runner { app };
@@ -300,6 +308,7 @@ fn print_help() {
     println!("  -M, --mode <name>             Use preset (system, profile, tools from $AISH_HOME/config/mode.d/<name>.json). CLI -p/-m/-S override mode.");
     println!("  --generate <shell>             Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
     println!("  --list-tasks                   List available task names (used by shell completion).");
+    println!("  --list-modes                   List available mode names (used by shell completion).");
     println!();
     println!("Environment:");
     println!("  AISH_SESSION    Session directory for resume/continue. Set by aish when running ai from the shell.");

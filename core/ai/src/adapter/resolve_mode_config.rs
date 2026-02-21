@@ -51,6 +51,32 @@ impl ResolveModeConfig for StdResolveModeConfig {
         ModeConfig::parse_json(&contents).map_err(|e| Error::json(format!("{}: {}", path.display(), e)))
             .map(Some)
     }
+
+    fn list_names(&self) -> Result<Vec<String>, Error> {
+        let dirs = self.env.resolve_dirs()?;
+        let mode_d = dirs.config_dir.join("mode.d");
+        if !self.fs.exists(&mode_d) {
+            return Ok(Vec::new());
+        }
+        let mut names = Vec::new();
+        for path in self.fs.read_dir(&mode_d)? {
+            if !self.fs.metadata(&path).map(|m| m.is_file()).unwrap_or(false) {
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s,
+                None => continue,
+            };
+            if is_valid_mode_name(stem) {
+                names.push(stem.to_string());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
 }
 
 #[cfg(test)]
