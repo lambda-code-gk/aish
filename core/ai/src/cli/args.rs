@@ -128,6 +128,7 @@ fn build_clap_command() -> clap::Command {
         )
         .arg(
             clap::Arg::new("mode")
+                .short('M')
                 .long("mode")
                 .value_name("name")
                 .help("Use preset mode (system prompt, profile, tools from config/mode.d/<name>.json)")
@@ -234,7 +235,7 @@ pub fn print_completion(shell: Shell) {
 }
 
 fn emit_fallback_completion(shell: Shell) {
-    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose -p --profile -S --system -m --model --generate --list-tasks";
+    let opts = "-h --help -L --list-profiles -c --continue --no-interactive -v --verbose -p --profile -S --system -m --model -M --mode --generate --list-tasks";
     match shell {
         Shell::Bash => {
             println!(
@@ -271,6 +272,7 @@ complete -c ai -l no-interactive -d "Do not prompt (CI-friendly)"
 complete -c ai -l profile -s p -d "LLM profile" -r
 complete -c ai -l system -s S -d "System instruction" -r
 complete -c ai -l model -s m -d "Model name" -r
+complete -c ai -l mode -s M -d "Preset mode (config/mode.d/<name>.json)" -r
 complete -c ai -l generate -d "Generate completion script" -r -a "bash zsh fish"
 complete -c ai -l list-tasks -d "List task names"
 complete -c ai -a "(ai --list-tasks 2>/dev/null)"
@@ -530,6 +532,14 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.mode.as_deref(), Some("plan"));
         assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("hello"));
+    }
+
+    #[test]
+    fn test_parse_args_mode_short() {
+        let args = vec!["ai".to_string(), "-M".to_string(), "agent".to_string(), "run".to_string()];
+        let config = parse_args_from(&args).unwrap();
+        assert_eq!(config.mode.as_deref(), Some("agent"));
+        assert_eq!(config.task.as_ref().map(|t| t.as_ref()), Some("run"));
     }
 
     #[test]

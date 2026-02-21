@@ -63,4 +63,21 @@ mod tests {
         assert!(c.model.is_none());
         assert_eq!(c.tools.as_ref().map(|v| v.as_slice()), Some(&["read_file".to_string(), "grep".to_string()][..]));
     }
+
+    #[test]
+    fn test_parse_readonly_mode() {
+        let json = r#"{
+            "system": "You have read-only access.",
+            "tools": ["read_file", "grep", "history_get", "history_search", "get_memory_content", "search_memory"]
+        }"#;
+        let c = ModeConfig::parse_json(json).unwrap();
+        assert_eq!(c.system.as_deref(), Some("You have read-only access."));
+        assert!(c.profile.is_none());
+        assert!(c.model.is_none());
+        let tools = c.tools.as_ref().unwrap();
+        assert_eq!(tools.len(), 6);
+        assert!(tools.contains(&"read_file".to_string()));
+        assert!(tools.contains(&"search_memory".to_string()));
+        assert!(!tools.contains(&"run_shell".to_string()));
+    }
 }

@@ -1,0 +1,11 @@
+{
+  "system": "You have read-only access. Do not run shell commands or modify files. Use only read and search tools (read_file, grep, history, memory search). Answer based on the content you can read.",
+  "tools": [
+    "read_file",
+    "grep",
+    "history_get",
+    "history_search",
+    "get_memory_content",
+    "search_memory"
+  ]
+}

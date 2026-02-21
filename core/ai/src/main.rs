@@ -297,7 +297,7 @@ fn print_help() {
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
     println!("                                If omitted, enabled system prompts from aish sysq are used.");
-    println!("  --mode <name>                 Use preset (system, profile, tools from $AISH_HOME/config/mode.d/<name>.json). CLI -p/-m/-S override mode.");
+    println!("  -M, --mode <name>             Use preset (system, profile, tools from $AISH_HOME/config/mode.d/<name>.json). CLI -p/-m/-S override mode.");
     println!("  --generate <shell>             Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
     println!("  --list-tasks                   List available task names (used by shell completion).");
     println!();
