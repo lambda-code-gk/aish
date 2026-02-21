@@ -18,7 +18,7 @@ use crate::adapter::{
     NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
     ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler, SigintChecker,
     StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory, StdLlmCompletion,
-    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir,     StdResolveModeConfig, StdResolveProfileAndModel, StdResolveSystemInstruction, StdTaskRunner,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveModeConfig, StdResolveProfileAndModel, StdTaskRunner,
     ShellTool, TailWindowReducer, WriteFileTool,
     HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, SaveMemoryTool, SearchMemoryTool,
 };
@@ -26,7 +26,7 @@ use crate::adapter::lifecycle::LifecycleHandler;
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, ContextMessageBuilder, LifecycleHooks, LlmCompletion,
-    PrepareSessionForSensitiveCheck, ResolveModeConfig, ResolveSystemInstruction, RunQuery,
+    PrepareSessionForSensitiveCheck, ResolveModeConfig, RunQuery,
     SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::{AiDeps, AiUseCase, ModelDeps, ObsDeps, PolicyDeps, SessionDeps, SystemDeps, ToolingDeps};
@@ -65,7 +65,6 @@ pub struct App {
     pub fs: Arc<dyn FileSystem>,
     pub task_use_case: TaskUseCase,
     pub run_query: Arc<dyn RunQuery>,
-    pub resolve_system_instruction: Arc<dyn ResolveSystemInstruction>,
     pub resolve_mode_config: Arc<dyn ResolveModeConfig>,
     /// 構造化ログ（ファイルへ JSONL）。エラー時のコンソール表示とは別。
     pub logger: Arc<dyn Log>,
@@ -320,16 +319,6 @@ fn build_lifecycle_hooks(
     Arc::new(CompositeLifecycleHooks::new(handlers))
 }
 
-fn build_resolve_system_instruction(
-    env_resolver: &Arc<dyn EnvResolver>,
-    fs: &Arc<dyn FileSystem>,
-) -> Arc<dyn ResolveSystemInstruction> {
-    Arc::new(StdResolveSystemInstruction::new(
-        Arc::clone(env_resolver),
-        Arc::clone(fs),
-    ))
-}
-
 fn build_resolve_mode_config(
     env_resolver: &Arc<dyn EnvResolver>,
     fs: &Arc<dyn FileSystem>,
@@ -374,7 +363,6 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     }));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));
     let task_runner: Arc<dyn TaskRunner> = build_task_runner(&fs, &process);
-    let resolve_system_instruction = build_resolve_system_instruction(&env_resolver, &fs);
     let resolve_mode_config = build_resolve_mode_config(&env_resolver, &fs);
     let task_use_case = TaskUseCase::new(task_runner, Arc::clone(&run_query));
     App {
@@ -382,7 +370,6 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         fs,
         task_use_case,
         run_query,
-        resolve_system_instruction,
         resolve_mode_config,
         logger,
         ai_use_case,

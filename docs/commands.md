@@ -13,7 +13,7 @@ aish [options] [<command> [args...]]
 
 - **役割**:  
   - セッションディレクトリを作成し、ターミナルの入出力を記録する。
-  - `clear` や `sysq list` など、AISH 独自のサブコマンドを提供する。
+  - `clear` や `memory list` など、AISH 独自のサブコマンドを提供する。
 
 - **主なオプション**
   - `-h, --help` : ヘルプを表示。
@@ -29,12 +29,9 @@ aish [options] [<command> [args...]]
 | *(なし)* | 省略すると、インタラクティブな `aish` シェルを起動します。 |
 | `clear` | セッションディレクトリ内の Part ファイルを削除し、会話履歴をクリアします。 |
 | `truncate_console_log` | コンソールログ/バッファを切り詰めます。主に `ai` との連携用です。 |
-| `sysq list` | 利用可能なシステムプロンプトと有効状態を一覧表示します。 |
-| `sysq enable <id>...` | 指定したシステムプロンプト ID を有効化します。 |
-| `sysq disable <id>...` | 指定したシステムプロンプト ID を無効化します。 |
 | `init [--force] [--dry-run] [--defaults-dir DIR]` | テンプレ（`AISH_DEFAULTS_DIR` または `--defaults-dir`）を XDG/AISH_HOME の config にコピーします。 |
 
-> 詳細: `aish` の起動・セッション・sysq の挙動については `aish-usage.md` および `system-prompts.md` を参照してください。
+> 詳細: `aish` の起動・セッションの挙動については `aish-usage.md` を参照してください。
 
 ### `ai` コマンド
 
@@ -63,6 +60,28 @@ ai [options] [task] [message...]
 | `-S, --system <instruction>` | この問い合わせ専用のシステムインストラクションを直接指定します。 |
 | `--generate <shell>` | シェル補完スクリプトを生成します。 |
 | `--list-tasks` | 利用可能なタスク名一覧を表示します（シェル補完用）。 |
+| `--list-modes` | 利用可能なモード名一覧を表示します（シェル補完用）。 |
+
+- **TAB キーでの補完**
+
+  `ai` では、TAB キーでオプション値やタスク名を補完できます。有効にするには、利用中のシェル用の補完スクリプトを生成し、読み込んでください。
+
+  ```bash
+  # 例: bash の場合
+  ai --generate bash   # 出力をファイルに保存するか、source で読み込む
+  source <(ai --generate bash)   # 一時的に有効化
+
+  # 例: 設定に永続的に追加する場合（bash）
+  ai --generate bash >> ~/.bashrc
+  ```
+
+  `fish` の場合は `ai --generate fish`、`zsh` の場合は `ai --generate zsh` を同様に実行・読み込みます。
+
+  補完される主な項目:
+  - **タスク名** — `task.d` に存在するタスク（`ai ` の直後に TAB）
+  - **`-p` / `--profile`** — 利用可能なプロファイル名（`ai -p ` の直後に TAB）
+  - **`-M` / `--mode`** — 利用可能なモード名（`ai -M ` の直後に TAB）
+  - オプション名（`-h`, `--help`, `-c`, `-v` など）
 
 - **タスクスクリプト**
 

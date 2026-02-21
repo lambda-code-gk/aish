@@ -31,13 +31,6 @@ pub trait EnvResolver: Send + Sync {
     /// カレントディレクトリを返す（プロジェクトスコープ探索用）
     fn current_dir(&self) -> Result<PathBuf, Error>;
 
-    /// グローバル system.d ディレクトリ
-    /// AISH_HOME が設定されていれば $AISH_HOME/config/system.d、そうでなければ ~/.config/aish/system.d
-    fn resolve_global_system_d_dir(&self) -> Result<Option<PathBuf>, Error>;
-
-    /// ユーザー system.d ディレクトリ（~/.aish/system.d）
-    fn resolve_user_system_d_dir(&self) -> Result<Option<PathBuf>, Error>;
-
     /// プロバイダプロファイル設定ファイルのパス
     /// AISH_HOME があれば $AISH_HOME/config/profiles.json、なければ resolve_home_dir() 直下の profiles.json（例: ~/.config/aish/profiles.json）
     fn resolve_profiles_config_path(&self) -> Result<PathBuf, Error>;

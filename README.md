@@ -19,7 +19,6 @@ Rust 製の `ai` / `aish` バイナリとして提供され、ターミナルの
 * **Context-aware interactions**: `aish` がターミナルの入出力を記録し、`ai` コマンドがそのコンテキストを踏まえて応答できます。
 * **AI Agent**: ツール使用により簡易的なエージェントとして振る舞えます。
 * **Memory / Session System**: セッションログ・Part 履歴を Rust の usecase / adapter で管理し、LLM コンテキストやツールから参照します。
-* **システムプロンプト（sysq）**: グローバル・ユーザー・プロジェクトの system.d でシステムプロンプトを管理し、`aish sysq list` / `enable` / `disable` で有効化を切り替えられます。`ai` 実行時に有効な sysq をマージして system instruction として利用します。
 * **Security Scanning**: `tools/leakscan` による高速な秘密情報検出エンジン（キーワード・正規表現・エントロピー）を統合可能です。
 * **Task-oriented workflows**: `ai <task>` でタスクスクリプトを実行。タスクは `task.d` に配置し、`ai --list-tasks` で一覧できます。
 * **TAB 補完**: `ai --generate bash` / `zsh` / `fish` で補完スクリプトを生成し、シェルに読み込むと、タスク名・`-p` プロファイル・`-M` モードなどを TAB キーで補完できます。
@@ -31,7 +30,6 @@ Rust 製の `ai` / `aish` バイナリとして提供され、ターミナルの
 - コマンド一覧と概要: [docs/commands.md](docs/commands.md)
 - `aish` の使い方とセッション管理: [docs/aish-usage.md](docs/aish-usage.md)
 - `ai` の使い方（最も詳しいガイド）: [docs/ai-usage.md](docs/ai-usage.md)
-- システムプロンプト（sysq）の設定: [docs/system-prompts.md](docs/system-prompts.md)
 - セキュリティ・プライバシーと leakscan: [docs/security.md](docs/security.md)
 - よくある質問とトラブルシューティング: [docs/faq.md](docs/faq.md)
 

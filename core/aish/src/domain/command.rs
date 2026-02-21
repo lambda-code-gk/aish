@@ -41,13 +41,6 @@ pub enum Command {
         defaults_dir: Option<String>,
     },
 
-    /// システムプロンプト一覧（sysq list）
-    SysqList,
-    /// システムプロンプトを有効化（sysq enable id [id...]）
-    SysqEnable { ids: Vec<String> },
-    /// システムプロンプトを無効化（sysq disable id [id...]）
-    SysqDisable { ids: Vec<String> },
-
     /// メモリ一覧（memory list）
     MemoryList,
     /// メモリ取得（memory get id [id...]）
@@ -60,22 +53,11 @@ pub enum Command {
 }
 
 impl Command {
-    /// コマンド名と引数から Command に解析する（sysq / resume は args を使用）
+    /// コマンド名と引数から Command に解析する（resume / memory は args を使用）
     pub fn parse_with_args(name: &str, args: &[String]) -> Self {
         if name == "resume" {
             let id = args.first().cloned();
             return Command::Resume { id };
-        }
-        if name == "sysq" {
-            match args.first().map(|s| s.as_str()) {
-                Some("list") => return Command::SysqList,
-                Some("enable") => return Command::SysqEnable { ids: args[1..].to_vec() },
-                Some("disable") => return Command::SysqDisable { ids: args[1..].to_vec() },
-                _ => {
-                    let sub = args.first().cloned().unwrap_or_else(|| "".to_string());
-                    return Command::Unknown(format!("sysq {}", sub).trim_end().to_string());
-                }
-            }
         }
         if name == "memory" {
             match args.first().map(|s| s.as_str()) {
@@ -108,12 +90,6 @@ impl Command {
             },
             _ => Command::Unknown(s.to_string()),
         }
-    }
-
-    /// sysq 系コマンドかどうか
-    #[allow(dead_code)]
-    pub fn is_sysq(&self) -> bool {
-        matches!(self, Command::SysqList | Command::SysqEnable { .. } | Command::SysqDisable { .. })
     }
 }
 
@@ -161,32 +137,6 @@ mod tests {
     fn test_parse_unknown() {
         let cmd = Command::parse("unknown_cmd");
         assert!(matches!(cmd, Command::Unknown(s) if s == "unknown_cmd"));
-    }
-
-    #[test]
-    fn test_parse_with_args_sysq_list() {
-        let cmd = Command::parse_with_args("sysq", &["list".to_string()]);
-        assert_eq!(cmd, Command::SysqList);
-        assert!(cmd.is_sysq());
-    }
-
-    #[test]
-    fn test_parse_with_args_sysq_enable() {
-        let cmd = Command::parse_with_args("sysq", &["enable".to_string(), "dev/coding".to_string()]);
-        assert!(matches!(&cmd, Command::SysqEnable { ids } if ids == &["dev/coding".to_string()]));
-        assert!(cmd.is_sysq());
-    }
-
-    #[test]
-    fn test_parse_with_args_sysq_disable() {
-        let cmd = Command::parse_with_args("sysq", &["disable".to_string(), "a".to_string(), "b".to_string()]);
-        assert!(matches!(&cmd, Command::SysqDisable { ids } if ids == &["a".to_string(), "b".to_string()]));
-    }
-
-    #[test]
-    fn test_parse_with_args_sysq_unknown_subcommand() {
-        let cmd = Command::parse_with_args("sysq", &["invalid".to_string()]);
-        assert!(matches!(cmd, Command::Unknown(_)));
     }
 
     #[test]

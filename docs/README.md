@@ -10,6 +10,5 @@
 
 そのほか、必要に応じて次のドキュメントを参照してください。
 
-- **[system-prompts.md](system-prompts.md)** — システムプロンプト（sysq）と system.d の設定
 - **[security.md](security.md)** — セキュリティ・プライバシーと leakscan
 - **[faq.md](faq.md)** — よくある質問とトラブルシューティング

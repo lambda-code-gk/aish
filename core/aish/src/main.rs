@@ -79,19 +79,6 @@ impl UseCaseRunner for Runner {
                 }
                 Ok(0)
             }
-            Command::SysqList => {
-                let entries = self.app.sysq_use_case.list()?;
-                print_sysq_list(&entries);
-                Ok(0)
-            }
-            Command::SysqEnable { ids } => {
-                self.app.sysq_use_case.enable(&ids)?;
-                Ok(0)
-            }
-            Command::SysqDisable { ids } => {
-                self.app.sysq_use_case.disable(&ids)?;
-                Ok(0)
-            }
             Command::MemoryList => {
                 let entries = self.app.memory_use_case.list()?;
                 print_memory_list(&entries);
@@ -177,7 +164,7 @@ fn print_help() {
     println!("  [args...]             Arguments for the command.");
     println!();
     println!("Environment:");
-    println!("  AISH_HOME       Home directory (config, profiles.json, task.d, system.d). Default: $XDG_CONFIG_HOME/aish or ~/.config/aish.");
+    println!("  AISH_HOME       Home directory (config, profiles.json, task.d). Default: $XDG_CONFIG_HOME/aish or ~/.config/aish.");
     println!("  AISH_SESSION   Session directory; set by aish for child processes (e.g. ai). Use -s or -d to scope clear/resume.");
     println!();
     println!("Implemented commands:");
@@ -188,23 +175,9 @@ fn print_help() {
     println!("  unmute                 Resume recording console.txt.");
     println!("  init                   Copy default config (set AISH_DEFAULTS_DIR or use --defaults-dir).");
     println!();
-    println!("  sysq list              List system prompts and their enabled state.");
-    println!("  sysq enable <id>...    Enable system prompt(s).");
-    println!("  sysq disable <id>...   Disable system prompt(s).");
-    println!();
     println!("  memory list            List all memories (id, category, subject).");
     println!("  memory get <id> [id...] Get memory content by ID(s).");
     println!("  memory remove <id> [id...] Remove memory by ID(s).");
-}
-
-#[cfg(unix)]
-fn print_sysq_list(entries: &[crate::ports::outbound::SysqListEntry]) {
-    println!("{:8} {:7} {:<20} {}", "SCOPE", "ENABLED", "ID", "TITLE");
-    for e in entries {
-        let enabled = if e.enabled { "yes" } else { "no" };
-        let title = if e.title.len() > 40 { format!("{}...", &e.title[..e.title.floor_char_boundary(37)]) } else { e.title.clone() };
-        println!("{:8} {:7} {:<20} {}", e.scope.as_str(), enabled, e.id, title);
-    }
 }
 
 #[cfg(unix)]
@@ -330,11 +303,6 @@ mod tests {
                 let _ = app.init_use_case.run(&input)?;
                 Ok(0)
             }
-            Command::SysqList
-            | Command::SysqEnable { .. }
-            | Command::SysqDisable { .. } => Err(Error::invalid_argument(
-                "sysq commands are not available in run_app (use aish binary).".to_string(),
-            )),
             Command::MemoryList => {
                 let _ = app.memory_use_case.list()?;
                 Ok(0)

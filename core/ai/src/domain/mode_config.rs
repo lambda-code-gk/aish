@@ -7,7 +7,7 @@ use serde::Deserialize;
 /// 1 モード分の設定（JSON からデシリアライズ）
 #[derive(Debug, Clone, Default)]
 pub struct ModeConfig {
-    /// このモードで使うシステムプロンプト。指定時は sysq を使わずこれのみ。
+    /// このモードで使うシステムプロンプト（-S 未指定時に使用）。
     pub system: Option<String>,
     /// デフォルトプロファイル名（例: gemini, echo）
     pub profile: Option<String>,

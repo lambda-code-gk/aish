@@ -91,10 +91,8 @@ impl UseCaseRunner for Runner {
             });
         }
 
-        // -S 未指定時は有効な sysq を結合して system instruction にする
-        let system_instruction = |explicit: Option<String>| {
-            explicit.or_else(|| self.app.resolve_system_instruction.resolve().ok().flatten())
-        };
+        // -S 未指定時は system instruction なし（明示指定分のみ使用）
+        let system_instruction = |explicit: Option<String>| explicit;
 
         let event_hub = build_event_hub(
             session_dir.as_ref(),
@@ -304,7 +302,6 @@ fn print_help() {
     println!("  -p, --profile <profile>         Specify LLM profile (gemini, gpt, echo, etc.). Default: profiles.json default, or gemini if not set.");
     println!("  -m, --model <model>            Specify model name (e.g. gemini-2.0, gpt-4). Default: profile default from profiles.json");
     println!("  -S, --system <instruction>     Set system instruction (e.g. role or constraints) for this query");
-    println!("                                If omitted, enabled system prompts from aish sysq are used.");
     println!("  -M, --mode <name>             Use preset (system, profile, tools from $AISH_HOME/config/mode.d/<name>.json). CLI -p/-m/-S override mode.");
     println!("  --generate <shell>             Generate shell completion script (bash, zsh, fish). Source the output to enable tab completion.");
     println!("  --list-tasks                   List available task names (used by shell completion).");

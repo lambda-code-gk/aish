@@ -9,13 +9,13 @@ use common::part_id::{IdGenerator, StdIdGenerator};
 use common::ports::outbound::{EnvResolver, FileSystem, Log, PathResolver, Signal};
 
 use crate::adapter::{
-    LoggingMemoryRepository, StdMemoryRepository, StdShellRunner, StdSysqRepository, UnixPtySpawn,
+    LoggingMemoryRepository, StdMemoryRepository, StdShellRunner, UnixPtySpawn,
     UnixSignal,
 };
-use crate::ports::outbound::{MemoryRepository, ShellRunner, SysqRepository};
+use crate::ports::outbound::{MemoryRepository, ShellRunner};
 use crate::usecase::{
     ClearUseCase, InitUseCase, MemoryUseCase, RolloutUseCase, ResumeUseCase, SessionsUseCase,
-    ShellUseCase, SysqUseCase, TruncateConsoleLogUseCase, MuteUseCase, UnmuteUseCase,
+    ShellUseCase, TruncateConsoleLogUseCase, MuteUseCase, UnmuteUseCase,
 };
 
 /// 配線で組み立てたポート群とユースケース（main の Command ディスパッチで利用）
@@ -29,9 +29,6 @@ pub struct App {
     pub signal: Arc<dyn Signal>,
     #[allow(dead_code)]
     pub shell_runner: Arc<dyn ShellRunner>,
-    #[allow(dead_code)] // sysq_use_case 構築に使用。main からは sysq_use_case 経由で利用
-    pub sysq_repository: Arc<dyn SysqRepository>,
-    pub sysq_use_case: SysqUseCase,
     pub memory_use_case: MemoryUseCase,
     pub shell_use_case: ShellUseCase,
     pub clear_use_case: ClearUseCase,
@@ -68,9 +65,6 @@ pub fn wire_aish() -> App {
         Arc::clone(&signal) as Arc<dyn Signal>,
         pty_spawn,
     ));
-    let sysq_repository: Arc<dyn SysqRepository> =
-        Arc::new(StdSysqRepository::new(Arc::clone(&env_resolver), Arc::clone(&fs)));
-    let sysq_use_case = SysqUseCase::new(Arc::clone(&sysq_repository));
     let memory_repository: Arc<dyn MemoryRepository> = Arc::new(LoggingMemoryRepository::new(
         Arc::new(StdMemoryRepository::new(Arc::clone(&env_resolver))),
         Arc::clone(&logger),
@@ -110,8 +104,6 @@ pub fn wire_aish() -> App {
         fs,
         signal,
         shell_runner,
-        sysq_repository,
-        sysq_use_case,
         memory_use_case,
         shell_use_case,
         clear_use_case,

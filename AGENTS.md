@@ -81,12 +81,7 @@ usecase モジュール（`core/ai/src/usecase/`, `core/aish/src/usecase/`）で
 - **core/common**: `ai` / `aish` 共通。エラー型、session、LLM ドライバ・プロバイダ、Part ID、Port trait（FileSystem, Process, Clock 等）と標準実装、Tool trait / ToolRegistry。**ai 専用・aish 専用のユースケースは置かない。**  
   - Outbound の trait のうち **Tool** と **LlmProvider** は、ドメイン型（ToolContext, Message 等）との循環参照を避けるため、それぞれ `common::tool` と `common::llm::provider` に定義し、`common::ports::outbound` から re-export している。その他の outbound trait は `ports/outbound` に定義。
 - **core/ai**: `ai` コマンド。main → cli → wiring → UseCaseRunner。usecase: `app.rs`（AiUseCase）, `task.rs`（TaskUseCase）, `agent_loop.rs`。adapter: sinks, task, part_session_storage, approval, tools 等。
-- **core/aish**: `aish` コマンド。main → cli → wiring → UseCaseRunner。usecase: shell, truncate_console_log, clear, sysq 等。adapter: shell, terminal, platform, logfmt, sysq 等。
-
-**システムプロンプト（sysq）**
-- 格納場所（優先度 低→高）: グローバル `$AISH_HOME/config/system.d` または `~/.config/aish/system.d`、ユーザー `~/.aish/system.d`、プロジェクト `.aish/system.d`（カレントから遡って探索）。1ファイル1機能（拡張子除く相対パスが ID）。
-- 有効/無効: 各スコープの `system.d/enabled` に 1 行 1 ID で列挙されたものが有効。`aish sysq list` で一覧と有効状態表示、`aish sysq enable id [id...]` / `aish sysq disable id [id...]` で切り替え。
-- **ai** 実行時: `-S/--system` 未指定のとき、上記で有効な sysq を優先順位でマージし結合した文字列を system instruction として使用。指定時はその文字列をそのまま使用。
+- **core/aish**: `aish` コマンド。main → cli → wiring → UseCaseRunner。usecase: shell, truncate_console_log, clear 等。adapter: shell, terminal, platform, logfmt 等。
 
 ビルド・テストはプロジェクトルートで `./build.sh`, `./tests/units.sh`, `./tests/integration.sh`。個別は `cd core/ai && cargo test` 等。
 
@@ -118,6 +113,6 @@ usecase モジュール（`core/ai/src/usecase/`, `core/aish/src/usecase/`）で
 ## 更新履歴
 
 - **2026年2月**: common の port & adapter 整理。adapter から port の re-export を削除し、usecase は `common::ports::outbound` から trait を参照。StdIdGenerator を adapter に移動。Tool / LlmProvider が ports 外に定義されている理由を明記。
-- **2026年2月**: システムプロンプト（sysq）を追加。common に `system_prompt`（Scope・マージ）、EnvResolver に `current_dir` / `resolve_global_system_d_dir` / `resolve_user_system_d_dir` を追加。aish に `sysq list` / `sysq enable` / `sysq disable`、ai に `-S` 未指定時の sysq 解決（ResolveSystemInstruction ポート）を実装。結合テストに sysq list を追加。
+- **2026年2月**: システムプロンプト（sysq）を廃止。common の `system_prompt`、EnvResolver の system.d 関連、aish の sysq サブコマンド・UseCase・Adapter、ai の ResolveSystemInstruction を削除。`-S` 未指定時は system instruction なし。
 - **2026年2月**: アーキテクチャを「逆流防止」の判断基準として整理。依存方向・usecase 禁止事項・wiring 責務・inbound/outbound・実装時チェックリストを明文化。長さを抑え実務で参照しやすい形に変更。
 - **2026年1月**: common / ai / aish の状態・モジュール・CLI を現状に合わせて見直し。
