@@ -42,6 +42,8 @@ pub struct SessionDeps {
     pub agent_state_saver: Arc<dyn AgentStateSaver>,
     pub agent_state_loader: Arc<dyn AgentStateLoader>,
     pub prepare_session_for_sensitive_check: Option<Arc<dyn PrepareSessionForSensitiveCheck>>,
+    /// leakscan が有効で manifest/reviewed 履歴を使っている場合 true（dry run 表示用）
+    pub leakscan_enabled: bool,
 }
 
 pub struct PolicyDeps {
@@ -177,6 +179,7 @@ impl AiUseCase {
             model_name,
             system_instruction: system_instruction.map(String::from),
             mode_name,
+            leakscan_enabled: self.deps.session.leakscan_enabled,
             tool_allowlist: tool_allowlist.map(|s| s.to_vec()),
             tools_enabled,
             messages,

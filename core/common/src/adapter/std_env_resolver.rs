@@ -17,6 +17,8 @@ const CONFIG_SUBDIR: &str = "config";
 const DATA_SUBDIR: &str = "data";
 const CACHE_SUBDIR: &str = "cache";
 const AISH_SUBDIR: &str = "aish";
+const RULES_JSON: &str = "rules.json";
+const CONFIG_RULES_JSON: &str = "config/rules.json";
 
 /// 標準環境変数解決実装
 #[derive(Debug, Clone, Default)]
@@ -81,6 +83,18 @@ impl EnvResolver for StdEnvResolver {
         }
         let home_dir = self.resolve_home_dir()?;
         Ok(home_dir.as_ref().join(COMMAND_RULES_FILENAME))
+    }
+
+    fn resolve_leakscan_rules_path(&self) -> Result<PathBuf, Error> {
+        if let Ok(home) = env::var("AISH_HOME") {
+            if !home.is_empty() {
+                let mut p = PathBuf::from(home);
+                p.push(CONFIG_RULES_JSON);
+                return Ok(p);
+            }
+        }
+        let home_dir = self.resolve_home_dir()?;
+        Ok(home_dir.as_ref().join(RULES_JSON))
     }
 
     fn resolve_log_file_path(&self) -> Result<PathBuf, Error> {
@@ -283,6 +297,27 @@ mod tests {
                         path.to_string_lossy(),
                         "/xdg/config/aish/command_rules.txt"
                     );
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn test_resolve_leakscan_rules_path() {
+        let r = StdEnvResolver;
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("HOME", Some("/home/user"), || {
+                with_env_var("AISH_HOME", Some("/opt/aish"), || {
+                    let path = r.resolve_leakscan_rules_path().unwrap();
+                    assert_eq!(path.to_string_lossy(), "/opt/aish/config/rules.json");
+                });
+            });
+        });
+        with_env_var("AISH_HOME", None, || {
+            with_env_var("XDG_CONFIG_HOME", Some("/xdg/config"), || {
+                with_env_var("HOME", Some("/home/user"), || {
+                    let path = r.resolve_leakscan_rules_path().unwrap();
+                    assert_eq!(path.to_string_lossy(), "/xdg/config/aish/rules.json");
                 });
             });
         });

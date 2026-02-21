@@ -36,6 +36,7 @@ impl DryRunReportSink for StdoutDryRunReportSink {
             Some(m) => println!("mode: {}", m),
             None => println!("mode: (none)"),
         }
+        println!("leakscan_enabled: {}", info.leakscan_enabled);
         match &info.tool_allowlist {
             Some(list) => println!("tool_allowlist: [{}]", list.join(", ")),
             None => println!("tool_allowlist: (all)"),

@@ -140,6 +140,7 @@ fn test_manifest_loader_uses_injected_strategy() {
         10,
         Arc::new(StubStrategy("manifest-strategy")),
         Arc::new(StubStrategy("fallback-strategy")),
+        None,
     );
     let history = loader.load(&session_dir).unwrap();
     assert_eq!(history.messages().len(), 1);

@@ -9,6 +9,8 @@ pub struct DryRunInfo {
     pub model_name: String,
     pub system_instruction: Option<String>,
     pub mode_name: Option<String>,
+    /// leakscan が有効で manifest/reviewed 履歴を使っている場合 true
+    pub leakscan_enabled: bool,
     pub tool_allowlist: Option<Vec<String>>,
     pub tools_enabled: Vec<String>,
     pub messages: Vec<Msg>,

@@ -38,7 +38,8 @@ pub(crate) use leakscan_prepare_session::LeakscanPrepareSession;
 pub(crate) use lifecycle::{CompositeLifecycleHooks, SelfImproveHandler};
 pub(crate) use llm_completion::StdLlmCompletion;
 pub(crate) use manifest_reviewed_session_storage::{
-    ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, ReviewedTailViewStrategy,
+    ManifestReviewedSessionStorage, ManifestTailCompactionViewStrategy, PartTailViewStrategy,
+    ReviewedTailViewStrategy,
 };
 pub(crate) use reducer::{PassThroughReducer, TailWindowReducer};
 pub(crate) use llm_event_stream_factory::StdLlmEventStreamFactory;
