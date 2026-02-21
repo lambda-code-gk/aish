@@ -18,16 +18,16 @@ use crate::adapter::{
     NoopInterruptChecker, NonInteractiveToolApproval, PartSessionStorage, PassThroughReducer,
     ReadFileTool, ReplaceFileTool, ReviewedTailViewStrategy, SelfImproveHandler, SigintChecker,
     StdCommandAllowRulesLoader, StdContextMessageBuilder, StdEventSinkFactory, StdLlmCompletion,
-    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveModeConfig, StdResolveProfileAndModel, StdResolveSystemPromptFromHooks, StdTaskRunner,
+    StdLlmEventStreamFactory, StdProfileLister, StdResolveMemoryDir, StdResolveModeConfig, StdResolveProfileAndModel, StdResolveSystemPromptFromHooks, StdoutDryRunReportSink, StdTaskRunner,
     ShellTool, TailWindowReducer, WriteFileTool,
     HistoryGetTool, HistorySearchTool, QueueShellSuggestionTool, SaveMemoryTool, SearchMemoryTool,
 };
 use crate::adapter::lifecycle::LifecycleHandler;
 use crate::domain::{ContextBudget, Query};
 use crate::ports::outbound::{
-    AgentStateLoader, AgentStateSaver, ContextMessageBuilder, LifecycleHooks, LlmCompletion,
-    PrepareSessionForSensitiveCheck, ResolveModeConfig, ResolveSystemPromptFromHooks, RunQuery,
-    SessionHistoryLoader, SessionResponseSaver, TaskRunner,
+    AgentStateLoader, AgentStateSaver, ContextMessageBuilder, DryRunReportSink, LifecycleHooks,
+    LlmCompletion, PrepareSessionForSensitiveCheck, ResolveModeConfig, ResolveSystemPromptFromHooks,
+    RunQuery, SessionHistoryLoader, SessionResponseSaver, TaskRunner,
 };
 use crate::usecase::app::{AiDeps, AiUseCase, ModelDeps, ObsDeps, PolicyDeps, SessionDeps, SystemDeps, ToolingDeps};
 use crate::usecase::task::TaskUseCase;
@@ -353,6 +353,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
     let obs = build_obs_deps(&logger);
     let lifecycle_hooks = build_lifecycle_hooks(&model.llm_stream_factory, &logger);
 
+    let dry_run_report_sink: Arc<dyn DryRunReportSink> = Arc::new(StdoutDryRunReportSink::new());
     let ai_use_case = Arc::new(AiUseCase::new(AiDeps {
         session,
         policy,
@@ -361,6 +362,7 @@ pub fn wire_ai(non_interactive: bool, verbose: bool) -> App {
         system,
         obs,
         lifecycle_hooks,
+        dry_run_report_sink,
         non_interactive,
     }));
     let run_query: Arc<dyn RunQuery> = Arc::new(AiRunQuery(Arc::clone(&ai_use_case)));

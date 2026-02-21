@@ -1,7 +1,7 @@
 use crate::domain::{DryRunInfo, LifecycleEvent, QueryOutcome};
 use crate::ports::outbound::{
     AgentStateLoader, AgentStateSaver, CommandAllowRulesLoader, ContextMessageBuilder,
-    ContinueAfterLimitPrompt, EventSinkFactory, InterruptChecker, LifecycleHooks,
+    ContinueAfterLimitPrompt, DryRunReportSink, EventSinkFactory, InterruptChecker, LifecycleHooks,
     LlmEventStreamFactory, PrepareSessionForSensitiveCheck, ProfileLister, QueryPlacement,
     ResolveMemoryDir, ResolveProfileAndModel, RunQuery, SessionHistoryLoader, SessionResponseSaver,
     ToolApproval,
@@ -28,6 +28,8 @@ pub struct AiDeps {
     pub system: SystemDeps,
     pub obs: ObsDeps,
     pub lifecycle_hooks: Arc<dyn LifecycleHooks>,
+    /// dry run の結果を出力する先（どこに出すかは adapter が実装）
+    pub dry_run_report_sink: Arc<dyn DryRunReportSink>,
     /// CI 等で true のとき確認プロンプトを出さない（run イベントの payload に載せる）
     pub non_interactive: bool,
 }
@@ -179,6 +181,30 @@ impl AiUseCase {
             tools_enabled,
             messages,
         })
+    }
+
+    /// dry run を実行する: 結果を組み立て、report 先に渡す（出力先は adapter が実装）。
+    pub fn run_dry_run(
+        &self,
+        session_dir: Option<SessionDir>,
+        provider: Option<common::domain::ProviderName>,
+        model: Option<common::domain::ModelName>,
+        query: Option<&Query>,
+        system_instruction: Option<&str>,
+        tool_allowlist: Option<&[String]>,
+        mode_name: Option<String>,
+    ) -> Result<(), Error> {
+        let info = self.dry_run_query(
+            session_dir,
+            provider,
+            model,
+            query,
+            system_instruction,
+            tool_allowlist,
+            mode_name,
+        )?;
+        self.deps.dry_run_report_sink.report(&info)?;
+        Ok(())
     }
 
     fn truncate_console_log(&self, session_dir: &SessionDir) -> Result<(), Error> {
