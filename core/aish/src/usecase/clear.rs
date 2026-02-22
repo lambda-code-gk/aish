@@ -3,6 +3,7 @@
 use common::error::Error;
 use common::ports::outbound::FileSystem;
 use common::ports::outbound::{PathResolver, PathResolverInput};
+use common::safe_session_path::HISTORY_SEND_FROM_FILENAME;
 use common::session::Session;
 use std::path::Path;
 use std::sync::Arc;
@@ -61,25 +62,14 @@ impl ClearUseCase {
 
         for entry in entries {
             if let Some(file_name) = entry.file_name().and_then(|n| n.to_str()) {
-                // part_ で始まるファイルを削除（会話履歴）
-                if file_name.starts_with("part_") {
-                    if self.fs.metadata(&entry).map(|m| m.is_file()).unwrap_or(false) {
-                        self.fs.remove_file(&entry)?;
-                    }
-                }
-                // reviewed_ で始まるファイルを削除（leakscan 通過後の履歴）
-                else if file_name.starts_with("reviewed_") {
-                    if self.fs.metadata(&entry).map(|m| m.is_file()).unwrap_or(false) {
-                        self.fs.remove_file(&entry)?;
-                    }
+                #[allow(clippy::collapsible_if)]
+                if file_name.starts_with("part_")
+                    && self.fs.metadata(&entry).map(|m| m.is_file()).unwrap_or(false)
+                {
+                    self.fs.remove_file(&entry)?;
                 }
             }
-        }
-
-        // reviewed/ ディレクトリを削除（leakscan 通過後の履歴）
-        let reviewed_dir = session_dir.join("reviewed");
-        if self.fs.exists(&reviewed_dir) {
-            self.fs.remove_dir_all(&reviewed_dir)?;
+            // reviewed_ / reviewed/ と manifest.jsonl は削除しない（Ctrl+L 時は送信開始位置のみ先頭に戻す）
         }
 
         // leakscan 退避用ディレクトリを削除
@@ -88,11 +78,17 @@ impl ClearUseCase {
             self.fs.remove_dir_all(&evacuated_dir)?;
         }
 
-        // manifest.jsonl を削除（履歴メタデータ；参照先の reviewed は上で削除済み）
+        // 履歴送信開始位置を manifest.jsonl の行数に設定。次回は LLM に送る会話履歴が 0 件になる。
+        let send_from_path = session_dir.join(HISTORY_SEND_FROM_FILENAME);
         let manifest_path = session_dir.join("manifest.jsonl");
-        if self.fs.exists(&manifest_path) && self.fs.metadata(&manifest_path).map(|m| m.is_file()).unwrap_or(false) {
-            self.fs.remove_file(&manifest_path)?;
-        }
+        let content = if self.fs.exists(&manifest_path) {
+            let s = self.fs.read_to_string(&manifest_path).unwrap_or_default();
+            let line_count = s.lines().filter(|l| !l.trim().is_empty()).count();
+            format!("{}\n", line_count)
+        } else {
+            "0\n".to_string()
+        };
+        self.fs.write(&send_from_path, &content)?;
 
         Ok(0)
     }

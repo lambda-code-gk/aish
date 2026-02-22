@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 /// reviewed ファイルを格納するセッション直下のサブディレクトリ名
 pub const REVIEWED_DIR: &str = "reviewed";
 
+/// 履歴送信開始位置（manifest の何件目から送るか）を記録するファイル名。内容は 1 行の非負整数（先頭=0）。
+pub const HISTORY_SEND_FROM_FILENAME: &str = ".history_send_from";
+
 const REVIEWED_PREFIX: &str = "reviewed_";
 const REVIEWED_SUFFIX: &str = ".txt";
 const SUMMARY_PREFIX: &str = "compaction_";

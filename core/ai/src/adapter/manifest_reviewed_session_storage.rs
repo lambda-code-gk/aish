@@ -31,7 +31,9 @@ impl HistoryViewStrategy for ManifestTailCompactionViewStrategy {
         load_max: usize,
     ) -> Result<History, Error> {
         let records = session_manifest::load_all(fs, dir)?;
-        let tail = session_manifest::tail_message_records(&records, load_max);
+        let from_index = session_manifest::load_send_from_index(fs, dir);
+        let range = records.get(from_index..).unwrap_or_default();
+        let tail = session_manifest::tail_message_records(range, load_max);
 
         let mut history = History::new();
         let oldest_tail_id = tail

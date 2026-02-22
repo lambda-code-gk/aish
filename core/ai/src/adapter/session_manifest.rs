@@ -3,11 +3,39 @@
 use crate::domain::{parse_lines, ManifestRecordV1};
 use common::error::Error;
 use common::ports::outbound::FileSystem;
+use common::safe_session_path::HISTORY_SEND_FROM_FILENAME;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn manifest_path(session_dir: &Path) -> PathBuf {
     session_dir.join("manifest.jsonl")
+}
+
+fn send_from_path(session_dir: &Path) -> PathBuf {
+    session_dir.join(HISTORY_SEND_FROM_FILENAME)
+}
+
+/// 履歴送信開始位置（manifest の何件目から送るか）を読む。ファイルが無い・不正時は 0（最先端）。
+pub(crate) fn load_send_from_index(fs: &dyn FileSystem, session_dir: &Path) -> usize {
+    let path = send_from_path(session_dir);
+    if !fs.exists(&path) {
+        return 0;
+    }
+    let s = match fs.read_to_string(&path) {
+        Ok(x) => x,
+        Err(_) => return 0,
+    };
+    let trimmed = s.trim();
+    trimmed.parse::<usize>().unwrap_or(0)
+}
+
+/// 履歴送信開始位置を「最先端」（0）に設定する。呼び出し元は aish clear（直接ファイル書き）のため、テスト・将来用に残す。
+#[allow(dead_code)]
+pub(crate) fn write_send_from_front(fs: &dyn FileSystem, session_dir: &Path) -> Result<(), Error> {
+    let path = send_from_path(session_dir);
+    let content = "0\n";
+    fs.write(&path, content)
+        .map_err(|e| Error::io_msg(e.to_string()))
 }
 
 pub(crate) fn append(

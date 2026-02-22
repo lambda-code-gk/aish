@@ -417,11 +417,17 @@ mod tests {
             assert!(!session_path.join("part_00000001_user.txt").exists());
             assert!(!session_path.join("part_00000002_assistant.txt").exists());
             assert!(!session_path.join("part_00000003_user.txt").exists());
-            assert!(!session_path.join("reviewed_ABC12001_user.txt").exists());
-            assert!(!session_path.join("reviewed_ABC12002_assistant.txt").exists());
-            assert!(!reviewed_dir.exists());
+            // reviewed と manifest は残す（Ctrl+L は送信開始位置を先頭にするだけ）
+            assert!(session_path.join("reviewed_ABC12001_user.txt").exists());
+            assert!(session_path.join("reviewed_ABC12002_assistant.txt").exists());
+            assert!(reviewed_dir.exists());
+            assert!(session_path.join("reviewed/reviewed_ABC12003_user.txt").exists());
+            assert!(session_path.join("reviewed/reviewed_ABC12004_assistant.txt").exists());
+            assert!(session_path.join("manifest.jsonl").exists());
             assert!(!session_path.join("leakscan_evacuated").exists());
-            assert!(!session_path.join("manifest.jsonl").exists());
+            let send_from = session_path.join(".history_send_from");
+            assert!(send_from.exists(), "Ctrl+L で送信開始位置が manifest の行数に設定され会話履歴0件になる");
+            assert_eq!(fs::read_to_string(&send_from).unwrap().trim(), "1", "manifest.jsonl が1行なので .history_send_from は 1");
             assert!(session_path.join("console.txt").exists());
             assert!(session_path.join("AISH_PID").exists());
 
