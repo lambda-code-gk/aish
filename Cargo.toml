@@ -9,4 +9,9 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 libc = "0.2"
-# 将来: tonic, tokio などをここに集約
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }

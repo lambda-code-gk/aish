@@ -26,7 +26,8 @@ pub fn daemonize() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        libc::umask(0);
+        // 作成ファイルのグループ/その他権限を抑える（socket 等）
+        libc::umask(0o077);
 
         let devnull = CString::new("/dev/null").unwrap();
         let fd = libc::open(devnull.as_ptr(), libc::O_RDWR);

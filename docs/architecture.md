@@ -53,9 +53,9 @@ aibe →  aish 禁止
   - フォアグラウンド: `cargo run -p aibe -- -f`（デバッグ用）
 - **メッセージ形式**: 接続後、**1 行 1 JSON**（newline-delimited JSON）でリクエスト/レスポンスをやりとりする（stdio JSON スタイル）
 
-## プロトコル（設計）
+## プロトコル（設計・詳細）
 
-実装進行に合わせてフィールドを確定する。破壊的変更時はこの文書とテストを同時に更新する。
+破壊的変更時はこの文書と `aibe` / `ai` のテストを同時に更新する。
 
 ### リクエスト（クライアント → aibe）
 
@@ -118,7 +118,16 @@ aibe →  aish 禁止
 ## aish ログ
 
 - **用途（当面）**: `ai` が読み込み、aibe リクエストの `context` に載せる
-- **形式（設計）**: JSONL。1 行に 1 イベント（`command_start`, `stdout`, `stderr`, `exit` 等）
+- **形式（実装）**: JSONL。1 行に 1 イベント。`event` フィールドで種別を区別する:
+
+| `event` | 内容 |
+|---------|------|
+| `command_start` | `command`, `args` |
+| `stdout` | `data` |
+| `stderr` | `data` |
+| `exit` | `code`（任意） |
+
+- **CLI**: `aish exec [--log PATH] -- <program> [args...]`（未指定時は `~/.local/share/aish/sessions/session-<pid>.jsonl`）
 - **保存場所（設計）**: 設定または環境変数。例: `~/.local/share/aish/sessions/<session-id>.jsonl`
 - 詳細スキーマは aish 実装時にこの節を拡張する
 
@@ -133,8 +142,51 @@ aibe →  aish 禁止
 - リポジトリに **実キーをコミットしない**
 - 例示用は `docs/` または `*.example.toml` のみ
 
+## Hexagonal（Ports & Adapters）
+
+各クレートは **独立した六角形**。クレート間は path 依存ではなく **プロトコル（aibe）** と **ログファイル（aish）** で接続する。
+
+共通のソース配置:
+
+```text
+<crate>/src/
+  domain/           # エンティティ・ルール（I/O なし）
+  application/      # ユースケース（port の trait のみ参照）
+  ports/outbound/   # アプリが外に頼る trait
+  adapters/         # port の具象（OS / HTTP / ファイル / socket）
+```
+
+| クレート | 主なユースケース | Outbound ports（例） | Inbound adapters（例） |
+|---------|------------------|----------------------|-------------------------|
+| **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ConfigLoader` | Unix NDJSON リスナ（`application::server`） |
+| **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
+| **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask` |
+
+`ai` は `aibe::protocol` のみをクレート依存し、`aish` には依存しない（ログはファイルパスで読む）。
+
+## プロトコル（実装済み）
+
+### `ping`
+
+リクエスト:
+
+```json
+{ "type": "ping", "id": "..." }
+```
+
+レスポンス:
+
+```json
+{ "type": "pong", "id": "..." }
+```
+
+### `agent_turn`
+
+`architecture.md` 先頭の JSON スキーマどおり。`context.shell_log_tail` は `ai` が aish JSONL の末尾を載せる。
+
 ## 実装フェーズ（参考）
 
-1. aibe: socket + 1 ターンのエージェントループ（モック LLM 可、ただし本番経路は実装で完了報告）
-2. aish: 1 コマンド実行と JSONL 追記
-3. ai: aibe 接続と応答表示 + ログ tail の context 付与
+1. **aibe**（済）: socket + `ping` + 1 ターン `agent_turn` + `MockLlm`
+2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
+3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
+4. **次**: 実 LLM プロバイダ 1 種、`config.toml`、aibe シングルトン起動、PTY シェル
