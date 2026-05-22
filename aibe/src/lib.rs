@@ -4,6 +4,7 @@
 
 pub mod adapters;
 pub mod application;
+pub mod client;
 pub mod daemon;
 pub mod domain;
 pub mod ports;
@@ -21,8 +22,13 @@ pub fn run() -> ! {
 }
 
 fn try_run() -> anyhow::Result<()> {
-    let config = adapters::outbound::EnvConfig::load()?;
-    let llm = adapters::outbound::MockLlm::new();
+    let config = adapters::outbound::TomlConfig::load()?;
+    if client::ping(&config.socket_path) {
+        eprintln!("aibe: already running at {}", config.socket_path.display());
+        return Ok(());
+    }
+
+    let llm = adapters::outbound::build_llm(&config)?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

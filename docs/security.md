@@ -40,7 +40,18 @@
   - パスワードプロンプト直後の入力
   - `.env` ファイルの内容をそのまま
 
-将来、マスクルールを aish 内に実装したら、この節にパターン一覧を追記する。
+### 実装済みマスク（aish）
+
+`aish` はログ追記前に `sanitize_log_text` を通す（`aish/src/domain/sanitize.rs`）。
+
+| パターン | 置換 |
+|---------|------|
+| `sk-...`（OpenAI 形式） | `sk-[REDACTED]` |
+| `Bearer ...` | `Bearer [REDACTED]` |
+| `AIza...`（Google API キー形式） | `AIza[REDACTED]` |
+| 環境変数名に `KEY` / `TOKEN` / `SECRET` を含む `NAME=value` | `NAME=[REDACTED]` |
+
+完全な秘匿ではない。パスワードプロンプト直後の入力などは今後拡張する。
 
 ### ai → aibe の context
 
@@ -50,7 +61,7 @@
 ## 権限・プロセス
 
 - **Unix 専用**: ファイルモード・ソケットパスは umask / `chmod` を意識する
-- aibe の socket: ユーザー私用ディレクトリ配下（他ユーザーから書けないパス）
+- aibe の socket: ユーザー私用ディレクトリ配下。`bind` 時は umask `077` + `chmod 600`（foreground / デーモン共通）
 - aish が起動するシェルは **ユーザー自身の権限** で動く。エージェントのツール実行はその権限を継承する — 高権限シェルでは aibe を動かさない運用を推奨
 
 ## 依存関係

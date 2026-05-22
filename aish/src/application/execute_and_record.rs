@@ -1,6 +1,6 @@
 //! 1 コマンド実行とログ追記ユースケース。
 
-use crate::domain::{CommandSpec, LogEvent};
+use crate::domain::{sanitize_log_text, CommandSpec, LogEvent};
 use crate::ports::outbound::{LogError, SessionLog, ShellError, ShellExecutor};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,12 +37,12 @@ where
 
         if !result.stdout.is_empty() {
             self.log.append(&LogEvent::Stdout {
-                data: result.stdout.clone(),
+                data: sanitize_log_text(&result.stdout),
             })?;
         }
         if !result.stderr.is_empty() {
             self.log.append(&LogEvent::Stderr {
-                data: result.stderr.clone(),
+                data: sanitize_log_text(&result.stderr),
             })?;
         }
         self.log.append(&LogEvent::Exit {

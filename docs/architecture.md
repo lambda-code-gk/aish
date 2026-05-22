@@ -189,4 +189,5 @@ aibe →  aish 禁止
 1. **aibe**（済）: socket + `ping` + 1 ターン `agent_turn` + `MockLlm`
 2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
-4. **次**: 実 LLM プロバイダ 1 種、`config.toml`、aibe シングルトン起動、PTY シェル
+4. **済（本ラウンド）**: OpenAI 互換 LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク
+5. **次**: ツールループ、Gemini プロバイダ、ログマスクの拡張テスト、手動検証ドキュメント

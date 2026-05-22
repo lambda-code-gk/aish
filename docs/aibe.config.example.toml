@@ -1,0 +1,11 @@
+# コピー先: ~/.config/aibe/config.toml
+# 実キーはリポジトリにコミットしないこと。
+
+# socket_path = "~/.local/share/aibe/run.sock"
+
+[llm]
+# provider = "mock"
+provider = "openai_compatible"
+api_key = "YOUR_API_KEY"
+base_url = "http://127.0.0.1:1234/v1"
+model = "local-model"

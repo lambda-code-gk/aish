@@ -1,0 +1,3 @@
+# コピー先: ~/.config/ai/config.toml
+
+socket_path = "~/.local/share/aibe/run.sock"

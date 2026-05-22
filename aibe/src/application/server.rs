@@ -11,13 +11,12 @@ use crate::application::request_service::RequestService;
 use crate::ports::outbound::LlmProvider;
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
 
-pub async fn run(socket_path: PathBuf, llm: impl LlmProvider + 'static) -> anyhow::Result<()> {
+pub async fn run(socket_path: PathBuf, llm: Arc<dyn LlmProvider>) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
-    let listener = UnixListener::bind(&socket_path)?;
-    std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+    let listener = bind_unix_listener(&socket_path)?;
     eprintln!("aibe: listening on {}", socket_path.display());
 
-    let handler = Arc::new(RequestService::new(Arc::new(llm)));
+    let handler = Arc::new(RequestService::new(llm));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -38,6 +37,19 @@ fn prepare_socket_path(path: &Path) -> anyhow::Result<()> {
         std::fs::remove_file(path)?;
     }
     Ok(())
+}
+
+/// `bind` 前後で umask を 077 にし、作成直後から他ユーザーに開けないようにする。
+fn bind_unix_listener(path: &Path) -> anyhow::Result<UnixListener> {
+    let old_umask = unsafe { libc::umask(0o077) };
+    let result = UnixListener::bind(path).and_then(|listener| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(listener)
+    });
+    unsafe {
+        libc::umask(old_umask);
+    }
+    result.map_err(Into::into)
 }
 
 async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> anyhow::Result<()> {

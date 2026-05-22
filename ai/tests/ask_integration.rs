@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -19,7 +20,7 @@ fn ask_reaches_mock_aibe() {
     thread::spawn(move || {
         let rt = Runtime::new().expect("runtime");
         rt.block_on(async {
-            server::run(socket_for_server, MockLlm::new())
+            server::run(socket_for_server, Arc::new(MockLlm::new()))
                 .await
                 .expect("server");
         });

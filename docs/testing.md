@@ -29,7 +29,7 @@ CI 導入前も、完了報告前に上記をローカルで通す。
 - **単体**: JSON メッセージの serialize/deserialize、設定パース、プロバイダアダプタのモック応答
 - **統合**: Unix socket に接続し、1 `agent_turn` が完走（LLM は mock server）
 - **E2E**: デーモン起動 → クライアント 1 リクエスト → 応答（ネットワーク不要な fixture 推奨）
-- **手動**: 実プロバイダ + 実キーでの 1 ターン（`docs/manual/aibe-provider.md` に手順を書く）
+- **手動**: 実プロバイダ + 実キーでの 1 ターン（`docs/manual/aibe-openai-compatible.md`）
 
 ### aish
 

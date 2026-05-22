@@ -1,30 +1,31 @@
-//! 環境変数ベースの設定アダプタ。
+//! 環境変数のみの設定（後方互換）。新規は [`TomlConfig`] を使う。
 
 use std::path::PathBuf;
 
 use crate::default_socket_path;
-use crate::ports::outbound::{ConfigError, ConfigLoader, ServerConfig};
+use crate::ports::outbound::{AppConfig, ConfigError, ConfigLoader, LlmConfig};
 
-/// `AIBE_SOCKET_PATH` があればそれを使い、なければデフォルトパス。
+/// `AIBE_SOCKET_PATH` のみ。LLM は mock。
 pub struct EnvConfig;
 
 impl EnvConfig {
-    pub fn load() -> Result<ServerConfig, ConfigError> {
+    pub fn load() -> Result<AppConfig, ConfigError> {
         Self::load_from_env()
+    }
+
+    fn load_from_env() -> Result<AppConfig, ConfigError> {
+        let socket_path = std::env::var("AIBE_SOCKET_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| default_socket_path());
+        Ok(AppConfig {
+            socket_path,
+            llm: LlmConfig::Mock,
+        })
     }
 }
 
 impl ConfigLoader for EnvConfig {
-    fn load(&self) -> Result<ServerConfig, ConfigError> {
+    fn load(&self) -> Result<AppConfig, ConfigError> {
         Self::load_from_env()
-    }
-}
-
-impl EnvConfig {
-    fn load_from_env() -> Result<ServerConfig, ConfigError> {
-        let socket_path = std::env::var("AIBE_SOCKET_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| default_socket_path());
-        Ok(ServerConfig { socket_path })
     }
 }

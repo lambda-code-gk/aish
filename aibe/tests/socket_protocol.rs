@@ -4,6 +4,8 @@
 
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::protocol::{ClientRequest, ClientResponse};
@@ -18,7 +20,7 @@ async fn ping_and_agent_turn_over_unix_socket() {
 
     let socket_for_server = socket_path.clone();
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, MockLlm::new())
+        server::run(socket_for_server, Arc::new(MockLlm::new()))
             .await
             .expect("server");
     });

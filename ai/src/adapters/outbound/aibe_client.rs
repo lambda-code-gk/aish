@@ -57,12 +57,14 @@ impl AgentClient for AibeUnixClient {
 }
 
 fn correlation_id() -> String {
-    format!(
-        "{:x}",
-        std::time::SystemTime::now()
-            .elapsed()
-            .ok()
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    )
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}-{}", std::process::id(), seq, nanos)
 }

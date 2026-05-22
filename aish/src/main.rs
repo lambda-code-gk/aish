@@ -3,9 +3,11 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use aish::adapters::outbound::{JsonlFileLog, ProcessShell};
-use aish::application::ExecuteAndRecord;
-use aish::domain::CommandSpec;
+use aish::adapters::outbound::toml_config::AishConfig;
+use aish::adapters::outbound::{JsonlFileLog, ProcessShell, PtyShell};
+use aish::application::{ExecuteAndRecord, RunShell};
+use aish::domain::{CommandSpec, LogEvent};
+use aish::ports::outbound::SessionLog;
 
 fn main() -> ExitCode {
     match run() {
@@ -19,12 +21,18 @@ fn main() -> ExitCode {
 
 fn run() -> anyhow::Result<u8> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) != Some("exec") {
-        anyhow::bail!("usage: aish exec [--log PATH] -- <program> [args...]");
+    let Some(cmd) = args.first().map(String::as_str) else {
+        anyhow::bail!("usage: aish exec|shell [--log PATH] ...");
+    };
+    match cmd {
+        "exec" => run_exec(&args[1..]),
+        "shell" => run_shell(&args[1..]),
+        _ => anyhow::bail!("usage: aish exec|shell [--log PATH] ..."),
     }
-    let rest = &args[1..];
+}
 
-    let (log_path, cmd_args) = parse_exec_args(rest)?;
+fn run_exec(rest: &[String]) -> anyhow::Result<u8> {
+    let (log_path, cmd_args) = parse_log_args(rest, true)?;
     let program = cmd_args
         .first()
         .ok_or_else(|| anyhow::anyhow!("missing command after --"))?;
@@ -44,8 +52,34 @@ fn run() -> anyhow::Result<u8> {
     Ok(result.exit_code.unwrap_or(0) as u8)
 }
 
-fn parse_exec_args(args: &[String]) -> anyhow::Result<(PathBuf, Vec<String>)> {
-    let mut log_path = default_log_path();
+fn run_shell(rest: &[String]) -> anyhow::Result<u8> {
+    let cfg = AishConfig::load();
+    let (log_path, _) = parse_log_args(rest, false)?;
+    let shell = cfg.shell;
+
+    let mut log = JsonlFileLog::new(log_path);
+    let log_path_display = log.path().display().to_string();
+    log.append(&LogEvent::CommandStart {
+        command: "interactive_shell".to_string(),
+        args: vec![shell.clone()],
+    })
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let mut runner = PtyShell::new(&mut log);
+    let mut app = RunShell::new(&mut runner);
+    let code = app.run(&shell)?;
+    log.append(&LogEvent::Exit { code: Some(code) })
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    eprintln!("aish: log written to {log_path_display}");
+    Ok(code as u8)
+}
+
+fn parse_log_args(
+    args: &[String],
+    require_separator: bool,
+) -> anyhow::Result<(PathBuf, Vec<String>)> {
+    let cfg = AishConfig::load();
+    let mut log_path = cfg.default_session_log();
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--log" {
@@ -61,13 +95,8 @@ fn parse_exec_args(args: &[String]) -> anyhow::Result<(PathBuf, Vec<String>)> {
         }
         i += 1;
     }
-    anyhow::bail!("missing -- before command");
-}
-
-fn default_log_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let name = format!("session-{}.jsonl", std::process::id());
-    PathBuf::from(home)
-        .join(".local/share/aish/sessions")
-        .join(name)
+    if require_separator {
+        anyhow::bail!("missing -- before command");
+    }
+    Ok((log_path, vec![]))
 }
