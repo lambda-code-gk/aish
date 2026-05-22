@@ -4,6 +4,8 @@ Rust ワークスペース。3 つのクレートで構成されます。
 
 AI・人間向けの開発規約は [AGENTS.md](AGENTS.md) と [.cursor/rules/](.cursor/rules/) を参照。
 
+設計・テスト・セキュリティ: [docs/architecture.md](docs/architecture.md)、[docs/testing.md](docs/testing.md)、[docs/security.md](docs/security.md)。境界チェック: `./scripts/check-architecture.sh`。
+
 | クレート | 種別 | 役割 |
 |---------|------|------|
 | **aibe** | ライブラリ + バイナリ | 複数 LLM API を呼び出すバックエンド常駐プロセス。クライアントとプロトコルで通信し、バックグラウンドで API 処理を行う |

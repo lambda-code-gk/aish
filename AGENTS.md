@@ -63,8 +63,6 @@ cargo test --workspace
 ./scripts/check-architecture.sh
 ```
 
-`scripts/check-architecture.sh` が未整備の場合は、整備をタスクに含めるか、スキップ理由を報告する。
-
 ## 報告義務（必須）
 
 返信の末尾に、該当があれば次の見出しで列挙する。
