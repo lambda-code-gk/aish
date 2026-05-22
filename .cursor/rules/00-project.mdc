@@ -1,0 +1,38 @@
+---
+description: プロジェクト目的・優先順位・言語・ツール
+alwaysApply: true
+---
+
+# aish プロジェクト基本
+
+## 目的
+
+シェルに LLM を組み込み、LLM ネイティブなシェル体験を作る。将来 OSS 公開を想定するが、現状は個人開発。
+
+## 優先順位
+
+1. セキュリティ
+2. シェル統合体験
+3. 保守性
+
+互換性のための歪んだ依存より、**レイヤーと責務が正しい実装** を選ぶ。
+
+## 言語・ツール
+
+- ユーザー向け説明・報告: **日本語**
+- AI 環境: Cursor + Codex。入口はリポジトリ直下の `AGENTS.md`
+- `cursor_tasks/` 形式のタスク管理は使わない
+
+## 変更後の確認
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
+```
+
+アーキテクチャに触れた変更では `./scripts/check-architecture.sh` も実行する。
+
+## Git
+
+- main 直。`git commit` / `git push` はユーザー明示時のみ。

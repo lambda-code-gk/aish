@@ -1,0 +1,43 @@
+---
+description: aish / aibe / ai の責務境界と禁止事項
+alwaysApply: true
+---
+
+# クレート境界（厳守）
+
+## aish
+
+**許可**: シェル起動、コマンド実行、stdin/stdout/stderr・終了コードの記録、ログファイル I/O。
+
+**禁止**:
+
+- LLM / HTTP / HTTPS での API 呼び出し
+- aibe への Unix socket サーバ・クライアント（ログはファイル等で ai が読む）
+- API キー・プロバイダ設定の保持
+
+## aibe
+
+**許可**: エージェントループ、ツール実行、LLM プロバイダ（OpenAI / OpenAI 互換 / Gemini）、Unix socket サーバ、stdio JSON プロトコル、設定ファイルでのキー指定。
+
+**禁止**:
+
+- シェル UI や PTY の直接操作（それは aish）
+- シークレットのソースコード直書き
+
+## ai
+
+**許可**: aibe へのクライアント通信、応答の表示、aish ログの読み込み（コンテキスト用）。
+
+**禁止**:
+
+- `reqwest` 等による LLM エンドポイントへの直接リクエスト
+- API キーを ai 側で保持・読み込み
+
+## 依存の向き
+
+```
+ai  →  aibe のクライアント API のみ
+aish →  aibe へ依存しない（シェル + ログのみ）
+```
+
+違反を見つけたら直す。`./scripts/check-architecture.sh` で機械チェックする（スクリプト追加・更新もタスクに含める）。

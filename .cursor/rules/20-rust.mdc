@@ -1,0 +1,36 @@
+---
+description: Rust コーディング規約（rustfmt・エラー処理・Unix）
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust 規約
+
+## フォーマット・Lint
+
+- `rustfmt` デフォルト（`cargo fmt --all`）
+- `cargo clippy --workspace -- -D warnings` を満たす
+
+## プラットフォーム
+
+- **Unix 専用**。`#[cfg(unix)]` で守る。Windows 用の分岐は追加しない。
+
+## エラー処理
+
+- ライブラリ境界: `thiserror` で型を定義
+- バイナリのトップレベル: `anyhow` 可
+- 本番経路の `unwrap` / `expect` 禁止（テストと起動不能な不変条件のみ可）
+
+## 依存関係
+
+- 共有クレートは `[workspace.dependencies]` に集約してから各 `Cargo.toml` で参照
+- 新規依存は必要最小限。ライセンスは MIT / Apache-2.0 系を優先
+
+## 非同期
+
+- aibe の socket・エージェントループ実装時は **tokio** を workspace 依存に追加し、そこに統一
+
+## テスト
+
+- 単体・統合・E2E を用途に応じて追加し `cargo test --workspace` で通す
+- 手動のみの検証は `docs/manual/` に手順を書く

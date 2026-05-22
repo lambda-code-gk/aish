@@ -1,0 +1,36 @@
+---
+description: レイヤー・プロトコル・設計原則
+globs: "{aibe,aish,ai}/**/*"
+alwaysApply: false
+---
+
+# アーキテクチャ
+
+## 設計原則
+
+- **正しい依存方向** を最優先。レガシー互換のための層越え・仮モジュールは作らない
+- 外部 API の「互換」は **aibe のプロバイダアダプタ内** に閉じる（OpenAI 互換エンドポイント等）
+
+## プロトコル（aibe）
+
+- トランスポート: **Unix domain socket**
+- メッセージ: **stdio JSON**（型・フィールドは `docs/architecture.md` と同期）
+
+## 設定・秘密
+
+- LLM API キー: **aibe 設定ファイルのみ**
+- ログにキー・トークン・`.env` 内容を書かない。コンテキスト投入も禁止
+
+## aish ログ
+
+- 当面の用途: **ai のコンテキスト**（シェル履歴・コマンド出力）
+- 形式・保存場所を変えたら `docs/architecture.md` を更新
+
+## aibe デーモン
+
+- シングルトン想定: 既存 socket があれば接続、なければ起動（詳細は architecture doc）
+
+## 変更時
+
+1. 境界に触れたら `./scripts/check-architecture.sh` を実行
+2. `docs/architecture.md` を実装と同時に更新
