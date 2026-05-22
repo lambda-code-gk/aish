@@ -1,97 +1,105 @@
 ---
-description: Codex は仕様作成と実装後レビュー。実装は Cursor 親
+description: Codex は仕様・監査・調査。実装とコンテキスト重い読取は Cursor 親
 alwaysApply: true
 ---
 
-# Codex MCP サブエージェント
+# Codex MCP 委譲（別 LLM・コンテキスト分散）
 
-**役割分担**: Codex（MCP `codex` / `codex-reply`）は **仕様の作成** と **実装後のレビュー** のみ。コード実装・テスト追加・`docs/` の実装同期更新は **Cursor 親** が行う。
+**目的**:
 
-設定: `.cursor/mcp.json`。変更後は **Cursor を再起動** し、MCP で `codex` / `codex-reply` が有効か確認する。
+1. **Cursor のコンテキスト消費を分散** — diff・docs・横断照合は `scripts/codex-context.sh` のパケットで Codex に渡し、Codex 全文は Cursor 履歴に戻さない（要約 + `threadId` のみ保持）。
+2. **別 LLM による監査** — 実装（Cursor）と仕様・レビュー・監査（Codex）を分離する。
 
-## ワークフロー
+**役割**: Codex = 仕様ドラフト・実装レビュー・横断監査・限定調査。Cursor 親 = 実装・テスト・`docs/` 同期・パケット生成・Codex 要約。
+
+正本: `docs/codex-delegation.md`。レビュー深度: `docs/codex-review.md`。
+
+## ワークフロー（典型）
 
 ```text
-1. 仕様（Codex）→ 2. 実装（Cursor）→ 3. レビュー（Codex）→ 4. 指摘対応（Cursor）→ 完了報告
+spec（Codex）→ 実装・検証（Cursor）→ review（Codex）→ 指摘対応（Cursor）
+     ↑ audit / spike は必要に応じて挿入
+     ↑ 再確認は codex-reply（差分パケットのみ）
 ```
 
-非自明な機能・クレート境界・プロトコル変更では、**実装に入る前に** 手順 1 を省略しない。実装完了報告の前に手順 3 を省略しない。
+## タスクと MCP 引数
 
-## MCP ツール
+親は **必ず** `./scripts/codex-context.sh`（または `codex-review-context.sh`）を実行し、出力を `prompt` に貼る。続きは `codex-reply` + `threadId`。
 
-| ツール | 用途 |
-|--------|------|
-| `codex` | 新規: 仕様ドラフト、または実装後レビュー |
-| `codex-reply` | 同一 `threadId` で仕様の追記・レビュー観点の深掘り |
+| `CODEX_TASK` | タイミング | `profile` | `sandbox` |
+|--------------|------------|-----------|-----------|
+| `spec` | 非自明な機能・プロトコル変更前 | `spec` | `read-only`（推奨） |
+| `review` | テスト通過後・完了報告前 | `review` | `read-only` |
+| `audit` | 境界・セキュリティ・docs 横断 | `audit` | `read-only` |
+| `spike` | 設計比較・影響調査 | `audit` または `spec` | `read-only` |
 
-## 1. 仕様作成（Codex に委譲）
+**共通 MCP 引数**（省略禁止）:
 
-**タイミング**: 新機能、破壊的プロトコル変更、複数クレートにまたがる設計の前。
+| 引数 | 値 |
+|------|-----|
+| `cwd` | リポジトリルート |
+| `approval-policy` | `never` |
+| `config` | `{"approval_policy":"never"}`（reasoning は profile に任せる） |
 
-**プロンプトに含めるもの**:
+プロンプト先頭の一行:
 
-- ユーザー要求・制約
-- `AGENTS.md` の優先順位（セキュリティ > シェル統合 > 保守性）
-- `.cursor/rules/10-boundaries.mdc` のクレート境界
-- 既存の `docs/architecture.md` 等との整合
+```text
+Role: <spec|review|audit|spike> for aish workspace. Separate LLM auditor — do not implement code.
+```
 
-**Codex の成果物（期待）**:
+### `developer-instructions` 骨子
 
-- 目的・スコープ外
-- 受け入れ条件（検証可能な文言）
-- 影響クレート・依存・プロトコル / 設定の変更点
-- テスト方針（単体 / 統合 / 手動）
-- セキュリティ・ログ上の注意
-- 未確定事項の明示（推測は推測とラベル）
+**共通末尾**:
 
-**sandbox**: `workspace-write`（`docs/` への仕様追記を許す場合）。ファイル変更をさせないときは `read-only` でドラフトのみ返させる。
+```text
+Output in Japanese. Mark 推測 explicitly. No repo-wide search (rg --files, find, grep -r, cargo test/build).
+No require_escalated retries on the same command.
+```
 
-親は Codex の仕様を読み、矛盾・境界違反を直してから実装に入る。
+**spec** — `CODEX_TASK=spec`:
 
-## 2. 実装（Cursor 親。Codex に委譲しない）
+```text
+Draft specification only: goals, out-of-scope, testable acceptance criteria, affected crates/protocols,
+test plan, security/logging notes, 未確定. Use the packet and static docs; shell budget max 15,
+only paths under "## フォーカスパス" if present. Do not edit source unless user explicitly allowed workspace-write.
+```
 
-- Rust 実装、`cargo test`、仕様に沿った `docs/` 更新
-- `./scripts/check-architecture.sh` の実行と修正
-- `git commit` / `push` はユーザー明示まで行わない
+**review** — `CODEX_REVIEW_MODE` に応じる（`docs/codex-review.md`）:
 
-## 3. 実装後レビュー（Codex に委譲）
+- `fast`: pasted diff/arch-check only; shell max 2 on allowed paths.
+- `standard`: shell max 12 on "## 変更ファイル（レビュー許可パス）" only.
+- `deep`: shell max 20; prefer packet excerpts first.
 
-**タイミング**: 実装とテストが通った後、ユーザーへ「完了」と報告する前。
+出力: 重大 / 中 / 低、通過、要確認、受け入れ条件との対応。
 
-**プロンプトに含めるもの**:
+**audit**:
 
-- 仕様（手順 1 の出力または合意内容）
-- 変更の要約（親が書く）または `git diff` の要点
-- 実行済みコマンドと結果（`fmt` / `clippy` / `test` / `check-architecture`）
+```text
+Cross-cutting audit: crate boundaries (ai→aibe, aish independent), secrets/logs/permissions,
+docs vs implementation, stub production paths. Shell max 15 on focus/allowed paths only.
+```
 
-**Codex の観点（必須チェック）**:
+**spike**:
 
-- 仕様・受け入れ条件を満たしているか
-- クレート境界・依存方向（`ai → aibe`、`aish` 独立）
-- セキュリティ（秘密情報・ログ・権限）
-- 仮実装・スタブで本番経路を止めていないか（`.cursor/rules/40-no-stubs.mdc`）
-- テスト・ドキュメントの不足
+```text
+Investigation only: options, tradeoffs, recommendation. Shell max 10 on "## フォーカスパス" only.
+No implementation.
+```
 
-**sandbox**: **`read-only`**（レビューではコードを書き換えさせない）。
+## 親の責務（コンテキスト分散）
 
-指摘は重大度付きで返させ、親が修正する。再レビューが必要なら `codex-reply` で同じ `threadId` を使う。
+- パケット生成 **1 回** → MCP `codex` → **要約だけ** Cursor に残す（全文貼り戻し禁止）。
+- ファイル全文が必要なら親が `Read` し、`codex-reply` に抜粋を渡す。
+- 実装・`cargo fmt` / `clippy` / `test` / `check-architecture` は親のみ。
+- `git commit` / `push` はユーザー明示まで行わない。
 
 ## Codex に委譲しないこと
 
-- コードの実装・リファクタの本体
-- 1 行修正や説明のみの質問
-- MCP `codex` が無効・接続失敗時（失敗を報告し、親が仕様・レビューを担う）
+- Rust 実装・テスト追加・実装に伴う `docs/` 更新
+- 単純な説明・1 行修正
+- MCP 障害時（親が担い、未実施を明記）
 
-## 親が常に残す責務
+## 競合・MCP
 
-- 実装とテスト実行
-- Codex 出力の要約と **日本語** 報告
-- 未確定・推測・指示外・残リスクの明示（`40-no-stubs.mdc`）
-
-## 競合回避
-
-Codex 実行中は親が **同じファイルを編集しない**。レビューは read-only、仕様フェーズ終了後に親が実装する。
-
-## MCP が起動しないとき
-
-`.cursor/mcp.json` の `command` を `which codex` に合わせる。
+- Codex 実行中は親が同じファイルを編集しない。
+- MCP 無効時: `.cursor/mcp.json` の `command` を `which codex` に合わせ、Cursor 再起動。

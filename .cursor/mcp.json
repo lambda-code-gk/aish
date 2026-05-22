@@ -2,7 +2,11 @@
   "mcpServers": {
     "codex": {
       "command": "${userHome}/.nvm/versions/node/v22.14.0/bin/codex",
-      "args": ["mcp-server"]
+      "args": [
+        "mcp-server",
+        "-c",
+        "approval_policy=\"never\""
+      ]
     }
   }
 }
