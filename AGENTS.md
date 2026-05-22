@@ -92,10 +92,17 @@ cargo test --workspace
 
 ## ツール
 
-- **Cursor**（`.cursor/rules/` が補足規約）
-- **Codex**（この `AGENTS.md` を正とする）
+- **Cursor**（`.cursor/rules/` が補足規約）— **実装**・テスト・`docs/` の実装同期
+- **Codex**（MCP `codex` / `codex-reply`、`.cursor/mcp.json`）— **仕様の作成** と **実装後のレビュー** のみ（詳細: `.cursor/rules/50-codex-subagent.mdc`）
 
 `cursor_tasks/` の r 系列タスクファイルは **使用しない**。
+
+### Cursor と Codex の流れ
+
+1. Codex で仕様（受け入れ条件・境界・テスト方針）
+2. Cursor で実装・検証
+3. Codex で read-only レビュー
+4. Cursor で指摘対応 → 完了報告
 
 ## ドキュメント
 
