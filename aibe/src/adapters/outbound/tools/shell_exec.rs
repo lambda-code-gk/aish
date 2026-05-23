@@ -1,4 +1,6 @@
 //! `shell_exec` ツール。
+//!
+//! subprocess の cwd は [`ToolExecutionContext::base_dir`]（クライアントの `context.cwd`）。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,7 +12,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::domain::{ExecutedToolCall, ToolResult};
-use crate::ports::outbound::{CommandPolicy, ToolExecutor};
+use crate::ports::outbound::{CommandPolicy, ToolExecutionContext, ToolExecutor};
 
 use super::tool_output::limit_tool_output;
 
@@ -46,6 +48,7 @@ impl ToolExecutor for ShellExecTool {
         tool_call_id: &str,
         arguments: &Value,
         timeout_ms: u64,
+        ctx: &ToolExecutionContext,
     ) -> (ExecutedToolCall, ToolResult) {
         let id = tool_call_id.to_string();
         let args_value = arguments.clone();
@@ -127,6 +130,7 @@ impl ToolExecutor for ShellExecTool {
 
         let mut cmd = Command::new(&parsed.command);
         cmd.args(&parsed.args);
+        cmd.current_dir(ctx.base_dir());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -209,5 +213,34 @@ impl ToolExecutor for ShellExecTool {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::outbound::tools::ConfigAllowlistPolicy;
+    use crate::ports::outbound::ShellExecConfig;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn command_runs_in_client_cwd() {
+        let dir = tempdir().expect("tempdir");
+        let client_sub = dir.path().join("work");
+        std::fs::create_dir_all(&client_sub).expect("mkdir");
+        std::fs::write(client_sub.join("note.txt"), "from client cwd").expect("write");
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["cat".into()],
+        }));
+        let tool = ShellExecTool::new(policy, 4096);
+        let ctx = ToolExecutionContext::from_client_cwd(Some(client_sub));
+        let args = json!({ "command": "cat", "args": ["note.txt"] });
+
+        let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("from client cwd"));
     }
 }

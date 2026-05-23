@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use crate::application::tool_defs::{definitions_for, is_known_tool};
 use crate::domain::{ChatMessage, ExecutedToolCall, ToolCall, ToolResult};
-use crate::ports::outbound::{LlmError, LlmProvider, ToolRegistry, ToolsConfig};
+use crate::ports::outbound::{
+    LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
+};
 use crate::protocol::RequestContext;
 use crate::protocol::{ClientResponse, ErrorCode, ProtocolMessageOut};
 
@@ -52,6 +54,8 @@ impl AgentTurnService {
             }
         }
 
+        let tool_ctx = tool_execution_context_from(&context);
+
         let mut conversation = messages;
         if let Some(tail) = context.shell_log_tail {
             if !tail.is_empty() {
@@ -62,8 +66,7 @@ impl AgentTurnService {
         if tools.is_empty() {
             return self.finish_text_only(id, &conversation).await;
         }
-
-        self.run_with_tools(id, conversation, tools).await
+        self.run_with_tools(id, conversation, tools, tool_ctx).await
     }
 
     async fn finish_text_only(&self, id: String, conversation: &[ChatMessage]) -> ClientResponse {
@@ -85,6 +88,7 @@ impl AgentTurnService {
         id: String,
         mut conversation: Vec<ChatMessage>,
         allowed_tools: Vec<String>,
+        tool_ctx: ToolExecutionContext,
     ) -> ClientResponse {
         let tool_defs = definitions_for(&allowed_tools);
         let mut executed: Vec<ExecutedToolCall> = Vec::new();
@@ -122,7 +126,12 @@ impl AgentTurnService {
                     )
                 } else if let Some(executor) = self.registry.get(&tc.name) {
                     executor
-                        .execute(&tc.id, &tc.arguments, self.tools_config.exec_timeout_ms)
+                        .execute(
+                            &tc.id,
+                            &tc.arguments,
+                            self.tools_config.exec_timeout_ms,
+                            &tool_ctx,
+                        )
                         .await
                 } else {
                     rejected_tool_result(
@@ -228,6 +237,24 @@ fn initial_user_request(conversation: &[ChatMessage]) -> Option<ChatMessage> {
 }
 
 /// 最終要約用: 実行済みツールの成功出力・失敗理由をプレーンテキスト化する。
+fn tool_execution_context_from(context: &RequestContext) -> ToolExecutionContext {
+    ToolExecutionContext::from_client_cwd(parse_client_cwd(context))
+}
+
+fn parse_client_cwd(context: &RequestContext) -> Option<std::path::PathBuf> {
+    context.cwd.as_ref().and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let path = std::path::PathBuf::from(trimmed);
+        if !path.is_absolute() {
+            return None;
+        }
+        Some(path)
+    })
+}
+
 fn format_tool_execution_summary(executed: &[ExecutedToolCall]) -> String {
     if executed.is_empty() {
         return "(no tools were executed in this turn)".to_string();
@@ -289,5 +316,26 @@ mod tests {
         assert!(summary.contains("status: ok"));
         assert!(summary.contains("status: error"));
         assert!(summary.contains("path is outside allowed_roots"));
+    }
+
+    #[test]
+    fn parse_client_cwd_rejects_relative() {
+        let ctx = RequestContext {
+            cwd: Some("relative/path".into()),
+            ..Default::default()
+        };
+        assert!(parse_client_cwd(&ctx).is_none());
+    }
+
+    #[test]
+    fn parse_client_cwd_accepts_absolute() {
+        let ctx = RequestContext {
+            cwd: Some("/tmp/proj".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            parse_client_cwd(&ctx),
+            Some(std::path::PathBuf::from("/tmp/proj"))
+        );
     }
 }

@@ -71,7 +71,8 @@ aibe →  aish 禁止
   ],
   "tools": ["shell_exec", "read_file"],
   "context": {
-    "shell_log_tail": "..."
+    "shell_log_tail": "...",
+    "cwd": "/abs/path/to/ai/cwd"
   }
 }
 ```
@@ -83,6 +84,7 @@ aibe →  aish 禁止
 | `messages` | チャット履歴（プロバイダへ渡す前に aibe で正規化） |
 | `tools` | 有効にするツール名のリスト |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
+| `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
 
 ### レスポンス（aibe → クライアント）
 
@@ -204,15 +206,27 @@ aibe →  aish 禁止
 
 ### `agent_turn`
 
-`architecture.md` 先頭の JSON スキーマどおり。`context.shell_log_tail` は `ai` が aish JSONL の末尾を載せる。
+`architecture.md` 先頭の JSON スキーマどおり。`context.shell_log_tail` は `ai` が aish JSONL の末尾を載せる。`context.cwd` は `ai` が自身のカレントディレクトリを載せる。
 
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
 - `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。
-- 組み込みツール: `shell_exec`（設定 `allowed_commands` のみ）、`read_file`（`allowed_roots` 配下のみ）。
+- 組み込みツール: `shell_exec`（設定 `allowed_commands` のみ。subprocess cwd は `context.cwd`）、`read_file`（`allowed_roots` 配下のみ。相対パスは `context.cwd` 基準）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
 - ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/0001_aibe-tool-agent-loop-spec.md`。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
+
+#### ツールとカレントディレクトリ（必須方針）
+
+| 項目 | 方針 |
+|------|------|
+| **基準 cwd** | **クライアント**（`ai ask` 等）のカレントディレクトリ。`agent_turn.context.cwd`（絶対パス）で渡す |
+| **aibe の cwd** | 相対パス解決に **使わない**（`context.cwd` 未送信時のみ `ToolExecutionContext::base_dir` が aibe cwd にフォールバック） |
+| **新規ツール** | [`ToolExecutor::execute`](aibe/src/ports/outbound/tools.rs) の `ToolExecutionContext` を受け取り、相対パスは `base_dir` / `resolve_path` を使う。aibe 内で `std::env::current_dir` を直接参照しない |
+| **`ai` の責務** | 起動時の `std::env::current_dir()` を毎回 `context.cwd` に載せる |
+| **既存** | `read_file` / `shell_exec` は上記に準拠 |
+
+実装の正本: `aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。
 
 #### エラーコード（`type: error`）
 

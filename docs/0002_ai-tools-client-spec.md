@@ -229,7 +229,7 @@ ai: tools enabled: none
 | 統合 | config `tools = "@read-only"` + CLI `--tools none` → `tools: []` |
 | 回帰 | `tools` 未指定の既存 `ai ask` 統合テスト |
 
-手動のみの確認は必要に応じて `docs/manual/` に追記する（例: 実 aibe + OpenAI 互換で 1 turn）。
+手動検証手順: `docs/manual/ai-ask-tools.md`（A/B: mock・隔離設定、C: 実 LLM + `read_file`）。実施記録は同ファイル末尾（C はユーザー確認済み）。
 
 ## 影響クレート
 

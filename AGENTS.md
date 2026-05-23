@@ -29,6 +29,7 @@
 ## プロトコル・LLM
 
 - **aibe ↔ クライアント**: Unix domain socket + **stdio JSON**（スキーマは `docs/architecture.md` で管理）
+- **aibe ツールの cwd**: 相対パスは **クライアント**（`ai` の `current_dir` → `context.cwd`）基準。新規ツールは `ToolExecutionContext::base_dir` / `resolve_path` を使う（`docs/architecture.md`「ツールとカレントディレクトリ」）
 - **プロバイダ**（aibe 内）: OpenAI、OpenAI 互換（ローカル等）、Gemini
 - **API キー**: aibe の設定ファイルのみ。リポジトリ・ログ・ai バイナリに含めない
 

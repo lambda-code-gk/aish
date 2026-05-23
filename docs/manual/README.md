@@ -9,6 +9,7 @@
 | ファイル | 内容 |
 |----------|------|
 | [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（OpenAI 互換）1 ターン |
+| [ai-ask-tools.md](ai-ask-tools.md) | `ai ask` の `--tools` / 表示契約（mock + 任意で実 LLM） |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
 | [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |
 

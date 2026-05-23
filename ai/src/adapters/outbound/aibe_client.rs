@@ -39,6 +39,10 @@ impl AgentClient for AibeUnixClient {
             tools: input.tools.clone(),
             context: RequestContext {
                 shell_log_tail: input.shell_log_tail.clone(),
+                cwd: input
+                    .client_cwd
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
             },
         };
 

@@ -49,6 +49,7 @@ where
         let input = AskInput {
             user_message,
             shell_log_tail,
+            client_cwd: std::env::current_dir().ok(),
             tools: options.resolved_tools.names,
         };
 

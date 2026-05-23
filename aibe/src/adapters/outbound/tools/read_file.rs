@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::time::timeout;
 
 use crate::domain::{ExecutedToolCall, ToolResult};
-use crate::ports::outbound::{ReadFileConfig, ToolExecutor};
+use crate::ports::outbound::{ReadFileConfig, ToolExecutionContext, ToolExecutor};
 
 use super::tool_output::limit_tool_output;
 
@@ -26,13 +26,13 @@ impl ReadFileTool {
         }
     }
 
-    fn resolve_allowed_roots(&self) -> Vec<PathBuf> {
+    fn resolve_allowed_roots(&self, ctx: &ToolExecutionContext) -> Vec<PathBuf> {
         self.config
             .allowed_roots
             .iter()
             .map(|p| {
                 if p == Path::new(".") {
-                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                    ctx.base_dir()
                 } else {
                     expand_home_path(p)
                 }
@@ -105,6 +105,7 @@ impl ToolExecutor for ReadFileTool {
         tool_call_id: &str,
         arguments: &Value,
         timeout_ms: u64,
+        ctx: &ToolExecutionContext,
     ) -> (ExecutedToolCall, ToolResult) {
         let id = tool_call_id.to_string();
         let args_value = arguments.clone();
@@ -167,7 +168,8 @@ impl ToolExecutor for ReadFileTool {
             );
         }
 
-        let roots = self.resolve_allowed_roots();
+        let roots = self.resolve_allowed_roots(ctx);
+        let read_path = ctx.resolve_path(&path);
         let offset = parsed.offset;
         let limit = parsed.limit;
         let max_output_bytes = self.max_output_bytes;
@@ -175,7 +177,7 @@ impl ToolExecutor for ReadFileTool {
 
         match timeout(
             duration,
-            Self::read_within_roots(&roots, &path, offset, limit),
+            Self::read_within_roots(&roots, &read_path, offset, limit),
         )
         .await
         {
@@ -234,5 +236,53 @@ impl ToolExecutor for ReadFileTool {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::outbound::ReadFileConfig;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn relative_path_uses_client_cwd_not_server_cwd() {
+        let dir = tempdir().expect("tempdir");
+        let client_sub = dir.path().join("client");
+        std::fs::create_dir_all(&client_sub).expect("mkdir");
+        std::fs::write(client_sub.join("note.txt"), "from client cwd").expect("write");
+
+        let tool = ReadFileTool::new(
+            ReadFileConfig {
+                allowed_roots: vec![dir.path().to_path_buf()],
+            },
+            4096,
+        );
+        let ctx = ToolExecutionContext::from_client_cwd(Some(client_sub.clone()));
+        let args = json!({ "path": "note.txt" });
+
+        let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(result.content, "from client cwd");
+    }
+
+    #[tokio::test]
+    async fn dot_allowed_root_uses_client_cwd() {
+        let dir = tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("root.txt"), "dot root").expect("write");
+
+        let tool = ReadFileTool::new(
+            ReadFileConfig {
+                allowed_roots: vec![PathBuf::from(".")],
+            },
+            4096,
+        );
+        let ctx = ToolExecutionContext::from_client_cwd(Some(dir.path().to_path_buf()));
+        let args = json!({ "path": "root.txt" });
+
+        let (_record, result) = tool.execute("tc2", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(result.content, "dot root");
     }
 }

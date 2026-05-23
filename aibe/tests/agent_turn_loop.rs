@@ -403,6 +403,96 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
     }
 }
 
+#[tokio::test]
+async fn shell_exec_runs_in_context_cwd() {
+    let dir = tempdir().expect("tempdir");
+    let client_sub = dir.path().join("work");
+    fs::create_dir_all(&client_sub).expect("mkdir");
+    fs::write(client_sub.join("note.txt"), "shell cwd ok").expect("write");
+
+    let steps = vec![
+        LlmStepResult::with_tool_calls(
+            "",
+            vec![ToolCall {
+                id: "c1".into(),
+                name: "shell_exec".into(),
+                arguments: json!({"command": "cat", "args": ["note.txt"]}),
+            }],
+        ),
+        LlmStepResult::text_only("done"),
+    ];
+    let llm = Arc::new(ScriptedMockLlm::new(steps));
+    let mut cfg = ToolsConfig::default();
+    cfg.shell_exec = ShellExecConfig {
+        enabled: true,
+        allowed_commands: vec!["cat".into()],
+    };
+    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
+    let res = svc
+        .run(
+            "cwd-shell".into(),
+            vec![ChatMessage::user("run")],
+            vec!["shell_exec".into()],
+            RequestContext {
+                cwd: Some(client_sub.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
+    match res {
+        ClientResponse::AgentTurnResult { tool_calls, .. } => {
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0]["status"], "ok");
+            let output = tool_calls[0]["output"].as_str().unwrap_or("");
+            assert!(output.contains("shell cwd ok"), "output: {output}");
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn read_file_relative_path_uses_context_cwd() {
+    let dir = tempdir().expect("tempdir");
+    let client_sub = dir.path().join("work");
+    fs::create_dir_all(&client_sub).expect("mkdir");
+    fs::write(client_sub.join("rel.txt"), "relative ok").expect("write");
+
+    let steps = vec![
+        LlmStepResult::with_tool_calls(
+            "",
+            vec![ToolCall {
+                id: "c1".into(),
+                name: "read_file".into(),
+                arguments: json!({"path": "rel.txt"}),
+            }],
+        ),
+        LlmStepResult::text_only("read rel.txt"),
+    ];
+    let llm = Arc::new(ScriptedMockLlm::new(steps));
+    let mut cfg = ToolsConfig::default();
+    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
+    let res = svc
+        .run(
+            "cwd".into(),
+            vec![ChatMessage::user("read")],
+            vec!["read_file".into()],
+            RequestContext {
+                cwd: Some(client_sub.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
+    match res {
+        ClientResponse::AgentTurnResult { tool_calls, .. } => {
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0]["status"], "ok");
+            assert_eq!(tool_calls[0]["output"], "relative ok");
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
 /// 2 回目の LLM 呼び出し前に、会話中の tool result が切り詰められていることを検証する。
 struct TruncationAssertLlm {
     inner: ScriptedMockLlm,

@@ -44,6 +44,9 @@ impl From<ProtocolMessage> for ChatMessage {
 pub struct RequestContext {
     #[serde(default)]
     pub shell_log_tail: Option<String>,
+    /// クライアントのカレントディレクトリ（絶対パス）。`read_file` の相対パス解決に使う。
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[cfg(test)]
@@ -60,6 +63,21 @@ mod tests {
             ClientRequest::AgentTurn { tools, context, .. } => {
                 assert!(tools.is_empty());
                 assert!(context.shell_log_tail.is_none());
+                assert!(context.cwd.is_none());
+            }
+            _ => panic!("expected agent_turn"),
+        }
+    }
+
+    #[test]
+    fn agent_turn_deserializes_context_cwd() {
+        let req: ClientRequest = serde_json::from_str(
+            r#"{"type":"agent_turn","id":"1","messages":[{"role":"user","content":"hi"}],"context":{"cwd":"/tmp/proj"}}"#,
+        )
+        .expect("parse");
+        match req {
+            ClientRequest::AgentTurn { context, .. } => {
+                assert_eq!(context.cwd.as_deref(), Some("/tmp/proj"));
             }
             _ => panic!("expected agent_turn"),
         }

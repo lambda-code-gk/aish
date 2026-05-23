@@ -37,6 +37,11 @@ alwaysApply: false
 - `adapters` → `application` 禁止
 - 機械検査: `./scripts/check-hexagonal.sh`（`check-architecture.sh` から呼ばれる）
 
+## aibe ツール（cwd）
+
+- 相対パス・`.` 付きルート設定は **クライアント cwd**（`context.cwd` → `ToolExecutionContext::base_dir`）基準
+- 新規 `ToolExecutor` は `std::env::current_dir()` を直接使わない（詳細は `docs/architecture.md` の「ツールとカレントディレクトリ」）
+
 ## 変更時
 
 1. 境界・レイヤーに触れたら `./scripts/check-architecture.sh` を実行
