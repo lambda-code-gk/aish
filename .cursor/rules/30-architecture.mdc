@@ -30,7 +30,14 @@ alwaysApply: false
 
 - シングルトン想定: 既存 socket があれば接続、なければ起動（詳細は architecture doc）
 
+## 六角形レイヤー（クレート内）
+
+- `application` → `adapters` 禁止（**aibe** の composition root は `application/server.rs` のみ）
+- `domain` / `ports` → `adapters`・`application` 禁止
+- `adapters` → `application` 禁止
+- 機械検査: `./scripts/check-hexagonal.sh`（`check-architecture.sh` から呼ばれる）
+
 ## 変更時
 
-1. 境界に触れたら `./scripts/check-architecture.sh` を実行
+1. 境界・レイヤーに触れたら `./scripts/check-architecture.sh` を実行
 2. `docs/architecture.md` を実装と同時に更新

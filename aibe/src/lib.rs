@@ -29,10 +29,15 @@ fn try_run() -> anyhow::Result<()> {
     }
 
     let llm = adapters::outbound::build_llm(&config)?;
+    let tools_config = config.tools.clone();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(application::server::run(config.socket_path, llm))
+    rt.block_on(application::server::run(
+        config.socket_path,
+        llm,
+        tools_config,
+    ))
 }
 
 /// デフォルトの Unix socket パス（`$HOME/.local/share/aibe/run.sock`）。

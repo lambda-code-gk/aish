@@ -6,6 +6,7 @@ use std::time::Duration;
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::client;
+use aibe::ports::outbound::ToolsConfig;
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
@@ -18,9 +19,13 @@ fn ping_detects_running_server() {
     std::thread::spawn(move || {
         let rt = Runtime::new().expect("runtime");
         rt.block_on(async {
-            server::run(socket_for_server, Arc::new(MockLlm::new()))
-                .await
-                .expect("server");
+            server::run(
+                socket_for_server,
+                Arc::new(MockLlm::new()),
+                ToolsConfig::default(),
+            )
+            .await
+            .expect("server");
         });
     });
 

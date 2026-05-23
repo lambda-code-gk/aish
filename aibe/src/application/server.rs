@@ -7,16 +7,22 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
+use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
-use crate::ports::outbound::LlmProvider;
+use crate::ports::outbound::{LlmProvider, ToolsConfig};
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
 
-pub async fn run(socket_path: PathBuf, llm: Arc<dyn LlmProvider>) -> anyhow::Result<()> {
+pub async fn run(
+    socket_path: PathBuf,
+    llm: Arc<dyn LlmProvider>,
+    tools_config: ToolsConfig,
+) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
     let listener = bind_unix_listener(&socket_path)?;
     eprintln!("aibe: listening on {}", socket_path.display());
 
-    let handler = Arc::new(RequestService::new(llm));
+    let registry = build_registry(&tools_config);
+    let handler = Arc::new(RequestService::new(llm, registry, tools_config));
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -71,10 +77,31 @@ async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> a
             ),
         };
 
-        let out = serde_json::to_string(&response)? + "\n";
-        writer.write_all(out.as_bytes()).await?;
-        writer.flush().await?;
+        write_response_line(&mut writer, &response).await?;
     }
 
+    Ok(())
+}
+
+/// 応答 1 行を書き込む。クライアントが先に切断した場合は正常終了（手動 `socat` 等）。
+async fn write_response_line(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    response: &ClientResponse,
+) -> anyhow::Result<()> {
+    use std::io::ErrorKind;
+
+    let out = serde_json::to_string(response)? + "\n";
+    if let Err(e) = writer.write_all(out.as_bytes()).await {
+        if e.kind() == ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(e.into());
+    }
+    if let Err(e) = writer.flush().await {
+        if e.kind() == ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(e.into());
+    }
     Ok(())
 }

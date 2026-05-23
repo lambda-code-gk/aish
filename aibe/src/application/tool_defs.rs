@@ -1,0 +1,61 @@
+//! 組み込みツールの LLM 定義。
+
+use serde_json::json;
+
+use crate::ports::outbound::ToolDefinition;
+
+pub const SHELL_EXEC: &str = "shell_exec";
+pub const READ_FILE: &str = "read_file";
+
+pub const KNOWN_TOOLS: &[&str] = &[SHELL_EXEC, READ_FILE];
+
+pub fn is_known_tool(name: &str) -> bool {
+    KNOWN_TOOLS.contains(&name)
+}
+
+pub fn definitions_for(allowed: &[String]) -> Vec<ToolDefinition> {
+    allowed
+        .iter()
+        .filter_map(|name| match name.as_str() {
+            SHELL_EXEC => Some(shell_exec_definition()),
+            READ_FILE => Some(read_file_definition()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn shell_exec_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: SHELL_EXEC.to_string(),
+        description: "Run a subprocess command. Only commands listed in server config are allowed."
+            .to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "Executable name or path" },
+                "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional arguments"
+                }
+            },
+            "required": ["command"]
+        }),
+    }
+}
+
+fn read_file_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: READ_FILE.to_string(),
+        description: "Read a text file under configured allowed roots.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path relative to allowed root or absolute under root" },
+                "offset": { "type": "integer", "description": "1-based line to start reading" },
+                "limit": { "type": "integer", "description": "Maximum lines to read" }
+            },
+            "required": ["path"]
+        }),
+    }
+}

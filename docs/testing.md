@@ -8,7 +8,7 @@ aish ワークスペースのテスト種別、置き場所、実行方法。機
 cargo fmt --all -- --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
-./scripts/check-architecture.sh
+./scripts/check-architecture.sh   # クレート境界 + scripts/check-hexagonal.sh（レイヤー）
 ```
 
 CI 導入前も、完了報告前に上記をローカルで通す。
@@ -26,8 +26,8 @@ CI 導入前も、完了報告前に上記をローカルで通す。
 
 ### aibe
 
-- **単体**: JSON メッセージの serialize/deserialize、設定パース、プロバイダアダプタのモック応答
-- **統合**: Unix socket に接続し、1 `agent_turn` が完走（LLM は mock server）
+- **単体**: JSON メッセージの serialize/deserialize、設定パース、allowlist、`agent_turn` ループ（`ScriptedMockLlm`）。ツール失敗は tool result で継続（allowlist 外 `shell_exec`、パス制限外 `read_file`、モデル幻覚ツール、subprocess 非ゼロ終了、`shell_exec` タイムアウト）
+- **統合**: Unix socket で `ping` / `agent_turn`（ツールなし・`read_file` ループ）が完走
 - **E2E**: デーモン起動 → クライアント 1 リクエスト → 応答（ネットワーク不要な fixture 推奨）
 - **手動**: 実プロバイダ + 実キーでの 1 ターン（`docs/manual/aibe-openai-compatible.md`）
 

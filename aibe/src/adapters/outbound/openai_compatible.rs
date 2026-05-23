@@ -2,9 +2,10 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::domain::ChatMessage;
-use crate::ports::outbound::{LlmError, LlmProvider};
+use crate::domain::{ChatMessage, LlmStepResult, ToolCall};
+use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
 
 pub struct OpenAiCompatibleLlm {
     client: reqwest::Client,
@@ -26,22 +27,8 @@ impl OpenAiCompatibleLlm {
     fn chat_url(&self) -> String {
         format!("{}/chat/completions", self.base_url)
     }
-}
 
-#[async_trait]
-impl LlmProvider for OpenAiCompatibleLlm {
-    async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
-        let body = ChatRequest {
-            model: self.model.clone(),
-            messages: messages
-                .iter()
-                .map(|m| ApiMessage {
-                    role: m.role.clone(),
-                    content: m.content.clone(),
-                })
-                .collect(),
-        };
-
+    async fn chat_completion(&self, body: ChatRequest) -> Result<ChatResponse, LlmError> {
         let response = self
             .client
             .post(self.chat_url())
@@ -61,18 +48,131 @@ impl LlmProvider for OpenAiCompatibleLlm {
             return Err(LlmError::Provider(format!("HTTP {status}: {text}")));
         }
 
-        let parsed: ChatResponse = serde_json::from_str(&text)
-            .map_err(|e| LlmError::Provider(format!("invalid response JSON: {e}; body: {text}")))?;
+        serde_json::from_str(&text)
+            .map_err(|e| LlmError::Provider(format!("invalid response JSON: {e}; body: {text}")))
+    }
+}
 
-        let content = parsed
+fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
+    messages
+        .iter()
+        .map(|m| {
+            let mut api = ApiMessage {
+                role: m.role.clone(),
+                content: Some(m.content.clone()),
+                tool_call_id: m.tool_call_id.clone(),
+                tool_calls: None,
+            };
+            if let Some(calls) = &m.tool_calls {
+                api.tool_calls = Some(
+                    calls
+                        .iter()
+                        .map(|tc| ApiToolCall {
+                            id: tc.id.clone(),
+                            r#type: "function".to_string(),
+                            function: ApiFunctionCall {
+                                name: tc.name.clone(),
+                                arguments: tc.arguments.to_string(),
+                            },
+                        })
+                        .collect(),
+                );
+                if m.content.is_empty() {
+                    api.content = None;
+                }
+            }
+            api
+        })
+        .collect()
+}
+
+fn parse_tool_calls(message: &ApiMessage) -> Vec<ToolCall> {
+    message
+        .tool_calls
+        .as_ref()
+        .map(|calls| {
+            calls
+                .iter()
+                .map(|c| {
+                    let args: Value =
+                        serde_json::from_str(&c.function.arguments).unwrap_or(Value::Null);
+                    ToolCall {
+                        id: c.id.clone(),
+                        name: c.function.name.clone(),
+                        arguments: args,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiCompatibleLlm {
+    async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
+        let body = ChatRequest {
+            model: self.model.clone(),
+            messages: to_api_messages(messages),
+            tools: None,
+        };
+        let parsed = self.chat_completion(body).await?;
+        let message = parsed
             .choices
             .into_iter()
             .next()
             .and_then(|c| c.message)
-            .map(|m| m.content)
-            .unwrap_or_default();
+            .unwrap_or(ApiMessage {
+                role: "assistant".to_string(),
+                content: Some(String::new()),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        Ok(ChatMessage::assistant(message.content.unwrap_or_default()))
+    }
 
-        Ok(ChatMessage::assistant(content))
+    async fn complete_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmStepResult, LlmError> {
+        let api_tools: Vec<ApiTool> = tools
+            .iter()
+            .map(|t| ApiTool {
+                r#type: "function".to_string(),
+                function: ApiToolFunction {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                },
+            })
+            .collect();
+
+        let body = ChatRequest {
+            model: self.model.clone(),
+            messages: to_api_messages(messages),
+            tools: if api_tools.is_empty() {
+                None
+            } else {
+                Some(api_tools)
+            },
+        };
+
+        let parsed = self.chat_completion(body).await?;
+        let message = parsed
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message)
+            .unwrap_or(ApiMessage {
+                role: "assistant".to_string(),
+                content: Some(String::new()),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+
+        let tool_calls = parse_tool_calls(&message);
+        let content = message.content.unwrap_or_default();
+        Ok(LlmStepResult::with_tool_calls(content, tool_calls))
     }
 }
 
@@ -80,12 +180,45 @@ impl LlmProvider for OpenAiCompatibleLlm {
 struct ChatRequest {
     model: String,
     messages: Vec<ApiMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ApiTool>>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct ApiMessage {
     role: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ApiToolCall>>,
+}
+
+#[derive(Serialize)]
+struct ApiTool {
+    r#type: String,
+    function: ApiToolFunction,
+}
+
+#[derive(Serialize)]
+struct ApiToolFunction {
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ApiToolCall {
+    id: String,
+    r#type: String,
+    function: ApiFunctionCall,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ApiFunctionCall {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Deserialize)]

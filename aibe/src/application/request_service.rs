@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
 use crate::domain::ChatMessage;
-use crate::ports::outbound::LlmProvider;
+use crate::ports::outbound::{LlmProvider, ToolRegistry, ToolsConfig};
 use crate::protocol::{ClientRequest, ClientResponse};
 
 pub struct RequestService {
@@ -12,9 +12,13 @@ pub struct RequestService {
 }
 
 impl RequestService {
-    pub fn new(llm: Arc<dyn LlmProvider>) -> Self {
+    pub fn new(
+        llm: Arc<dyn LlmProvider>,
+        registry: Arc<dyn ToolRegistry>,
+        tools_config: ToolsConfig,
+    ) -> Self {
         Self {
-            agent_turn: AgentTurnService::new(llm),
+            agent_turn: AgentTurnService::new(llm, registry, tools_config),
         }
     }
 

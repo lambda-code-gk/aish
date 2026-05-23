@@ -3,10 +3,53 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// `tool_calls` / LLM 向け tool result の既定上限（バイト）。
+pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = 32_768;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub socket_path: PathBuf,
     pub llm: LlmConfig,
+    pub tools: ToolsConfig,
+}
+
+/// ツール実行とエージェントループの設定。
+#[derive(Debug, Clone)]
+pub struct ToolsConfig {
+    pub max_rounds: u32,
+    pub exec_timeout_ms: u64,
+    /// `tool_calls` / LLM 向け tool result の最大バイト数。
+    pub max_tool_output_bytes: usize,
+    pub shell_exec: ShellExecConfig,
+    pub read_file: ReadFileConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellExecConfig {
+    pub enabled: bool,
+    pub allowed_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadFileConfig {
+    pub allowed_roots: Vec<PathBuf>,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            max_rounds: 8,
+            exec_timeout_ms: 30_000,
+            max_tool_output_bytes: DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+            shell_exec: ShellExecConfig {
+                enabled: true,
+                allowed_commands: vec![],
+            },
+            read_file: ReadFileConfig {
+                allowed_roots: vec![PathBuf::from(".")],
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

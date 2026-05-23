@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::ports::outbound::{AppConfig, ConfigError, ConfigLoader, LlmConfig};
+use crate::ports::outbound::{AppConfig, ConfigError, ConfigLoader, LlmConfig, ToolsConfig};
 
 const DEFAULT_CONFIG_PATH: &str = ".config/aibe/config.toml";
 
@@ -56,8 +56,43 @@ impl ConfigLoader for TomlConfig {
             });
 
         let llm = parse_llm(file_cfg.as_ref())?;
-        Ok(AppConfig { socket_path, llm })
+        let tools = parse_tools(file_cfg.as_ref());
+        Ok(AppConfig {
+            socket_path,
+            llm,
+            tools,
+        })
     }
+}
+
+fn parse_tools(file: Option<&FileConfig>) -> ToolsConfig {
+    let section = file.and_then(|c| c.tools.as_ref());
+    let mut tools = ToolsConfig::default();
+    if let Some(t) = section {
+        if let Some(n) = t.max_rounds {
+            tools.max_rounds = n;
+        }
+        if let Some(ms) = t.exec_timeout_ms {
+            tools.exec_timeout_ms = ms;
+        }
+        if let Some(n) = t.max_tool_output_bytes {
+            tools.max_tool_output_bytes = n;
+        }
+        if let Some(shell) = t.shell_exec.as_ref() {
+            if let Some(enabled) = shell.enabled {
+                tools.shell_exec.enabled = enabled;
+            }
+            if let Some(cmds) = shell.allowed_commands.clone() {
+                tools.shell_exec.allowed_commands = cmds;
+            }
+        }
+        if let Some(rf) = t.read_file.as_ref() {
+            if let Some(roots) = rf.allowed_roots.clone() {
+                tools.read_file.allowed_roots = roots.into_iter().map(expand_home).collect();
+            }
+        }
+    }
+    tools
 }
 
 fn parse_llm(file: Option<&FileConfig>) -> Result<LlmConfig, ConfigError> {
@@ -111,6 +146,27 @@ fn expand_home(path: String) -> PathBuf {
 struct FileConfig {
     socket_path: Option<String>,
     llm: Option<LlmSection>,
+    tools: Option<ToolsSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolsSection {
+    max_rounds: Option<u32>,
+    exec_timeout_ms: Option<u64>,
+    max_tool_output_bytes: Option<usize>,
+    shell_exec: Option<ShellExecSection>,
+    read_file: Option<ReadFileSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShellExecSection {
+    enabled: Option<bool>,
+    allowed_commands: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReadFileSection {
+    allowed_roots: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +180,37 @@ struct LlmSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_tools_section() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tools]
+max_rounds = 3
+exec_timeout_ms = 5000
+max_tool_output_bytes = 4096
+
+[tools.shell_exec]
+enabled = true
+allowed_commands = ["echo", "git"]
+
+[tools.read_file]
+allowed_roots = ["~/projects"]
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert_eq!(cfg.tools.max_rounds, 3);
+        assert_eq!(cfg.tools.exec_timeout_ms, 5000);
+        assert_eq!(cfg.tools.max_tool_output_bytes, 4096);
+        assert!(cfg.tools.shell_exec.enabled);
+        assert_eq!(cfg.tools.shell_exec.allowed_commands, vec!["echo", "git"]);
+        assert_eq!(cfg.tools.read_file.allowed_roots.len(), 1);
+    }
 
     #[test]
     fn parses_openai_compatible() {

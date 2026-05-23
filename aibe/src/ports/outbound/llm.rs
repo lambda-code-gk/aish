@@ -3,7 +3,8 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::ChatMessage;
+use crate::domain::{ChatMessage, LlmStepResult};
+use crate::ports::outbound::ToolDefinition;
 
 #[derive(Debug, Error)]
 pub enum LlmError {
@@ -11,8 +12,14 @@ pub enum LlmError {
     Provider(String),
 }
 
-/// 1 ターン分のテキスト応答を生成する（ツールループは将来拡張）。
+/// テキスト応答およびツール付き推論。
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError>;
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmStepResult, LlmError>;
 }

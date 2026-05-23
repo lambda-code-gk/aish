@@ -33,6 +33,8 @@ impl From<ProtocolMessage> for ChatMessage {
         ChatMessage {
             role: m.role,
             content: m.content,
+            tool_call_id: None,
+            tool_calls: None,
         }
     }
 }

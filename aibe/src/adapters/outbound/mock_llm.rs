@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 
-use crate::domain::ChatMessage;
-use crate::ports::outbound::{LlmError, LlmProvider};
+use crate::domain::{ChatMessage, LlmStepResult};
+use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
 
 /// 最後の user メッセージをエコーするモックプロバイダ。
 #[derive(Debug, Default)]
@@ -28,5 +28,18 @@ impl LlmProvider for MockLlm {
         Ok(ChatMessage::assistant(format!(
             "[mock] received: {last_user}"
         )))
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmStepResult, LlmError> {
+        let assistant = self.complete(messages).await?;
+        let _ = tools;
+        Ok(LlmStepResult {
+            assistant,
+            tool_calls: vec![],
+        })
     }
 }

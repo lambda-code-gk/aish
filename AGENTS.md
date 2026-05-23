@@ -60,7 +60,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
 # アーキテクチャに触れた変更では:
-./scripts/check-architecture.sh
+./scripts/check-architecture.sh   # クレート境界 + check-hexagonal.sh（application→adapters 等）
 ```
 
 ## 報告義務（必須）
@@ -118,6 +118,7 @@ cargo test --workspace
 | `docs/codex-review.md` | オプション: 厚い diff パケット（`CODEX_USE_PACKET=1`） |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
+| `docs/0001_aibe-tool-agent-loop-spec.md` | aibe ツール付きエージェントループ仕様（ドラフト） |
 
 機能変更時は、上記のいずれかを **必ず** 実装と同時に更新する。
 

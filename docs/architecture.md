@@ -34,7 +34,10 @@ aish →  （aibe への path 依存禁止）
 aibe →  aish 禁止
 ```
 
-機械チェック: `./scripts/check-architecture.sh`
+機械チェック:
+
+- `./scripts/check-architecture.sh` — クレート間依存・禁止 HTTP/LLM・キー直書き
+- 同スクリプト内で `./scripts/check-hexagonal.sh` を呼び出し、**クレート内レイヤー** を検査
 
 ### クレート別の依存方針
 
@@ -151,14 +154,33 @@ aibe →  aish 禁止
 ```text
 <crate>/src/
   domain/           # エンティティ・ルール（I/O なし）
-  application/      # ユースケース（port の trait のみ参照）
+  application/      # ユースケース（domain + ports のみ。adapters 禁止）
   ports/outbound/   # アプリが外に頼る trait
   adapters/         # port の具象（OS / HTTP / ファイル / socket）
 ```
 
+### レイヤー依存（機械検査: `scripts/check-hexagonal.sh`）
+
+| 層 | 許可する `use` | 禁止 |
+|----|----------------|------|
+| **domain** | domain 内 | `adapters`, `application` |
+| **ports** | domain, ports | `adapters`, `application` |
+| **application** | domain, ports, protocol 等 | `adapters`（**例外**は composition root のみ） |
+| **adapters** | domain, ports, adapters 内 | `application` |
+
+**composition root**（adapters を組み立てて `Arc<dyn Port>` を注入してよい application ファイル）:
+
+| クレート | ファイル |
+|---------|----------|
+| aibe | `application/server.rs` のみ |
+| aish | （なし — `main.rs` / `lib.rs` で配線） |
+| ai | （なし — `main.rs` で配線） |
+
+ユースケースの単体テストで adapters が必要なときは `tests/*.rs` に置く（`src/application` 内の `#[cfg(test)]` で adapters を `use` しない）。
+
 | クレート | 主なユースケース | Outbound ports（例） | Inbound adapters（例） |
 |---------|------------------|----------------------|-------------------------|
-| **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ConfigLoader` | Unix NDJSON リスナ（`application::server`） |
+| **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ToolExecutor`, `CommandPolicy`, `ConfigLoader` | Unix NDJSON リスナ、ツール（`shell_exec`, `read_file`） |
 | **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
 | **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask` |
 
@@ -184,10 +206,31 @@ aibe →  aish 禁止
 
 `architecture.md` 先頭の JSON スキーマどおり。`context.shell_log_tail` は `ai` が aish JSONL の末尾を載せる。
 
+- `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
+- `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。
+- 組み込みツール: `shell_exec`（設定 `allowed_commands` のみ）、`read_file`（`allowed_roots` 配下のみ）。
+- ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
+- ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/0001_aibe-tool-agent-loop-spec.md`。
+
+`tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
+
+#### エラーコード（`type: error`）
+
+| `code` | 意味 |
+|--------|------|
+| `invalid_request` | リクエスト不正 |
+| `provider_error` | LLM API 失敗 |
+| `tool_not_allowed` | 未知ツール名、またはリクエスト外のツール呼び出し |
+| `internal_error` | 内部エラー |
+
+`agent_turn_result.status` には `"ok"` のほか、ツール上限到達時は `"max_tool_rounds"`（`type: error` ではない。`tool_calls` と最終 assistant 本文を返す）。
+
+（`tool_error` / `tool_timeout` / `max_tool_rounds` の turn `error` コードは予約または非使用。MVP では個別ツール失敗は `tool_calls` + LLM 向け tool result、上限到達は `status: max_tool_rounds` の `agent_turn_result`。）
+
 ## 実装フェーズ（参考）
 
-1. **aibe**（済）: socket + `ping` + 1 ターン `agent_turn` + `MockLlm`
+1. **aibe**（済）: socket + `ping` + `agent_turn` + ツールループ + `MockLlm` / OpenAI 互換
 2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
-4. **済（本ラウンド）**: OpenAI 互換 LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク
-5. **次**: ツールループ、Gemini プロバイダ、ログマスクの拡張テスト、手動検証ドキュメント
+4. **済**: OpenAI 互換 LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`
+5. **次**: Gemini プロバイダ、`ai` からの `tools` 列挙、インタラクティブ `shell_exec` 許可、ログマスクの拡張

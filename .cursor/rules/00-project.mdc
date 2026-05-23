@@ -31,7 +31,7 @@ cargo clippy --workspace -- -D warnings
 cargo test --workspace
 ```
 
-アーキテクチャに触れた変更では `./scripts/check-architecture.sh` も実行する。
+アーキテクチャに触れた変更では `./scripts/check-architecture.sh` も実行する（内包: `scripts/check-hexagonal.sh` でレイヤー依存）。
 
 ## Git
 

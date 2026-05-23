@@ -43,6 +43,13 @@ check_forbidden_deps() {
   done
 }
 
+# クレート内レイヤー（domain / ports / application / adapters）
+if [[ -x "$ROOT/scripts/check-hexagonal.sh" ]]; then
+  "$ROOT/scripts/check-hexagonal.sh"
+else
+  fail "missing or non-executable scripts/check-hexagonal.sh"
+fi
+
 note "checking Cargo.toml boundaries..."
 
 # aish → aibe 禁止

@@ -32,9 +32,15 @@ pub struct ProtocolMessageOut {
 
 impl From<ChatMessage> for ProtocolMessageOut {
     fn from(m: ChatMessage) -> Self {
+        Self::from_assistant(&m)
+    }
+}
+
+impl ProtocolMessageOut {
+    pub fn from_assistant(m: &ChatMessage) -> Self {
         Self {
-            role: m.role,
-            content: m.content,
+            role: m.role.clone(),
+            content: m.content.clone(),
         }
     }
 }
@@ -49,10 +55,14 @@ impl ClientResponse {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     InvalidRequest,
     InternalError,
     ProviderError,
+    ToolError,
+    ToolTimeout,
+    ToolNotAllowed,
+    MaxToolRounds,
 }
