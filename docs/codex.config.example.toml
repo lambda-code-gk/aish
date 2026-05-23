@@ -1,0 +1,22 @@
+# 将来: Codex が [permissions.*] を安定サポートしたときの aish-subagent 例。
+# 現行のプロジェクト設定は .codex/config.toml の sandbox_mode を参照。
+#
+# ユーザー層 ~/.codex/config.toml にマージする追記案:
+
+# default_permissions = "aish-subagent"
+#
+# [permissions.aish-subagent.filesystem]
+# ":minimal" = "read"
+#
+# [permissions.aish-subagent.filesystem.":workspace_roots"]
+# "." = "write"
+# ".git" = "read"
+# ".codex" = "read"
+# "**/*.env" = "deny"
+#
+# [permissions.aish-subagent.workspace_roots]
+# "~/.config/aibe" = true
+# "~/.local/share/aibe" = true
+#
+# [permissions.aish-subagent.network]
+# enabled = false

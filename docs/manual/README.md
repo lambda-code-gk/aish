@@ -10,5 +10,6 @@
 |----------|------|
 | [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（OpenAI 互換）1 ターン |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
+| [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |
 
 テンプレは [testing.md](../testing.md) の「手動検証ドキュメント」を参照。

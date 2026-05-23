@@ -1,124 +1,167 @@
-# Codex 委譲（コンテキスト分散・別 LLM 監査）
+# Codex 委譲（サブエージェント・別 LLM）
 
-Cursor 親（実装・統合）と Codex MCP（仕様・監査・調査）の役割分担。  
-**目的**:
+Cursor 親と **Codex MCP サブエージェント**の役割分担。
 
-1. **Cursor のコンテキスト消費を分散** — 重い読取・diff・ドキュメント照合は Codex 側のスレッドに閉じる。
-2. **別 LLM による監査能力** — 実装と同じモデルに検証を任せず、Codex で仕様・レビュー・横断監査を行う。
+## 目的
 
-実装・`cargo test`・コミットは **Cursor 親のみ**。Codex はコードを直さない（指摘とドラフト文書のみ）。
+1. **別 LLM・別スレッド** — 調査・仕様・実装・横断確認を Codex に任せ、Cursor のコンテキストを節約する。
+2. **自律調査** — 親が載せ忘れたファイルも、**リポジトリ内なら Codex が自分で読める**（パケット必須ではない）。
+3. **パス境界** — **cwd（リポジトリ）内の読書き**（`sandbox_mode = workspace-write`）。リポジトリ外は原則不可（将来 `workspace_roots` で明示）。
 
-## アーキテクチャ
+## モデル
 
 ```mermaid
 flowchart LR
   subgraph cursor [Cursor 親]
     U[ユーザー要求]
-    P[パケット生成 scripts/codex-context.sh]
-    I[実装・テスト・docs 同期]
-    S[Codex 出力の要約のみ保持]
+    T[タスク文 + 短いヘッダ]
+    I[統合・最終判断・git commit]
+    S[Codex 要約 + threadId]
   end
   subgraph codex [Codex MCP]
-    T[threadId スレッド]
-    L[別モデル / profile]
+    P[sandbox: workspace-write]
+    X[読取・編集・shell]
   end
-  U --> P
-  P -->|prompt 1 回| T
-  T -->|content 要約| S
+  U --> T
+  T -->|prompt| codex
+  codex -->|要約| S
   S --> I
-  I -->|差分だけ reconcile| T
 ```
 
-### コンテキストの原則
+| 層 | 保持するもの |
+|----|--------------|
+| **Cursor** | ユーザー意図、Codex **要約**、`threadId` |
+| **Codex** | スレッド内の調査・編集・会話全文 |
 
-| 層 | 保持するもの | 保持しないもの |
-|----|--------------|----------------|
-| **Cursor** | ユーザー意図、受け入れ条件一覧、Codex の **要約**（各 5〜15 行）、`threadId` | Codex の全文ログ、リポジトリ全体の再読取 |
-| **Codex** | パケット全文、スレッド内の追加 Q&A | — |
+親は Codex 全文を履歴に貼らない。追い込みは `codex-reply` + 同じ `threadId`。
 
-親は Codex 返答を **そのまま次の Cursor ターンに貼り直さない**。要点だけ抽出し、必要なら `codex-reply` で Codex 側に追質問する。
+## 権限（`.codex/config.toml`）
 
-## タスク種別
+リポジトリ直下の [`.codex/config.toml`](../.codex/config.toml):
 
-| `CODEX_TASK` | いつ使う | Codex の役割 | `profile` | `sandbox` |
-|--------------|----------|--------------|-----------|-----------|
-| `spec` | 機能着手前 | 仕様・受け入れ条件・テスト方針のドラフト | `spec` | `read-only`（推奨）または `workspace-write`（docs 直書きを任せる場合のみ） |
-| `review` | 実装・テスト後 | 差分に対する実装監査 | `review` | `read-only` |
-| `audit` | リリース前・大きな変更 | 境界・セキュリティ・docs 整合の横断監査 | `audit` | `read-only` |
-| `spike` | 設計比較・影響調査 | 限定範囲の調査・選択肢提示 | `audit` または `spec` | `read-only` |
+| 設定 | 意味 |
+|------|------|
+| `sandbox_mode = "workspace-write"` | cwd（リポジトリ）内の読取・編集・コマンド実行 |
+| `[sandbox_workspace_write] network_access = false` | シェルからのネットワーク既定オフ |
 
-レビュー深度: `CODEX_REVIEW_MODE=fast|standard|deep`（`review` / `audit` で diff があるとき）。詳細は [codex-review.md](./codex-review.md)。
+**Linux**: `[features] use_legacy_landlock = true` で bwrap の `loopback: Operation not permitted` を回避（本リポジトリ設定済み）。
 
-## 手順（親エージェント）
+**将来**: Codex の `[permissions.aish-subagent]`（beta）例は [codex.config.example.toml](./codex.config.example.toml)。
 
-1. タスクを決める（`spec` / `review` / `audit` / `spike`）。
-2. パケット生成:
+MCP の `codex` 呼び出しでは **`sandbox: danger-full-access` を必ず渡す**（省略すると Ubuntu で bwrap EPERM）。`workspace-write` は使わない。
+
+## MCP 呼び出し（親エージェント）
+
+### 1. prompt を組み立てる（既定）
 
 ```bash
-CODEX_TASK=spec ./scripts/codex-context.sh
-CODEX_TASK=review ./scripts/codex-context.sh
-CODEX_TASK=audit CODEX_FOCUS_PATHS=aibe/src/,docs/ ./scripts/codex-context.sh
-CODEX_TASK=spike CODEX_FOCUS_PATHS=docs/architecture.md ./scripts/codex-context.sh
+{
+  ./scripts/codex-mcp-prompt.sh
+  echo
+  cat <<'EOF'
+  （ここにタスク。例: aibe の agent_turn と hexagonal チェックを横断確認し、
+  問題があれば修正して cargo test まで通して。）
+  EOF
+} 
+# → 連結した全文を MCP codex の prompt に渡す
 ```
 
-3. 出力の **下に** 親だけが知る短い **ブリーフ** を付ける（ユーザー要求、受け入れ条件、検証コマンド結果）。
-4. MCP `codex` を呼ぶ（下記テンプレ）。`threadId` を記録。
-5. 返答を **要約** して Cursor 側に残す。深掘りは `codex-reply` + 同じ `threadId`。
-6. 指摘対応後の再監査は **新規 `codex` ではなく** `codex-reply` に **差分パケットだけ** 渡す（`CODEX_REVIEW_MODE=fast` 推奨）。
+**やらないこと**: prompt に「`target/xxx.txt` を読め」だけ書く（ファイルパス参照だけにしない。タスク文を必ず含める）。
 
-## MCP 共通（全タスク）
+### 2. オプション: 親がコンテキストを絞る（パケット）
+
+```bash
+CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
+```
+
+`codex-context.sh` の diff・抜粋を同梱。レビュー深度は [codex-review.md](./codex-review.md)。
+
+### 3. 追加許可パス（そのターンだけ）
+
+```bash
+CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-mcp-prompt.sh
+```
+
+恒久に許可するなら `.codex/config.toml` の `workspace_roots` に追記。
+
+### 4. MCP 引数
 
 | 引数 | 値 |
 |------|-----|
 | `cwd` | リポジトリルート |
+| `profile` | `subagent`（既定）/ `spec` / `review` / `audit`（推論の深さ） |
 | `approval-policy` | `never` |
-| `config` | `{"approval_policy":"never"}`（タスク別に `model_reasoning_effort` は profile で） |
+| `config` | `{"approval_policy":"never"}` |
+| `sandbox` | `workspace-write`（省略時は `.codex/config.toml` の `sandbox_mode`） |
+| `developer-instructions` | `.cursor/rules/50-codex-subagent.mdc` 参照 |
 
-`.cursor/mcp.json` で `mcp-server` に `approval_policy="never"` を既定化済み。
+### 5. 続き
 
-## タスク別 `profile` / `developer-instructions`
+- `codex-reply` + `threadId`
+- 再開時もタスク文を短く添える。大きな差分だけ `CODEX_USE_PACKET=1` でよい。
 
-`~/.codex/config.toml` のプロファイル（リポジトリ外。未設定なら `config` で上書き可）:
+## タスク種別（`CODEX_TASK`）
 
-```toml
-[profiles.spec]
-model_reasoning_effort = "medium"
-approval_policy = "never"
+| 値 | 用途 |
+|----|------|
+| `subagent` | 既定。調査・実装・修正・検証など自由記述 |
+| `spec` | 仕様ドラフト（`docs/` に書いてよい） |
+| `review` | 変更の監査（パケット任意） |
+| `audit` | 境界・セキュリティ横断 |
+| `spike` | 設計比較・調査のみ |
 
-[profiles.review]
-model_reasoning_effort = "low"
-approval_policy = "never"
+`CODEX_TASK` は `codex-mcp-prompt.sh` の Role 行に反映されるだけ。実際の作業内容は **prompt 本文**で伝える。
 
-[profiles.audit]
-model_reasoning_effort = "medium"
-approval_policy = "never"
+## Codex に任せてよいこと
+
+- リポジトリ内の読取・編集・`cargo fmt` / `clippy` / `test` / `./scripts/check-architecture.sh`
+- 仕様ドラフト（`docs/`）
+- 横断調査・指摘・修正案の実装（サブエージェントとして）
+
+## 親（Cursor）が担うこと
+
+- ユーザー意図の最終判断
+- Codex 要約の保持と統合
+- **`git commit` / `push` はユーザー明示時のみ**（Codex に任せない運用を推奨）
+- MCP 障害時のフォールバック
+
+## Linux: `bwrap: loopback: Operation not permitted`
+
+Ubuntu 24.04 などで AppArmor が unprivileged user namespace を制限していると、Codex の **bwrap** サンドボックスが失敗し、MCP からの `cat` / `rg` も同じエラーになる。
+
+**CLI（手元）**
+
+```bash
+./scripts/codex-cli.sh …   # Ubuntu: Landlock 有効
 ```
 
-`developer-instructions` の骨子は `.cursor/rules/50-codex-subagent.mdc` に記載。プロンプト先頭に次の一行を付けるとよい:
+`workspace-write` を明示すると permission profiles と Landlock が競合するため、プロジェクト [`.codex/config.toml`](../.codex/config.toml) には `sandbox_mode` を書かない。
 
-```text
-Role: <spec|review|audit|spike> for aish workspace. Separate LLM auditor — do not implement code.
+**Cursor MCP**
+
+- [`.cursor/mcp.json`](../.cursor/mcp.json) → `scripts/codex-mcp-wrapper.sh`（認証は `~/.codex`、`danger-full-access`）
+- 事前に `codex login`（ChatGPT または API キー）
+- **設定変更後は MCP 再接続が必須**（古い `mcp-server` プロセスは Landlock を保持したまま）
+
+診断: `./scripts/codex-fix-linux-sandbox.sh`
+
+Landlock 有効時も失敗する場合:
+
+```bash
+sudo apt install -y apparmor-profiles apparmor-utils bubblewrap
+# プロファイルがパッケージに含まれる場合のみ:
+sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 ```
 
-## シェルと速度
+## MCP がそれでも動かないとき
 
-無差別探索（`rg --files`, `find`, 全体 `cargo`）は遅延の主因。対策は **パケットで先に渡す** ことと、**許可パス・回数上限**（review モード別）。全面禁止はしない。
-
-| 手段 | 用途 |
-|------|------|
-| パケット（`codex-context.sh`） | 仕様・監査・レビュー共通のコンテキスト分散 |
-| 限定シェル（`standard` / `deep`） | パケット不足分だけ Codex が読取 |
-| 親の `Read` → `codex-reply` | 特定ファイル全文が必要なとき |
-| `codex review` CLI | MCP 外の手元差分レビュー |
-
-## Codex に任せないこと
-
-- Rust 実装・テスト追加・`docs/` の実装同期（親の責務）
-- 1 行修正の説明だけ
-- MCP 障害時（親が仕様・監査を担い、未実施と明記）
+1. Cursor の **Codex MCP** にシェル実行権限（Settings → MCP）
+2. 手元で `codex` CLI（MCP 外）
+3. 親が代替し **Codex 未実施**を明記
 
 ## 関連
 
 - ルール: `.cursor/rules/50-codex-subagent.mdc`
-- レビュー深度: [codex-review.md](./codex-review.md)
+- オプションの厚いパケット: [codex-review.md](./codex-review.md)
 - 入口: `AGENTS.md`

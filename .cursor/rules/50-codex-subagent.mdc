@@ -1,105 +1,85 @@
 ---
-description: Codex は仕様・監査・調査。実装とコンテキスト重い読取は Cursor 親
+description: Codex MCP サブエージェント（別 LLM・cwd+許可パス内で自律作業）
 alwaysApply: true
 ---
 
-# Codex MCP 委譲（別 LLM・コンテキスト分散）
+# Codex MCP サブエージェント
 
-**目的**:
+**役割**: Codex = **コプロセス上のサブエージェント**（調査・仕様・実装・検証・横断確認）。Cursor 親 = タスク委譲・統合・要約保持・**git commit はユーザー明示時のみ**。
 
-1. **Cursor のコンテキスト消費を分散** — diff・docs・横断照合は `scripts/codex-context.sh` のパケットで Codex に渡し、Codex 全文は Cursor 履歴に戻さない（要約 + `threadId` のみ保持）。
-2. **別 LLM による監査** — 実装（Cursor）と仕様・レビュー・監査（Codex）を分離する。
-
-**役割**: Codex = 仕様ドラフト・実装レビュー・横断監査・限定調査。Cursor 親 = 実装・テスト・`docs/` 同期・パケット生成・Codex 要約。
-
-正本: `docs/codex-delegation.md`。レビュー深度: `docs/codex-review.md`。
+正本: `docs/codex-delegation.md`。オプションの厚い diff パケット: `docs/codex-review.md`。
 
 ## ワークフロー（典型）
 
 ```text
-spec（Codex）→ 実装・検証（Cursor）→ review（Codex）→ 指摘対応（Cursor）
-     ↑ audit / spike は必要に応じて挿入
-     ↑ 再確認は codex-reply（差分パケットのみ）
+親: タスク文 + codex-mcp-prompt.sh → MCP codex
+Codex: repo 内を自律調査・編集・テスト
+親: 要約 + threadId → 統合 or codex-reply
 ```
 
-## タスクと MCP 引数
+パケット（`CODEX_USE_PACKET=1`）は **親がコンテキストを絞りたいときだけ**。
 
-親は **必ず** `./scripts/codex-context.sh`（または `codex-review-context.sh`）を実行し、出力を `prompt` に貼る。続きは `codex-reply` + `threadId`。
+## MCP 呼び出し（親が行う）
 
-| `CODEX_TASK` | タイミング | `profile` | `sandbox` |
-|--------------|------------|-----------|-----------|
-| `spec` | 非自明な機能・プロトコル変更前 | `spec` | `read-only`（推奨） |
-| `review` | テスト通過後・完了報告前 | `review` | `read-only` |
-| `audit` | 境界・セキュリティ・docs 横断 | `audit` | `read-only` |
-| `spike` | 設計比較・影響調査 | `audit` または `spec` | `read-only` |
+1. prompt を組み立てる:
 
-**共通 MCP 引数**（省略禁止）:
+```bash
+{ ./scripts/codex-mcp-prompt.sh; printf '\n%s\n' '（タスク本文）'; }
+```
+
+2. MCP `codex`:
 
 | 引数 | 値 |
 |------|-----|
 | `cwd` | リポジトリルート |
+| `profile` | `subagent` / `spec` / `review` / `audit` |
 | `approval-policy` | `never` |
-| `config` | `{"approval_policy":"never"}`（reasoning は profile に任せる） |
+| `config` | `{"approval_policy":"never"}` |
+| `sandbox` | **`danger-full-access`（必須）** — 省略すると bwrap EPERM で失敗 |
+| `prompt` | 上記連結全文 |
+| `developer-instructions` | 下記 |
 
-プロンプト先頭の一行:
+3. 返答は **要約 + `threadId` のみ** Cursor に残す。続きは `codex-reply`。
+
+**禁止**: prompt が「ファイル X を読め」だけ。タスク文なし。
+
+## 権限
+
+- プロジェクト [`.codex/config.toml`](../.codex/config.toml): `sandbox_mode = workspace-write`、`network_access = false`
+- **cwd 内**: 読取・編集可
+- **外**: 原則不可（将来 `workspace_roots` — `docs/codex.config.example.toml`）
+
+## `developer-instructions` 骨子
 
 ```text
-Role: <spec|review|audit|spike> for aish workspace. Separate LLM auditor — do not implement code.
-```
-
-### `developer-instructions` 骨子
-
-**共通末尾**:
-
-```text
-Output in Japanese. Mark 推測 explicitly. No repo-wide search (rg --files, find, grep -r, cargo test/build).
+Subagent for aish. Project .codex/config.toml uses workspace-write sandbox; stay in repo cwd unless user allows extra paths.
+Explore with shell/tools; edits allowed in workspace. Do not access paths outside the repo without explicit user allowance. Do not commit secrets or write API keys to the repo.
+Do not git commit or git push unless the user message explicitly requests it.
+Output in Japanese. Mark 推測 explicitly.
+Prefer cargo fmt/clippy/test/check-architecture.sh after code changes.
 No require_escalated retries on the same command.
 ```
 
-**spec** — `CODEX_TASK=spec`:
+タスク別の追記（任意）:
 
-```text
-Draft specification only: goals, out-of-scope, testable acceptance criteria, affected crates/protocols,
-test plan, security/logging notes, 未確定. Use the packet and static docs; shell budget max 15,
-only paths under "## フォーカスパス" if present. Do not edit source unless user explicitly allowed workspace-write.
-```
+- **spec**: 仕様は docs/ に。受け入れ条件・未確定を明示。
+- **review**: 重大/中/低、通過、要確認。パケット同梱時はそれも参照。
+- **audit**: クレート境界・秘密・docs 整合・本番経路のスタブ。
 
-**review** — `CODEX_REVIEW_MODE` に応じる（`docs/codex-review.md`）:
+## 親の責務
 
-- `fast`: pasted diff/arch-check only; shell max 2 on allowed paths.
-- `standard`: shell max 12 on "## 変更ファイル（レビュー許可パス）" only.
-- `deep`: shell max 20; prefer packet excerpts first.
-
-出力: 重大 / 中 / 低、通過、要確認、受け入れ条件との対応。
-
-**audit**:
-
-```text
-Cross-cutting audit: crate boundaries (ai→aibe, aish independent), secrets/logs/permissions,
-docs vs implementation, stub production paths. Shell max 15 on focus/allowed paths only.
-```
-
-**spike**:
-
-```text
-Investigation only: options, tradeoffs, recommendation. Shell max 10 on "## フォーカスパス" only.
-No implementation.
-```
-
-## 親の責務（コンテキスト分散）
-
-- パケット生成 **1 回** → MCP `codex` → **要約だけ** Cursor に残す（全文貼り戻し禁止）。
-- ファイル全文が必要なら親が `Read` し、`codex-reply` に抜粋を渡す。
-- 実装・`cargo fmt` / `clippy` / `test` / `check-architecture` は親のみ。
-- `git commit` / `push` はユーザー明示まで行わない。
+- タスクを明確に書く（何をしてほしいか）
+- Codex 実行中は同じファイルを編集しない（競合回避）
+- `cargo test` 等の最終確認は親でもよいが、Codex に任せてもよい
+- **git commit / push はユーザー明示まで行わない**（Codex にも明示指示がない限りさせない）
 
 ## Codex に委譲しないこと
 
-- Rust 実装・テスト追加・実装に伴う `docs/` 更新
-- 単純な説明・1 行修正
-- MCP 障害時（親が担い、未実施を明記）
+- ユーザーへの最終報告の責任（親が要約する）
+- MCP 障害時の黙殺
 
-## 競合・MCP
+## MCP 障害（bwrap）
 
-- Codex 実行中は親が同じファイルを編集しない。
-- MCP 無効時: `.cursor/mcp.json` の `command` を `which codex` に合わせ、Cursor 再起動。
+Ubuntu 24.04: bwrap EPERM → CLI は `.codex/config.toml` の `use_legacy_landlock`。MCP は `scripts/codex-mcp-wrapper.sh`（Landlock 併用不可）。`./scripts/codex-fix-linux-sandbox.sh`。MCP 変更後は Cursor 再起動。
+
+それでも失敗時は親が代替し未実施を明記。

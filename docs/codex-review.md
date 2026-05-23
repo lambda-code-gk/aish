@@ -1,43 +1,49 @@
-# Codex レビュー深度（`CODEX_TASK=review`）
+# Codex レビュー用パケット（オプション）
 
-実装後監査のパケット生成とシェル方針。全体像は [codex-delegation.md](./codex-delegation.md)。
+**既定の Codex 運用はサブエージェント**（タスク文 + repo 内自律調査）。本書は **親が diff を先に渡したいとき** のオプション。
+
+全体: [codex-delegation.md](./codex-delegation.md)
+
+## いつ使うか
+
+| 方式 | 向く場面 |
+|------|----------|
+| **既定（パケットなし）** | 広く調べてほしい、関連ファイルの読み落としを減らしたい |
+| **`CODEX_USE_PACKET=1`** | 変更範囲を明示したい、Cursor 側で既に diff を選んだ |
 
 ## パケット生成
 
 ```bash
-./scripts/codex-review-context.sh
-# 同等
-CODEX_TASK=review ./scripts/codex-context.sh
+CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
+# または
+CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-context.sh
 ```
 
-## レビューモード
+出力の **後ろにタスク文**を足して MCP `prompt` に渡す。
 
-| `CODEX_REVIEW_MODE` | パケット | Codex シェル目安 |
-|---------------------|----------|------------------|
-| `fast` | diff + arch-check | 最大 2 回・許可パスのみ |
-| `standard`（既定） | + 変更ファイル抜粋 | 最大 12 回 |
-| `deep` | + 広い抜粋 | 最大 20 回 |
+## レビューモード（`CODEX_REVIEW_MODE`）
+
+`codex-context.sh` 内での抜粋量のみ変わる。Codex は **引き続き repo 内を読んでよい**（permission profile の範囲内）。
+
+| モード | パケット |
+|--------|----------|
+| `fast` | diff + arch-check |
+| `standard`（既定） | + 変更ファイル抜粋 |
+| `deep` | + 広い抜粋 |
 
 ```bash
-CODEX_REVIEW_MODE=deep ./scripts/codex-review-context.sh
+CODEX_REVIEW_MODE=deep CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
 ```
 
-`developer-instructions` は `.cursor/rules/50-codex-subagent.mdc` の **review** 節。
+## 再レビュー
 
-## 遅延を避ける
+`codex-reply` + `threadId`。差分だけなら:
 
-- プロンプトに diff / 抜粋が無いと Codex が全リポジトリ探索しやすい（数分級）。
-- 再レビューは `codex-reply` + 差分だけ。新規 `codex` で全文再走査しない。
+```bash
+CODEX_REVIEW_MODE=fast CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-context.sh
+```
 
-## 深い確認の代替
+## 禁止（パケット運用時も）
 
-| 手段 | 説明 |
-|------|------|
-| `deep` モード | パケットを厚くする |
-| 親が `Read` → `codex-reply` | Cursor 側で読み、Codex に貼る |
-| `codex review --uncommitted` | MCP 外の CLI 差分レビュー |
-
-## 禁止（review / audit 共通）
-
-- `rg --files` / `find` / `grep -r` / 全体 `cargo test`・`cargo build`
-- 許可パス外の読取、同一コマンドの `require_escalated` 連打
+- リポジトリ外への無許可アクセス（`workspace_roots` 外）
+- 実 API キーのコミット

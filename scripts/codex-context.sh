@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Codex MCP 用コンテキストパケットを生成する（Cursor 親がプロンプトに貼る）。
+# Codex MCP 用コンテキストパケット（オプション）。既定は codex-mcp-prompt.sh のみで Codex が repo 内を自律調査。
 #
 # 目的:
-#   - Cursor のコンテキスト消費を抑える（重い読取・diff は一度だけパケット化）
-#   - Codex（別 LLM）に監査・仕様・調査を任せる
+#   - 親が diff / 抜粋を先に渡してコンテキストを絞る（CODEX_USE_PACKET=1）
+#   - Codex（別 LLM）への監査・仕様・調査の補助
 #
 # CODEX_TASK:
 #   spec    — 仕様ドラフト（docs / 境界 / セキュリティを同梱）
@@ -32,8 +32,10 @@ emit_header() {
   echo "- review_mode: ${REVIEW_MODE}"
   echo "- generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
-  echo "親エージェント: このブロック以下を MCP codex ツールの prompt に貼る。"
-  echo "続きは codex-reply + 同じ threadId。Codex 全文を Cursor 履歴に丸ごと戻さない。"
+  echo "親エージェント（MCP・オプション）:"
+  echo "  既定: タスク文 + ./scripts/codex-mcp-prompt.sh（パケットなし）→ Codex が repo 内を自律調査"
+  echo "  親が diff を絞りたいときのみ: CODEX_USE_PACKET=1 CODEX_TASK=${TASK} ./scripts/codex-mcp-prompt.sh"
+  echo "  続き: codex-reply + threadId。Codex 返答は Cursor に要約のみ"
   echo
 }
 

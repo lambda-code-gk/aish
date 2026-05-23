@@ -1,0 +1,24 @@
+# aish プロジェクト共有設定（プロファイル等）。
+# sandbox_mode は経路ごとに分離:
+#   CLI: ./scripts/codex-cli.sh（workspace-write + Landlock）
+#   MCP: scripts/codex-mcp-wrapper.sh → .codex-mcp/
+# 正本: docs/codex-delegation.md
+
+[sandbox_workspace_write]
+network_access = false
+
+[profiles.subagent]
+approval_policy = "never"
+model_reasoning_effort = "medium"
+
+[profiles.spec]
+approval_policy = "never"
+model_reasoning_effort = "medium"
+
+[profiles.review]
+approval_policy = "never"
+model_reasoning_effort = "low"
+
+[profiles.audit]
+approval_policy = "never"
+model_reasoning_effort = "medium"

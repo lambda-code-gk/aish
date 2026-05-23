@@ -93,19 +93,18 @@ cargo test --workspace
 ## ツール
 
 - **Cursor**（`.cursor/rules/` が補足規約）— **実装**・テスト・`docs/` の実装同期
-- **Codex**（MCP `codex` / `codex-reply`）— **仕様・監査・調査**（実装は Cursor）。コンテキスト分散と別 LLM 監査: `docs/codex-delegation.md`、ルール: `.cursor/rules/50-codex-subagent.mdc`
+- **Codex**（MCP `codex` / `codex-reply`）— **サブエージェント**（repo 内自律調査・編集可、パス境界は `.codex/config.toml`）。`docs/codex-delegation.md`、ルール: `.cursor/rules/50-codex-subagent.mdc`
 
 `cursor_tasks/` の r 系列タスクファイルは **使用しない**。
 
 ### Cursor と Codex の流れ
 
-1. 親が `CODEX_TASK=spec ./scripts/codex-context.sh` → Codex で仕様ドラフト（要約だけ Cursor に残す）
-2. Cursor で実装・検証
-3. 親が `CODEX_TASK=review ./scripts/codex-context.sh` → Codex で監査（再確認は `codex-reply`）
-4. 必要なら `audit` / `spike`（横断監査・設計調査）
-5. Cursor で指摘対応 → 完了報告
+1. 親が **タスク文** + `./scripts/codex-mcp-prompt.sh` を MCP `prompt` に渡す → Codex がサブエージェントとして作業（要約 + `threadId` のみ Cursor に残す）
+2. 親が統合・最終判断・必要なら Cursor でも追実装
+3. 続きは `codex-reply`。親が diff を絞りたいときだけ `CODEX_USE_PACKET=1`
+4. **`git commit` / `push` はユーザー明示時のみ**（Codex にも明示がない限りさせない）
 
-詳細: `docs/codex-delegation.md`
+詳細: `docs/codex-delegation.md`（MCP は `sandbox: danger-full-access` 必須）
 
 ## ドキュメント
 
@@ -115,8 +114,10 @@ cargo test --workspace
 | `docs/testing.md` | テスト種別と実行方針 |
 | `docs/security.md` | 秘密情報・ログ・権限 |
 | `docs/manual/` | 手動検証チェックリスト |
-| `docs/codex-delegation.md` | Codex 委譲（コンテキスト分散・タスク種別） |
-| `docs/codex-review.md` | レビュー深度（fast / standard / deep） |
+| `docs/codex-delegation.md` | Codex サブエージェント（権限・MCP 手順） |
+| `docs/codex-review.md` | オプション: 厚い diff パケット（`CODEX_USE_PACKET=1`） |
+| `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
+| `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
 
 機能変更時は、上記のいずれかを **必ず** 実装と同時に更新する。
 
