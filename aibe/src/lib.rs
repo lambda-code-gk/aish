@@ -4,6 +4,8 @@
 
 pub mod adapters;
 pub mod application;
+
+pub use application::tool_defs::{is_known_tool, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
 pub mod client;
 pub mod daemon;
 pub mod domain;

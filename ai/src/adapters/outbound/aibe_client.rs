@@ -36,7 +36,7 @@ impl AgentClient for AibeUnixClient {
                 role: "user".to_string(),
                 content: input.user_message.clone(),
             }],
-            tools: vec![],
+            tools: input.tools.clone(),
             context: RequestContext {
                 shell_log_tail: input.shell_log_tail.clone(),
             },

@@ -182,7 +182,7 @@ aibe →  aish 禁止
 |---------|------------------|----------------------|-------------------------|
 | **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ToolExecutor`, `CommandPolicy`, `ConfigLoader` | Unix NDJSON リスナ、ツール（`shell_exec`, `read_file`） |
 | **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
-| **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask` |
+| **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask`。`[ask].tools` / `--tools` を展開して aibe の `tools` allowlist を構築 |
 
 `ai` は `aibe::protocol` のみをクレート依存し、`aish` には依存しない（ログはファイルパスで読む）。
 
@@ -233,4 +233,4 @@ aibe →  aish 禁止
 2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
 4. **済**: OpenAI 互換 LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`
-5. **次**: Gemini プロバイダ、`ai` からの `tools` 列挙、インタラクティブ `shell_exec` 許可、ログマスクの拡張
+5. **次**: Gemini プロバイダ、インタラクティブ `shell_exec` 許可、ログマスクの拡張（ai ツール連携は `docs/0002_ai-tools-client-spec.md` 参照・実装済み）

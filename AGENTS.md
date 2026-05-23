@@ -116,6 +116,7 @@ cargo test --workspace
 | `docs/manual/` | 手動検証チェックリスト |
 | `docs/codex-delegation.md` | Codex サブエージェント（権限・MCP 手順） |
 | `docs/codex-review.md` | オプション: 厚い diff パケット（`CODEX_USE_PACKET=1`） |
+| `docs/0002_ai-tools-client-spec.md` | ai クライアントのツール連携仕様（ドラフト） |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
 | `docs/0001_aibe-tool-agent-loop-spec.md` | aibe ツール付きエージェントループ仕様（ドラフト） |
