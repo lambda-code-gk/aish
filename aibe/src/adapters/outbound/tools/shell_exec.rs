@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::domain::{ExecutedToolCall, ToolResult};
+use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
 use crate::ports::outbound::{CommandPolicy, ToolExecutionContext, ToolExecutor};
 
 use super::tool_output::limit_tool_output;
@@ -39,8 +39,8 @@ struct ShellExecArgs {
 
 #[async_trait]
 impl ToolExecutor for ShellExecTool {
-    fn name(&self) -> &'static str {
-        "shell_exec"
+    fn name(&self) -> ToolName {
+        ToolName::shell_exec()
     }
 
     async fn execute(
@@ -56,13 +56,7 @@ impl ToolExecutor for ShellExecTool {
         if !self.policy.shell_exec_enabled() {
             let msg = "shell_exec is disabled in server config";
             return (
-                ExecutedToolCall::err(
-                    id.clone(),
-                    self.name().to_string(),
-                    args_value,
-                    "disabled",
-                    msg,
-                ),
+                ExecutedToolCall::err(id.clone(), self.name(), args_value, "disabled", msg),
                 ToolResult {
                     tool_call_id: id,
                     content: msg.to_string(),
@@ -78,7 +72,7 @@ impl ToolExecutor for ShellExecTool {
                 return (
                     ExecutedToolCall::err(
                         id.clone(),
-                        self.name().to_string(),
+                        self.name(),
                         args_value,
                         "invalid_arguments",
                         &msg,
@@ -97,7 +91,7 @@ impl ToolExecutor for ShellExecTool {
             return (
                 ExecutedToolCall::err(
                     id.clone(),
-                    self.name().to_string(),
+                    self.name(),
                     args_value,
                     "invalid_arguments",
                     msg,
@@ -115,7 +109,7 @@ impl ToolExecutor for ShellExecTool {
             return (
                 ExecutedToolCall::err(
                     id.clone(),
-                    self.name().to_string(),
+                    self.name(),
                     args_value,
                     "command_not_allowed",
                     msg,
@@ -152,12 +146,7 @@ impl ToolExecutor for ShellExecTool {
                 let body = limit_tool_output(&body_raw, self.max_output_bytes);
                 if output.status.success() {
                     (
-                        ExecutedToolCall::ok(
-                            id.clone(),
-                            self.name().to_string(),
-                            args_value,
-                            body.clone(),
-                        ),
+                        ExecutedToolCall::ok(id.clone(), self.name(), args_value, body.clone()),
                         ToolResult {
                             tool_call_id: id,
                             content: body,
@@ -168,7 +157,7 @@ impl ToolExecutor for ShellExecTool {
                     (
                         ExecutedToolCall::err(
                             id.clone(),
-                            self.name().to_string(),
+                            self.name(),
                             args_value,
                             "nonzero_exit",
                             format!("process exited with {code}"),
@@ -184,7 +173,7 @@ impl ToolExecutor for ShellExecTool {
             Ok(Err(msg)) => (
                 ExecutedToolCall::err(
                     id.clone(),
-                    self.name().to_string(),
+                    self.name(),
                     args_value,
                     "execution_failed",
                     &msg,
@@ -198,13 +187,7 @@ impl ToolExecutor for ShellExecTool {
             Err(_) => {
                 let msg = format!("command timed out after {timeout_ms}ms");
                 (
-                    ExecutedToolCall::err(
-                        id.clone(),
-                        self.name().to_string(),
-                        args_value,
-                        "timeout",
-                        &msg,
-                    ),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg.clone(),
