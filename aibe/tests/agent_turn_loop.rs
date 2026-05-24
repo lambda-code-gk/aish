@@ -7,30 +7,23 @@ use std::sync::Arc;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::agent_turn::AgentTurnService;
-use aibe::domain::{ChatMessage, ExecutedToolStatus, LlmStepResult, ToolCall, ToolName};
+use aibe::domain::{
+    AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, LlmStepResult, ToolCall, ToolName,
+};
 use aibe::ports::outbound::{LlmError, LlmProvider, ShellExecConfig, ToolDefinition, ToolsConfig};
-use aibe::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, RequestContext};
+use aibe::protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
 use async_trait::async_trait;
 use serde_json::json;
 use tempfile::tempdir;
 
-fn process_cwd_context() -> RequestContext {
-    RequestContext {
-        cwd: Some(
-            std::env::current_dir()
-                .expect("cwd")
-                .to_string_lossy()
-                .into_owned(),
-        ),
-        ..Default::default()
-    }
+fn process_cwd_context() -> AgentTurnContext {
+    let cwd = ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd");
+    AgentTurnContext::for_tool_turn(cwd, None)
 }
 
-fn cwd_context(path: &std::path::Path) -> RequestContext {
-    RequestContext {
-        cwd: Some(path.to_string_lossy().into_owned()),
-        ..Default::default()
-    }
+fn cwd_context(path: &std::path::Path) -> AgentTurnContext {
+    let cwd = ClientCwd::new(path.to_path_buf()).expect("absolute cwd");
+    AgentTurnContext::for_tool_turn(cwd, None)
 }
 
 #[tokio::test]
@@ -43,7 +36,7 @@ async fn empty_tools_uses_complete_path() {
             "1".into(),
             vec![ChatMessage::user("hi")],
             vec![],
-            RequestContext::default(),
+            AgentTurnContext::for_text_only(None),
         )
         .await;
     match res {
@@ -66,7 +59,7 @@ async fn tools_without_cwd_is_rejected() {
             "1".into(),
             vec![ChatMessage::user("hi")],
             vec![ToolName::read_file()],
-            RequestContext::default(),
+            AgentTurnContext::for_text_only(None),
         )
         .await;
     match res {
@@ -452,10 +445,10 @@ async fn shell_exec_runs_in_context_cwd() {
             "cwd-shell".into(),
             vec![ChatMessage::user("run")],
             vec![ToolName::shell_exec()],
-            RequestContext {
-                cwd: Some(client_sub.to_string_lossy().into_owned()),
-                ..Default::default()
-            },
+            AgentTurnContext::for_tool_turn(
+                ClientCwd::new(client_sub.clone()).expect("absolute cwd"),
+                None,
+            ),
         )
         .await;
     match res {
@@ -496,10 +489,10 @@ async fn read_file_relative_path_uses_context_cwd() {
             "cwd".into(),
             vec![ChatMessage::user("read")],
             vec![ToolName::read_file()],
-            RequestContext {
-                cwd: Some(client_sub.to_string_lossy().into_owned()),
-                ..Default::default()
-            },
+            AgentTurnContext::for_tool_turn(
+                ClientCwd::new(client_sub.clone()).expect("absolute cwd"),
+                None,
+            ),
         )
         .await;
     match res {

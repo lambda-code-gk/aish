@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
-use crate::domain::{parse_tool_names, ChatMessage};
+use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::outbound::{LlmProvider, ToolRegistry, ToolsConfig};
-use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
+use crate::protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
 
 pub struct RequestService {
     agent_turn: AgentTurnService,
@@ -33,9 +33,9 @@ impl RequestService {
             } => {
                 let messages: Vec<ChatMessage> = messages.into_iter().map(Into::into).collect();
 
-                // tools 非空: cwd を tool 名検証より先（0003 受け入れ条件 2）
+                // tools 非空: cwd を tool 名検証より先（0003 / 0005 受け入れ条件）
                 if !tools.is_empty() {
-                    if let Err(e) = context.require_client_cwd() {
+                    if let Err(e) = validate_client_cwd_for_tools(&context) {
                         return ClientResponse::error(id, ErrorCode::InvalidRequest, e.to_string());
                     }
                 }
@@ -46,8 +46,21 @@ impl RequestService {
                         return ClientResponse::error(id, ErrorCode::ToolNotAllowed, e.to_string());
                     }
                 };
-                self.agent_turn.run(id, messages, tools, context).await
+
+                let ctx = match AgentTurnContext::try_from(context) {
+                    Ok(ctx) => ctx,
+                    Err(e) => match e {},
+                };
+
+                self.agent_turn.run(id, messages, tools, ctx).await
             }
         }
+    }
+}
+
+fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientCwdError> {
+    match context.cwd.as_deref() {
+        Some(raw) => ClientCwd::parse(raw).map(|_| ()),
+        None => Err(ClientCwdError::Missing),
     }
 }

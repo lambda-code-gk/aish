@@ -5,9 +5,10 @@ use std::sync::Arc;
 use crate::application::llm_error::client_response_for_llm_error;
 use crate::application::tool_defs::definitions_for;
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
-use crate::domain::{ChatMessage, ExecutedToolCall, ToolCall, ToolName, ToolResult};
+use crate::domain::{
+    AgentTurnContext, ChatMessage, ExecutedToolCall, ToolCall, ToolName, ToolResult,
+};
 use crate::ports::outbound::{LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig};
-use crate::protocol::RequestContext;
 use crate::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
 
 pub struct AgentTurnService {
@@ -34,7 +35,7 @@ impl AgentTurnService {
         id: String,
         messages: Vec<ChatMessage>,
         tools: Vec<ToolName>,
-        context: RequestContext,
+        context: AgentTurnContext,
     ) -> ClientResponse {
         if messages.is_empty() {
             return ClientResponse::error(
@@ -44,24 +45,22 @@ impl AgentTurnService {
             );
         }
 
-        let mut conversation = messages;
-        if let Some(ref tail) = context.shell_log_tail {
-            if !tail.is_empty() {
-                conversation.insert(0, ChatMessage::user(format!("[shell log tail]\n{tail}")));
-            }
-        }
+        let conversation = inject_shell_log_tail(messages, &context);
 
         if tools.is_empty() {
             return self.finish_text_only(id, &conversation).await;
         }
 
-        // tools 非空: cwd を tool 名より先に検証（0003 受け入れ条件 2）
-        let tool_ctx = match tool_execution_context(&context) {
-            Ok(ctx) => ctx,
-            Err(msg) => {
-                return ClientResponse::error(id, ErrorCode::InvalidRequest, msg);
-            }
-        };
+        if let Err(e) = context.validate_tools_enabled(&tools) {
+            return ClientResponse::error(id, ErrorCode::InvalidRequest, e.to_string());
+        }
+
+        let tool_ctx = ToolExecutionContext::new(
+            context
+                .client_cwd
+                .clone()
+                .expect("validate_tools_enabled ensures cwd"),
+        );
 
         self.run_with_tools(id, conversation, tools, tool_ctx).await
     }
@@ -162,6 +161,20 @@ impl AgentTurnService {
     }
 }
 
+/// `[shell log tail]` 前置（aibe application 内の唯一の注入箇所）。
+fn inject_shell_log_tail(
+    mut messages: Vec<ChatMessage>,
+    context: &AgentTurnContext,
+) -> Vec<ChatMessage> {
+    if let Some(ref tail) = context.shell_log_tail {
+        messages.insert(
+            0,
+            ChatMessage::user(format!("[shell log tail]\n{}", tail.as_str())),
+        );
+    }
+    messages
+}
+
 /// モデルが許可外・未実装ツールを要求したときの tool result（ループ継続）。
 fn rejected_tool_result(
     tc: &ToolCall,
@@ -183,29 +196,41 @@ fn rejected_tool_result(
     (record, result)
 }
 
-fn tool_execution_context(context: &RequestContext) -> Result<ToolExecutionContext, String> {
-    context
-        .require_client_cwd()
-        .map(ToolExecutionContext::new)
-        .map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{ClientCwd, ShellLogTail};
 
     #[test]
-    fn tool_execution_context_requires_cwd() {
-        let ctx = RequestContext::default();
-        assert!(tool_execution_context(&ctx).is_err());
+    fn inject_shell_log_tail_skips_empty_normalized_tail() {
+        let ctx = AgentTurnContext::for_text_only(None);
+        let msgs = inject_shell_log_tail(vec![ChatMessage::user("hi")], &ctx);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hi");
     }
 
     #[test]
-    fn tool_execution_context_accepts_absolute_cwd() {
-        let ctx = RequestContext {
-            cwd: Some("/tmp/proj".into()),
-            ..Default::default()
-        };
-        assert!(tool_execution_context(&ctx).is_ok());
+    fn inject_shell_log_tail_prepends_when_present() {
+        let tail = ShellLogTail::from_wire_opt("log line").expect("tail");
+        let ctx = AgentTurnContext::for_text_only(Some(tail));
+        let msgs = inject_shell_log_tail(vec![ChatMessage::user("hi")], &ctx);
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs[0].content.starts_with("[shell log tail]\n"));
+        assert!(msgs[0].content.contains("log line"));
+    }
+
+    #[test]
+    fn validate_tools_enabled_rejects_missing_cwd() {
+        let ctx = AgentTurnContext::for_text_only(None);
+        assert!(ctx
+            .validate_tools_enabled(&[ToolName::read_file()])
+            .is_err());
+    }
+
+    #[test]
+    fn validate_tools_enabled_accepts_absolute_cwd() {
+        let cwd = ClientCwd::parse("/tmp/proj").expect("cwd");
+        let ctx = AgentTurnContext::for_tool_turn(cwd, None);
+        assert!(ctx.validate_tools_enabled(&[ToolName::read_file()]).is_ok());
     }
 }

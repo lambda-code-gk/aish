@@ -1,6 +1,7 @@
 //! 質問 → aibe → 表示ユースケース。
 
 use aibe::protocol::ClientResponse;
+use aibe::ShellLogTail;
 
 use crate::domain::{AskInput, AskRequestError, ResolvedTools};
 use crate::ports::outbound::{AgentClient, AgentError, LogReadError, Presenter, ShellLogSource};
@@ -45,7 +46,7 @@ where
             .show_tools_startup(&options.resolved_tools.startup);
 
         let shell_log_tail = match self.log {
-            Some(l) => Some(l.tail_bytes(16 * 1024)?),
+            Some(l) => Some(l.tail_bytes(ShellLogTail::MAX_BYTES)?),
             None => None,
         };
 
