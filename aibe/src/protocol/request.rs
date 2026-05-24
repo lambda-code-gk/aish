@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{ChatMessage, ClientCwd, ClientCwdError};
+use crate::domain::{AgentTurnContext, ChatMessage, ClientCwd, ShellLogTail};
 
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ impl From<ProtocolMessage> for ChatMessage {
     }
 }
 
-/// クライアントが渡す付加コンテキスト。
+/// クライアントが渡す付加コンテキスト（wire DTO。domain 変換は `TryFrom` のみ）。
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 pub struct RequestContext {
     #[serde(default)]
@@ -49,13 +49,31 @@ pub struct RequestContext {
     pub cwd: Option<String>,
 }
 
-impl RequestContext {
-    /// ツール有効時に必須のクライアント cwd をパースする。
-    pub fn require_client_cwd(&self) -> Result<ClientCwd, ClientCwdError> {
-        match &self.cwd {
-            Some(raw) => ClientCwd::parse(raw),
-            None => Err(ClientCwdError::Missing),
-        }
+/// protocol DTO → domain 変換エラー。
+///
+/// 現在の wire 正規化（tail truncate・相対 cwd の `None` 化）は失敗しない。
+/// `TryFrom` を唯一の変換経路にし、`From` は意図的に実装しない。
+#[derive(Debug)]
+pub enum RequestContextConversionError {}
+
+// 0005 仕様: protocol → domain 変換は `TryFrom` に閉じる（`From` による暗黙変換を禁止）。
+#[allow(clippy::infallible_try_from)]
+impl TryFrom<RequestContext> for AgentTurnContext {
+    type Error = RequestContextConversionError;
+
+    fn try_from(ctx: RequestContext) -> Result<AgentTurnContext, Self::Error> {
+        let client_cwd = ctx
+            .cwd
+            .as_deref()
+            .and_then(|raw| ClientCwd::parse(raw).ok());
+        let shell_log_tail = ctx
+            .shell_log_tail
+            .as_deref()
+            .and_then(ShellLogTail::from_wire_opt);
+        Ok(AgentTurnContext {
+            client_cwd,
+            shell_log_tail,
+        })
     }
 }
 
@@ -94,26 +112,45 @@ mod tests {
     }
 
     #[test]
-    fn require_client_cwd_rejects_relative() {
+    fn try_from_relative_cwd_becomes_none() {
         let ctx = RequestContext {
             cwd: Some("relative/path".into()),
             ..Default::default()
         };
-        assert!(matches!(
-            ctx.require_client_cwd(),
-            Err(ClientCwdError::NotAbsolute)
-        ));
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
+        assert!(domain.client_cwd.is_none());
     }
 
     #[test]
-    fn require_client_cwd_accepts_absolute() {
+    fn try_from_absolute_cwd_parses() {
         let ctx = RequestContext {
             cwd: Some("/tmp/proj".into()),
             ..Default::default()
         };
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
         assert_eq!(
-            ctx.require_client_cwd().expect("cwd").as_path(),
+            domain.client_cwd.expect("cwd").as_path(),
             std::path::Path::new("/tmp/proj")
         );
+    }
+
+    #[test]
+    fn try_from_empty_tail_becomes_none() {
+        let ctx = RequestContext {
+            shell_log_tail: Some("".into()),
+            ..Default::default()
+        };
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
+        assert!(domain.shell_log_tail.is_none());
+    }
+
+    #[test]
+    fn try_from_whitespace_tail_becomes_none() {
+        let ctx = RequestContext {
+            shell_log_tail: Some("  \n\t  ".into()),
+            ..Default::default()
+        };
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
+        assert!(domain.shell_log_tail.is_none());
     }
 }
