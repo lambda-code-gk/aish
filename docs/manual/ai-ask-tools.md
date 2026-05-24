@@ -202,6 +202,32 @@ allowed_roots = ["."]   # または検証用ディレクトリのみ
 - `allowed_roots` 外のパス → ツールエラーだが turn は継続しうる（0001 仕様）
 - モデルがツールを呼ばない → C は再試行またはプロンプト調整
 
+## D. `max_tool_rounds` 到達（任意・実 LLM）
+
+既定（`termination_strategy` 未設定）は **SummaryPrompt** — 0003 と同じ要約経路。統合テスト `max_tool_rounds_returns_agent_turn_result_with_tool_calls` で mock 確認済み。
+
+**ConversationReplay** を試す場合（プロバイダが tool role を plain `complete()` で解釈するときのみ有効）:
+
+```toml
+[tools]
+max_rounds = 2   # 短く上限到達させる
+termination_strategy = "conversation_replay"
+```
+
+手順（実 LLM・ターミナル 2）:
+
+1. aibe を `-f` で起動
+2. ツールを複数ラウンド呼ばせるプロンプト（例: `read_file` で 2 ファイル以上を順に読む）
+3. 上限到達後:
+   - **stdout**: 最終 assistant 本文（部分結果を含む）
+   - **stderr**: `max_tool_rounds` warning 1 行（0002 Presenter 契約）
+   - aibe 側ログ（tracing 有効時）: `termination strategy=...` 1 行
+
+期待:
+
+- `status: max_tool_rounds` の `agent_turn_result`（`type: error` ではない）
+- Replay が provider error になった場合は SummaryPrompt に自動フォールバック（設定は `conversation_replay` のままでよい）
+
 ## 記録
 
 実施日・実施者・結果をメモする場合の例:

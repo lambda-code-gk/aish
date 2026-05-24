@@ -182,7 +182,7 @@ aibe →  aish 禁止
 
 | クレート | 主なユースケース | Outbound ports（例） | Inbound adapters（例） |
 |---------|------------------|----------------------|-------------------------|
-| **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ToolExecutor`, `CommandPolicy`, `ConfigLoader` | Unix NDJSON リスナ、ツール（`shell_exec`, `read_file`） |
+| **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ToolRoundTerminator`, `ToolExecutor`, `CommandPolicy`, `ConfigLoader` | Unix NDJSON リスナ、ツール（`shell_exec`, `read_file`）、終端戦略（`terminator/`） |
 | **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
 | **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask`。`[ask].tools` / `--tools` を展開して aibe の `tools` allowlist を構築 |
 
@@ -241,6 +241,25 @@ aibe →  aish 禁止
 `agent_turn_result.status` には `"ok"` のほか、ツール上限到達時は `"max_tool_rounds"`（`type: error` ではない。`tool_calls` と最終 assistant 本文を返す）。
 
 （`tool_error` / `tool_timeout` / `max_tool_rounds` の turn `error` コードは予約または非使用。MVP では個別ツール失敗は `tool_calls` + LLM 向け tool result、上限到達は `status: max_tool_rounds` の `agent_turn_result`。）
+
+#### max-round 終端戦略（0006）
+
+ツールラウンド上限到達時の最終 LLM 呼び出しは `ToolRoundTerminator` port（`ports/outbound/tool_round_terminator.rs`）に委譲する。戦略の具象は `adapters/outbound/terminator/` のみが保持する。
+
+| 項目 | 内容 |
+|------|------|
+| **既定戦略** | `summary_prompt`（0003 互換 — 実行記録を `ToolExecutionSummary` で要約 user に圧縮） |
+| **設定** | `[tools] termination_strategy = "summary_prompt"` または `"conversation_replay"` |
+| **Replay 条件** | policy が `conversation_replay` **かつ** `TerminationCapability.plain_complete_accepts_tool_role == true` |
+| **capability** | LLM adapter / `llm_factory::termination_capability` が提供（`LlmProvider` trait には載せない） |
+| **フォールバック** | Replay の `complete()` が `LlmError::Provider` を返したら SummaryPrompt を 1 回再試行 |
+| **wire protocol** | 変更なし（クライアントは `status` + `assistant_message` のみ） |
+
+| プロバイダ（初期値） | `plain_complete_accepts_tool_role` |
+|---------------------|-------------------------------------|
+| mock / openai_compatible | `false`（安全側） |
+
+実装の正本: `ToolRoundTerminatorOrchestrator`、`TerminationCapability`、`TerminationStrategy`（`ports/outbound/config.rs`）。
 
 ## 実装フェーズ（参考）
 
