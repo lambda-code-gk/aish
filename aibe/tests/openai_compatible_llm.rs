@@ -1,8 +1,13 @@
 #![cfg(unix)]
 
+use std::sync::Arc;
+
+use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::OpenAiCompatibleLlm;
-use aibe::domain::ChatMessage;
-use aibe::ports::outbound::LlmProvider;
+use aibe::application::agent_turn::AgentTurnService;
+use aibe::domain::{ChatMessage, ToolName};
+use aibe::ports::outbound::{LlmError, LlmProvider, ToolsConfig};
+use aibe::protocol::{ClientResponse, ErrorCode, RequestContext};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -26,4 +31,99 @@ async fn openai_compatible_calls_chat_completions() {
         .await
         .expect("complete");
     assert_eq!(out.content, "ok from mock http");
+}
+
+#[tokio::test]
+async fn complete_with_tools_rejects_unknown_tool_from_model() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {
+                            "name": "delete_everything",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let base = format!("{}/v1", server.uri());
+    let llm = OpenAiCompatibleLlm::new(base, "test-key".to_string(), "test-model".to_string());
+    let err = llm
+        .complete_with_tools(
+            &[ChatMessage::user("do it")],
+            &[aibe::application::tool_defs::definitions_for(&[ToolName::read_file()])[0].clone()],
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(err, LlmError::UnknownTool("delete_everything".into()));
+}
+
+#[tokio::test]
+async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {
+                            "name": "delete_everything",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let base = format!("{}/v1", server.uri());
+    let llm = Arc::new(OpenAiCompatibleLlm::new(
+        base,
+        "test-key".to_string(),
+        "test-model".to_string(),
+    ));
+    let cfg = ToolsConfig::default();
+    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
+    let res = svc
+        .run(
+            "turn-unknown-tool".into(),
+            vec![ChatMessage::user("clean disk")],
+            vec![ToolName::read_file()],
+            RequestContext {
+                cwd: Some(
+                    std::env::current_dir()
+                        .expect("cwd")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    match res {
+        ClientResponse::Error { code, message, .. } => {
+            assert_eq!(code, ErrorCode::ToolNotAllowed);
+            assert_eq!(message, "unknown tool: delete_everything");
+        }
+        other => panic!("expected tool_not_allowed, got {other:?}"),
+    }
 }

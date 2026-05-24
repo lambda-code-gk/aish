@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::server;
-use aibe::domain::{LlmStepResult, ToolCall};
+use aibe::domain::{LlmStepResult, ToolCall, ToolName};
 use aibe::ports::outbound::ToolsConfig;
 use serde_json::json;
 use tempfile::tempdir;
@@ -24,7 +24,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
             "",
             vec![ToolCall {
                 id: "call_1".into(),
-                name: "read_file".into(),
+                name: ToolName::read_file(),
                 arguments: json!({"path": "Cargo.toml", "limit": 3}),
             }],
         ),

@@ -10,7 +10,7 @@ use ai::domain::{resolve_tools, AskRequest, ConfigToolsTokens, ToolsResolveError
 use ai::ports::outbound::{AgentClient, AgentError};
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
-use aibe::domain::ExecutedToolCall;
+use aibe::domain::{ExecutedToolCall, ToolName};
 use aibe::ports::outbound::ToolsConfig;
 use aibe::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
 use serde_json::json;
@@ -35,7 +35,11 @@ impl RecordingClient {
 
 impl AgentClient for RecordingClient {
     fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
-        *self.last_tools.lock().expect("lock") = request.tools.clone();
+        *self.last_tools.lock().expect("lock") = request
+            .tools
+            .iter()
+            .map(|t| t.as_str().to_string())
+            .collect();
         Ok(ClientResponse::AgentTurnResult {
             id: "test-id".into(),
             status: AgentTurnStatus::Ok,
@@ -135,7 +139,7 @@ fn presenter_max_tool_rounds_and_verbose_tools_contract() {
             },
             tool_calls: vec![ExecutedToolCall::ok(
                 "c1".into(),
-                "read_file".into(),
+                ToolName::read_file(),
                 json!({"path": "/etc/passwd"}),
                 huge,
             )],
