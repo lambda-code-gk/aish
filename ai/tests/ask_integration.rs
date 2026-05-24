@@ -11,7 +11,7 @@ use ai::ports::outbound::{AgentClient, AgentError};
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::domain::{ExecutedToolCall, ToolName};
-use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
 use serde_json::json;
 use tempfile::tempdir;
@@ -61,14 +61,14 @@ fn ask_reaches_mock_aibe() {
     thread::spawn(move || {
         let rt = Runtime::new().expect("runtime");
         rt.block_on(async {
-            server::run(
-                socket_for_server,
+            let registry = ProfileRegistry::single(
+                "default",
                 Arc::new(MockLlm::new()),
-                ToolsConfig::default(),
-                TerminationCapability::summary_prompt_only(),
-            )
-            .await
-            .expect("server");
+                aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
+            );
+            server::run(socket_for_server, registry, ToolsConfig::default())
+                .await
+                .expect("server");
         });
     });
 
@@ -87,6 +87,7 @@ fn ask_reaches_mock_aibe() {
         AskRunOptions {
             resolved_tools: resolved,
             verbose_tools: false,
+            llm_profile: None,
         },
     )
     .expect("ask");
@@ -108,6 +109,7 @@ fn resolve_read_only_sends_read_file_to_aibe() {
         AskRunOptions {
             resolved_tools: resolved,
             verbose_tools: false,
+            llm_profile: None,
         },
     )
     .expect("ask");
