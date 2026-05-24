@@ -1,19 +1,21 @@
 //! `ai ask` のツール allowlist 解決（`docs/0002_ai-tools-client-spec.md`）。
 //! cwd・送信 payload・レイヤー分割は `docs/0003_architecture-review-refactor-spec.md`。
 //!
-//! ツール名の正本は `aibe::READ_FILE` / `aibe::SHELL_EXEC`。
+//! ツール名の正本は `aibe::ToolName` / `aibe::READ_FILE` / `aibe::SHELL_EXEC`。
 
-use aibe::{is_known_tool, READ_FILE, SHELL_EXEC};
+use std::str::FromStr;
+
+use aibe::{is_known_tool, ToolName, READ_FILE, SHELL_EXEC};
 use thiserror::Error;
 
 /// 展開・検証済みツール名の集合。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ToolAllowlist {
-    names: Vec<String>,
+    names: Vec<ToolName>,
 }
 
 impl ToolAllowlist {
-    pub fn names(&self) -> &[String] {
+    pub fn names(&self) -> &[ToolName] {
         &self.names
     }
 
@@ -21,7 +23,7 @@ impl ToolAllowlist {
         self.names.is_empty()
     }
 
-    pub fn into_names(self) -> Vec<String> {
+    pub fn into_names(self) -> Vec<ToolName> {
         self.names
     }
 }
@@ -109,9 +111,11 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
             continue;
         }
         if let Some(names) = expand_category(t)? {
-            expanded.extend(names.iter().map(|s| (*s).to_string()));
+            for name in names {
+                expanded.push(parse_tool_name(name)?);
+            }
         } else if is_known_tool(t) {
-            expanded.push(t.to_string());
+            expanded.push(parse_tool_name(t)?);
         } else if t.starts_with('@') {
             return Err(ToolsResolveError::UnknownCategory(t.to_string()));
         } else {
@@ -121,8 +125,8 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
 
     let names = dedup_preserve_order(expanded);
     for name in &names {
-        if !is_known_tool(name) {
-            return Err(ToolsResolveError::UnknownTool(name.clone()));
+        if !is_known_tool(name.as_str()) {
+            return Err(ToolsResolveError::UnknownTool(name.to_string()));
         }
     }
 
@@ -130,7 +134,11 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
     let enabled_list = if names.is_empty() {
         "none".to_string()
     } else {
-        names.join(", ")
+        names
+            .iter()
+            .map(|n| n.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
 
     Ok(ResolvedTools {
@@ -141,6 +149,10 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
             warn_shell,
         },
     })
+}
+
+fn parse_tool_name(s: &str) -> Result<ToolName, ToolsResolveError> {
+    ToolName::from_str(s).map_err(|e| ToolsResolveError::UnknownTool(e.0))
 }
 
 fn empty_resolved() -> ResolvedTools {
@@ -164,14 +176,14 @@ fn expand_category(token: &str) -> Result<Option<&'static [&'static str]>, Tools
     }
 }
 
-fn shell_warning(resolved: &[String], original_tokens: &[String]) -> bool {
-    resolved.iter().any(|n| n == SHELL_EXEC)
+fn shell_warning(resolved: &[ToolName], original_tokens: &[String]) -> bool {
+    resolved.iter().any(|n| n.as_str() == SHELL_EXEC)
         || original_tokens
             .iter()
             .any(|t| matches!(t.as_str(), SHELL_EXEC | "@exec" | "@full"))
 }
 
-fn dedup_preserve_order(names: Vec<String>) -> Vec<String> {
+fn dedup_preserve_order(names: Vec<ToolName>) -> Vec<ToolName> {
     let mut out = Vec::new();
     for n in names {
         if !out.iter().any(|x| x == &n) {
@@ -210,7 +222,7 @@ mod tests {
     #[test]
     fn read_only_expands() {
         let r = resolve_tools(Some("@read-only"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.allowlist.names(), &[READ_FILE.to_string()]);
+        assert_eq!(r.allowlist.names(), &[ToolName::read_file()]);
         assert!(!r.startup.warn_shell);
     }
 
@@ -219,7 +231,7 @@ mod tests {
         let r = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).unwrap();
         assert_eq!(
             r.allowlist.names(),
-            &[READ_FILE.to_string(), SHELL_EXEC.to_string()]
+            &[ToolName::read_file(), ToolName::shell_exec()]
         );
         assert!(r.startup.warn_shell);
     }
@@ -227,7 +239,7 @@ mod tests {
     #[test]
     fn dedup_read_only_and_literal() {
         let r = resolve_tools(Some("@read-only,read_file"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.allowlist.names(), &[READ_FILE.to_string()]);
+        assert_eq!(r.allowlist.names(), &[ToolName::read_file()]);
     }
 
     #[test]
@@ -236,7 +248,7 @@ mod tests {
             resolve_tools(Some("@read-only,shell_exec"), &ConfigToolsTokens::default()).unwrap();
         assert_eq!(
             r.allowlist.names(),
-            &[READ_FILE.to_string(), SHELL_EXEC.to_string()]
+            &[ToolName::read_file(), ToolName::shell_exec()]
         );
         assert!(r.startup.warn_shell);
     }
@@ -264,6 +276,6 @@ mod tests {
         let raw = AskToolsConfigRaw::Array(vec!["@read-only".into(), "read_file".into()]);
         let tokens = tokens_from_config_value(raw);
         let r = resolve_tools(None, &tokens).unwrap();
-        assert_eq!(r.allowlist.names(), &[READ_FILE.to_string()]);
+        assert_eq!(r.allowlist.names(), &[ToolName::read_file()]);
     }
 }

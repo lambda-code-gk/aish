@@ -36,7 +36,11 @@ impl AgentClient for AibeUnixClient {
                 role: "user".to_string(),
                 content: request.user_message.clone(),
             }],
-            tools: request.tools.clone(),
+            tools: request
+                .tools
+                .iter()
+                .map(|t| t.as_str().to_string())
+                .collect(),
             context: RequestContext {
                 shell_log_tail: request.shell_log_tail.clone(),
                 cwd: request

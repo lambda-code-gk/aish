@@ -86,6 +86,8 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    use aibe::ToolName;
+
     use crate::domain::{resolve_tools, AskToolsConfigRaw};
 
     #[test]
@@ -114,7 +116,7 @@ tools = "@read-only,shell_exec"
         let resolved = resolve_tools(None, &tokens).expect("resolve");
         assert_eq!(
             resolved.allowlist.names(),
-            &["read_file".to_string(), "shell_exec".to_string()]
+            &[ToolName::read_file(), ToolName::shell_exec()]
         );
     }
 
@@ -144,9 +146,6 @@ tools = "@read-only"
         assert!(resolved.allowlist.is_empty());
 
         let from_config_only = resolve_tools(None, &cfg.ask_tools).expect("resolve");
-        assert_eq!(
-            from_config_only.allowlist.names(),
-            &["read_file".to_string()]
-        );
+        assert_eq!(from_config_only.allowlist.names(), &[ToolName::read_file()]);
     }
 }
