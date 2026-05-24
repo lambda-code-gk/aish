@@ -7,12 +7,31 @@ use std::sync::Arc;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::agent_turn::AgentTurnService;
-use aibe::domain::{ChatMessage, LlmStepResult, ToolCall};
+use aibe::domain::{ChatMessage, ExecutedToolStatus, LlmStepResult, ToolCall};
 use aibe::ports::outbound::{LlmError, LlmProvider, ShellExecConfig, ToolDefinition, ToolsConfig};
-use aibe::protocol::{ClientResponse, ErrorCode, RequestContext};
+use aibe::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, RequestContext};
 use async_trait::async_trait;
 use serde_json::json;
 use tempfile::tempdir;
+
+fn process_cwd_context() -> RequestContext {
+    RequestContext {
+        cwd: Some(
+            std::env::current_dir()
+                .expect("cwd")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    }
+}
+
+fn cwd_context(path: &std::path::Path) -> RequestContext {
+    RequestContext {
+        cwd: Some(path.to_string_lossy().into_owned()),
+        ..Default::default()
+    }
+}
 
 #[tokio::test]
 async fn empty_tools_uses_complete_path() {
@@ -38,6 +57,25 @@ async fn empty_tools_uses_complete_path() {
 }
 
 #[tokio::test]
+async fn tools_without_cwd_is_rejected() {
+    let llm = Arc::new(ScriptedMockLlm::new(vec![]));
+    let cfg = ToolsConfig::default();
+    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
+    let res = svc
+        .run(
+            "1".into(),
+            vec![ChatMessage::user("hi")],
+            vec!["read_file".into()],
+            RequestContext::default(),
+        )
+        .await;
+    match res {
+        ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidRequest),
+        _ => panic!("expected invalid_request"),
+    }
+}
+
+#[tokio::test]
 async fn unknown_tool_in_request_is_rejected() {
     let llm = Arc::new(ScriptedMockLlm::new(vec![]));
     let cfg = ToolsConfig::default();
@@ -47,12 +85,31 @@ async fn unknown_tool_in_request_is_rejected() {
             "1".into(),
             vec![ChatMessage::user("hi")],
             vec!["nope".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
         ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::ToolNotAllowed),
         _ => panic!("expected error"),
+    }
+}
+
+#[tokio::test]
+async fn missing_cwd_takes_priority_over_unknown_tool() {
+    let llm = Arc::new(ScriptedMockLlm::new(vec![]));
+    let cfg = ToolsConfig::default();
+    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
+    let res = svc
+        .run(
+            "1".into(),
+            vec![ChatMessage::user("hi")],
+            vec!["nope".into(), "read_file".into()],
+            RequestContext::default(),
+        )
+        .await;
+    match res {
+        ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidRequest),
+        _ => panic!("expected invalid_request before tool_not_allowed"),
     }
 }
 
@@ -81,7 +138,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
             "1".into(),
             vec![ChatMessage::user("fetch")],
             vec!["shell_exec".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
@@ -92,7 +149,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
         } => {
             assert_eq!(assistant_message.content, "gave up on curl");
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "error");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Error);
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -124,7 +181,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
             "max-rounds".into(),
             vec![ChatMessage::user("read all")],
             vec!["read_file".into()],
-            RequestContext::default(),
+            cwd_context(dir.path()),
         )
         .await;
     match res {
@@ -134,7 +191,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
             assistant_message,
             ..
         } => {
-            assert_eq!(status, "max_tool_rounds");
+            assert_eq!(status, AgentTurnStatus::MaxToolRounds);
             assert_eq!(tool_calls.len(), 2);
             assert!(assistant_message.content.contains("Tool round limit"));
         }
@@ -172,13 +229,13 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
             "1".into(),
             vec![ChatMessage::user("run")],
             vec!["shell_exec".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
         ClientResponse::AgentTurnResult { tool_calls, .. } => {
             assert_eq!(tool_calls.len(), 1);
-            let output = tool_calls[0]["output"].as_str().expect("output string");
+            let output = tool_calls[0].output.as_deref().expect("output string");
             assert!(output.contains("[output truncated:"));
             assert!(output.len() < 500);
         }
@@ -217,13 +274,13 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
             "1".into(),
             vec![ChatMessage::user("read")],
             vec!["read_file".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
         ClientResponse::AgentTurnResult { tool_calls, .. } => {
             assert_eq!(tool_calls.len(), 1);
-            let output = tool_calls[0]["output"].as_str().expect("output string");
+            let output = tool_calls[0].output.as_deref().expect("output string");
             assert!(output.contains("[output truncated:"));
             assert!(output.len() < 500);
         }
@@ -252,7 +309,7 @@ async fn model_disallowed_tool_returns_tool_result_and_continues() {
             "1".into(),
             vec![ChatMessage::user("clean disk")],
             vec!["read_file".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
@@ -263,8 +320,8 @@ async fn model_disallowed_tool_returns_tool_result_and_continues() {
         } => {
             assert_eq!(assistant_message.content, "cannot delete, explained");
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "error");
-            assert_eq!(tool_calls[0]["error"], "tool_not_allowed");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Error);
+            assert_eq!(tool_calls[0].error.as_deref(), Some("tool_not_allowed"));
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -298,7 +355,7 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
             "1".into(),
             vec![ChatMessage::user("read secret")],
             vec!["read_file".into()],
-            RequestContext::default(),
+            cwd_context(dir.path()),
         )
         .await;
     match res {
@@ -309,8 +366,8 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
         } => {
             assert_eq!(assistant_message.content, "cannot read that path");
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "error");
-            assert_eq!(tool_calls[0]["error"], "path_not_allowed");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Error);
+            assert_eq!(tool_calls[0].error.as_deref(), Some("path_not_allowed"));
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -341,7 +398,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
             "1".into(),
             vec![ChatMessage::user("run check")],
             vec!["shell_exec".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
@@ -352,8 +409,8 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
         } => {
             assert_eq!(assistant_message.content, "command failed as expected");
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "error");
-            assert_eq!(tool_calls[0]["error"], "nonzero_exit");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Error);
+            assert_eq!(tool_calls[0].error.as_deref(), Some("nonzero_exit"));
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -385,7 +442,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
             "1".into(),
             vec![ChatMessage::user("nap")],
             vec!["shell_exec".into()],
-            RequestContext::default(),
+            process_cwd_context(),
         )
         .await;
     match res {
@@ -396,8 +453,8 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
         } => {
             assert_eq!(assistant_message.content, "sleep timed out");
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "error");
-            assert_eq!(tool_calls[0]["error"], "timeout");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Error);
+            assert_eq!(tool_calls[0].error.as_deref(), Some("timeout"));
         }
         other => panic!("unexpected: {other:?}"),
     }
@@ -442,8 +499,8 @@ async fn shell_exec_runs_in_context_cwd() {
     match res {
         ClientResponse::AgentTurnResult { tool_calls, .. } => {
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "ok");
-            let output = tool_calls[0]["output"].as_str().unwrap_or("");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Ok);
+            let output = tool_calls[0].output.as_deref().unwrap_or("");
             assert!(output.contains("shell cwd ok"), "output: {output}");
         }
         other => panic!("unexpected: {other:?}"),
@@ -486,8 +543,8 @@ async fn read_file_relative_path_uses_context_cwd() {
     match res {
         ClientResponse::AgentTurnResult { tool_calls, .. } => {
             assert_eq!(tool_calls.len(), 1);
-            assert_eq!(tool_calls[0]["status"], "ok");
-            assert_eq!(tool_calls[0]["output"], "relative ok");
+            assert_eq!(tool_calls[0].status, ExecutedToolStatus::Ok);
+            assert_eq!(tool_calls[0].output.as_deref(), Some("relative ok"));
         }
         other => panic!("unexpected: {other:?}"),
     }

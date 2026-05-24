@@ -11,13 +11,21 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
+/// 実行済みツール呼び出しの成否。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutedToolStatus {
+    Ok,
+    Error,
+}
+
 /// クライアント向け `tool_calls` 記録。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutedToolCall {
     pub id: String,
     pub name: String,
     pub arguments: Value,
-    pub status: String,
+    pub status: ExecutedToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,7 +40,7 @@ impl ExecutedToolCall {
             id,
             name,
             arguments,
-            status: "ok".to_string(),
+            status: ExecutedToolStatus::Ok,
             output: Some(output),
             error: None,
             message: None,
@@ -50,15 +58,11 @@ impl ExecutedToolCall {
             id,
             name,
             arguments,
-            status: "error".to_string(),
+            status: ExecutedToolStatus::Error,
             output: None,
             error: Some(error.into()),
             message: Some(message.into()),
         }
-    }
-
-    pub fn to_json(&self) -> Value {
-        serde_json::to_value(self).expect("ExecutedToolCall serializes")
     }
 }
 

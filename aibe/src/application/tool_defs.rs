@@ -4,13 +4,10 @@ use serde_json::json;
 
 use crate::ports::outbound::ToolDefinition;
 
-pub const SHELL_EXEC: &str = "shell_exec";
-pub const READ_FILE: &str = "read_file";
+pub use crate::domain::{is_known_tool, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
 
-pub const KNOWN_TOOLS: &[&str] = &[SHELL_EXEC, READ_FILE];
-
-pub fn is_known_tool(name: &str) -> bool {
-    KNOWN_TOOLS.contains(&name)
+pub fn is_known_tool_name(name: &str) -> bool {
+    is_known_tool(name)
 }
 
 pub fn definitions_for(allowed: &[String]) -> Vec<ToolDefinition> {

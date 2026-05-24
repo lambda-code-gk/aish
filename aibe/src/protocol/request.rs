@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ChatMessage;
+use crate::domain::{ChatMessage, ClientCwd, ClientCwdError};
 
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,9 +44,19 @@ impl From<ProtocolMessage> for ChatMessage {
 pub struct RequestContext {
     #[serde(default)]
     pub shell_log_tail: Option<String>,
-    /// クライアントのカレントディレクトリ（絶対パス）。`read_file` の相対パス解決に使う。
+    /// クライアントのカレントディレクトリ（絶対パス）。ツール有効時は必須。
     #[serde(default)]
     pub cwd: Option<String>,
+}
+
+impl RequestContext {
+    /// ツール有効時に必須のクライアント cwd をパースする。
+    pub fn require_client_cwd(&self) -> Result<ClientCwd, ClientCwdError> {
+        match &self.cwd {
+            Some(raw) => ClientCwd::parse(raw),
+            None => Err(ClientCwdError::Missing),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -81,5 +91,29 @@ mod tests {
             }
             _ => panic!("expected agent_turn"),
         }
+    }
+
+    #[test]
+    fn require_client_cwd_rejects_relative() {
+        let ctx = RequestContext {
+            cwd: Some("relative/path".into()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            ctx.require_client_cwd(),
+            Err(ClientCwdError::NotAbsolute)
+        ));
+    }
+
+    #[test]
+    fn require_client_cwd_accepts_absolute() {
+        let ctx = RequestContext {
+            cwd: Some("/tmp/proj".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ctx.require_client_cwd().expect("cwd").as_path(),
+            std::path::Path::new("/tmp/proj")
+        );
     }
 }

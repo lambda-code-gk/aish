@@ -1,8 +1,10 @@
 //! 標準出力プレゼンター。
 
+use aibe::domain::{ExecutedToolCall, ExecutedToolStatus};
 use aibe::ports::outbound::DEFAULT_MAX_TOOL_OUTPUT_BYTES;
-use aibe::protocol::ClientResponse;
+use aibe::protocol::{AgentTurnStatus, ClientResponse};
 
+use crate::domain::ToolsStartupLine;
 use crate::ports::outbound::Presenter;
 
 pub struct StdoutPresenter;
@@ -15,6 +17,10 @@ pub struct PresenterOutput {
 }
 
 impl Presenter for StdoutPresenter {
+    fn show_tools_startup(&self, line: &ToolsStartupLine) {
+        eprintln!("{}", format_tools_startup(line));
+    }
+
     fn show_response(&self, response: &ClientResponse, verbose_tools: bool) {
         let out = render_response(response, verbose_tools);
         if let Some(s) = out.stdout {
@@ -30,6 +36,14 @@ impl Presenter for StdoutPresenter {
     }
 }
 
+pub fn format_tools_startup(line: &ToolsStartupLine) -> String {
+    let prefix = if line.warn_shell { "warning: " } else { "" };
+    match &line.source_hint {
+        Some(hint) => format!("{prefix}ai: tools enabled: {} ({hint})", line.enabled_list),
+        None => format!("{prefix}ai: tools enabled: {}", line.enabled_list),
+    }
+}
+
 pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> PresenterOutput {
     match response {
         ClientResponse::AgentTurnResult {
@@ -39,7 +53,7 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
             ..
         } => {
             let mut stderr = Vec::new();
-            if status == "max_tool_rounds" {
+            if *status == AgentTurnStatus::MaxToolRounds {
                 stderr.push(
                     "warning: ai: max tool rounds reached; showing partial assistant reply"
                         .to_string(),
@@ -66,24 +80,28 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
     }
 }
 
-pub fn format_tool_call_line(tc: &serde_json::Value) -> String {
-    let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-    let status = tc.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-    let args = tc
-        .get("arguments")
-        .map(|v| truncate_bytes(&v.to_string(), DEFAULT_MAX_TOOL_OUTPUT_BYTES))
-        .unwrap_or_else(|| "?".to_string());
-    let detail = if status == "ok" {
-        tc.get("output")
-            .and_then(|v| v.as_str())
-            .map(|s| truncate_bytes(s, DEFAULT_MAX_TOOL_OUTPUT_BYTES))
-            .unwrap_or_default()
-    } else {
-        let err = tc.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        let msg = tc.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        format!("{err}: {msg}")
+pub fn format_tool_call_line(tc: &ExecutedToolCall) -> String {
+    let status = match tc.status {
+        ExecutedToolStatus::Ok => "ok",
+        ExecutedToolStatus::Error => "error",
     };
-    format!("ai: tool {name} {status} args={args} output={detail}")
+    let args = truncate_bytes(&tc.arguments.to_string(), DEFAULT_MAX_TOOL_OUTPUT_BYTES);
+    let detail = match tc.status {
+        ExecutedToolStatus::Ok => tc
+            .output
+            .as_deref()
+            .map(|s| truncate_bytes(s, DEFAULT_MAX_TOOL_OUTPUT_BYTES))
+            .unwrap_or_default(),
+        ExecutedToolStatus::Error => {
+            let err = tc.error.as_deref().unwrap_or("");
+            let msg = tc.message.as_deref().unwrap_or("");
+            format!("{err}: {msg}")
+        }
+    };
+    format!(
+        "ai: tool {} {} args={args} output={detail}",
+        tc.name, status
+    )
 }
 
 pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
@@ -102,6 +120,24 @@ mod tests {
     use super::*;
     use aibe::protocol::ProtocolMessageOut;
     use serde_json::json;
+
+    #[test]
+    fn startup_line_formats() {
+        use crate::domain::{resolve_tools, ConfigToolsTokens};
+
+        let r = resolve_tools(None, &ConfigToolsTokens::default()).unwrap();
+        assert_eq!(format_tools_startup(&r.startup), "ai: tools enabled: none");
+
+        let r = resolve_tools(Some("@read-only"), &ConfigToolsTokens::default()).unwrap();
+        assert_eq!(
+            format_tools_startup(&r.startup),
+            "ai: tools enabled: read_file (@read-only)"
+        );
+
+        let r = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).unwrap();
+        assert!(format_tools_startup(&r.startup).starts_with("warning: "));
+        assert!(format_tools_startup(&r.startup).contains("shell_exec"));
+    }
 
     #[test]
     fn truncates_multibyte_safe() {
@@ -123,7 +159,7 @@ mod tests {
         let out = render_response(
             &ClientResponse::AgentTurnResult {
                 id: "id".into(),
-                status: "max_tool_rounds".into(),
+                status: AgentTurnStatus::MaxToolRounds,
                 assistant_message: ProtocolMessageOut {
                     role: "assistant".into(),
                     content: "partial".into(),
@@ -140,20 +176,21 @@ mod tests {
     #[test]
     fn verbose_tools_on_stderr_not_stdout() {
         let huge = "x".repeat(DEFAULT_MAX_TOOL_OUTPUT_BYTES + 500);
+        let huge_len = huge.len();
         let out = render_response(
             &ClientResponse::AgentTurnResult {
                 id: "id".into(),
-                status: "ok".into(),
+                status: AgentTurnStatus::Ok,
                 assistant_message: ProtocolMessageOut {
                     role: "assistant".into(),
                     content: "final".into(),
                 },
-                tool_calls: vec![json!({
-                    "name": "read_file",
-                    "status": "ok",
-                    "arguments": {"path": "a"},
-                    "output": huge
-                })],
+                tool_calls: vec![ExecutedToolCall::ok(
+                    "c1".into(),
+                    "read_file".into(),
+                    json!({"path": "a"}),
+                    huge,
+                )],
             },
             true,
         );
@@ -162,19 +199,20 @@ mod tests {
         let line = &out.stderr[0];
         assert!(line.starts_with("ai: tool read_file ok"));
         assert!(line.contains("[truncated]"));
-        assert!(line.len() < huge.len());
+        assert!(line.len() < huge_len);
     }
 
     #[test]
     fn format_tool_call_line_truncates_output() {
         let huge = "y".repeat(DEFAULT_MAX_TOOL_OUTPUT_BYTES + 100);
-        let line = format_tool_call_line(&json!({
-            "name": "shell_exec",
-            "status": "ok",
-            "arguments": {},
-            "output": huge
-        }));
+        let huge_len = huge.len();
+        let line = format_tool_call_line(&ExecutedToolCall::ok(
+            "c1".into(),
+            "shell_exec".into(),
+            json!({}),
+            huge,
+        ));
         assert!(line.contains("[truncated]"));
-        assert!(line.len() < huge.len() + 80);
+        assert!(line.len() < huge_len + 80);
     }
 }

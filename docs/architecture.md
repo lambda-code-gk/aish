@@ -209,10 +209,11 @@ aibe →  aish 禁止
 `architecture.md` 先頭の JSON スキーマどおり。`context.shell_log_tail` は `ai` が aish JSONL の末尾を載せる。`context.cwd` は `ai` が自身のカレントディレクトリを載せる。
 
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
-- `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。
+- `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。**このとき `context.cwd`（絶対パス）は必須**。未送信・相対パスは `invalid_request` で拒否する。
 - 組み込みツール: `shell_exec`（設定 `allowed_commands` のみ。subprocess cwd は `context.cwd`）、`read_file`（`allowed_roots` 配下のみ。相対パスは `context.cwd` 基準）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
 - ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/0001_aibe-tool-agent-loop-spec.md`。
+- cwd 必須化・ドメイン型・レイヤー分割は `docs/0003_architecture-review-refactor-spec.md`。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
 
@@ -220,13 +221,13 @@ aibe →  aish 禁止
 
 | 項目 | 方針 |
 |------|------|
-| **基準 cwd** | **クライアント**（`ai ask` 等）のカレントディレクトリ。`agent_turn.context.cwd`（絶対パス）で渡す |
-| **aibe の cwd** | 相対パス解決に **使わない**（`context.cwd` 未送信時のみ `ToolExecutionContext::base_dir` が aibe cwd にフォールバック） |
+| **基準 cwd** | **クライアント**（`ai ask` 等）のカレントディレクトリ。`agent_turn.context.cwd`（絶対パス）で渡す。ツール有効時は **必須** |
+| **aibe の cwd** | 相対パス解決に **使わない**（フォールバックなし） |
 | **新規ツール** | [`ToolExecutor::execute`](aibe/src/ports/outbound/tools.rs) の `ToolExecutionContext` を受け取り、相対パスは `base_dir` / `resolve_path` を使う。aibe 内で `std::env::current_dir` を直接参照しない |
-| **`ai` の責務** | 起動時の `std::env::current_dir()` を毎回 `context.cwd` に載せる |
+| **`ai` の責務** | ツール有効時は起動時の `std::env::current_dir()`（絶対パス）を `context.cwd` に載せる。`AskInput` → `AskRequest` 変換で検証する |
 | **既存** | `read_file` / `shell_exec` は上記に準拠 |
 
-実装の正本: `aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。
+実装の正本: `aibe::domain::ClientCwd`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。ツール名の正本は `aibe::domain::tool_name`（`READ_FILE` / `SHELL_EXEC`）。
 
 #### エラーコード（`type: error`）
 

@@ -2,7 +2,7 @@
 
 use aibe::protocol::ClientResponse;
 
-use crate::domain::{print_tools_startup, AskInput, ResolvedTools};
+use crate::domain::{AskInput, AskRequestError, ResolvedTools};
 use crate::ports::outbound::{AgentClient, AgentError, LogReadError, Presenter, ShellLogSource};
 
 #[derive(Debug, thiserror::Error)]
@@ -11,6 +11,8 @@ pub enum AskError {
     Agent(#[from] AgentError),
     #[error(transparent)]
     Log(#[from] LogReadError),
+    #[error(transparent)]
+    Request(#[from] AskRequestError),
 }
 
 pub struct AskRunOptions {
@@ -39,7 +41,8 @@ where
     }
 
     pub fn run(&self, user_message: String, options: AskRunOptions) -> Result<(), AskError> {
-        print_tools_startup(&options.resolved_tools.startup);
+        self.presenter
+            .show_tools_startup(&options.resolved_tools.startup);
 
         let shell_log_tail = match self.log {
             Some(l) => Some(l.tail_bytes(16 * 1024)?),
@@ -50,10 +53,11 @@ where
             user_message,
             shell_log_tail,
             client_cwd: std::env::current_dir().ok(),
-            tools: options.resolved_tools.names,
+            tools: options.resolved_tools.allowlist.into_names(),
         };
+        let request = input.into_request()?;
 
-        match self.client.agent_turn(&input) {
+        match self.client.agent_turn(&request) {
             Ok(response) => {
                 if let ClientResponse::Error { code, message, .. } = &response {
                     let code =

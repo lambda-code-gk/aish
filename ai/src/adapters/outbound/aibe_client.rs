@@ -6,7 +6,7 @@ use std::path::Path;
 
 use aibe::protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
 
-use crate::domain::AskInput;
+use crate::domain::AskRequest;
 use crate::ports::outbound::{AgentClient, AgentError};
 
 pub struct AibeUnixClient {
@@ -26,7 +26,7 @@ impl AibeUnixClient {
 }
 
 impl AgentClient for AibeUnixClient {
-    fn agent_turn(&self, input: &AskInput) -> Result<ClientResponse, AgentError> {
+    fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
         let mut stream = UnixStream::connect(self.socket_path())
             .map_err(|e| AgentError::Request(format!("connect to aibe: {e}")))?;
 
@@ -34,12 +34,12 @@ impl AgentClient for AibeUnixClient {
             id: correlation_id(),
             messages: vec![ProtocolMessage {
                 role: "user".to_string(),
-                content: input.user_message.clone(),
+                content: request.user_message.clone(),
             }],
-            tools: input.tools.clone(),
+            tools: request.tools.clone(),
             context: RequestContext {
-                shell_log_tail: input.shell_log_tail.clone(),
-                cwd: input
+                shell_log_tail: request.shell_log_tail.clone(),
+                cwd: request
                     .client_cwd
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned()),
