@@ -20,6 +20,8 @@ pub enum ClientRequest {
         tools: Vec<String>,
         #[serde(default)]
         context: RequestContext,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        llm_profile: Option<String>,
     },
 }
 
@@ -102,16 +104,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_turn_deserializes_llm_profile() {
+        let req: ClientRequest = serde_json::from_str(
+            r#"{"type":"agent_turn","id":"1","llm_profile":"fast","messages":[{"role":"user","content":"hi"}]}"#,
+        )
+        .expect("parse");
+        match req {
+            ClientRequest::AgentTurn { llm_profile, .. } => {
+                assert_eq!(llm_profile.as_deref(), Some("fast"));
+            }
+            _ => panic!("expected agent_turn"),
+        }
+    }
+
+    #[test]
     fn agent_turn_deserializes_defaults() {
         let req: ClientRequest = serde_json::from_str(
             r#"{"type":"agent_turn","id":"1","messages":[{"role":"user","content":"hi"}]}"#,
         )
         .expect("parse");
         match req {
-            ClientRequest::AgentTurn { tools, context, .. } => {
+            ClientRequest::AgentTurn {
+                tools,
+                context,
+                llm_profile,
+                ..
+            } => {
                 assert!(tools.is_empty());
                 assert!(context.shell_log_tail.is_none());
                 assert!(context.cwd.is_none());
+                assert!(llm_profile.is_none());
             }
             _ => panic!("expected agent_turn"),
         }

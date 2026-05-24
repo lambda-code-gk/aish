@@ -10,34 +10,27 @@ use tokio::net::{UnixListener, UnixStream};
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
-use crate::application::tool_round::ToolRoundExecutor;
-use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
+use crate::ports::outbound::{ProfileRegistry, ToolsConfig};
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
 
 pub async fn run(
     socket_path: PathBuf,
-    llm: Arc<dyn LlmProvider>,
+    profile_registry: ProfileRegistry,
     tools_config: ToolsConfig,
-    termination_capability: TerminationCapability,
 ) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
     let listener = bind_unix_listener(&socket_path)?;
     eprintln!("aibe: listening on {}", socket_path.display());
 
-    let registry = build_registry(&tools_config);
-    let executor = ToolRoundExecutor::new(
-        Arc::clone(&llm),
-        Arc::clone(&registry),
-        tools_config.clone(),
-    );
+    let tool_registry = build_registry(&tools_config);
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         tools_config.termination_strategy,
     ));
     let handler = Arc::new(RequestService::new(
-        llm,
-        executor,
+        profile_registry,
+        tool_registry,
+        tools_config,
         terminator,
-        termination_capability,
     ));
 
     loop {
@@ -61,7 +54,6 @@ fn prepare_socket_path(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `bind` 前後で umask を 077 にし、作成直後から他ユーザーに開けないようにする。
 fn bind_unix_listener(path: &Path) -> anyhow::Result<UnixListener> {
     let old_umask = unsafe { libc::umask(0o077) };
     let result = UnixListener::bind(path).and_then(|listener| {
@@ -99,7 +91,6 @@ async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> a
     Ok(())
 }
 
-/// 応答 1 行を書き込む。クライアントが先に切断した場合は正常終了（手動 `socat` 等）。
 async fn write_response_line(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     response: &ClientResponse,

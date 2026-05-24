@@ -5,24 +5,30 @@ use std::sync::Arc;
 use crate::application::agent_turn::AgentTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
-use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolRoundTerminator};
+use crate::ports::outbound::{ProfileRegistry, ToolRoundTerminator, ToolsConfig};
 use crate::protocol::{
     ClientRequest, ClientResponse, ErrorCode, ProtocolMessageConversionError, RequestContext,
 };
 
 pub struct RequestService {
-    agent_turn: AgentTurnService,
+    profile_registry: ProfileRegistry,
+    tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+    tools_config: ToolsConfig,
+    terminator: Arc<dyn ToolRoundTerminator>,
 }
 
 impl RequestService {
     pub fn new(
-        llm: Arc<dyn LlmProvider>,
-        executor: ToolRoundExecutor,
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
         terminator: Arc<dyn ToolRoundTerminator>,
-        termination_capability: TerminationCapability,
     ) -> Self {
         Self {
-            agent_turn: AgentTurnService::new(llm, executor, terminator, termination_capability),
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
         }
     }
 
@@ -34,7 +40,16 @@ impl RequestService {
                 messages,
                 tools,
                 context,
+                llm_profile,
             } => {
+                let (llm, termination_capability) =
+                    match self.profile_registry.resolve(llm_profile.as_deref()) {
+                        Ok(pair) => pair,
+                        Err(msg) => {
+                            return ClientResponse::error(id, ErrorCode::InvalidRequest, msg);
+                        }
+                    };
+
                 let messages: Vec<ChatMessage> = match messages
                     .into_iter()
                     .map(ChatMessage::try_from)
@@ -46,7 +61,6 @@ impl RequestService {
                     }
                 };
 
-                // tools 非空: cwd を tool 名検証より先（0003 / 0005 受け入れ条件）
                 if !tools.is_empty() {
                     if let Err(e) = validate_client_cwd_for_tools(&context) {
                         return ClientResponse::error(id, ErrorCode::InvalidRequest, e.to_string());
@@ -65,7 +79,19 @@ impl RequestService {
                     Err(e) => match e {},
                 };
 
-                self.agent_turn.run(id, messages, tools, ctx).await
+                let executor = ToolRoundExecutor::new(
+                    Arc::clone(llm),
+                    Arc::clone(&self.tool_registry),
+                    self.tools_config.clone(),
+                );
+                let agent_turn = AgentTurnService::new(
+                    Arc::clone(llm),
+                    executor,
+                    Arc::clone(&self.terminator),
+                    termination_capability,
+                );
+
+                agent_turn.run(id, messages, tools, ctx).await
             }
         }
     }
