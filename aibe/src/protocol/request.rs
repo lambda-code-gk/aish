@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{AgentTurnContext, ChatMessage, ClientCwd, ShellLogTail};
+use std::fmt;
+
+use crate::domain::{AgentTurnContext, ChatMessage, ClientCwd, MessageRole, ShellLogTail};
 
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,14 +30,32 @@ pub struct ProtocolMessage {
     pub content: String,
 }
 
-impl From<ProtocolMessage> for ChatMessage {
-    fn from(m: ProtocolMessage) -> Self {
-        ChatMessage {
-            role: m.role,
+/// protocol メッセージ → domain 変換エラー。
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProtocolMessageConversionError {
+    UnknownRole { role: String },
+}
+
+impl fmt::Display for ProtocolMessageConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownRole { role } => write!(f, "unknown message role: {role}"),
+        }
+    }
+}
+
+impl TryFrom<ProtocolMessage> for ChatMessage {
+    type Error = ProtocolMessageConversionError;
+
+    fn try_from(m: ProtocolMessage) -> Result<Self, Self::Error> {
+        let role = MessageRole::parse_wire(&m.role)
+            .map_err(|_| ProtocolMessageConversionError::UnknownRole { role: m.role })?;
+        Ok(ChatMessage {
+            role,
             content: m.content,
             tool_call_id: None,
             tool_calls: None,
-        }
+        })
     }
 }
 
@@ -152,5 +172,46 @@ mod tests {
         };
         let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
         assert!(domain.shell_log_tail.is_none());
+    }
+
+    #[test]
+    fn try_from_protocol_message_known_roles() {
+        for role in ["user", "assistant", "tool", "system"] {
+            let msg = ProtocolMessage {
+                role: role.into(),
+                content: "hi".into(),
+            };
+            let domain = ChatMessage::try_from(msg).expect("known role");
+            assert_eq!(domain.role.as_wire(), role);
+            assert_eq!(domain.content, "hi");
+        }
+    }
+
+    #[test]
+    fn try_from_protocol_message_unknown_role() {
+        let msg = ProtocolMessage {
+            role: "moderator".into(),
+            content: "hi".into(),
+        };
+        let err = ChatMessage::try_from(msg).expect_err("unknown role");
+        assert_eq!(
+            err,
+            ProtocolMessageConversionError::UnknownRole {
+                role: "moderator".into()
+            }
+        );
+    }
+
+    #[test]
+    fn protocol_message_roundtrip_serialize() {
+        let msg = ProtocolMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        };
+        let domain = ChatMessage::try_from(msg).expect("convert");
+        let json = serde_json::to_string(&domain).expect("serialize");
+        let back: ChatMessage = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.role, MessageRole::User);
+        assert_eq!(back.content, "hello");
     }
 }
