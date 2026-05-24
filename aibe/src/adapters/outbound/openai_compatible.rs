@@ -2,39 +2,53 @@
 
 use std::str::FromStr;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::adapters::outbound::llm_backend::HttpBackendContext;
 use crate::domain::{ChatMessage, LlmStepResult, ToolCall, ToolName};
-use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
+use crate::ports::outbound::{LlmError, LlmGenerationParams, LlmProvider, ToolDefinition};
 
 pub struct OpenAiCompatibleLlm {
-    client: reqwest::Client,
-    base_url: String,
-    api_key: String,
+    backend: Arc<HttpBackendContext>,
     model: String,
+    params: LlmGenerationParams,
 }
 
 impl OpenAiCompatibleLlm {
     pub fn new(base_url: String, api_key: String, model: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url,
-            api_key,
+        Self::with_backend(
+            HttpBackendContext::new(base_url, api_key),
             model,
+            LlmGenerationParams::default(),
+        )
+    }
+
+    pub fn with_backend(
+        backend: Arc<HttpBackendContext>,
+        model: String,
+        params: LlmGenerationParams,
+    ) -> Self {
+        Self {
+            backend,
+            model,
+            params,
         }
     }
 
     fn chat_url(&self) -> String {
-        format!("{}/chat/completions", self.base_url)
+        format!("{}/chat/completions", self.backend.base_url)
     }
 
     async fn chat_completion(&self, body: ChatRequest) -> Result<ChatResponse, LlmError> {
         let response = self
+            .backend
             .client
             .post(self.chat_url())
-            .bearer_auth(&self.api_key)
+            .bearer_auth(&self.backend.api_key)
             .json(&body)
             .send()
             .await
@@ -116,6 +130,8 @@ impl LlmProvider for OpenAiCompatibleLlm {
             model: self.model.clone(),
             messages: to_api_messages(messages),
             tools: None,
+            temperature: self.params.temperature,
+            max_tokens: self.params.max_output_tokens,
         };
         let parsed = self.chat_completion(body).await?;
         let message = parsed
@@ -157,6 +173,8 @@ impl LlmProvider for OpenAiCompatibleLlm {
             } else {
                 Some(api_tools)
             },
+            temperature: self.params.temperature,
+            max_tokens: self.params.max_output_tokens,
         };
 
         let parsed = self.chat_completion(body).await?;
@@ -184,6 +202,10 @@ struct ChatRequest {
     messages: Vec<ApiMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<ApiTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
