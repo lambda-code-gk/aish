@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ChatMessage;
+use crate::domain::{ChatMessage, ExecutedToolCall};
 
 /// NDJSON 1 行のレスポンス。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,15 +13,23 @@ pub enum ClientResponse {
     },
     AgentTurnResult {
         id: String,
-        status: String,
+        status: AgentTurnStatus,
         assistant_message: ProtocolMessageOut,
-        tool_calls: Vec<serde_json::Value>,
+        tool_calls: Vec<ExecutedToolCall>,
     },
     Error {
         id: String,
         code: ErrorCode,
         message: String,
     },
+}
+
+/// `agent_turn_result.status` の取りうる値。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTurnStatus {
+    Ok,
+    MaxToolRounds,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

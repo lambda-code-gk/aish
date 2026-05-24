@@ -4,4 +4,4 @@ mod request;
 mod response;
 
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
-pub use response::{ClientResponse, ErrorCode, ProtocolMessageOut};
+pub use response::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
