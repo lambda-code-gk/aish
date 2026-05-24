@@ -55,7 +55,7 @@
 
 ### ai → aibe の context
 
-- 渡すのは **必要最小限** のログ tail
+- 渡すのは **必要最小限** のログ tail（上限は `aibe::ShellLogTail::MAX_BYTES`。ai はこの定数のみ参照しリテラル直書きしない）
 - `cwd` はツール有効時に `ai` のカレントディレクトリ（絶対パス）を送り、`read_file` / `shell_exec` の相対パス解決に使う。**未送信・相対パスは aibe が `invalid_request` で拒否する**（aibe プロセス cwd へのフォールバックはしない）
 - ユーザーが明示しない限り、全セッション履歴を一度に送らない設計を推奨
 
