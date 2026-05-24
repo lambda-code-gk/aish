@@ -3,11 +3,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::ToolName;
+
 /// LLM が返したツール呼び出し（正規化済み）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
-    pub name: String,
+    pub name: ToolName,
     pub arguments: Value,
 }
 
@@ -23,7 +25,7 @@ pub enum ExecutedToolStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutedToolCall {
     pub id: String,
-    pub name: String,
+    pub name: ToolName,
     pub arguments: Value,
     pub status: ExecutedToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,7 +37,7 @@ pub struct ExecutedToolCall {
 }
 
 impl ExecutedToolCall {
-    pub fn ok(id: String, name: String, arguments: Value, output: String) -> Self {
+    pub fn ok(id: String, name: ToolName, arguments: Value, output: String) -> Self {
         Self {
             id,
             name,
@@ -49,7 +51,7 @@ impl ExecutedToolCall {
 
     pub fn err(
         id: String,
-        name: String,
+        name: ToolName,
         arguments: Value,
         error: impl Into<String>,
         message: impl Into<String>,
@@ -72,4 +74,38 @@ pub struct ToolResult {
     pub tool_call_id: String,
     pub content: String,
     pub is_error: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ToolName;
+
+    #[test]
+    fn tool_call_serde_roundtrip() {
+        let tc = ToolCall {
+            id: "c1".into(),
+            name: ToolName::read_file(),
+            arguments: serde_json::json!({"path": "a.md"}),
+        };
+        let json = serde_json::to_string(&tc).expect("serialize");
+        assert!(json.contains(r#""name":"read_file""#));
+        let back: ToolCall = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, tc);
+    }
+
+    #[test]
+    fn executed_tool_call_serde_roundtrip() {
+        let tc = ExecutedToolCall::ok(
+            "c1".into(),
+            ToolName::shell_exec(),
+            serde_json::json!({"command": "echo"}),
+            "hi".into(),
+        );
+        let json = serde_json::to_string(&tc).expect("serialize");
+        assert!(json.contains(r#""name":"shell_exec""#));
+        let back: ExecutedToolCall = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.name, tc.name);
+        assert_eq!(back.output, tc.output);
+    }
 }

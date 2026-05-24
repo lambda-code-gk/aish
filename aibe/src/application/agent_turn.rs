@@ -2,12 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::application::tool_defs::{definitions_for, is_known_tool_name};
+use crate::application::llm_error::client_response_for_llm_error;
+use crate::application::tool_defs::definitions_for;
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
-use crate::domain::{ChatMessage, ExecutedToolCall, ToolCall, ToolResult};
-use crate::ports::outbound::{
-    LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
-};
+use crate::domain::{ChatMessage, ExecutedToolCall, ToolCall, ToolName, ToolResult};
+use crate::ports::outbound::{LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig};
 use crate::protocol::RequestContext;
 use crate::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
 
@@ -34,7 +33,7 @@ impl AgentTurnService {
         &self,
         id: String,
         messages: Vec<ChatMessage>,
-        tools: Vec<String>,
+        tools: Vec<ToolName>,
         context: RequestContext,
     ) -> ClientResponse {
         if messages.is_empty() {
@@ -64,16 +63,6 @@ impl AgentTurnService {
             }
         };
 
-        for name in &tools {
-            if !is_known_tool_name(name) {
-                return ClientResponse::error(
-                    id.clone(),
-                    ErrorCode::ToolNotAllowed,
-                    format!("unknown tool: {name}"),
-                );
-            }
-        }
-
         self.run_with_tools(id, conversation, tools, tool_ctx).await
     }
 
@@ -85,9 +74,7 @@ impl AgentTurnService {
                 assistant_message: ProtocolMessageOut::from_assistant(&assistant),
                 tool_calls: vec![],
             },
-            Err(LlmError::Provider(msg)) => {
-                ClientResponse::error(id, ErrorCode::ProviderError, msg)
-            }
+            Err(e) => client_response_for_llm_error(id, e),
         }
     }
 
@@ -95,7 +82,7 @@ impl AgentTurnService {
         &self,
         id: String,
         mut conversation: Vec<ChatMessage>,
-        allowed_tools: Vec<String>,
+        allowed_tools: Vec<ToolName>,
         tool_ctx: ToolExecutionContext,
     ) -> ClientResponse {
         let tool_defs = definitions_for(&allowed_tools);
@@ -109,9 +96,7 @@ impl AgentTurnService {
                 .await
             {
                 Ok(s) => s,
-                Err(LlmError::Provider(msg)) => {
-                    return ClientResponse::error(id, ErrorCode::ProviderError, msg);
-                }
+                Err(e) => return client_response_for_llm_error(id, e),
             };
 
             if step.tool_calls.is_empty() {
@@ -126,7 +111,7 @@ impl AgentTurnService {
             conversation.push(step.assistant.clone());
 
             for tc in &step.tool_calls {
-                let (record, result) = if !allowed_tools.iter().any(|t| t == &tc.name) {
+                let (record, result) = if !allowed_tools.contains(&tc.name) {
                     rejected_tool_result(
                         tc,
                         "tool_not_allowed",

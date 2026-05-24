@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use aibe::ToolName;
 use thiserror::Error;
 
 /// CLI / ユースケースが収集する入力（cwd は取得時点では未検証）。
@@ -12,7 +13,7 @@ pub struct AskInput {
     /// `ai` プロセスのカレントディレクトリ。
     pub client_cwd: Option<PathBuf>,
     /// 展開・検証済みツール名。
-    pub tools: Vec<String>,
+    pub tools: Vec<ToolName>,
 }
 
 /// aibe へ送る `agent_turn` 用ペイロード。
@@ -22,7 +23,7 @@ pub struct AskRequest {
     pub shell_log_tail: Option<String>,
     /// ツール有効時は必須。無効時は未送信でよい。
     pub client_cwd: Option<PathBuf>,
-    pub tools: Vec<String>,
+    pub tools: Vec<ToolName>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -78,11 +79,26 @@ mod tests {
             user_message: "hi".into(),
             shell_log_tail: None,
             client_cwd: None,
-            tools: vec!["read_file".into()],
+            tools: vec![ToolName::read_file()],
         };
         assert_eq!(
             input.into_request().unwrap_err(),
             AskRequestError::MissingClientCwd
+        );
+    }
+
+    #[test]
+    fn into_request_preserves_tool_names() {
+        let input = AskInput {
+            user_message: "hi".into(),
+            shell_log_tail: None,
+            client_cwd: Some("/tmp".into()),
+            tools: vec![ToolName::read_file(), ToolName::shell_exec()],
+        };
+        let req = input.into_request().expect("request");
+        assert_eq!(
+            req.tools,
+            vec![ToolName::read_file(), ToolName::shell_exec()]
         );
     }
 }

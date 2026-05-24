@@ -7,7 +7,7 @@ use std::sync::Arc;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::agent_turn::AgentTurnService;
-use aibe::domain::{ChatMessage, ExecutedToolStatus, LlmStepResult, ToolCall};
+use aibe::domain::{ChatMessage, ExecutedToolStatus, LlmStepResult, ToolCall, ToolName};
 use aibe::ports::outbound::{LlmError, LlmProvider, ShellExecConfig, ToolDefinition, ToolsConfig};
 use aibe::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, RequestContext};
 use async_trait::async_trait;
@@ -65,7 +65,7 @@ async fn tools_without_cwd_is_rejected() {
         .run(
             "1".into(),
             vec![ChatMessage::user("hi")],
-            vec!["read_file".into()],
+            vec![ToolName::read_file()],
             RequestContext::default(),
         )
         .await;
@@ -76,51 +76,13 @@ async fn tools_without_cwd_is_rejected() {
 }
 
 #[tokio::test]
-async fn unknown_tool_in_request_is_rejected() {
-    let llm = Arc::new(ScriptedMockLlm::new(vec![]));
-    let cfg = ToolsConfig::default();
-    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
-    let res = svc
-        .run(
-            "1".into(),
-            vec![ChatMessage::user("hi")],
-            vec!["nope".into()],
-            process_cwd_context(),
-        )
-        .await;
-    match res {
-        ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::ToolNotAllowed),
-        _ => panic!("expected error"),
-    }
-}
-
-#[tokio::test]
-async fn missing_cwd_takes_priority_over_unknown_tool() {
-    let llm = Arc::new(ScriptedMockLlm::new(vec![]));
-    let cfg = ToolsConfig::default();
-    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
-    let res = svc
-        .run(
-            "1".into(),
-            vec![ChatMessage::user("hi")],
-            vec!["nope".into(), "read_file".into()],
-            RequestContext::default(),
-        )
-        .await;
-    match res {
-        ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidRequest),
-        _ => panic!("expected invalid_request before tool_not_allowed"),
-    }
-}
-
-#[tokio::test]
 async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
     let steps = vec![
         LlmStepResult::with_tool_calls(
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "shell_exec".into(),
+                name: ToolName::shell_exec(),
                 arguments: json!({"command": "curl", "args": []}),
             }],
         ),
@@ -137,7 +99,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
         .run(
             "1".into(),
             vec![ChatMessage::user("fetch")],
-            vec!["shell_exec".into()],
+            vec![ToolName::shell_exec()],
             process_cwd_context(),
         )
         .await;
@@ -163,7 +125,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
 
     let read_call = |id: &str| ToolCall {
         id: id.into(),
-        name: "read_file".into(),
+        name: ToolName::read_file(),
         arguments: json!({"path": file_path}),
     };
     let steps = vec![
@@ -180,7 +142,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
         .run(
             "max-rounds".into(),
             vec![ChatMessage::user("read all")],
-            vec!["read_file".into()],
+            vec![ToolName::read_file()],
             cwd_context(dir.path()),
         )
         .await;
@@ -210,7 +172,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "shell_exec".into(),
+                name: ToolName::shell_exec(),
                 arguments: json!({"command": "echo", "args": [payload]}),
             }],
         ),
@@ -228,7 +190,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
         .run(
             "1".into(),
             vec![ChatMessage::user("run")],
-            vec!["shell_exec".into()],
+            vec![ToolName::shell_exec()],
             process_cwd_context(),
         )
         .await;
@@ -254,7 +216,7 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "read_file".into(),
+                name: ToolName::read_file(),
                 arguments: json!({"path": file_path}),
             }],
         ),
@@ -273,7 +235,7 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
         .run(
             "1".into(),
             vec![ChatMessage::user("read")],
-            vec!["read_file".into()],
+            vec![ToolName::read_file()],
             process_cwd_context(),
         )
         .await;
@@ -295,7 +257,7 @@ async fn model_disallowed_tool_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "delete_everything".into(),
+                name: ToolName::shell_exec(),
                 arguments: json!({}),
             }],
         ),
@@ -308,7 +270,7 @@ async fn model_disallowed_tool_returns_tool_result_and_continues() {
         .run(
             "1".into(),
             vec![ChatMessage::user("clean disk")],
-            vec!["read_file".into()],
+            vec![ToolName::read_file()],
             process_cwd_context(),
         )
         .await;
@@ -338,7 +300,7 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "read_file".into(),
+                name: ToolName::read_file(),
                 arguments: json!({"path": outside}),
             }],
         ),
@@ -354,7 +316,7 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
         .run(
             "1".into(),
             vec![ChatMessage::user("read secret")],
-            vec!["read_file".into()],
+            vec![ToolName::read_file()],
             cwd_context(dir.path()),
         )
         .await;
@@ -380,7 +342,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "shell_exec".into(),
+                name: ToolName::shell_exec(),
                 arguments: json!({"command": "false", "args": []}),
             }],
         ),
@@ -397,7 +359,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
         .run(
             "1".into(),
             vec![ChatMessage::user("run check")],
-            vec!["shell_exec".into()],
+            vec![ToolName::shell_exec()],
             process_cwd_context(),
         )
         .await;
@@ -423,7 +385,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "shell_exec".into(),
+                name: ToolName::shell_exec(),
                 arguments: json!({"command": "sleep", "args": ["5"]}),
             }],
         ),
@@ -441,7 +403,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
         .run(
             "1".into(),
             vec![ChatMessage::user("nap")],
-            vec!["shell_exec".into()],
+            vec![ToolName::shell_exec()],
             process_cwd_context(),
         )
         .await;
@@ -472,7 +434,7 @@ async fn shell_exec_runs_in_context_cwd() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "shell_exec".into(),
+                name: ToolName::shell_exec(),
                 arguments: json!({"command": "cat", "args": ["note.txt"]}),
             }],
         ),
@@ -489,7 +451,7 @@ async fn shell_exec_runs_in_context_cwd() {
         .run(
             "cwd-shell".into(),
             vec![ChatMessage::user("run")],
-            vec!["shell_exec".into()],
+            vec![ToolName::shell_exec()],
             RequestContext {
                 cwd: Some(client_sub.to_string_lossy().into_owned()),
                 ..Default::default()
@@ -519,7 +481,7 @@ async fn read_file_relative_path_uses_context_cwd() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: "read_file".into(),
+                name: ToolName::read_file(),
                 arguments: json!({"path": "rel.txt"}),
             }],
         ),
@@ -533,7 +495,7 @@ async fn read_file_relative_path_uses_context_cwd() {
         .run(
             "cwd".into(),
             vec![ChatMessage::user("read")],
-            vec!["read_file".into()],
+            vec![ToolName::read_file()],
             RequestContext {
                 cwd: Some(client_sub.to_string_lossy().into_owned()),
                 ..Default::default()

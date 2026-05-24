@@ -1,10 +1,12 @@
 //! OpenAI 互換 HTTP API アダプタ。
 
+use std::str::FromStr;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::domain::{ChatMessage, LlmStepResult, ToolCall};
+use crate::domain::{ChatMessage, LlmStepResult, ToolCall, ToolName};
 use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
 
 pub struct OpenAiCompatibleLlm {
@@ -71,7 +73,7 @@ fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
                             id: tc.id.clone(),
                             r#type: "function".to_string(),
                             function: ApiFunctionCall {
-                                name: tc.name.clone(),
+                                name: tc.name.as_str().to_string(),
                                 arguments: tc.arguments.to_string(),
                             },
                         })
@@ -86,25 +88,24 @@ fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
         .collect()
 }
 
-fn parse_tool_calls(message: &ApiMessage) -> Vec<ToolCall> {
-    message
-        .tool_calls
-        .as_ref()
-        .map(|calls| {
-            calls
-                .iter()
-                .map(|c| {
-                    let args: Value =
-                        serde_json::from_str(&c.function.arguments).unwrap_or(Value::Null);
-                    ToolCall {
-                        id: c.id.clone(),
-                        name: c.function.name.clone(),
-                        arguments: args,
-                    }
-                })
-                .collect()
+fn parse_tool_calls(message: &ApiMessage) -> Result<Vec<ToolCall>, LlmError> {
+    let Some(calls) = message.tool_calls.as_ref() else {
+        return Ok(vec![]);
+    };
+
+    calls
+        .iter()
+        .map(|c| {
+            let args: Value = serde_json::from_str(&c.function.arguments).unwrap_or(Value::Null);
+            let name =
+                ToolName::from_str(&c.function.name).map_err(|e| LlmError::UnknownTool(e.0))?;
+            Ok(ToolCall {
+                id: c.id.clone(),
+                name,
+                arguments: args,
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 #[async_trait]
@@ -140,7 +141,7 @@ impl LlmProvider for OpenAiCompatibleLlm {
             .map(|t| ApiTool {
                 r#type: "function".to_string(),
                 function: ApiToolFunction {
-                    name: t.name.clone(),
+                    name: t.name.as_str().to_string(),
                     description: t.description.clone(),
                     parameters: t.parameters.clone(),
                 },
@@ -170,7 +171,7 @@ impl LlmProvider for OpenAiCompatibleLlm {
                 tool_calls: None,
             });
 
-        let tool_calls = parse_tool_calls(&message);
+        let tool_calls = parse_tool_calls(&message)?;
         let content = message.content.unwrap_or_default();
         Ok(LlmStepResult::with_tool_calls(content, tool_calls))
     }

@@ -125,7 +125,7 @@ cargo test --workspace
 | `docs/0001_aibe-tool-agent-loop-spec.md` | aibe ツール付きエージェントループ仕様（ドラフト） |
 | `docs/0002_ai-tools-client-spec.md` | ai クライアントのツール連携仕様（ドラフト） |
 | `docs/0003_architecture-review-refactor-spec.md` | アーキテクチャレビュー反映（指示書・実装済み） |
-| `docs/0004_tool-name-type-adoption-spec.md` | ToolName 型の API 全面適用（未実装） |
+| `docs/0004_tool-name-type-adoption-spec.md` | ToolName 型の API 全面適用（実装済み） |
 | `docs/0005_request-context-domain-spec.md` | RequestContext / AgentTurnContext ドメイン化（未実装） |
 | `docs/0006_max-tool-rounds-terminator-spec.md` | max_tool_rounds 終端戦略の port 化（未実装） |
 | `docs/0007_agent-turn-loop-modularization-spec.md` | agent_turn 1 ラウンド実行の分割（未実装） |

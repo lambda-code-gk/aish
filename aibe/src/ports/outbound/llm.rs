@@ -6,10 +6,13 @@ use thiserror::Error;
 use crate::domain::{ChatMessage, LlmStepResult};
 use crate::ports::outbound::ToolDefinition;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum LlmError {
     #[error("provider failed: {0}")]
     Provider(String),
+    /// LLM が組み込みツール名以外を tool call として返した。
+    #[error("unknown tool: {0}")]
+    UnknownTool(String),
 }
 
 /// テキスト応答およびツール付き推論。

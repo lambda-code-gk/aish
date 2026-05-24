@@ -117,6 +117,8 @@ pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use aibe::ToolName;
+
     use super::*;
     use aibe::protocol::ProtocolMessageOut;
     use serde_json::json;
@@ -187,7 +189,7 @@ mod tests {
                 },
                 tool_calls: vec![ExecutedToolCall::ok(
                     "c1".into(),
-                    "read_file".into(),
+                    ToolName::read_file(),
                     json!({"path": "a"}),
                     huge,
                 )],
@@ -208,7 +210,7 @@ mod tests {
         let huge_len = huge.len();
         let line = format_tool_call_line(&ExecutedToolCall::ok(
             "c1".into(),
-            "shell_exec".into(),
+            ToolName::shell_exec(),
             json!({}),
             huge,
         ));

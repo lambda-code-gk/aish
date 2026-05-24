@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::domain::ToolName;
 use crate::ports::outbound::{ToolExecutor, ToolRegistry};
 
 pub struct DefaultToolRegistry {
-    executors: HashMap<&'static str, Arc<dyn ToolExecutor>>,
+    executors: HashMap<ToolName, Arc<dyn ToolExecutor>>,
 }
 
 impl DefaultToolRegistry {
@@ -19,7 +20,7 @@ impl DefaultToolRegistry {
 }
 
 impl ToolRegistry for DefaultToolRegistry {
-    fn get(&self, name: &str) -> Option<Arc<dyn ToolExecutor>> {
+    fn get(&self, name: &ToolName) -> Option<Arc<dyn ToolExecutor>> {
         self.executors.get(name).cloned()
     }
 }

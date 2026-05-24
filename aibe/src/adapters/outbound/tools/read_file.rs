@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::timeout;
 
-use crate::domain::{ExecutedToolCall, ToolResult};
+use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
 use crate::ports::outbound::{ReadFileConfig, ToolExecutionContext, ToolExecutor};
 
 use super::tool_output::limit_tool_output;
@@ -96,8 +96,8 @@ struct ReadFileArgs {
 
 #[async_trait]
 impl ToolExecutor for ReadFileTool {
-    fn name(&self) -> &'static str {
-        "read_file"
+    fn name(&self) -> ToolName {
+        ToolName::read_file()
     }
 
     async fn execute(
@@ -117,7 +117,7 @@ impl ToolExecutor for ReadFileTool {
                 return (
                     ExecutedToolCall::err(
                         id.clone(),
-                        self.name().to_string(),
+                        self.name(),
                         args_value,
                         "invalid_arguments",
                         &msg,
@@ -136,7 +136,7 @@ impl ToolExecutor for ReadFileTool {
             return (
                 ExecutedToolCall::err(
                     id.clone(),
-                    self.name().to_string(),
+                    self.name(),
                     args_value,
                     "invalid_arguments",
                     msg,
@@ -153,13 +153,7 @@ impl ToolExecutor for ReadFileTool {
         if path_has_parent_traversal(&path) {
             let msg = "path must not contain '..'";
             return (
-                ExecutedToolCall::err(
-                    id.clone(),
-                    self.name().to_string(),
-                    args_value,
-                    "path_not_allowed",
-                    msg,
-                ),
+                ExecutedToolCall::err(id.clone(), self.name(), args_value, "path_not_allowed", msg),
                 ToolResult {
                     tool_call_id: id,
                     content: msg.to_string(),
@@ -184,12 +178,7 @@ impl ToolExecutor for ReadFileTool {
             Ok(Ok(text)) => {
                 let limited = limit_tool_output(&text, max_output_bytes);
                 (
-                    ExecutedToolCall::ok(
-                        id.clone(),
-                        self.name().to_string(),
-                        args_value,
-                        limited.clone(),
-                    ),
+                    ExecutedToolCall::ok(id.clone(), self.name(), args_value, limited.clone()),
                     ToolResult {
                         tool_call_id: id,
                         content: limited,
@@ -204,13 +193,7 @@ impl ToolExecutor for ReadFileTool {
                     ("read_failed", format!("read failed: {e}"))
                 };
                 (
-                    ExecutedToolCall::err(
-                        id.clone(),
-                        self.name().to_string(),
-                        args_value,
-                        code,
-                        &msg,
-                    ),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, code, &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg,
@@ -221,13 +204,7 @@ impl ToolExecutor for ReadFileTool {
             Err(_) => {
                 let msg = format!("read timed out after {timeout_ms}ms");
                 (
-                    ExecutedToolCall::err(
-                        id.clone(),
-                        self.name().to_string(),
-                        args_value,
-                        "timeout",
-                        &msg,
-                    ),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg.clone(),
