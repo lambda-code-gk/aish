@@ -6,12 +6,14 @@ use std::time::Duration;
 
 use ai::adapters::outbound::{render_response, AibeUnixClient, StdoutPresenter};
 use ai::application::{plan_ask_launch, Ask, AskRunOptions};
-use ai::domain::{resolve_tools, AskInput, ConfigToolsTokens, ToolsResolveError};
+use ai::domain::{resolve_tools, AskRequest, ConfigToolsTokens, ToolsResolveError};
 use ai::ports::outbound::{AgentClient, AgentError};
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
+use aibe::domain::ExecutedToolCall;
 use aibe::ports::outbound::ToolsConfig;
-use aibe::protocol::{ClientResponse, ProtocolMessageOut};
+use aibe::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
+use serde_json::json;
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
@@ -32,11 +34,11 @@ impl RecordingClient {
 }
 
 impl AgentClient for RecordingClient {
-    fn agent_turn(&self, input: &AskInput) -> Result<ClientResponse, AgentError> {
-        *self.last_tools.lock().expect("lock") = input.tools.clone();
+    fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
+        *self.last_tools.lock().expect("lock") = request.tools.clone();
         Ok(ClientResponse::AgentTurnResult {
             id: "test-id".into(),
-            status: "ok".into(),
+            status: AgentTurnStatus::Ok,
             assistant_message: ProtocolMessageOut {
                 role: "assistant".into(),
                 content: "ok".into(),
@@ -111,7 +113,7 @@ fn resolve_read_only_sends_read_file_to_aibe() {
 fn cli_none_overrides_config_read_only() {
     let cfg = ConfigToolsTokens(vec!["@read-only".into()]);
     let resolved = resolve_tools(Some("none"), &cfg).expect("resolve");
-    assert!(resolved.names.is_empty());
+    assert!(resolved.allowlist.is_empty());
 }
 
 #[test]
@@ -122,24 +124,21 @@ fn unknown_tool_errors_without_connect() {
 
 #[test]
 fn presenter_max_tool_rounds_and_verbose_tools_contract() {
-    use aibe::protocol::ProtocolMessageOut;
-    use serde_json::json;
-
     let huge = "z".repeat(aibe::ports::outbound::DEFAULT_MAX_TOOL_OUTPUT_BYTES + 200);
     let out = render_response(
         &ClientResponse::AgentTurnResult {
             id: "id".into(),
-            status: "max_tool_rounds".into(),
+            status: AgentTurnStatus::MaxToolRounds,
             assistant_message: ProtocolMessageOut {
                 role: "assistant".into(),
                 content: "partial reply".into(),
             },
-            tool_calls: vec![json!({
-                "name": "read_file",
-                "status": "ok",
-                "arguments": {"path": "/etc/passwd"},
-                "output": huge
-            })],
+            tool_calls: vec![ExecutedToolCall::ok(
+                "c1".into(),
+                "read_file".into(),
+                json!({"path": "/etc/passwd"}),
+                huge,
+            )],
         },
         true,
     );
@@ -168,5 +167,5 @@ fn plan_ask_launch_cli_none_with_config_read_only() {
         false,
     )
     .expect("plan");
-    assert!(plan.resolved_tools.names.is_empty());
+    assert!(plan.resolved_tools.allowlist.is_empty());
 }
