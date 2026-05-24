@@ -48,6 +48,7 @@ impl AgentClient for AibeUnixClient {
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned()),
             },
+            llm_profile: request.llm_profile.clone(),
         };
 
         let payload =

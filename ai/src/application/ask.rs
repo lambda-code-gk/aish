@@ -19,6 +19,7 @@ pub enum AskError {
 pub struct AskRunOptions {
     pub resolved_tools: ResolvedTools,
     pub verbose_tools: bool,
+    pub llm_profile: Option<String>,
 }
 
 pub struct Ask<'a, C, P, L> {
@@ -55,6 +56,7 @@ where
             shell_log_tail,
             client_cwd: std::env::current_dir().ok(),
             tools: options.resolved_tools.allowlist.into_names(),
+            llm_profile: options.llm_profile,
         };
         let request = input.into_request()?;
 

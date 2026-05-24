@@ -12,6 +12,7 @@ use crate::domain::{tokens_from_config_value, AskToolsConfigRaw, ConfigToolsToke
 pub struct AiConfig {
     pub socket_path: PathBuf,
     pub ask_tools: ConfigToolsTokens,
+    pub ask_default_profile: Option<String>,
 }
 
 const DEFAULT_CONFIG: &str = ".config/ai/config.toml";
@@ -22,6 +23,7 @@ impl AiConfig {
         let mut cfg = Self {
             socket_path: default_socket_path(),
             ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
         };
         if path.is_file() {
             if let Ok(raw) = fs::read_to_string(&path) {
@@ -36,6 +38,7 @@ impl AiConfig {
                                 AskToolsToml::Array(a) => AskToolsConfigRaw::Array(a),
                             });
                         }
+                        cfg.ask_default_profile = ask.default_profile;
                     }
                 }
             }
@@ -72,6 +75,7 @@ struct FileConfig {
 #[derive(Debug, Deserialize)]
 struct AskSection {
     tools: Option<AskToolsToml>,
+    default_profile: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

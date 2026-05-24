@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{AibeUnixClient, FileLogTail, StdoutPresenter};
 use ai::application::{ensure_aibe_if_needed, plan_ask_launch, Ask, AskRunOptions};
-use ai::domain::ToolsResolveError;
+use ai::domain::{resolve_llm_profile, ToolsResolveError};
 use aibe::client;
 
 fn main() -> ExitCode {
@@ -37,6 +37,7 @@ fn run() -> anyhow::Result<()> {
     let mut socket_path = None;
     let mut auto_start = true;
     let mut tools_cli = None;
+    let mut profile_cli = None;
     let mut verbose_tools = false;
 
     let mut i = 1;
@@ -66,6 +67,14 @@ fn run() -> anyhow::Result<()> {
                 tools_cli = Some(
                     args.get(i + 1)
                         .ok_or_else(|| anyhow::anyhow!("--tools requires a list"))?
+                        .clone(),
+                );
+                i += 2;
+            }
+            "--profile" => {
+                profile_cli = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| anyhow::anyhow!("--profile requires a name"))?
                         .clone(),
                 );
                 i += 2;
@@ -102,9 +111,13 @@ fn run() -> anyhow::Result<()> {
 
     let client = AibeUnixClient::new(plan.socket_path);
     let presenter = StdoutPresenter;
+    let llm_profile =
+        resolve_llm_profile(profile_cli.as_deref(), cfg.ask_default_profile.as_deref());
+
     let options = AskRunOptions {
         resolved_tools: plan.resolved_tools,
         verbose_tools,
+        llm_profile,
     };
 
     if let Some(path) = log_path {
@@ -125,6 +138,6 @@ fn tools_resolve_to_anyhow(e: ToolsResolveError) -> anyhow::Error {
 
 fn print_usage() {
     eprintln!(
-        "usage: ai ask <message> [--log PATH] [--socket PATH] [--no-start] [--tools LIST] [--verbose-tools]"
+        "usage: ai ask <message> [--log PATH] [--socket PATH] [--no-start] [--tools LIST] [--profile NAME] [--verbose-tools]"
     );
 }
