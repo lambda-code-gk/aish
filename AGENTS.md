@@ -121,10 +121,18 @@ cargo test --workspace
 | `docs/manual/` | 手動検証チェックリスト |
 | `docs/codex-delegation.md` | Codex サブエージェント（権限・MCP 手順） |
 | `docs/codex-review.md` | オプション: 厚い diff パケット（`CODEX_USE_PACKET=1`） |
+| `docs/0000_spec-index.md` | 000x 仕様・指示書の一覧 |
+| `docs/0001_aibe-tool-agent-loop-spec.md` | aibe ツール付きエージェントループ仕様（ドラフト） |
 | `docs/0002_ai-tools-client-spec.md` | ai クライアントのツール連携仕様（ドラフト） |
+| `docs/0003_architecture-review-refactor-spec.md` | アーキテクチャレビュー反映（指示書・実装済み） |
+| `docs/0004_tool-name-type-adoption-spec.md` | ToolName 型の API 全面適用（未実装） |
+| `docs/0005_request-context-domain-spec.md` | RequestContext / AgentTurnContext ドメイン化（未実装） |
+| `docs/0006_max-tool-rounds-terminator-spec.md` | max_tool_rounds 終端戦略の port 化（未実装） |
+| `docs/0007_agent-turn-loop-modularization-spec.md` | agent_turn 1 ラウンド実行の分割（未実装） |
+| `docs/0008_chat-message-and-protocol-typing-spec.md` | ChatMessage / MessageRole 型強化（未実装） |
+| `docs/0009_ai-tool-category-sync-spec.md` | ai カテゴリ表と aibe ツール名の同期強化（未実装） |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
-| `docs/0001_aibe-tool-agent-loop-spec.md` | aibe ツール付きエージェントループ仕様（ドラフト） |
 
 機能変更時は、上記のいずれかを **必ず** 実装と同時に更新する。
 

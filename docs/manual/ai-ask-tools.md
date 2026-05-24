@@ -152,7 +152,7 @@ cargo run -q -p ai -- ask "verbose check" \
 
 ## 相対パスとカレントディレクトリ
 
-**方針（全ツール共通）**: 相対パス・`.` 付き許可ルートは **aibe デーモンの cwd ではなく `ai` を実行したディレクトリ**（`context.cwd`）を基準にする。今後追加する aibe ツールも同様（`docs/architecture.md`）。
+**方針（全ツール共通）**: 相対パス・`.` 付き許可ルートは **aibe デーモンの cwd ではなく `ai` を実行したディレクトリ**（`context.cwd`）を基準にする。ツール有効時は `context.cwd`（絶対パス）が **必須**（未送信は `invalid_request`）。詳細は `docs/0003_architecture-review-refactor-spec.md` と `docs/architecture.md`。
 
 `read_file` / `shell_exec` の確認例（相対パス・相対引数は `cd` したディレクトリ基準）:
 

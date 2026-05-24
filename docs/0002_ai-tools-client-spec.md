@@ -239,6 +239,8 @@ ai: tools enabled: none
 | **aibe** | プロトコル変更なし。ツール名の `pub` 露出のみ（別コミット可） |
 | **docs** | `architecture.md`, `security.md`, `ai.config.example.toml`, `AGENTS.md` |
 
+レイヤー分割・cwd 必須・内部型強化は **`docs/0003_architecture-review-refactor-spec.md`**（0002 実装後の追補）。
+
 ## 未確定・推測
 
 | 種別 | 内容 |

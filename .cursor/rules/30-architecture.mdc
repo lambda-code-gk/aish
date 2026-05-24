@@ -39,7 +39,8 @@ alwaysApply: false
 
 ## aibe ツール（cwd）
 
-- 相対パス・`.` 付きルート設定は **クライアント cwd**（`context.cwd` → `ToolExecutionContext::base_dir`）基準
+- 相対パス・`.` 付きルート設定は **クライアント cwd**（`context.cwd` → `ClientCwd` → `ToolExecutionContext::base_dir`）基準
+- **ツール有効時は `context.cwd` 必須**。aibe プロセス cwd へのフォールバックは禁止
 - 新規 `ToolExecutor` は `std::env::current_dir()` を直接使わない（詳細は `docs/architecture.md` の「ツールとカレントディレクトリ」）
 
 ## 変更時
