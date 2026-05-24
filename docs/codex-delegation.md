@@ -123,6 +123,7 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 - ユーザー意図の最終判断
 - Codex 要約の保持と統合
 - **`git commit` / `push` はユーザー明示時のみ**（Codex に任せない運用を推奨）
+- feature ブランチ運用時の **commit 整理（soft reset → 意味単位で commit し直し）** は Codex 完了後に親が行う（`.cursor/rules/05-git-workflow.mdc`）
 - MCP 障害時のフォールバック
 
 ## Linux: `bwrap: loopback: Operation not permitted`

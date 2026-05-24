@@ -35,4 +35,5 @@ cargo test --workspace
 
 ## Git
 
-- main 直。`git commit` / `git push` はユーザー明示時のみ。
+- 機能実装は **feature ブランチ**（詳細: `.cursor/rules/05-git-workflow.mdc`）。
+- `git commit` / `git push` はユーザー明示時のみ（feature 実装中の WIP commit は同ルール参照）。

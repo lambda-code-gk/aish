@@ -72,6 +72,7 @@ No require_escalated retries on the same command.
 - Codex 実行中は同じファイルを編集しない（競合回避）
 - `cargo test` 等の最終確認は親でもよいが、Codex に任せてもよい
 - **git commit / push はユーザー明示まで行わない**（Codex にも明示指示がない限りさせない）
+- feature ブランチ運用時: **commit 整理**（soft reset → 意味単位で commit し直し）は Codex 完了後に親が行う（`.cursor/rules/05-git-workflow.mdc`）
 
 ## Codex に委譲しないこと
 

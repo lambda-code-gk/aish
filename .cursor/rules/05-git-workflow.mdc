@@ -1,0 +1,57 @@
+---
+description: feature ブランチ・WIP commit・整理 commit の開発フロー
+alwaysApply: true
+---
+
+# Git 開発フロー（feature ブランチ）
+
+## 流れ
+
+1. **仕様** — 従来通り（`docs/`）。main 上 or 別 PR 可。
+2. **ブランチ** — 実装に入る**前**に `main` から `feature/<短い説明>` を切る。
+3. **実装** — 意味のある区切りごとに **WIP commit**（こまめに）。
+4. **整理** — ユーザーが「commit を整理して」と指示したときのみ。ブランチ根元へ soft reset し、**レビューしやすい単位**で commit し直す。
+5. **公開** — 整理後、ユーザー明示で push / PR。
+
+## commit の権限
+
+- **既定**: `git commit` / `git push` はユーザー明示時のみ（他ルールと同じ）。
+- **feature 実装タスク**（ユーザーがブランチ名 or「feature ブランチで実装」と指示）: 実装フェーズ中は **WIP commit をこまめに行ってよい**。整理・push はユーザー明示まで待つ。
+
+## WIP commit
+
+- プレフィックス例: `wip:` / `feat:`（粗くてよい）
+- 目的: ロールバック・差分確認。最終履歴には残さない想定。
+
+## 整理（commit し直し）
+
+整理前に `cargo fmt` / `clippy` / `test`（必要なら `check-architecture.sh`）を通す。
+
+```bash
+BASE=$(git merge-base main HEAD)
+git reset --soft "$BASE"
+git reset HEAD .    # いったん unstaged に戻す
+# 意味単位で git add → git commit を繰り返す
+```
+
+- **`git rebase -i` は使わない**（非対話環境）。
+- **整理は push 前**が原則。remote に WIP 履歴を載せない。
+- **`git push --force` to main は禁止**。整理後の force push が必要な場合はユーザー確認。
+
+## 整理後の commit 分割（目安）
+
+レイヤー・責務に沿って分ける（例）:
+
+1. `feat(aibe): domain / ports`
+2. `feat(aibe): adapters`
+3. `feat(aibe): application 組み込み`
+4. `feat(ai):` クライアント側（該当時）
+5. `test:` テスト
+6. `docs:` 仕様・manual 同期
+
+1 commit = 1 つの読み手が追える変更単位。テストと docs は実装と**同 PR 内**で分 commit 可。
+
+## Codex との分担
+
+- Codex 実行中は **同じ feature ブランチを親と競合させない**。
+- **整理 commit は Codex 完了後、Cursor 親**が行う（またはユーザー明示時）。

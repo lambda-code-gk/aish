@@ -88,8 +88,12 @@ cargo test --workspace
 
 ## Git
 
-- ブランチ: **main 直**（個人開発）
-- **コミット・push はユーザーが明示したときのみ**
+- **main** がベース。機能実装は **feature ブランチ** → 整理後 PR（詳細: `.cursor/rules/05-git-workflow.mdc`）
+- **コミット・push はユーザーが明示したときのみ**（feature 実装タスク中の WIP commit は同ルール参照）
+
+```text
+仕様(docs/) → feature/<name> 作成 → 実装中は WIP commit → 整理(commit し直し) → push/PR
+```
 
 ## ツール
 
@@ -133,6 +137,7 @@ cargo test --workspace
 ## 関連ファイル
 
 - `.cursor/rules/00-project.mdc` — 常時: 目的・優先順位・言語
+- `.cursor/rules/05-git-workflow.mdc` — 常時: feature ブランチ・WIP commit・整理 commit
 - `.cursor/rules/10-boundaries.mdc` — 常時: クレート境界
 - `.cursor/rules/20-rust.mdc` — `**/*.rs`
 - `.cursor/rules/30-architecture.mdc` — クレート配下
