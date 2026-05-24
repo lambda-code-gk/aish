@@ -2,7 +2,7 @@
 
 use aibe::protocol::ClientResponse;
 
-use crate::domain::AskInput;
+use crate::domain::AskRequest;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
@@ -14,5 +14,5 @@ pub enum AgentError {
 
 /// 1 ターンのエージェント呼び出し。
 pub trait AgentClient {
-    fn agent_turn(&self, input: &AskInput) -> Result<ClientResponse, AgentError>;
+    fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError>;
 }

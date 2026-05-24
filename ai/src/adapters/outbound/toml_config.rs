@@ -113,8 +113,8 @@ tools = "@read-only,shell_exec"
             }));
         let resolved = resolve_tools(None, &tokens).expect("resolve");
         assert_eq!(
-            resolved.names,
-            vec!["read_file".to_string(), "shell_exec".to_string()]
+            resolved.allowlist.names(),
+            &["read_file".to_string(), "shell_exec".to_string()]
         );
     }
 
@@ -141,9 +141,12 @@ tools = "@read-only"
         }
 
         let resolved = resolve_tools(Some("none"), &cfg.ask_tools).expect("resolve");
-        assert!(resolved.names.is_empty());
+        assert!(resolved.allowlist.is_empty());
 
         let from_config_only = resolve_tools(None, &cfg.ask_tools).expect("resolve");
-        assert_eq!(from_config_only.names, vec!["read_file".to_string()]);
+        assert_eq!(
+            from_config_only.allowlist.names(),
+            &["read_file".to_string()]
+        );
     }
 }

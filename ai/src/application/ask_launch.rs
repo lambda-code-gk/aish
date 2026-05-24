@@ -66,6 +66,6 @@ mod tests {
         let cfg = ConfigToolsTokens(vec!["@read-only".into()]);
         let plan =
             plan_ask_launch(&cfg, Some("none"), PathBuf::from("/tmp/t.sock"), false).expect("plan");
-        assert!(plan.resolved_tools.names.is_empty());
+        assert!(plan.resolved_tools.allowlist.is_empty());
     }
 }

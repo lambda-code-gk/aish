@@ -1,28 +1,39 @@
 //! `ai ask` のツール allowlist 解決（`docs/0002_ai-tools-client-spec.md`）。
+//! cwd・送信 payload・レイヤー分割は `docs/0003_architecture-review-refactor-spec.md`。
 //!
-//! ツール名は `aibe` の `READ_FILE` / `SHELL_EXEC` と一致させる（`tests/tool_names_sync.rs`）。
+//! ツール名の正本は `aibe::READ_FILE` / `aibe::SHELL_EXEC`。
 
+use aibe::{is_known_tool, READ_FILE, SHELL_EXEC};
 use thiserror::Error;
 
-/// aibe 組み込みツール名（`aibe::READ_FILE` と同期）。
-pub const READ_FILE: &str = "read_file";
-/// aibe 組み込みツール名（`aibe::SHELL_EXEC` と同期）。
-pub const SHELL_EXEC: &str = "shell_exec";
+/// 展開・検証済みツール名の集合。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ToolAllowlist {
+    names: Vec<String>,
+}
 
-const KNOWN_TOOLS: &[&str] = &[READ_FILE, SHELL_EXEC];
+impl ToolAllowlist {
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
 
-fn is_known_tool(name: &str) -> bool {
-    KNOWN_TOOLS.contains(&name)
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    pub fn into_names(self) -> Vec<String> {
+        self.names
+    }
 }
 
 /// 解決済み allowlist と起動時表示用メタデータ。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTools {
-    pub names: Vec<String>,
+    pub allowlist: ToolAllowlist,
     pub startup: ToolsStartupLine,
 }
 
-/// 起動時 `stderr` 1 行分。
+/// 起動時 `stderr` 1 行分のメタデータ（表示は adapter 層）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolsStartupLine {
     /// `read_file` / `read_file, shell_exec` / `none`
@@ -123,7 +134,7 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
     };
 
     Ok(ResolvedTools {
-        names,
+        allowlist: ToolAllowlist { names },
         startup: ToolsStartupLine {
             enabled_list,
             source_hint: Some(source_hint),
@@ -134,7 +145,7 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
 
 fn empty_resolved() -> ResolvedTools {
     ResolvedTools {
-        names: vec![],
+        allowlist: ToolAllowlist::default(),
         startup: ToolsStartupLine {
             enabled_list: "none".to_string(),
             source_hint: None,
@@ -177,20 +188,6 @@ fn split_comma_list(list: &str) -> Vec<String> {
         .collect()
 }
 
-/// 起動時 1 行の文言（`stderr` 用）。
-pub fn format_tools_startup(line: &ToolsStartupLine) -> String {
-    let prefix = if line.warn_shell { "warning: " } else { "" };
-    match &line.source_hint {
-        Some(hint) => format!("{prefix}ai: tools enabled: {} ({hint})", line.enabled_list),
-        None => format!("{prefix}ai: tools enabled: {}", line.enabled_list),
-    }
-}
-
-/// 起動時 1 行を `stderr` に出す。
-pub fn print_tools_startup(line: &ToolsStartupLine) {
-    eprintln!("{}", format_tools_startup(line));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,7 +195,7 @@ mod tests {
     #[test]
     fn default_empty() {
         let r = resolve_tools(None, &ConfigToolsTokens::default()).unwrap();
-        assert!(r.names.is_empty());
+        assert!(r.allowlist.is_empty());
         assert_eq!(r.startup.enabled_list, "none");
         assert!(!r.startup.warn_shell);
     }
@@ -207,34 +204,40 @@ mod tests {
     fn cli_overrides_config() {
         let cfg = ConfigToolsTokens(vec!["@read-only".into()]);
         let r = resolve_tools(Some("none"), &cfg).unwrap();
-        assert!(r.names.is_empty());
+        assert!(r.allowlist.is_empty());
     }
 
     #[test]
     fn read_only_expands() {
         let r = resolve_tools(Some("@read-only"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.names, vec![READ_FILE.to_string()]);
+        assert_eq!(r.allowlist.names(), &[READ_FILE.to_string()]);
         assert!(!r.startup.warn_shell);
     }
 
     #[test]
     fn full_expands_order() {
         let r = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.names, vec![READ_FILE.to_string(), SHELL_EXEC.to_string()]);
+        assert_eq!(
+            r.allowlist.names(),
+            &[READ_FILE.to_string(), SHELL_EXEC.to_string()]
+        );
         assert!(r.startup.warn_shell);
     }
 
     #[test]
     fn dedup_read_only_and_literal() {
         let r = resolve_tools(Some("@read-only,read_file"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.names, vec![READ_FILE.to_string()]);
+        assert_eq!(r.allowlist.names(), &[READ_FILE.to_string()]);
     }
 
     #[test]
     fn category_plus_shell_exec() {
         let r =
             resolve_tools(Some("@read-only,shell_exec"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.names, vec![READ_FILE.to_string(), SHELL_EXEC.to_string()]);
+        assert_eq!(
+            r.allowlist.names(),
+            &[READ_FILE.to_string(), SHELL_EXEC.to_string()]
+        );
         assert!(r.startup.warn_shell);
     }
 
@@ -261,22 +264,6 @@ mod tests {
         let raw = AskToolsConfigRaw::Array(vec!["@read-only".into(), "read_file".into()]);
         let tokens = tokens_from_config_value(raw);
         let r = resolve_tools(None, &tokens).unwrap();
-        assert_eq!(r.names, vec![READ_FILE.to_string()]);
-    }
-
-    #[test]
-    fn startup_line_formats() {
-        let r = resolve_tools(None, &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(format_tools_startup(&r.startup), "ai: tools enabled: none");
-
-        let r = resolve_tools(Some("@read-only"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(
-            format_tools_startup(&r.startup),
-            "ai: tools enabled: read_file (@read-only)"
-        );
-
-        let r = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).unwrap();
-        assert!(format_tools_startup(&r.startup).starts_with("warning: "));
-        assert!(format_tools_startup(&r.startup).contains("shell_exec"));
+        assert_eq!(r.allowlist.names(), &[READ_FILE.to_string()]);
     }
 }
