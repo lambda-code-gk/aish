@@ -8,13 +8,18 @@ use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{
     AgentTurnContext, ChatMessage, ExecutedToolCall, ToolCall, ToolName, ToolResult,
 };
-use crate::ports::outbound::{LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig};
+use crate::ports::outbound::{
+    LlmProvider, TerminationCapability, ToolExecutionContext, ToolRegistry, ToolRoundTerminator,
+    ToolsConfig,
+};
 use crate::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
 
 pub struct AgentTurnService {
     llm: Arc<dyn LlmProvider>,
     registry: Arc<dyn ToolRegistry>,
     tools_config: ToolsConfig,
+    terminator: Arc<dyn ToolRoundTerminator>,
+    termination_capability: TerminationCapability,
 }
 
 impl AgentTurnService {
@@ -22,11 +27,15 @@ impl AgentTurnService {
         llm: Arc<dyn LlmProvider>,
         registry: Arc<dyn ToolRegistry>,
         tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        termination_capability: TerminationCapability,
     ) -> Self {
         Self {
             llm,
             registry,
             tools_config,
+            terminator,
+            termination_capability,
         }
     }
 
@@ -144,6 +153,8 @@ impl AgentTurnService {
             if round + 1 >= max_rounds {
                 return finish_after_max_tool_rounds(
                     self.llm.as_ref(),
+                    self.terminator.as_ref(),
+                    &self.termination_capability,
                     id,
                     &conversation,
                     executed,
