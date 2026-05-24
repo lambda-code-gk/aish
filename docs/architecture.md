@@ -227,7 +227,7 @@ aibe →  aish 禁止
 | **`ai` の責務** | ツール有効時は起動時の `std::env::current_dir()`（絶対パス）を `context.cwd` に載せる。`AskInput` → `AskRequest` 変換で検証する |
 | **既存** | `read_file` / `shell_exec` は上記に準拠 |
 
-実装の正本: `aibe::domain::ClientCwd`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。ツール名の正本は `aibe::domain::tool_name`（`READ_FILE` / `SHELL_EXEC`）。
+実装の正本: `aibe::domain::ClientCwd`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。ツール名の正本は `aibe::domain::tool_name`（`ToolName` 値オブジェクト、`READ_FILE` / `SHELL_EXEC` / `KNOWN_TOOLS`）。NDJSON wire 上の `tools` / `tool_calls[].name` は従来どおり JSON 文字列。内部 API（`ToolCall` / `ExecutedToolCall` / `ToolDefinition` / `ai::ToolAllowlist`）は `ToolName` を使用する。
 
 #### エラーコード（`type: error`）
 
