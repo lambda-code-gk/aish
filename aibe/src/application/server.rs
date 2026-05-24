@@ -7,22 +7,33 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
+use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
-use crate::ports::outbound::{LlmProvider, ToolsConfig};
+use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
 
 pub async fn run(
     socket_path: PathBuf,
     llm: Arc<dyn LlmProvider>,
     tools_config: ToolsConfig,
+    termination_capability: TerminationCapability,
 ) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
     let listener = bind_unix_listener(&socket_path)?;
     eprintln!("aibe: listening on {}", socket_path.display());
 
     let registry = build_registry(&tools_config);
-    let handler = Arc::new(RequestService::new(llm, registry, tools_config));
+    let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
+        tools_config.termination_strategy,
+    ));
+    let handler = Arc::new(RequestService::new(
+        llm,
+        registry,
+        tools_config,
+        terminator,
+        termination_capability,
+    ));
 
     loop {
         let (stream, _) = listener.accept().await?;

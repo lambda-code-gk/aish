@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
-use crate::ports::outbound::{LlmProvider, ToolRegistry, ToolsConfig};
+use crate::ports::outbound::{
+    LlmProvider, TerminationCapability, ToolRegistry, ToolRoundTerminator, ToolsConfig,
+};
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
 
 pub struct RequestService {
@@ -16,9 +18,17 @@ impl RequestService {
         llm: Arc<dyn LlmProvider>,
         registry: Arc<dyn ToolRegistry>,
         tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        termination_capability: TerminationCapability,
     ) -> Self {
         Self {
-            agent_turn: AgentTurnService::new(llm, registry, tools_config),
+            agent_turn: AgentTurnService::new(
+                llm,
+                registry,
+                tools_config,
+                terminator,
+                termination_capability,
+            ),
         }
     }
 

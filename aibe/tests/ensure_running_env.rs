@@ -8,7 +8,7 @@ use std::time::Duration;
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::client;
-use aibe::ports::outbound::ToolsConfig;
+use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
@@ -25,6 +25,7 @@ fn ensure_running_waits_on_custom_socket_path() {
                 socket_for_server,
                 Arc::new(MockLlm::new()),
                 ToolsConfig::default(),
+                TerminationCapability::summary_prompt_only(),
             )
             .await
             .expect("server");

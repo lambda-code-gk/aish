@@ -91,6 +91,11 @@ fn parse_tools(file: Option<&FileConfig>) -> ToolsConfig {
                 tools.read_file.allowed_roots = roots.into_iter().map(expand_home).collect();
             }
         }
+        if let Some(s) = t.termination_strategy.as_deref() {
+            if let Some(strategy) = crate::ports::outbound::TerminationStrategy::parse(s) {
+                tools.termination_strategy = strategy;
+            }
+        }
     }
     tools
 }
@@ -154,6 +159,7 @@ struct ToolsSection {
     max_rounds: Option<u32>,
     exec_timeout_ms: Option<u64>,
     max_tool_output_bytes: Option<usize>,
+    termination_strategy: Option<String>,
     shell_exec: Option<ShellExecSection>,
     read_file: Option<ReadFileSection>,
 }
@@ -180,6 +186,26 @@ struct LlmSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_termination_strategy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tools]
+termination_strategy = "conversation_replay"
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert_eq!(
+            cfg.tools.termination_strategy,
+            crate::ports::outbound::TerminationStrategy::ConversationReplay
+        );
+    }
 
     #[test]
     fn parses_tools_section() {

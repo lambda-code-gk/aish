@@ -13,6 +13,26 @@ pub struct AppConfig {
     pub tools: ToolsConfig,
 }
 
+/// max-round 到達時の終端戦略（policy）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TerminationStrategy {
+    /// 実行記録を要約 user メッセージに圧縮（既定・0003 互換）。
+    #[default]
+    SummaryPrompt,
+    /// capability が許すときループ会話を無加工で `complete()` に渡す。
+    ConversationReplay,
+}
+
+impl TerminationStrategy {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "summary_prompt" => Some(Self::SummaryPrompt),
+            "conversation_replay" => Some(Self::ConversationReplay),
+            _ => None,
+        }
+    }
+}
+
 /// ツール実行とエージェントループの設定。
 #[derive(Debug, Clone)]
 pub struct ToolsConfig {
@@ -20,6 +40,7 @@ pub struct ToolsConfig {
     pub exec_timeout_ms: u64,
     /// `tool_calls` / LLM 向け tool result の最大バイト数。
     pub max_tool_output_bytes: usize,
+    pub termination_strategy: TerminationStrategy,
     pub shell_exec: ShellExecConfig,
     pub read_file: ReadFileConfig,
 }
@@ -41,6 +62,7 @@ impl Default for ToolsConfig {
             max_rounds: 8,
             exec_timeout_ms: 30_000,
             max_tool_output_bytes: DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+            termination_strategy: TerminationStrategy::default(),
             shell_exec: ShellExecConfig {
                 enabled: true,
                 allowed_commands: vec![],

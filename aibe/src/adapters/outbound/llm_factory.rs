@@ -3,7 +3,18 @@
 use std::sync::Arc;
 
 use crate::adapters::outbound::{MockLlm, OpenAiCompatibleLlm};
-use crate::ports::outbound::{AppConfig, ConfigError, LlmConfig, LlmProvider};
+use crate::ports::outbound::{
+    AppConfig, ConfigError, LlmConfig, LlmProvider, TerminationCapability,
+};
+
+/// LLM プロバイダ種別に応じた終端 capability（`LlmProvider` trait には載せない）。
+pub fn termination_capability(llm: &LlmConfig) -> TerminationCapability {
+    match llm {
+        LlmConfig::Mock => TerminationCapability::summary_prompt_only(),
+        // OpenAI 互換は安全側: tool role を plain complete で送らない。
+        LlmConfig::OpenAiCompatible { .. } => TerminationCapability::summary_prompt_only(),
+    }
+}
 
 pub fn build_llm(config: &AppConfig) -> Result<Arc<dyn LlmProvider>, ConfigError> {
     let provider: Arc<dyn LlmProvider> = match &config.llm {

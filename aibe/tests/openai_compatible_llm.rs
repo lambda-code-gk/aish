@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
+use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::OpenAiCompatibleLlm;
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, ToolName};
-use aibe::ports::outbound::{LlmError, LlmProvider, ToolsConfig};
+use aibe::ports::outbound::{LlmError, LlmProvider, TerminationCapability, ToolsConfig};
 use aibe::protocol::{ClientResponse, ErrorCode};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -101,7 +102,16 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
         "test-model".to_string(),
     ));
     let cfg = ToolsConfig::default();
-    let svc = AgentTurnService::new(llm, build_registry(&cfg), cfg);
+    let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
+        cfg.termination_strategy,
+    ));
+    let svc = AgentTurnService::new(
+        llm,
+        build_registry(&cfg),
+        cfg,
+        terminator,
+        TerminationCapability::summary_prompt_only(),
+    );
     let res = svc
         .run(
             "turn-unknown-tool".into(),
