@@ -11,6 +11,7 @@ base_url = "http://127.0.0.1:1234/v1"
 model = "local-model"
 
 [tools]
+# 1 以上（0 は読み込みエラー）。1 agent_turn あたりの LLM↔tool ループ上限。
 max_rounds = 8
 exec_timeout_ms = 30_000
 # tool_calls / LLM 向け tool result の最大バイト（既定 32768、256〜1048576 にクランプ）

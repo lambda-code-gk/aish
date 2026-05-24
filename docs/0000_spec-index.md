@@ -8,10 +8,10 @@
 | 0004 | [0004_tool-name-type-adoption-spec.md](0004_tool-name-type-adoption-spec.md) | 実装済み | `ToolName` API 全面適用 |
 | 0005 | [0005_request-context-domain-spec.md](0005_request-context-domain-spec.md) | 実装済み | `AgentTurnContext` ドメイン化 |
 | 0006 | [0006_max-tool-rounds-terminator-spec.md](0006_max-tool-rounds-terminator-spec.md) | 実装済み | max-round 終端戦略の差し替え可能化 |
-| 0007 | [0007_agent-turn-loop-modularization-spec.md](0007_agent-turn-loop-modularization-spec.md) | 未実装 | ループ 1 ラウンドの `ToolRoundExecutor` 抽出 |
+| 0007 | [0007_agent-turn-loop-modularization-spec.md](0007_agent-turn-loop-modularization-spec.md) | 実装済み | ループ 1 ラウンドの `ToolRoundExecutor` 抽出 |
 | 0008 | [0008_chat-message-and-protocol-typing-spec.md](0008_chat-message-and-protocol-typing-spec.md) | 未実装 | `MessageRole` / 注入メッセージの型化 |
 | 0009 | [0009_ai-tool-category-sync-spec.md](0009_ai-tool-category-sync-spec.md) | 未実装 | カテゴリ表と `KNOWN_TOOLS` の機械同期 |
 
 運用上の正本（要約）: [architecture.md](architecture.md)。
 
-実装順の目安: **0004**（ツール追加前）→ **0005**（context 拡張前）→ **0007**（ループ変更前）→ **0006**（プロバイダ検証とセット）→ **0008** / **0009**（低優先・独立）。
+実装順の目安: **0004** → **0005** → **0006**（実装済み）→ **0007**（ループ分割）→ **0008** / **0009**（低優先・独立）。

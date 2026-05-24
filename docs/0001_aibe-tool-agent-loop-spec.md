@@ -311,7 +311,7 @@ allowed_commands = ["ls", "git", "cargo", "/usr/bin/rg"]
 
 | キー | 説明 |
 |------|------|
-| `[tools] max_rounds` | 1 `agent_turn` あたりの最大 LLM↔ツール ラウンド |
+| `[tools] max_rounds` | 1 `agent_turn` あたりの最大 LLM↔ツール ラウンド（**1 以上**。`0` は TOML 読み込み拒否。プログラム上 0 のみ 1 に補正 — `ToolsConfig::effective_max_rounds`） |
 | `[tools] exec_timeout_ms` | ツール 1 回あたりのタイムアウト |
 | `[tools] max_tool_output_bytes` | `tool_calls` / LLM 向け tool result の最大バイト（超過分は切り詰め） |
 | `[tools.shell_exec] enabled` | `false` なら常に拒否（tool result） |

@@ -210,10 +210,12 @@ aibe →  aish 禁止
 
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
 - `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。**このとき `context.cwd`（絶対パス）は必須**。未送信・相対パスは `invalid_request` で拒否する。
+- `[tools] max_rounds` は **1 以上**。`config.toml` で `0` は設定読み込みエラー。プログラム上 `ToolsConfig { max_rounds: 0 }` のみ `effective_max_rounds()` で 1 に補正（`docs/0007_agent-turn-loop-modularization-spec.md`）。
 - 組み込みツール: `shell_exec`（設定 `allowed_commands` のみ。subprocess cwd は `context.cwd`）、`read_file`（`allowed_roots` 配下のみ。相対パスは `context.cwd` 基準）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
 - ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/0001_aibe-tool-agent-loop-spec.md`。
 - cwd 必須化・ドメイン型・レイヤー分割は `docs/0003_architecture-review-refactor-spec.md`。
+- ループ 1 ラウンド（LLM step + tool 実行 + conversation 更新）は `application/tool_round/ToolRoundExecutor`（0007）。`AgentTurnService` は前処理・for-loop・max-round 時の `ToolRoundTerminator` 委譲。composition root は `application/server.rs`。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
 
