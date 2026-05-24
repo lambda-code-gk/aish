@@ -5,9 +5,9 @@ use std::sync::Arc;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::OpenAiCompatibleLlm;
 use aibe::application::agent_turn::AgentTurnService;
-use aibe::domain::{ChatMessage, ToolName};
+use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, ToolName};
 use aibe::ports::outbound::{LlmError, LlmProvider, ToolsConfig};
-use aibe::protocol::{ClientResponse, ErrorCode, RequestContext};
+use aibe::protocol::{ClientResponse, ErrorCode};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -107,15 +107,10 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
             "turn-unknown-tool".into(),
             vec![ChatMessage::user("clean disk")],
             vec![ToolName::read_file()],
-            RequestContext {
-                cwd: Some(
-                    std::env::current_dir()
-                        .expect("cwd")
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-                ..Default::default()
-            },
+            AgentTurnContext::for_tool_turn(
+                ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
+                None,
+            ),
         )
         .await;
 
