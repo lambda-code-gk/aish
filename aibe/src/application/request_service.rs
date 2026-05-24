@@ -6,7 +6,9 @@ use crate::application::agent_turn::AgentTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolRoundTerminator};
-use crate::protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
+use crate::protocol::{
+    ClientRequest, ClientResponse, ErrorCode, ProtocolMessageConversionError, RequestContext,
+};
 
 pub struct RequestService {
     agent_turn: AgentTurnService,
@@ -33,7 +35,16 @@ impl RequestService {
                 tools,
                 context,
             } => {
-                let messages: Vec<ChatMessage> = messages.into_iter().map(Into::into).collect();
+                let messages: Vec<ChatMessage> = match messages
+                    .into_iter()
+                    .map(ChatMessage::try_from)
+                    .collect::<Result<Vec<_>, ProtocolMessageConversionError>>()
+                {
+                    Ok(msgs) => msgs,
+                    Err(e) => {
+                        return ClientResponse::error(id, ErrorCode::InvalidRequest, e.to_string());
+                    }
+                };
 
                 // tools 非空: cwd を tool 名検証より先（0003 / 0005 受け入れ条件）
                 if !tools.is_empty() {

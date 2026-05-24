@@ -81,7 +81,7 @@ aibe →  aish 禁止
 |-----------|------|
 | `type` | 今後 `ping`, `cancel` 等を追加可能 |
 | `id` | 相関 ID |
-| `messages` | チャット履歴（プロバイダへ渡す前に aibe で正規化） |
+| `messages` | チャット履歴（プロバイダへ渡す前に aibe で正規化）。wire 上の `role` は `"user"` 等の **JSON 文字列のまま**（0008 以降も不変）。aibe 内部では `MessageRole` enum に変換して保持（未知 role は `invalid_request`）。詳細: `docs/0008_chat-message-and-protocol-typing-spec.md` |
 | `tools` | 有効にするツール名のリスト |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
@@ -229,7 +229,7 @@ aibe →  aish 禁止
 | **`ai` の責務** | ツール有効時は起動時の `std::env::current_dir()`（絶対パス）を `context.cwd` に載せる。`AskInput` → `AskRequest` 変換で検証する |
 | **既存** | `read_file` / `shell_exec` は上記に準拠 |
 
-実装の正本: `aibe::domain::ClientCwd`、`aibe::domain::AgentTurnContext`、`aibe::domain::ShellLogTail`（`aibe::ShellLogTail` として re-export）、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context` 形は従来どおり。内部では `RequestService` が protocol DTO を `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。ツール名の正本は `aibe::domain::tool_name`（`ToolName` 値オブジェクト、`READ_FILE` / `SHELL_EXEC` / `KNOWN_TOOLS`）。NDJSON wire 上の `tools` / `tool_calls[].name` は従来どおり JSON 文字列。内部 API（`ToolCall` / `ExecutedToolCall` / `ToolDefinition` / `ai::ToolAllowlist`）は `ToolName` を使用する。
+実装の正本: `aibe::domain::ClientCwd`、`aibe::domain::AgentTurnContext`、`aibe::domain::ShellLogTail`（`aibe::ShellLogTail` として re-export）、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context` 形は従来どおり。内部では `RequestService` が protocol DTO を `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。会話メッセージは wire 上 `messages[].role` 文字列のまま受け取り、内部 `ChatMessage.role` は `MessageRole` enum（0008）。変換は `TryFrom<ProtocolMessage>` のみ。ツール名の正本は `aibe::domain::tool_name`（`ToolName` 値オブジェクト、`READ_FILE` / `SHELL_EXEC` / `KNOWN_TOOLS`）。NDJSON wire 上の `tools` / `tool_calls[].name` は従来どおり JSON 文字列。内部 API（`ToolCall` / `ExecutedToolCall` / `ToolDefinition` / `ai::ToolAllowlist`）は `ToolName` を使用する。
 
 #### エラーコード（`type: error`）
 

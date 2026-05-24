@@ -1,6 +1,6 @@
 //! ConversationReplay 終端戦略: ループ会話を無加工で `complete()` に渡す。
 
-use crate::domain::ChatMessage;
+use crate::domain::{ChatMessage, MessageRole};
 use crate::ports::outbound::{LlmError, LlmProvider, TerminationResult, TerminationStrategyUsed};
 
 /// ConversationReplay: max-round 直後のループ会話を変更せず LLM に渡す。
@@ -8,7 +8,7 @@ pub async fn conversation_replay(
     llm: &dyn LlmProvider,
     conversation: &[ChatMessage],
 ) -> Result<TerminationResult, LlmError> {
-    let had_tool_messages = conversation.iter().any(|m| m.role == "tool");
+    let had_tool_messages = conversation.iter().any(|m| m.is_role(MessageRole::Tool));
     let assistant = llm.complete(conversation).await?;
     Ok(TerminationResult {
         strategy: TerminationStrategyUsed::ConversationReplay,

@@ -60,7 +60,7 @@ fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
         .iter()
         .map(|m| {
             let mut api = ApiMessage {
-                role: m.role.clone(),
+                role: m.role.to_string(),
                 content: Some(m.content.clone()),
                 tool_call_id: m.tool_call_id.clone(),
                 tool_calls: None,

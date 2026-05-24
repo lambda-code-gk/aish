@@ -47,7 +47,7 @@ impl From<ChatMessage> for ProtocolMessageOut {
 impl ProtocolMessageOut {
     pub fn from_assistant(m: &ChatMessage) -> Self {
         Self {
-            role: m.role.clone(),
+            role: m.role.to_string(),
             content: m.content.clone(),
         }
     }
