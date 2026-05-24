@@ -1,8 +1,9 @@
 //! ツールラウンド上限到達時の終端処理。
 
+use crate::application::llm_error::client_response_for_llm_error;
 use crate::domain::{ChatMessage, ExecutedToolCall, ToolExecutionSummary};
-use crate::ports::outbound::{LlmError, LlmProvider};
-use crate::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
+use crate::ports::outbound::LlmProvider;
+use crate::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
 
 /// 最大ツールラウンド到達後、取得済み tool result を根拠に最終応答を生成する。
 ///
@@ -29,7 +30,7 @@ pub async fn finish_after_max_tool_rounds(
             assistant_message: ProtocolMessageOut::from_assistant(&assistant),
             tool_calls: executed,
         },
-        Err(LlmError::Provider(msg)) => ClientResponse::error(id, ErrorCode::ProviderError, msg),
+        Err(e) => client_response_for_llm_error(id, e),
     }
 }
 

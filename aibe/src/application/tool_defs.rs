@@ -2,15 +2,12 @@
 
 use serde_json::json;
 
+use crate::domain::ToolName;
 use crate::ports::outbound::ToolDefinition;
 
 pub use crate::domain::{is_known_tool, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
 
-pub fn is_known_tool_name(name: &str) -> bool {
-    is_known_tool(name)
-}
-
-pub fn definitions_for(allowed: &[String]) -> Vec<ToolDefinition> {
+pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
     allowed
         .iter()
         .filter_map(|name| match name.as_str() {
@@ -23,7 +20,7 @@ pub fn definitions_for(allowed: &[String]) -> Vec<ToolDefinition> {
 
 fn shell_exec_definition() -> ToolDefinition {
     ToolDefinition {
-        name: SHELL_EXEC.to_string(),
+        name: ToolName::shell_exec(),
         description: "Run a subprocess command. Only commands listed in server config are allowed."
             .to_string(),
         parameters: json!({
@@ -43,7 +40,7 @@ fn shell_exec_definition() -> ToolDefinition {
 
 fn read_file_definition() -> ToolDefinition {
     ToolDefinition {
-        name: READ_FILE.to_string(),
+        name: ToolName::read_file(),
         description: "Read a text file under configured allowed roots.".to_string(),
         parameters: json!({
             "type": "object",
