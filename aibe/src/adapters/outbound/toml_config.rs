@@ -1,11 +1,16 @@
 //! `~/.config/aibe/config.toml` アダプタ。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use toml::Value;
 
-use crate::ports::outbound::{AppConfig, ConfigError, ConfigLoader, LlmConfig, ToolsConfig};
+use crate::ports::outbound::{
+    AppConfig, ConfigError, ConfigLoader, LlmBackend, LlmGenerationParams, LlmProfile,
+    LlmProfilesConfig, LlmProviderKind, ToolsConfig,
+};
 
 const DEFAULT_CONFIG_PATH: &str = ".config/aibe/config.toml";
 
@@ -34,15 +39,16 @@ impl TomlConfig {
 
 impl ConfigLoader for TomlConfig {
     fn load(&self) -> Result<AppConfig, ConfigError> {
-        let file_cfg = if self.path.is_file() {
+        let (file_cfg, root) = if self.path.is_file() {
             let raw = fs::read_to_string(&self.path)
                 .map_err(|e| ConfigError::Io(format!("{}: {e}", self.path.display())))?;
-            Some(
-                toml::from_str::<FileConfig>(&raw)
-                    .map_err(|e| ConfigError::Invalid(e.to_string()))?,
-            )
+            let file_cfg: FileConfig =
+                toml::from_str(&raw).map_err(|e| ConfigError::Invalid(e.to_string()))?;
+            let root: toml::Table =
+                toml::from_str(&raw).map_err(|e| ConfigError::Invalid(e.to_string()))?;
+            (Some(file_cfg), Some(root))
         } else {
-            None
+            (None, None)
         };
 
         let socket_path = std::env::var("AIBE_SOCKET_PATH")
@@ -55,7 +61,7 @@ impl ConfigLoader for TomlConfig {
                     .unwrap_or_else(crate::default_socket_path)
             });
 
-        let llm = parse_llm(file_cfg.as_ref())?;
+        let llm = parse_llm_profiles(root.as_ref(), file_cfg.as_ref())?;
         let tools = parse_tools(file_cfg.as_ref())?;
         Ok(AppConfig {
             socket_path,
@@ -63,6 +69,335 @@ impl ConfigLoader for TomlConfig {
             tools,
         })
     }
+}
+
+fn parse_llm_profiles(
+    root: Option<&toml::Table>,
+    file: Option<&FileConfig>,
+) -> Result<LlmProfilesConfig, ConfigError> {
+    let Some(root) = root else {
+        return Ok(LlmProfilesConfig::default_mock());
+    };
+
+    let llm_value = root.get("llm");
+    let profiles_value = root.get("profiles");
+
+    if llm_value.is_none() && profiles_value.is_none() {
+        return Ok(LlmProfilesConfig::default_mock());
+    }
+
+    let default_profile = file
+        .and_then(|f| f.default_profile.clone())
+        .unwrap_or_else(|| "default".to_string());
+
+    match classify_llm_section(llm_value)? {
+        LlmSectionKind::Legacy(flat) => parse_legacy_llm(flat, profiles_value, default_profile),
+        LlmSectionKind::Named(backends) => {
+            parse_named_llm(backends, profiles_value, default_profile)
+        }
+        LlmSectionKind::Absent => {
+            if profiles_value.is_some() {
+                return Err(ConfigError::Invalid(
+                    "[profiles] requires at least one [llm.<name>] backend".into(),
+                ));
+            }
+            Ok(LlmProfilesConfig::default_mock())
+        }
+    }
+}
+
+enum LlmSectionKind {
+    Legacy(toml::Table),
+    Named(HashMap<String, toml::Table>),
+    Absent,
+}
+
+fn classify_llm_section(llm: Option<&Value>) -> Result<LlmSectionKind, ConfigError> {
+    let Some(Value::Table(table)) = llm else {
+        return Ok(LlmSectionKind::Absent);
+    };
+
+    let mut named = HashMap::new();
+    let mut flat = toml::Table::new();
+
+    for (key, value) in table {
+        if value.is_table() {
+            named.insert(key.clone(), value.as_table().cloned().expect("is_table"));
+        } else {
+            flat.insert(key.clone(), value.clone());
+        }
+    }
+
+    if !named.is_empty() {
+        if flat.contains_key("provider")
+            || flat.contains_key("api_key")
+            || flat.contains_key("base_url")
+            || flat.contains_key("model")
+        {
+            return Err(ConfigError::Invalid(
+                "cannot mix flat [llm] keys with [llm.<name>] tables".into(),
+            ));
+        }
+        return Ok(LlmSectionKind::Named(named));
+    }
+
+    if flat.is_empty() {
+        return Ok(LlmSectionKind::Absent);
+    }
+
+    Ok(LlmSectionKind::Legacy(flat))
+}
+
+fn parse_legacy_llm(
+    mut flat: toml::Table,
+    profiles_value: Option<&Value>,
+    default_profile: String,
+) -> Result<LlmProfilesConfig, ConfigError> {
+    if profiles_value.is_some() {
+        return Err(ConfigError::Invalid(
+            "legacy flat [llm] cannot be combined with [profiles]".into(),
+        ));
+    }
+
+    let provider = flat
+        .remove("provider")
+        .and_then(|v| v.as_str().map(str::to_string))
+        .or_else(|| std::env::var("AIBE_LLM_PROVIDER").ok())
+        .unwrap_or_else(|| "mock".to_string());
+
+    let model = flat
+        .remove("model")
+        .and_then(|v| v.as_str().map(str::to_string))
+        .or_else(|| std::env::var("AIBE_MODEL").ok())
+        .unwrap_or_else(|| default_model_for_provider(&provider));
+
+    let backend = parse_backend_fields(&provider, &mut flat, true)?;
+
+    let mut backends = HashMap::new();
+    backends.insert("default".to_string(), backend);
+
+    let mut profiles = HashMap::new();
+    profiles.insert(
+        "default".to_string(),
+        LlmProfile {
+            llm: "default".to_string(),
+            model,
+            params: LlmGenerationParams::default(),
+        },
+    );
+
+    Ok(LlmProfilesConfig {
+        backends,
+        profiles,
+        default_profile: if default_profile.is_empty() {
+            "default".to_string()
+        } else {
+            default_profile
+        },
+    })
+}
+
+fn parse_named_llm(
+    backend_tables: HashMap<String, toml::Table>,
+    profiles_value: Option<&Value>,
+    default_profile: String,
+) -> Result<LlmProfilesConfig, ConfigError> {
+    let mut backends = HashMap::new();
+    for (name, mut table) in backend_tables {
+        if table.contains_key("model") {
+            return Err(ConfigError::Invalid(format!(
+                "[llm.{name}] must not contain model (use [profiles.<name>] instead)"
+            )));
+        }
+        let provider = table
+            .remove("provider")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .ok_or_else(|| ConfigError::Invalid(format!("[llm.{name}] requires provider")))?;
+        let backend = parse_backend_fields(&provider, &mut table, false)?;
+        backends.insert(name, backend);
+    }
+
+    let profiles = parse_profiles_table(profiles_value)?;
+    if profiles.is_empty() {
+        return Err(ConfigError::Invalid(
+            "new format requires at least one [profiles.<name>]".into(),
+        ));
+    }
+
+    Ok(LlmProfilesConfig {
+        backends,
+        profiles,
+        default_profile,
+    })
+}
+
+fn parse_profiles_table(
+    profiles_value: Option<&Value>,
+) -> Result<HashMap<String, LlmProfile>, ConfigError> {
+    let Some(Value::Table(table)) = profiles_value else {
+        return Err(ConfigError::Invalid(
+            "new format requires [profiles.<name>] tables".into(),
+        ));
+    };
+
+    let mut profiles = HashMap::new();
+    for (name, value) in table {
+        let inner = value
+            .as_table()
+            .ok_or_else(|| ConfigError::Invalid(format!("[profiles.{name}] must be a table")))?;
+        let llm = get_string(inner, "llm", &format!("[profiles.{name}]"))?;
+        let model = get_string(inner, "model", &format!("[profiles.{name}]"))?;
+        let temperature = inner
+            .get("temperature")
+            .and_then(|v| v.as_float().map(|f| f as f32));
+        let max_output_tokens =
+            parse_optional_u32(inner, "max_output_tokens", &format!("[profiles.{name}]"))?;
+
+        profiles.insert(
+            name.clone(),
+            LlmProfile {
+                llm,
+                model,
+                params: LlmGenerationParams {
+                    temperature,
+                    max_output_tokens,
+                },
+            },
+        );
+    }
+    Ok(profiles)
+}
+
+fn parse_backend_fields(
+    provider: &str,
+    table: &mut toml::Table,
+    allow_env: bool,
+) -> Result<LlmBackend, ConfigError> {
+    let kind = parse_provider_kind(provider)?;
+
+    match kind {
+        LlmProviderKind::Mock => Ok(LlmBackend {
+            provider: kind,
+            api_key: String::new(),
+            base_url: String::new(),
+        }),
+        LlmProviderKind::OpenAiCompatible => {
+            let api_key = table
+                .remove("api_key")
+                .and_then(|v| v.as_str().map(str::to_string))
+                .or_else(|| {
+                    if allow_env {
+                        std::env::var("AIBE_API_KEY").ok()
+                    } else {
+                        None
+                    }
+                })
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| {
+                    ConfigError::Invalid(
+                        "openai_compatible requires api_key in [llm.<name>]".into(),
+                    )
+                })?;
+            let base_url = table
+                .remove("base_url")
+                .and_then(|v| v.as_str().map(str::to_string))
+                .or_else(|| {
+                    if allow_env {
+                        std::env::var("AIBE_BASE_URL").ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            Ok(LlmBackend {
+                provider: kind,
+                api_key,
+                base_url: base_url.trim_end_matches('/').to_string(),
+            })
+        }
+        LlmProviderKind::Gemini => {
+            let api_key = table
+                .remove("api_key")
+                .and_then(|v| v.as_str().map(str::to_string))
+                .or_else(|| {
+                    if allow_env {
+                        std::env::var("AIBE_API_KEY").ok()
+                    } else {
+                        None
+                    }
+                })
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| {
+                    ConfigError::Invalid("gemini requires api_key in [llm.<name>]".into())
+                })?;
+            let base_url = table
+                .remove("base_url")
+                .and_then(|v| v.as_str().map(str::to_string))
+                .or_else(|| {
+                    if allow_env {
+                        std::env::var("AIBE_BASE_URL").ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            Ok(LlmBackend {
+                provider: kind,
+                api_key,
+                base_url: base_url.trim_end_matches('/').to_string(),
+            })
+        }
+    }
+}
+
+fn parse_provider_kind(provider: &str) -> Result<LlmProviderKind, ConfigError> {
+    match provider {
+        "mock" => Ok(LlmProviderKind::Mock),
+        "openai_compatible" | "openai-compatible" => Ok(LlmProviderKind::OpenAiCompatible),
+        "gemini" => Ok(LlmProviderKind::Gemini),
+        other => Err(ConfigError::Invalid(format!(
+            "unknown llm provider: {other}"
+        ))),
+    }
+}
+
+fn default_model_for_provider(provider: &str) -> String {
+    match provider {
+        "gemini" => "gemini-3.5-flash".to_string(),
+        "openai_compatible" | "openai-compatible" => "gpt-4o-mini".to_string(),
+        _ => "mock".to_string(),
+    }
+}
+
+fn get_string(table: &toml::Table, key: &str, ctx: &str) -> Result<String, ConfigError> {
+    table
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| ConfigError::Invalid(format!("{ctx} requires {key}")))
+}
+
+/// TOML 整数を `u32` に変換。負値・`u32::MAX` 超過は読み込みエラー。
+fn parse_optional_u32(
+    table: &toml::Table,
+    key: &str,
+    ctx: &str,
+) -> Result<Option<u32>, ConfigError> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let Some(n) = value.as_integer() else {
+        return Err(ConfigError::Invalid(format!(
+            "{ctx} {key} must be an integer"
+        )));
+    };
+    if n < 0 || n > u32::MAX as i64 {
+        return Err(ConfigError::Invalid(format!(
+            "{ctx} {key} must be between 0 and {}",
+            u32::MAX
+        )));
+    }
+    Ok(Some(n as u32))
 }
 
 fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
@@ -105,67 +440,6 @@ fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
     Ok(tools)
 }
 
-fn parse_llm(file: Option<&FileConfig>) -> Result<LlmConfig, ConfigError> {
-    let section = file.and_then(|c| c.llm.as_ref());
-    let provider = section
-        .and_then(|l| l.provider.clone())
-        .or_else(|| std::env::var("AIBE_LLM_PROVIDER").ok())
-        .unwrap_or_else(|| "mock".to_string());
-
-    match provider.as_str() {
-        "mock" => Ok(LlmConfig::Mock),
-        "openai_compatible" | "openai-compatible" => {
-            let api_key = section
-                .and_then(|l| l.api_key.clone())
-                .or_else(|| std::env::var("AIBE_API_KEY").ok())
-                .filter(|k| !k.is_empty())
-                .ok_or_else(|| {
-                    ConfigError::Invalid(
-                        "openai_compatible requires api_key in config or AIBE_API_KEY".into(),
-                    )
-                })?;
-            let base_url = section
-                .and_then(|l| l.base_url.clone())
-                .or_else(|| std::env::var("AIBE_BASE_URL").ok())
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-            let model = section
-                .and_then(|l| l.model.clone())
-                .or_else(|| std::env::var("AIBE_MODEL").ok())
-                .unwrap_or_else(|| "gpt-4o-mini".to_string());
-            Ok(LlmConfig::OpenAiCompatible {
-                base_url: base_url.trim_end_matches('/').to_string(),
-                api_key,
-                model,
-            })
-        }
-        "gemini" => {
-            let api_key = section
-                .and_then(|l| l.api_key.clone())
-                .or_else(|| std::env::var("AIBE_API_KEY").ok())
-                .filter(|k| !k.is_empty())
-                .ok_or_else(|| {
-                    ConfigError::Invalid("gemini requires api_key in config or AIBE_API_KEY".into())
-                })?;
-            let base_url = section
-                .and_then(|l| l.base_url.clone())
-                .or_else(|| std::env::var("AIBE_BASE_URL").ok())
-                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
-            let model = section
-                .and_then(|l| l.model.clone())
-                .or_else(|| std::env::var("AIBE_MODEL").ok())
-                .unwrap_or_else(|| "gemini-3.5-flash".to_string());
-            Ok(LlmConfig::Gemini {
-                base_url: base_url.trim_end_matches('/').to_string(),
-                api_key,
-                model,
-            })
-        }
-        other => Err(ConfigError::Invalid(format!(
-            "unknown llm provider: {other}"
-        ))),
-    }
-}
-
 fn expand_home(path: String) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -177,7 +451,7 @@ fn expand_home(path: String) -> PathBuf {
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     socket_path: Option<String>,
-    llm: Option<LlmSection>,
+    default_profile: Option<String>,
     tools: Option<ToolsSection>,
 }
 
@@ -202,17 +476,10 @@ struct ReadFileSection {
     allowed_roots: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct LlmSection {
-    provider: Option<String>,
-    api_key: Option<String>,
-    base_url: Option<String>,
-    model: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::outbound::TerminationStrategy;
 
     #[test]
     fn parses_termination_strategy() {
@@ -230,7 +497,7 @@ termination_strategy = "conversation_replay"
         let cfg = TomlConfig::from_path(path).load().expect("load");
         assert_eq!(
             cfg.tools.termination_strategy,
-            crate::ports::outbound::TerminationStrategy::ConversationReplay
+            TerminationStrategy::ConversationReplay
         );
     }
 
@@ -249,82 +516,18 @@ max_rounds = 0
 
         let err = TomlConfig::from_path(path).load().unwrap_err();
         match err {
-            ConfigError::Invalid(msg) => {
-                assert!(msg.contains("max_rounds"));
-            }
+            ConfigError::Invalid(msg) => assert!(msg.contains("max_rounds")),
             other => panic!("expected Invalid, got {other:?}"),
         }
     }
 
     #[test]
-    fn parses_tools_section() {
+    fn legacy_flat_llm_backward_compat() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("config.toml");
         fs::write(
             &path,
             r#"
-[tools]
-max_rounds = 3
-exec_timeout_ms = 5000
-max_tool_output_bytes = 4096
-
-[tools.shell_exec]
-enabled = true
-allowed_commands = ["echo", "git"]
-
-[tools.read_file]
-allowed_roots = ["~/projects"]
-"#,
-        )
-        .expect("write");
-
-        let cfg = TomlConfig::from_path(path).load().expect("load");
-        assert_eq!(cfg.tools.max_rounds, 3);
-        assert_eq!(cfg.tools.exec_timeout_ms, 5000);
-        assert_eq!(cfg.tools.max_tool_output_bytes, 4096);
-        assert!(cfg.tools.shell_exec.enabled);
-        assert_eq!(cfg.tools.shell_exec.allowed_commands, vec!["echo", "git"]);
-        assert_eq!(cfg.tools.read_file.allowed_roots.len(), 1);
-    }
-
-    #[test]
-    fn parses_gemini() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("config.toml");
-        fs::write(
-            &path,
-            r#"
-[llm]
-provider = "gemini"
-api_key = "test-gemini-key"
-model = "gemini-3.5-flash"
-"#,
-        )
-        .expect("write");
-
-        let cfg = TomlConfig::from_path(path).load().expect("load");
-        match cfg.llm {
-            LlmConfig::Gemini {
-                base_url,
-                api_key,
-                model,
-            } => {
-                assert_eq!(base_url, "https://generativelanguage.googleapis.com/v1beta");
-                assert_eq!(api_key, "test-gemini-key");
-                assert_eq!(model, "gemini-3.5-flash");
-            }
-            other => panic!("expected gemini, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_openai_compatible() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("config.toml");
-        fs::write(
-            &path,
-            r#"
-socket_path = "/tmp/aibe.sock"
 [llm]
 provider = "openai_compatible"
 api_key = "test-key"
@@ -335,18 +538,260 @@ model = "local"
         .expect("write");
 
         let cfg = TomlConfig::from_path(path).load().expect("load");
-        assert_eq!(cfg.socket_path, PathBuf::from("/tmp/aibe.sock"));
-        match cfg.llm {
-            LlmConfig::OpenAiCompatible {
-                base_url,
-                api_key,
-                model,
-            } => {
-                assert_eq!(base_url, "http://127.0.0.1:8080/v1");
-                assert_eq!(api_key, "test-key");
-                assert_eq!(model, "local");
-            }
-            LlmConfig::Mock | LlmConfig::Gemini { .. } => panic!("expected openai_compatible"),
+        assert_eq!(cfg.llm.default_profile, "default");
+        let backend = cfg.llm.backends.get("default").expect("backend");
+        assert_eq!(backend.provider, LlmProviderKind::OpenAiCompatible);
+        assert_eq!(backend.base_url, "http://127.0.0.1:8080/v1");
+        let profile = cfg.llm.profiles.get("default").expect("profile");
+        assert_eq!(profile.model, "local");
+    }
+
+    #[test]
+    fn parses_multi_backend_and_profiles() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_profile = "fast"
+
+[llm.gemini-studio]
+provider = "gemini"
+api_key = "k"
+
+[llm.lmstudio]
+provider = "openai_compatible"
+api_key = "k"
+base_url = "http://127.0.0.1:1/v1"
+
+[profiles.fast]
+llm = "gemini-studio"
+model = "gemini-3.5-flash"
+
+[profiles.local]
+llm = "lmstudio"
+model = "qwen"
+temperature = 0.5
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert_eq!(cfg.llm.default_profile, "fast");
+        assert_eq!(cfg.llm.backends.len(), 2);
+        assert_eq!(cfg.llm.profiles.len(), 2);
+        let fast = cfg.llm.profiles.get("fast").expect("fast");
+        assert_eq!(fast.llm, "gemini-studio");
+        assert_eq!(fast.params.temperature, None);
+        let local = cfg.llm.profiles.get("local").expect("local");
+        assert_eq!(local.params.temperature, Some(0.5));
+    }
+
+    #[test]
+    fn rejects_model_in_llm_backend_section() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[llm.studio]
+provider = "gemini"
+api_key = "k"
+model = "x"
+
+[profiles.p]
+llm = "studio"
+model = "y"
+"#,
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(_)));
+    }
+
+    #[test]
+    fn rejects_mixed_flat_and_named_llm() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[llm]
+provider = "mock"
+
+[llm.named]
+provider = "mock"
+
+[profiles.p]
+llm = "named"
+model = "m"
+"#,
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(_)));
+    }
+
+    #[test]
+    fn rejects_new_format_without_profiles() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[llm.studio]
+provider = "mock"
+"#,
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(_)));
+    }
+
+    #[test]
+    fn rejects_negative_max_output_tokens() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[llm.mock]
+provider = "mock"
+
+[profiles.p]
+llm = "mock"
+model = "m"
+max_output_tokens = -1
+"#,
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        match err {
+            ConfigError::Invalid(msg) => assert!(msg.contains("max_output_tokens")),
+            other => panic!("expected Invalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_max_output_tokens_overflow() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let overflow = (u32::MAX as u64) + 1;
+        fs::write(
+            &path,
+            format!(
+                r#"
+[llm.mock]
+provider = "mock"
+
+[profiles.p]
+llm = "mock"
+model = "m"
+max_output_tokens = {overflow}
+"#
+            ),
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        match err {
+            ConfigError::Invalid(msg) => assert!(msg.contains("max_output_tokens")),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn env_ignored_for_named_llm_backends() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[llm.studio]
+provider = "mock"
+
+[profiles.p]
+llm = "studio"
+model = "from-toml"
+"#,
+        )
+        .expect("write");
+
+        unsafe {
+            std::env::set_var("AIBE_MODEL", "from-env");
+            std::env::set_var("AIBE_API_KEY", "env-key-should-not-apply");
+        }
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        unsafe {
+            std::env::remove_var("AIBE_MODEL");
+            std::env::remove_var("AIBE_API_KEY");
+        }
+
+        let profile = cfg.llm.profiles.get("p").expect("profile");
+        assert_eq!(profile.model, "from-toml");
+        let backend = cfg.llm.backends.get("studio").expect("backend");
+        assert!(backend.api_key.is_empty());
+    }
+
+    #[test]
+    fn rejects_missing_default_profile_name() {
+        use crate::adapters::outbound::build_profile_registry;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_profile = "no-such"
+
+[llm.mock]
+provider = "mock"
+
+[profiles.fast]
+llm = "mock"
+model = "m"
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        let err = match build_profile_registry(&cfg.llm) {
+            Err(e) => e,
+            Ok(_) => panic!("expected registry build to fail"),
+        };
+        match err {
+            ConfigError::Invalid(msg) => assert!(msg.contains("default_profile")),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accepts_max_output_tokens_at_u32_max() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+[llm.mock]
+provider = "mock"
+
+[profiles.p]
+llm = "mock"
+model = "m"
+max_output_tokens = {}
+"#,
+                u32::MAX
+            ),
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        let profile = cfg.llm.profiles.get("p").expect("profile");
+        assert_eq!(profile.params.max_output_tokens, Some(u32::MAX));
     }
 }
