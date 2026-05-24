@@ -5,23 +5,24 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::MockLlm;
-use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::application::RequestService;
-use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe::protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 
 fn service() -> RequestService {
     let tools_config = ToolsConfig::default();
-    let llm: Arc<dyn aibe::ports::outbound::LlmProvider> = Arc::new(MockLlm::new());
-    let registry = build_registry(&tools_config);
-    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, tools_config.clone());
+    let strategy = tools_config.termination_strategy;
+    let profile_registry = ProfileRegistry::single(
+        "default",
+        Arc::new(MockLlm::new()),
+        aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
+    );
+    let tool_registry = build_registry(&tools_config);
     RequestService::new(
-        llm,
-        executor,
-        Arc::new(ToolRoundTerminatorOrchestrator::new(
-            tools_config.termination_strategy,
-        )),
-        TerminationCapability::summary_prompt_only(),
+        profile_registry,
+        tool_registry,
+        tools_config,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
     )
 }
 
@@ -43,6 +44,7 @@ async fn unknown_message_role_rejected_at_protocol_entry() {
             }],
             tools: vec![],
             context: RequestContext::default(),
+            llm_profile: None,
         })
         .await;
     match res {
@@ -65,6 +67,7 @@ async fn unknown_tool_rejected_at_protocol_entry() {
                 cwd: Some("/tmp".into()),
                 ..Default::default()
             },
+            llm_profile: None,
         })
         .await;
     match res {
@@ -81,6 +84,7 @@ async fn missing_cwd_takes_priority_over_unknown_tool() {
             messages: user_hi(),
             tools: vec!["nope".into(), "read_file".into()],
             context: RequestContext::default(),
+            llm_profile: None,
         })
         .await;
     match res {
@@ -97,6 +101,7 @@ async fn text_only_without_cwd_is_ok() {
             messages: user_hi(),
             tools: vec![],
             context: RequestContext::default(),
+            llm_profile: None,
         })
         .await;
     match res {
@@ -116,6 +121,7 @@ async fn empty_shell_log_tail_does_not_inject_prefix() {
                 shell_log_tail: Some("".into()),
                 ..Default::default()
             },
+            llm_profile: None,
         })
         .await;
     match res {

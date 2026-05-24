@@ -8,7 +8,7 @@ use std::time::Duration;
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, ToolName};
-use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -37,15 +37,12 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
 
     let socket_for_server = socket_path.clone();
     let cfg = tools_cfg.clone();
+    let profile_registry =
+        ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
     let server = tokio::spawn(async move {
-        server::run(
-            socket_for_server,
-            llm,
-            cfg,
-            TerminationCapability::summary_prompt_only(),
-        )
-        .await
-        .expect("server");
+        server::run(socket_for_server, profile_registry, cfg)
+            .await
+            .expect("server");
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
