@@ -5,7 +5,9 @@
 pub mod adapters;
 pub mod application;
 
-pub use domain::{is_known_tool, ToolName, UnknownToolError, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
+pub use domain::{
+    is_known_tool, ShellLogTail, ToolName, UnknownToolError, KNOWN_TOOLS, READ_FILE, SHELL_EXEC,
+};
 pub mod client;
 pub mod daemon;
 pub mod domain;
