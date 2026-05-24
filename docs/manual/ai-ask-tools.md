@@ -228,6 +228,22 @@ termination_strategy = "conversation_replay"
 - `status: max_tool_rounds` の `agent_turn_result`（`type: error` ではない）
 - Replay が provider error になった場合は SummaryPrompt に自動フォールバック（設定は `conversation_replay` のままでよい）
 
+## 新規組み込みツール追加チェックリスト
+
+`aibe` に組み込みツールを追加するとき、カテゴリ表と `KNOWN_TOOLS` のドリフトを防ぐ。仕様: `docs/0009_ai-tool-category-sync-spec.md`。カテゴリ表の仕様正本: `docs/0002_ai-tools-client-spec.md` §カテゴリ表。
+
+**分類責務**: メンテナが新ツールを `@read-only` / `@exec` / `@full` のどれに含めるか判断する。`@full` は常に **全** `aibe::KNOWN_TOOLS` を展開すること。
+
+1. **aibe** — `aibe/src/domain/tool_name.rs` の `KNOWN_TOOLS`、ツール定義・実装を追加
+2. **ai 展開** — `ai/src/domain/tools.rs` の `expand_category` を更新（該当カテゴリに新名を含め、`@full` が全 KNOWN_TOOLS をカバーするようにする）
+3. **仕様** — `docs/0002_ai-tools-client-spec.md` §カテゴリ表を更新
+4. **テスト** — 次が成功すること:
+   ```bash
+   cargo test -p ai tool_catalog_sync
+   cargo test -p ai tool_names_sync
+   ```
+5. **手動** — 本書 B 系（起動時 `stderr` 行）で必要なら追加ケースを確認
+
 ## 記録
 
 実施日・実施者・結果をメモする場合の例:

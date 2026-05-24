@@ -157,6 +157,7 @@ tools = "@read-only"
 - カテゴリとリテラルの併記（例: `@read-only` + `shell_exec`）は **許可** する。展開後は `@full` と同集合になりうる。
 - MVP では `@inspect` などの別名は増やさない。
 - カテゴリ表は `ai` 側だけが知る。`aibe` はカテゴリを解釈しない。
+- カテゴリ表と `aibe::KNOWN_TOOLS` の同期は `ai/tests/tool_catalog_sync.rs` で検証する。新ツール追加手順: `docs/manual/ai-ask-tools.md` §新規組み込みツール追加チェックリスト（`docs/0009_ai-tool-category-sync-spec.md`）。
 
 ## 展開ルール
 
