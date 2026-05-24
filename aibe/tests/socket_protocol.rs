@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
-use aibe::ports::outbound::ToolsConfig;
+use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
 use aibe::protocol::{ClientRequest, ClientResponse};
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -25,6 +25,7 @@ async fn ping_and_agent_turn_over_unix_socket() {
             socket_for_server,
             Arc::new(MockLlm::new()),
             ToolsConfig::default(),
+            TerminationCapability::summary_prompt_only(),
         )
         .await
         .expect("server");

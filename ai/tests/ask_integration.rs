@@ -11,7 +11,7 @@ use ai::ports::outbound::{AgentClient, AgentError};
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::domain::{ExecutedToolCall, ToolName};
-use aibe::ports::outbound::ToolsConfig;
+use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
 use aibe::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
 use serde_json::json;
 use tempfile::tempdir;
@@ -65,6 +65,7 @@ fn ask_reaches_mock_aibe() {
                 socket_for_server,
                 Arc::new(MockLlm::new()),
                 ToolsConfig::default(),
+                TerminationCapability::summary_prompt_only(),
             )
             .await
             .expect("server");
