@@ -2,32 +2,58 @@
 
 use std::str::FromStr;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use crate::adapters::outbound::llm_backend::HttpBackendContext;
 use crate::domain::{ChatMessage, LlmStepResult, MessageRole, ToolCall, ToolName};
-use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
+use crate::ports::outbound::{LlmError, LlmGenerationParams, LlmProvider, ToolDefinition};
 
 pub struct GeminiLlm {
-    client: reqwest::Client,
-    base_url: String,
-    api_key: String,
+    backend: Arc<HttpBackendContext>,
     model: String,
+    params: LlmGenerationParams,
 }
 
 impl GeminiLlm {
     pub fn new(base_url: String, api_key: String, model: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key,
+        Self::with_backend(
+            HttpBackendContext::new(base_url, api_key),
             model,
+            LlmGenerationParams::default(),
+        )
+    }
+
+    pub fn with_backend(
+        backend: Arc<HttpBackendContext>,
+        model: String,
+        params: LlmGenerationParams,
+    ) -> Self {
+        Self {
+            backend,
+            model,
+            params,
         }
     }
 
     fn generate_content_url(&self) -> String {
-        format!("{}/models/{}:generateContent", self.base_url, self.model)
+        format!(
+            "{}/models/{}:generateContent",
+            self.backend.base_url, self.model
+        )
+    }
+
+    fn generation_config(&self) -> Option<GenerationConfig> {
+        if self.params.temperature.is_none() && self.params.max_output_tokens.is_none() {
+            return None;
+        }
+        Some(GenerationConfig {
+            temperature: self.params.temperature,
+            max_output_tokens: self.params.max_output_tokens,
+        })
     }
 
     async fn generate_content(
@@ -35,9 +61,10 @@ impl GeminiLlm {
         body: GenerateContentRequest,
     ) -> Result<GeminiResponse, LlmError> {
         let response = self
+            .backend
             .client
             .post(self.generate_content_url())
-            .header("x-goog-api-key", &self.api_key)
+            .header("x-goog-api-key", &self.backend.api_key)
             .json(&body)
             .send()
             .await
@@ -269,6 +296,7 @@ impl LlmProvider for GeminiLlm {
             system_instruction: build_system_instruction(messages),
             tools: None,
             tool_config: None,
+            generation_config: self.generation_config(),
         };
         let parsed = self.generate_content(body).await?;
         let content = validate_response(&parsed)?;
@@ -310,6 +338,7 @@ impl LlmProvider for GeminiLlm {
             system_instruction: build_system_instruction(messages),
             tools: gemini_tools,
             tool_config,
+            generation_config: self.generation_config(),
         };
 
         let parsed = self.generate_content(body).await?;
@@ -328,6 +357,16 @@ struct GenerateContentRequest {
     tools: Option<Vec<GeminiTool>>,
     #[serde(rename = "toolConfig", skip_serializing_if = "Option::is_none")]
     tool_config: Option<ToolConfig>,
+    #[serde(rename = "generationConfig", skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GenerationConfig>,
+}
+
+#[derive(Serialize)]
+struct GenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(rename = "maxOutputTokens", skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u32>,
 }
 
 #[derive(Serialize)]

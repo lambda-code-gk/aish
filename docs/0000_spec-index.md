@@ -12,7 +12,8 @@
 | 0008 | [0008_chat-message-and-protocol-typing-spec.md](0008_chat-message-and-protocol-typing-spec.md) | 実装済み（PR 1） | `MessageRole` / `TryFrom` 化 / 注入メッセージ段階 PR（phase 2 未実装） |
 | 0009 | [0009_ai-tool-category-sync-spec.md](0009_ai-tool-category-sync-spec.md) | 実装済み | カテゴリ表と `KNOWN_TOOLS` の機械同期 |
 | 0010 | [0010_gemini-provider-spec.md](0010_gemini-provider-spec.md) | 実装済み | Gemini プロバイダ（Google AI Studio / `generateContent` v1beta） |
+| 0011 | [0011_llm-profiles-spec.md](0011_llm-profiles-spec.md) | 実装済み | LLM 接続定義 + プロファイル（モデル・生成パラメータ）の 2 段設定 |
 
 運用上の正本（要約）: [architecture.md](architecture.md)。
 
-実装順の目安: **0004** → **0005** → **0006**（実装済み）→ **0007**（ループ分割）→ **0008** / **0009**（低優先・独立）→ **0010**（Gemini プロバイダ）。
+実装順の目安: **0004** → **0005** → **0006**（実装済み）→ **0007**（ループ分割）→ **0008** / **0009**（低優先・独立）→ **0010**（Gemini プロバイダ）→ **0011**（LLM プロファイル）。

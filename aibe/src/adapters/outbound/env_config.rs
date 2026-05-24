@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use crate::default_socket_path;
-use crate::ports::outbound::{AppConfig, ConfigError, ConfigLoader, LlmConfig, ToolsConfig};
+use crate::ports::outbound::{
+    AppConfig, ConfigError, ConfigLoader, LlmProfilesConfig, ToolsConfig,
+};
 
 /// `AIBE_SOCKET_PATH` のみ。LLM は mock。
 pub struct EnvConfig;
@@ -19,7 +21,7 @@ impl EnvConfig {
             .unwrap_or_else(|_| default_socket_path());
         Ok(AppConfig {
             socket_path,
-            llm: LlmConfig::Mock,
+            llm: LlmProfilesConfig::default_mock(),
             tools: ToolsConfig::default(),
         })
     }

@@ -1,43 +1,96 @@
-//! `AppConfig` から `LlmProvider` を構築する。
+//! `LlmProfilesConfig` から起動時 `ProfileRegistry` を構築する。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::adapters::outbound::llm_backend::HttpBackendContext;
 use crate::adapters::outbound::{GeminiLlm, MockLlm, OpenAiCompatibleLlm};
 use crate::ports::outbound::{
-    AppConfig, ConfigError, LlmConfig, LlmProvider, TerminationCapability,
+    ConfigError, LlmBackend, LlmProfilesConfig, LlmProvider, LlmProviderKind, ProfileRegistry,
+    TerminationCapability,
 };
 
-/// LLM プロバイダ種別に応じた終端 capability（`LlmProvider` trait には載せない）。
-pub fn termination_capability(llm: &LlmConfig) -> TerminationCapability {
-    match llm {
-        LlmConfig::Mock => TerminationCapability::summary_prompt_only(),
-        // OpenAI 互換は安全側: tool role を plain complete で送らない。
-        LlmConfig::OpenAiCompatible { .. } => TerminationCapability::summary_prompt_only(),
-        LlmConfig::Gemini { .. } => TerminationCapability::summary_prompt_only(),
+pub fn termination_capability_for_kind(kind: LlmProviderKind) -> TerminationCapability {
+    match kind {
+        LlmProviderKind::Mock | LlmProviderKind::OpenAiCompatible | LlmProviderKind::Gemini => {
+            TerminationCapability::summary_prompt_only()
+        }
     }
 }
 
-pub fn build_llm(config: &AppConfig) -> Result<Arc<dyn LlmProvider>, ConfigError> {
-    let provider: Arc<dyn LlmProvider> = match &config.llm {
-        LlmConfig::Mock => Arc::new(MockLlm::new()),
-        LlmConfig::OpenAiCompatible {
-            base_url,
-            api_key,
-            model,
-        } => Arc::new(OpenAiCompatibleLlm::new(
-            base_url.clone(),
-            api_key.clone(),
-            model.clone(),
-        )),
-        LlmConfig::Gemini {
-            base_url,
-            api_key,
-            model,
-        } => Arc::new(GeminiLlm::new(
-            base_url.clone(),
-            api_key.clone(),
-            model.clone(),
-        )),
-    };
-    Ok(provider)
+pub fn build_profile_registry(config: &LlmProfilesConfig) -> Result<ProfileRegistry, ConfigError> {
+    if config.profiles.is_empty() {
+        return Err(ConfigError::Invalid(
+            "at least one [profiles.<name>] is required".into(),
+        ));
+    }
+    if !config.profiles.contains_key(&config.default_profile) {
+        return Err(ConfigError::Invalid(format!(
+            "default_profile {:?} does not exist",
+            config.default_profile
+        )));
+    }
+
+    let mut http_backends: HashMap<String, Arc<HttpBackendContext>> = HashMap::new();
+    let mut mock_backends: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
+
+    let mut providers = HashMap::new();
+    let mut capabilities = HashMap::new();
+
+    for (profile_name, profile) in &config.profiles {
+        let backend = config.backends.get(&profile.llm).ok_or_else(|| {
+            ConfigError::Invalid(format!(
+                "profile {profile_name:?} references unknown llm {:?}",
+                profile.llm
+            ))
+        })?;
+
+        let provider: Arc<dyn LlmProvider> = match backend.provider {
+            LlmProviderKind::Mock => mock_backends
+                .entry(profile.llm.clone())
+                .or_insert_with(|| Arc::new(MockLlm::new()) as Arc<dyn LlmProvider>)
+                .clone(),
+            LlmProviderKind::OpenAiCompatible => {
+                let ctx = http_context(&mut http_backends, &profile.llm, backend)?;
+                Arc::new(OpenAiCompatibleLlm::with_backend(
+                    Arc::clone(&ctx),
+                    profile.model.clone(),
+                    profile.params.clone(),
+                ))
+            }
+            LlmProviderKind::Gemini => {
+                let ctx = http_context(&mut http_backends, &profile.llm, backend)?;
+                Arc::new(GeminiLlm::with_backend(
+                    Arc::clone(&ctx),
+                    profile.model.clone(),
+                    profile.params.clone(),
+                ))
+            }
+        };
+
+        capabilities.insert(
+            profile_name.clone(),
+            termination_capability_for_kind(backend.provider),
+        );
+        providers.insert(profile_name.clone(), provider);
+    }
+
+    Ok(ProfileRegistry {
+        providers,
+        capabilities,
+        default_profile: config.default_profile.clone(),
+    })
+}
+
+fn http_context(
+    cache: &mut HashMap<String, Arc<HttpBackendContext>>,
+    backend_name: &str,
+    backend: &LlmBackend,
+) -> Result<Arc<HttpBackendContext>, ConfigError> {
+    if let Some(ctx) = cache.get(backend_name) {
+        return Ok(Arc::clone(ctx));
+    }
+    let ctx = HttpBackendContext::new(backend.base_url.clone(), backend.api_key.clone());
+    cache.insert(backend_name.to_string(), Arc::clone(&ctx));
+    Ok(ctx)
 }

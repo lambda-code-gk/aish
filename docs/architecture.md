@@ -70,6 +70,7 @@ aibe →  aish 禁止
     { "role": "user", "content": "..." }
   ],
   "tools": ["shell_exec", "read_file"],
+  "llm_profile": "fast",
   "context": {
     "shell_log_tail": "...",
     "cwd": "/abs/path/to/ai/cwd"
@@ -83,6 +84,7 @@ aibe →  aish 禁止
 | `id` | 相関 ID |
 | `messages` | チャット履歴（プロバイダへ渡す前に aibe で正規化）。wire 上の `role` は `"user"` 等の **JSON 文字列のまま**（0008 以降も不変）。aibe 内部では `MessageRole` enum に変換して保持（未知 role は `invalid_request`）。詳細: `docs/0008_chat-message-and-protocol-typing-spec.md` |
 | `tools` | 有効にするツール名のリスト |
+| `llm_profile` | 任意。使用する LLM プロファイル名（`docs/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
 
@@ -117,7 +119,7 @@ aibe →  aish 禁止
 | OpenAI 互換 | ローカル（LM Studio、vLLM 等） |
 | Gemini | Google AI Studio `generateContent`（`v1beta`）— `adapters/outbound/gemini.rs` |
 
-- 選択とエンドポイントは **aibe 設定ファイル** で指定（`provider = "gemini"`、`x-goog-api-key`）
+- 選択とエンドポイントは **aibe 設定ファイル** の LLM 接続 + プロファイルで指定（`docs/0011_llm-profiles-spec.md`）
 - Gemini の `thoughtSignature` 等は `ToolCall.provider_extras` に **part 単位**で保持し、次ラウンドの `functionCall` part に復元する（クライアント wire には載せない — `docs/0010_gemini-provider-spec.md`）
 - アダプタは aibe 内に閉じる。`ai` / `aish` にプロバイダ分岐を書かない
 
@@ -141,9 +143,9 @@ aibe →  aish 禁止
 
 | 対象 | 例のパス | 内容 |
 |------|----------|------|
-| aibe | `~/.config/aibe/config.toml` | プロバイダ、API キー、socket パス、モデル名 |
+| aibe | `~/.config/aibe/config.toml` | LLM 接続 `[llm.<name>]`、プロファイル `[profiles.<name>]`、`default_profile`、socket、tools |
 | aish | `~/.config/aish/config.toml` | ログディレクトリ、シェル起動オプション |
-| ai | `~/.config/ai/config.toml` | aibe socket パス、ログ参照パス |
+| ai | `~/.config/ai/config.toml` | aibe socket、`[ask].default_profile`、`[ask].tools` |
 
 - リポジトリに **実キーをコミットしない**
 - 例示用は `docs/` または `*.example.toml` のみ

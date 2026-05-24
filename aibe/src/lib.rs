@@ -32,17 +32,15 @@ fn try_run() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let llm = adapters::outbound::build_llm(&config)?;
-    let termination_capability = adapters::outbound::termination_capability(&config.llm);
+    let profile_registry = adapters::outbound::build_profile_registry(&config.llm)?;
     let tools_config = config.tools.clone();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     rt.block_on(application::server::run(
         config.socket_path,
-        llm,
+        profile_registry,
         tools_config,
-        termination_capability,
     ))
 }
 

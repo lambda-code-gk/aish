@@ -132,6 +132,7 @@ cargo test --workspace
 | `docs/0008_chat-message-and-protocol-typing-spec.md` | ChatMessage / MessageRole 型強化（PR 1 実装済み、phase 2 未実装） |
 | `docs/0009_ai-tool-category-sync-spec.md` | ai カテゴリ表と aibe ツール名の同期強化（実装済み） |
 | `docs/0010_gemini-provider-spec.md` | Gemini プロバイダ（Google AI Studio / `generateContent` v1beta）（実装済み） |
+| `docs/0011_llm-profiles-spec.md` | LLM 接続定義 + プロファイル（2 段設定、`ai ask --profile`）（実装済み） |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
 

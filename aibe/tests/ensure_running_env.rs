@@ -8,7 +8,7 @@ use std::time::Duration;
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::client;
-use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
@@ -21,14 +21,14 @@ fn ensure_running_waits_on_custom_socket_path() {
     std::thread::spawn(move || {
         let rt = Runtime::new().expect("runtime");
         rt.block_on(async {
-            server::run(
-                socket_for_server,
+            let registry = ProfileRegistry::single(
+                "default",
                 Arc::new(MockLlm::new()),
-                ToolsConfig::default(),
                 TerminationCapability::summary_prompt_only(),
-            )
-            .await
-            .expect("server");
+            );
+            server::run(socket_for_server, registry, ToolsConfig::default())
+                .await
+                .expect("server");
         });
     });
 

@@ -1,7 +1,13 @@
 //! サーバ設定 outbound port。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+
 use thiserror::Error;
+
+use super::llm::LlmProvider;
+use super::termination_capability::TerminationCapability;
 
 /// `tool_calls` / LLM 向け tool result の既定上限（バイト）。
 pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = 32_768;
@@ -9,7 +15,7 @@ pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = 32_768;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub socket_path: PathBuf,
-    pub llm: LlmConfig,
+    pub llm: LlmProfilesConfig,
     pub tools: ToolsConfig,
 }
 
@@ -87,19 +93,111 @@ impl Default for ToolsConfig {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum LlmConfig {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmProviderKind {
     Mock,
-    OpenAiCompatible {
-        base_url: String,
-        api_key: String,
-        model: String,
-    },
-    Gemini {
-        base_url: String,
-        api_key: String,
-        model: String,
-    },
+    OpenAiCompatible,
+    Gemini,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmBackend {
+    pub provider: LlmProviderKind,
+    pub api_key: String,
+    pub base_url: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LlmGenerationParams {
+    pub temperature: Option<f32>,
+    pub max_output_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmProfile {
+    pub llm: String,
+    pub model: String,
+    pub params: LlmGenerationParams,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmProfilesConfig {
+    pub backends: HashMap<String, LlmBackend>,
+    pub profiles: HashMap<String, LlmProfile>,
+    pub default_profile: String,
+}
+
+impl LlmProfilesConfig {
+    /// 設定ファイル無し・LLM 節無し時の既定（mock 1 プロファイル）。
+    pub fn default_mock() -> Self {
+        let mut backends = HashMap::new();
+        backends.insert(
+            "default".to_string(),
+            LlmBackend {
+                provider: LlmProviderKind::Mock,
+                api_key: String::new(),
+                base_url: String::new(),
+            },
+        );
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            "default".to_string(),
+            LlmProfile {
+                llm: "default".to_string(),
+                model: "mock".to_string(),
+                params: LlmGenerationParams::default(),
+            },
+        );
+        Self {
+            backends,
+            profiles,
+            default_profile: "default".to_string(),
+        }
+    }
+}
+
+/// 起動時 eager 構築。リクエスト時は参照のみ。
+pub struct ProfileRegistry {
+    pub providers: HashMap<String, Arc<dyn LlmProvider>>,
+    pub capabilities: HashMap<String, TerminationCapability>,
+    pub default_profile: String,
+}
+
+impl ProfileRegistry {
+    pub fn resolve(
+        &self,
+        llm_profile: Option<&str>,
+    ) -> Result<(&Arc<dyn LlmProvider>, TerminationCapability), String> {
+        let name = llm_profile.unwrap_or(&self.default_profile);
+        let provider = self
+            .providers
+            .get(name)
+            .ok_or_else(|| format!("unknown llm profile: {name}"))?;
+        let capability = self
+            .capabilities
+            .get(name)
+            .copied()
+            .unwrap_or_else(TerminationCapability::summary_prompt_only);
+        Ok((provider, capability))
+    }
+
+    /// テスト用: 単一プロファイルのレジストリ。
+    pub fn single(
+        profile_name: impl Into<String>,
+        llm: Arc<dyn LlmProvider>,
+        capability: TerminationCapability,
+    ) -> Self {
+        let profile_name = profile_name.into();
+        let mut providers = HashMap::new();
+        providers.insert(profile_name.clone(), llm);
+        let mut capabilities = HashMap::new();
+        capabilities.insert(profile_name.clone(), capability);
+        Self {
+            providers,
+            capabilities,
+            default_profile: profile_name,
+        }
+    }
 }
 
 #[derive(Debug, Error)]

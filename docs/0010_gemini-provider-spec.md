@@ -205,6 +205,8 @@ model = "gemini-3.5-flash"
 
 ### 環境変数
 
+> **0011 との関係**: 以下の `AIBE_LLM_*` は **legacy フラット `[llm]`** 設定でのみ有効。新形式（`[llm.<name>]` + `[profiles.<name>]`）では無視される — [0011_llm-profiles-spec.md](0011_llm-profiles-spec.md)。
+
 | 変数 | 意味 |
 |------|------|
 | `AIBE_LLM_PROVIDER` | `gemini` を選ぶ。 |
