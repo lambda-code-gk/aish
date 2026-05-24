@@ -4,12 +4,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::tool_context::ToolExecutionContext;
-use crate::domain::{ExecutedToolCall, ToolResult};
+use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
 
 /// LLM に渡すツール定義。
 #[derive(Debug, Clone)]
 pub struct ToolDefinition {
-    pub name: String,
+    pub name: ToolName,
     pub description: String,
     pub parameters: Value,
 }
@@ -20,7 +20,7 @@ pub struct ToolDefinition {
 /// [`ToolExecutionContext::resolve_path`] を使う。aibe の [`std::env::current_dir`] を直接使わない。
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> ToolName;
 
     async fn execute(
         &self,

@@ -13,5 +13,5 @@ pub use message::ChatMessage;
 pub use tool::{ExecutedToolCall, ExecutedToolStatus, ToolCall, ToolResult};
 pub use tool_execution_summary::ToolExecutionSummary;
 pub use tool_name::{
-    is_known_tool, ToolName, UnknownToolError, KNOWN_TOOLS, READ_FILE, SHELL_EXEC,
+    is_known_tool, parse_tool_names, ToolName, UnknownToolError, KNOWN_TOOLS, READ_FILE, SHELL_EXEC,
 };

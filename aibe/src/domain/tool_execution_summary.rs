@@ -64,6 +64,7 @@ fn format_call_block(index: usize, call: &ExecutedToolCall) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ToolName;
     use serde_json::json;
 
     #[test]
@@ -71,13 +72,13 @@ mod tests {
         let calls = vec![
             ExecutedToolCall::ok(
                 "c1".into(),
-                "read_file".into(),
+                ToolName::read_file(),
                 json!({"path": "a.md"}),
                 "line one".into(),
             ),
             ExecutedToolCall::err(
                 "c2".into(),
-                "read_file".into(),
+                ToolName::read_file(),
                 json!({"path": "b.md"}),
                 "path_not_allowed",
                 "path is outside allowed_roots",
