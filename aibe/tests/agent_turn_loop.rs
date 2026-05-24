@@ -8,6 +8,7 @@ use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::agent_turn::AgentTurnService;
+use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{
     AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, LlmStepResult, ToolCall, ToolName,
 };
@@ -27,7 +28,9 @@ fn agent_turn_service(
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         cfg.termination_strategy,
     ));
-    AgentTurnService::new(llm, build_registry(&cfg), cfg, terminator, capability)
+    let registry = build_registry(&cfg);
+    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
+    AgentTurnService::new(llm, executor, terminator, capability)
 }
 
 fn default_agent_turn_service(llm: Arc<dyn LlmProvider>, cfg: ToolsConfig) -> AgentTurnService {
@@ -123,6 +126,46 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
             assert_eq!(assistant_message.content, "gave up on curl");
             assert_eq!(tool_calls.len(), 1);
             assert_eq!(tool_calls[0].status, ExecutedToolStatus::Error);
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn max_rounds_zero_programmatic_acts_as_one_round_limit() {
+    let dir = tempdir().expect("tempdir");
+    let file_path = dir.path().join("note.txt");
+    fs::write(&file_path, "content").expect("write");
+
+    let read_call = |id: &str| ToolCall {
+        id: id.into(),
+        name: ToolName::read_file(),
+        arguments: json!({"path": file_path}),
+    };
+    let steps = vec![
+        LlmStepResult::with_tool_calls("", vec![read_call("c1")]),
+        LlmStepResult::with_tool_calls("", vec![read_call("c2")]),
+        LlmStepResult::text_only("stopped after one tool round"),
+    ];
+    let llm = Arc::new(ScriptedMockLlm::new(steps));
+    let mut cfg = ToolsConfig::default();
+    cfg.max_rounds = 0;
+    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let svc = default_agent_turn_service(llm, cfg);
+    let res = svc
+        .run(
+            "max-rounds-zero".into(),
+            vec![ChatMessage::user("read")],
+            vec![ToolName::read_file()],
+            cwd_context(dir.path()),
+        )
+        .await;
+    match res {
+        ClientResponse::AgentTurnResult {
+            status, tool_calls, ..
+        } => {
+            assert_eq!(status, AgentTurnStatus::MaxToolRounds);
+            assert_eq!(tool_calls.len(), 1);
         }
         other => panic!("unexpected: {other:?}"),
     }

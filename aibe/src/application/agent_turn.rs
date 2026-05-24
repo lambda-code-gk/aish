@@ -3,21 +3,17 @@
 use std::sync::Arc;
 
 use crate::application::llm_error::client_response_for_llm_error;
-use crate::application::tool_defs::definitions_for;
+use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
-use crate::domain::{
-    AgentTurnContext, ChatMessage, ExecutedToolCall, ToolCall, ToolName, ToolResult,
-};
+use crate::domain::{AgentTurnContext, ChatMessage, ToolName};
 use crate::ports::outbound::{
-    LlmProvider, TerminationCapability, ToolExecutionContext, ToolRegistry, ToolRoundTerminator,
-    ToolsConfig,
+    LlmProvider, TerminationCapability, ToolExecutionContext, ToolRoundTerminator,
 };
 use crate::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
 
 pub struct AgentTurnService {
     llm: Arc<dyn LlmProvider>,
-    registry: Arc<dyn ToolRegistry>,
-    tools_config: ToolsConfig,
+    executor: ToolRoundExecutor,
     terminator: Arc<dyn ToolRoundTerminator>,
     termination_capability: TerminationCapability,
 }
@@ -25,15 +21,13 @@ pub struct AgentTurnService {
 impl AgentTurnService {
     pub fn new(
         llm: Arc<dyn LlmProvider>,
-        registry: Arc<dyn ToolRegistry>,
-        tools_config: ToolsConfig,
+        executor: ToolRoundExecutor,
         terminator: Arc<dyn ToolRoundTerminator>,
         termination_capability: TerminationCapability,
     ) -> Self {
         Self {
             llm,
-            registry,
-            tools_config,
+            executor,
             terminator,
             termination_capability,
         }
@@ -93,74 +87,47 @@ impl AgentTurnService {
         allowed_tools: Vec<ToolName>,
         tool_ctx: ToolExecutionContext,
     ) -> ClientResponse {
-        let tool_defs = definitions_for(&allowed_tools);
-        let mut executed: Vec<ExecutedToolCall> = Vec::new();
-        let max_rounds = self.tools_config.max_rounds.max(1);
+        let mut executed = Vec::new();
+        let max_rounds = self.executor.tools_config().effective_max_rounds();
 
         for round in 0..max_rounds {
-            let step = match self
-                .llm
-                .complete_with_tools(&conversation, &tool_defs)
+            match self
+                .executor
+                .run_one_round(&conversation, &allowed_tools, &tool_ctx, &executed)
                 .await
             {
-                Ok(s) => s,
-                Err(e) => return client_response_for_llm_error(id, e),
-            };
+                Ok(RoundOutcome::Completed {
+                    assistant,
+                    executed: round_executed,
+                }) => {
+                    return ClientResponse::AgentTurnResult {
+                        id,
+                        status: AgentTurnStatus::Ok,
+                        assistant_message: ProtocolMessageOut::from_assistant(&assistant),
+                        tool_calls: round_executed,
+                    };
+                }
+                Ok(RoundOutcome::Continue {
+                    conversation: next,
+                    executed: round_executed,
+                }) => {
+                    conversation = next;
+                    executed = round_executed;
 
-            if step.tool_calls.is_empty() {
-                return ClientResponse::AgentTurnResult {
-                    id,
-                    status: AgentTurnStatus::Ok,
-                    assistant_message: ProtocolMessageOut::from_assistant(&step.assistant),
-                    tool_calls: executed,
-                };
-            }
-
-            conversation.push(step.assistant.clone());
-
-            for tc in &step.tool_calls {
-                let (record, result) = if !allowed_tools.contains(&tc.name) {
-                    rejected_tool_result(
-                        tc,
-                        "tool_not_allowed",
-                        format!("model requested disallowed tool: {}", tc.name),
-                    )
-                } else if let Some(executor) = self.registry.get(&tc.name) {
-                    executor
-                        .execute(
-                            &tc.id,
-                            &tc.arguments,
-                            self.tools_config.exec_timeout_ms,
-                            &tool_ctx,
+                    if round + 1 >= max_rounds {
+                        return finish_after_max_tool_rounds(
+                            self.llm.as_ref(),
+                            self.terminator.as_ref(),
+                            &self.termination_capability,
+                            id,
+                            &conversation,
+                            executed,
+                            max_rounds,
                         )
-                        .await
-                } else {
-                    rejected_tool_result(
-                        tc,
-                        "tool_not_implemented",
-                        format!("tool not implemented: {}", tc.name),
-                    )
-                };
-                executed.push(record);
-                let content = if result.is_error {
-                    format!("[tool error]\n{}", result.content)
-                } else {
-                    result.content
-                };
-                conversation.push(ChatMessage::tool(tc.id.clone(), content));
-            }
-
-            if round + 1 >= max_rounds {
-                return finish_after_max_tool_rounds(
-                    self.llm.as_ref(),
-                    self.terminator.as_ref(),
-                    &self.termination_capability,
-                    id,
-                    &conversation,
-                    executed,
-                    max_rounds,
-                )
-                .await;
+                        .await;
+                    }
+                }
+                Err(e) => return client_response_for_llm_error(id, e),
             }
         }
 
@@ -184,27 +151,6 @@ fn inject_shell_log_tail(
         );
     }
     messages
-}
-
-/// モデルが許可外・未実装ツールを要求したときの tool result（ループ継続）。
-fn rejected_tool_result(
-    tc: &ToolCall,
-    error: &str,
-    message: String,
-) -> (ExecutedToolCall, ToolResult) {
-    let record = ExecutedToolCall::err(
-        tc.id.clone(),
-        tc.name.clone(),
-        tc.arguments.clone(),
-        error,
-        message.clone(),
-    );
-    let result = ToolResult {
-        tool_call_id: tc.id.clone(),
-        content: message,
-        is_error: true,
-    };
-    (record, result)
 }
 
 #[cfg(test)]

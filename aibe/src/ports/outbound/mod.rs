@@ -10,7 +10,7 @@ pub mod tools;
 pub use command_policy::CommandPolicy;
 pub use config::{
     AppConfig, ConfigError, ConfigLoader, LlmConfig, ReadFileConfig, ShellExecConfig,
-    TerminationStrategy, ToolsConfig, DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+    TerminationStrategy, ToolsConfig, DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
 };
 pub use llm::{LlmError, LlmProvider};
 pub use termination_capability::TerminationCapability;

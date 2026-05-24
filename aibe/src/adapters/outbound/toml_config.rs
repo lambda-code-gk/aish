@@ -56,7 +56,7 @@ impl ConfigLoader for TomlConfig {
             });
 
         let llm = parse_llm(file_cfg.as_ref())?;
-        let tools = parse_tools(file_cfg.as_ref());
+        let tools = parse_tools(file_cfg.as_ref())?;
         Ok(AppConfig {
             socket_path,
             llm,
@@ -65,11 +65,16 @@ impl ConfigLoader for TomlConfig {
     }
 }
 
-fn parse_tools(file: Option<&FileConfig>) -> ToolsConfig {
+fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
     let section = file.and_then(|c| c.tools.as_ref());
     let mut tools = ToolsConfig::default();
     if let Some(t) = section {
         if let Some(n) = t.max_rounds {
+            if n < crate::ports::outbound::MIN_MAX_TOOL_ROUNDS {
+                return Err(ConfigError::Invalid(
+                    "[tools] max_rounds must be at least 1".into(),
+                ));
+            }
             tools.max_rounds = n;
         }
         if let Some(ms) = t.exec_timeout_ms {
@@ -97,7 +102,7 @@ fn parse_tools(file: Option<&FileConfig>) -> ToolsConfig {
             }
         }
     }
-    tools
+    Ok(tools)
 }
 
 fn parse_llm(file: Option<&FileConfig>) -> Result<LlmConfig, ConfigError> {
@@ -205,6 +210,28 @@ termination_strategy = "conversation_replay"
             cfg.tools.termination_strategy,
             crate::ports::outbound::TerminationStrategy::ConversationReplay
         );
+    }
+
+    #[test]
+    fn rejects_max_rounds_zero_in_toml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tools]
+max_rounds = 0
+"#,
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        match err {
+            ConfigError::Invalid(msg) => {
+                assert!(msg.contains("max_rounds"));
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
     }
 
     #[test]

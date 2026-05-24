@@ -33,6 +33,9 @@ impl TerminationStrategy {
     }
 }
 
+/// `[tools] max_rounds` の最小値（TOML 読み込み時に検証）。
+pub const MIN_MAX_TOOL_ROUNDS: u32 = 1;
+
 /// ツール実行とエージェントループの設定。
 #[derive(Debug, Clone)]
 pub struct ToolsConfig {
@@ -54,6 +57,16 @@ pub struct ShellExecConfig {
 #[derive(Debug, Clone)]
 pub struct ReadFileConfig {
     pub allowed_roots: Vec<PathBuf>,
+}
+
+impl ToolsConfig {
+    /// 1 `agent_turn` あたりの LLM↔tool ループ上限。
+    ///
+    /// - `config.toml` で `max_rounds = 0` は [`ConfigError::Invalid`]（読み込み拒否）。
+    /// - プログラムから `max_rounds: 0` が渡された場合のみ **1 に補正**（無限ループ防止の安全網）。
+    pub fn effective_max_rounds(&self) -> u32 {
+        self.max_rounds.max(MIN_MAX_TOOL_ROUNDS)
+    }
 }
 
 impl Default for ToolsConfig {
@@ -90,6 +103,29 @@ pub enum ConfigError {
     Invalid(String),
     #[error("failed to read config: {0}")]
     Io(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_max_rounds_clamps_zero_to_one() {
+        let cfg = ToolsConfig {
+            max_rounds: 0,
+            ..ToolsConfig::default()
+        };
+        assert_eq!(cfg.effective_max_rounds(), 1);
+    }
+
+    #[test]
+    fn effective_max_rounds_preserves_positive() {
+        let cfg = ToolsConfig {
+            max_rounds: 3,
+            ..ToolsConfig::default()
+        };
+        assert_eq!(cfg.effective_max_rounds(), 3);
+    }
 }
 
 /// 設定の読み込み。

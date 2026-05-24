@@ -5,16 +5,19 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::MockLlm;
+use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::application::RequestService;
 use aibe::ports::outbound::{TerminationCapability, ToolsConfig};
 use aibe::protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 
 fn service() -> RequestService {
     let tools_config = ToolsConfig::default();
+    let llm: Arc<dyn aibe::ports::outbound::LlmProvider> = Arc::new(MockLlm::new());
+    let registry = build_registry(&tools_config);
+    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, tools_config.clone());
     RequestService::new(
-        Arc::new(MockLlm::new()),
-        build_registry(&tools_config),
-        tools_config.clone(),
+        llm,
+        executor,
         Arc::new(ToolRoundTerminatorOrchestrator::new(
             tools_config.termination_strategy,
         )),

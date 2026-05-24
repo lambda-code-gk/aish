@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
+use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
-use crate::ports::outbound::{
-    LlmProvider, TerminationCapability, ToolRegistry, ToolRoundTerminator, ToolsConfig,
-};
+use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolRoundTerminator};
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
 
 pub struct RequestService {
@@ -16,19 +15,12 @@ pub struct RequestService {
 impl RequestService {
     pub fn new(
         llm: Arc<dyn LlmProvider>,
-        registry: Arc<dyn ToolRegistry>,
-        tools_config: ToolsConfig,
+        executor: ToolRoundExecutor,
         terminator: Arc<dyn ToolRoundTerminator>,
         termination_capability: TerminationCapability,
     ) -> Self {
         Self {
-            agent_turn: AgentTurnService::new(
-                llm,
-                registry,
-                tools_config,
-                terminator,
-                termination_capability,
-            ),
+            agent_turn: AgentTurnService::new(llm, executor, terminator, termination_capability),
         }
     }
 

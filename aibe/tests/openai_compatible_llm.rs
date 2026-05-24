@@ -6,6 +6,7 @@ use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::OpenAiCompatibleLlm;
 use aibe::application::agent_turn::AgentTurnService;
+use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, ToolName};
 use aibe::ports::outbound::{LlmError, LlmProvider, TerminationCapability, ToolsConfig};
 use aibe::protocol::{ClientResponse, ErrorCode};
@@ -96,7 +97,7 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
         .await;
 
     let base = format!("{}/v1", server.uri());
-    let llm = Arc::new(OpenAiCompatibleLlm::new(
+    let llm: Arc<dyn LlmProvider> = Arc::new(OpenAiCompatibleLlm::new(
         base,
         "test-key".to_string(),
         "test-model".to_string(),
@@ -105,10 +106,11 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         cfg.termination_strategy,
     ));
+    let registry = build_registry(&cfg);
+    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
     let svc = AgentTurnService::new(
         llm,
-        build_registry(&cfg),
-        cfg,
+        executor,
         terminator,
         TerminationCapability::summary_prompt_only(),
     );

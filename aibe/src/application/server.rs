@@ -10,6 +10,7 @@ use tokio::net::{UnixListener, UnixStream};
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
+use crate::application::tool_round::ToolRoundExecutor;
 use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
 use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
 
@@ -24,13 +25,17 @@ pub async fn run(
     eprintln!("aibe: listening on {}", socket_path.display());
 
     let registry = build_registry(&tools_config);
+    let executor = ToolRoundExecutor::new(
+        Arc::clone(&llm),
+        Arc::clone(&registry),
+        tools_config.clone(),
+    );
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         tools_config.termination_strategy,
     ));
     let handler = Arc::new(RequestService::new(
         llm,
-        registry,
-        tools_config,
+        executor,
         terminator,
         termination_capability,
     ));
