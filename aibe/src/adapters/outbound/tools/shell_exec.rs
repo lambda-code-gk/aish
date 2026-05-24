@@ -236,7 +236,9 @@ mod tests {
             allowed_commands: vec!["cat".into()],
         }));
         let tool = ShellExecTool::new(policy, 4096);
-        let ctx = ToolExecutionContext::from_client_cwd(Some(client_sub));
+        use crate::domain::ClientCwd;
+        let ctx =
+            ToolExecutionContext::new(ClientCwd::new(client_sub).expect("absolute client cwd"));
         let args = json!({ "command": "cat", "args": ["note.txt"] });
 
         let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;

@@ -31,13 +31,13 @@ impl ReadFileTool {
             .allowed_roots
             .iter()
             .map(|p| {
-                if p == Path::new(".") {
-                    ctx.base_dir()
+                let root = if p == Path::new(".") {
+                    ctx.base_dir().to_path_buf()
                 } else {
                     expand_home_path(p)
-                }
+                };
+                root.canonicalize().unwrap_or(root)
             })
-            .map(|p| p.canonicalize().unwrap_or(p))
             .collect()
     }
 
@@ -259,7 +259,10 @@ mod tests {
             },
             4096,
         );
-        let ctx = ToolExecutionContext::from_client_cwd(Some(client_sub.clone()));
+        use crate::domain::ClientCwd;
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(client_sub.clone()).expect("absolute client cwd"),
+        );
         let args = json!({ "path": "note.txt" });
 
         let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
@@ -278,7 +281,10 @@ mod tests {
             },
             4096,
         );
-        let ctx = ToolExecutionContext::from_client_cwd(Some(dir.path().to_path_buf()));
+        use crate::domain::ClientCwd;
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(dir.path().to_path_buf()).expect("absolute client cwd"),
+        );
         let args = json!({ "path": "root.txt" });
 
         let (_record, result) = tool.execute("tc2", &args, 5000, &ctx).await;
