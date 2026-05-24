@@ -26,6 +26,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
                 id: "call_1".into(),
                 name: ToolName::read_file(),
                 arguments: json!({"path": "Cargo.toml", "limit": 3}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("read done"),

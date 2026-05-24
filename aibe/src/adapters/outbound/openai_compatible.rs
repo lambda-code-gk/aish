@@ -103,6 +103,7 @@ fn parse_tool_calls(message: &ApiMessage) -> Result<Vec<ToolCall>, LlmError> {
                 id: c.id.clone(),
                 name,
                 arguments: args,
+                provider_extras: None,
             })
         })
         .collect()

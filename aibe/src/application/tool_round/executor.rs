@@ -251,6 +251,7 @@ mod tests {
                 id: "c1".into(),
                 name: ToolName::read_file(),
                 arguments: json!({"path": "a.md"}),
+                provider_extras: None,
             }],
         )]);
         let registry = MapRegistry::new(vec![Arc::new(StubTool {
@@ -291,6 +292,7 @@ mod tests {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({"command": "ls"}),
+                provider_extras: None,
             }],
         )]);
         let exec = executor(llm, MapRegistry::new(vec![]));
@@ -328,6 +330,7 @@ mod tests {
                 id: "c1".into(),
                 name: ToolName::read_file(),
                 arguments: json!({"path": "a.md"}),
+                provider_extras: None,
             }],
         )]);
         let exec = executor(llm, MapRegistry::new(vec![]));
@@ -363,11 +366,13 @@ mod tests {
                     id: "c1".into(),
                     name: ToolName::read_file(),
                     arguments: json!({"path": "a.md"}),
+                    provider_extras: None,
                 },
                 ToolCall {
                     id: "c2".into(),
                     name: ToolName::read_file(),
                     arguments: json!({"path": "b.md"}),
+                    provider_extras: None,
                 },
             ],
         )]);

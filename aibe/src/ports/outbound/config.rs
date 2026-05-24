@@ -95,6 +95,11 @@ pub enum LlmConfig {
         api_key: String,
         model: String,
     },
+    Gemini {
+        base_url: String,
+        api_key: String,
+        model: String,
+    },
 }
 
 #[derive(Debug, Error)]

@@ -99,6 +99,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({"command": "curl", "args": []}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("gave up on curl"),
@@ -142,6 +143,7 @@ async fn max_rounds_zero_programmatic_acts_as_one_round_limit() {
         id: id.into(),
         name: ToolName::read_file(),
         arguments: json!({"path": file_path}),
+        provider_extras: None,
     };
     let steps = vec![
         LlmStepResult::with_tool_calls("", vec![read_call("c1")]),
@@ -182,6 +184,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
         id: id.into(),
         name: ToolName::read_file(),
         arguments: json!({"path": file_path}),
+        provider_extras: None,
     };
     let steps = vec![
         LlmStepResult::with_tool_calls("", vec![read_call("c1")]),
@@ -229,6 +232,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({"command": "echo", "args": [payload]}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("done"),
@@ -273,6 +277,7 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
                 id: "c1".into(),
                 name: ToolName::read_file(),
                 arguments: json!({"path": file_path}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("done"),
@@ -314,6 +319,7 @@ async fn model_disallowed_tool_returns_tool_result_and_continues() {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("cannot delete, explained"),
@@ -357,6 +363,7 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
                 id: "c1".into(),
                 name: ToolName::read_file(),
                 arguments: json!({"path": outside}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("cannot read that path"),
@@ -399,6 +406,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({"command": "false", "args": []}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("command failed as expected"),
@@ -442,6 +450,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({"command": "sleep", "args": ["5"]}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("sleep timed out"),
@@ -491,6 +500,7 @@ async fn shell_exec_runs_in_context_cwd() {
                 id: "c1".into(),
                 name: ToolName::shell_exec(),
                 arguments: json!({"command": "cat", "args": ["note.txt"]}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("done"),
@@ -538,6 +548,7 @@ async fn read_file_relative_path_uses_context_cwd() {
                 id: "c1".into(),
                 name: ToolName::read_file(),
                 arguments: json!({"path": "rel.txt"}),
+                provider_extras: None,
             }],
         ),
         LlmStepResult::text_only("read rel.txt"),
@@ -611,6 +622,7 @@ async fn max_tool_rounds_conversation_replay_strategy() {
         id: id.into(),
         name: ToolName::read_file(),
         arguments: json!({"path": file_path}),
+        provider_extras: None,
     };
     let steps = vec![
         LlmStepResult::with_tool_calls("", vec![read_call("c1")]),
@@ -666,6 +678,7 @@ async fn max_tool_rounds_replay_fallback_to_summary() {
         id: id.into(),
         name: ToolName::read_file(),
         arguments: json!({"path": file_path}),
+        provider_extras: None,
     };
     let steps = vec![
         LlmStepResult::with_tool_calls("", vec![read_call("c1")]),

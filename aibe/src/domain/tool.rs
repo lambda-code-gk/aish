@@ -11,6 +11,9 @@ pub struct ToolCall {
     pub id: String,
     pub name: ToolName,
     pub arguments: Value,
+    /// Gemini 等の provider 固有 part。wire / protocol には載せない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_extras: Option<Value>,
 }
 
 /// 実行済みツール呼び出しの成否。
@@ -87,6 +90,7 @@ mod tests {
             id: "c1".into(),
             name: ToolName::read_file(),
             arguments: serde_json::json!({"path": "a.md"}),
+            provider_extras: None,
         };
         let json = serde_json::to_string(&tc).expect("serialize");
         assert!(json.contains(r#""name":"read_file""#));

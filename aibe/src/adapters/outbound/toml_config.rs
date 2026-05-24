@@ -138,6 +138,28 @@ fn parse_llm(file: Option<&FileConfig>) -> Result<LlmConfig, ConfigError> {
                 model,
             })
         }
+        "gemini" => {
+            let api_key = section
+                .and_then(|l| l.api_key.clone())
+                .or_else(|| std::env::var("AIBE_API_KEY").ok())
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| {
+                    ConfigError::Invalid("gemini requires api_key in config or AIBE_API_KEY".into())
+                })?;
+            let base_url = section
+                .and_then(|l| l.base_url.clone())
+                .or_else(|| std::env::var("AIBE_BASE_URL").ok())
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            let model = section
+                .and_then(|l| l.model.clone())
+                .or_else(|| std::env::var("AIBE_MODEL").ok())
+                .unwrap_or_else(|| "gemini-3.5-flash".to_string());
+            Ok(LlmConfig::Gemini {
+                base_url: base_url.trim_end_matches('/').to_string(),
+                api_key,
+                model,
+            })
+        }
         other => Err(ConfigError::Invalid(format!(
             "unknown llm provider: {other}"
         ))),
@@ -266,6 +288,36 @@ allowed_roots = ["~/projects"]
     }
 
     #[test]
+    fn parses_gemini() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[llm]
+provider = "gemini"
+api_key = "test-gemini-key"
+model = "gemini-3.5-flash"
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        match cfg.llm {
+            LlmConfig::Gemini {
+                base_url,
+                api_key,
+                model,
+            } => {
+                assert_eq!(base_url, "https://generativelanguage.googleapis.com/v1beta");
+                assert_eq!(api_key, "test-gemini-key");
+                assert_eq!(model, "gemini-3.5-flash");
+            }
+            other => panic!("expected gemini, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_openai_compatible() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("config.toml");
@@ -294,7 +346,7 @@ model = "local"
                 assert_eq!(api_key, "test-key");
                 assert_eq!(model, "local");
             }
-            LlmConfig::Mock => panic!("expected openai_compatible"),
+            LlmConfig::Mock | LlmConfig::Gemini { .. } => panic!("expected openai_compatible"),
         }
     }
 }

@@ -115,9 +115,10 @@ aibe →  aish 禁止
 |-----------|------|
 | OpenAI | 公式 API |
 | OpenAI 互換 | ローカル（LM Studio、vLLM 等） |
-| Gemini | Google API |
+| Gemini | Google AI Studio `generateContent`（`v1beta`）— `adapters/outbound/gemini.rs` |
 
-- 選択とエンドポイントは **aibe 設定ファイル** で指定
+- 選択とエンドポイントは **aibe 設定ファイル** で指定（`provider = "gemini"`、`x-goog-api-key`）
+- Gemini の `thoughtSignature` 等は `ToolCall.provider_extras` に **part 単位**で保持し、次ラウンドの `functionCall` part に復元する（クライアント wire には載せない — `docs/0010_gemini-provider-spec.md`）
 - アダプタは aibe 内に閉じる。`ai` / `aish` にプロバイダ分岐を書かない
 
 ## aish ログ
@@ -259,14 +260,14 @@ aibe →  aish 禁止
 
 | プロバイダ（初期値） | `plain_complete_accepts_tool_role` |
 |---------------------|-------------------------------------|
-| mock / openai_compatible | `false`（安全側） |
+| mock / openai_compatible / gemini | `false`（安全側） |
 
 実装の正本: `ToolRoundTerminatorOrchestrator`、`TerminationCapability`、`TerminationStrategy`（`ports/outbound/config.rs`）。
 
 ## 実装フェーズ（参考）
 
-1. **aibe**（済）: socket + `ping` + `agent_turn` + ツールループ + `MockLlm` / OpenAI 互換
+1. **aibe**（済）: socket + `ping` + `agent_turn` + ツールループ + `MockLlm` / OpenAI 互換 / Gemini
 2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
-4. **済**: OpenAI 互換 LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`
-5. **次**: Gemini プロバイダ、インタラクティブ `shell_exec` 許可、ログマスクの拡張（ai ツール連携は `docs/0002_ai-tools-client-spec.md` 参照・実装済み）
+4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`
+5. **次**: インタラクティブ `shell_exec` 許可、ログマスクの拡張（ai ツール連携は `docs/0002_ai-tools-client-spec.md` 参照・実装済み）
