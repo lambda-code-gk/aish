@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::domain::{ChatMessage, LlmStepResult};
+use crate::domain::{ChatMessage, LlmStepResult, MessageRole};
 use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
 
 /// 最後の user メッセージをエコーするモックプロバイダ。
@@ -21,7 +21,7 @@ impl LlmProvider for MockLlm {
         let last_user = messages
             .iter()
             .rev()
-            .find(|m| m.role == "user")
+            .find(|m| m.is_role(MessageRole::User))
             .map(|m| m.content.as_str())
             .unwrap_or("(no user message)");
 
