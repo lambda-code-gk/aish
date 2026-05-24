@@ -33,6 +33,28 @@ fn user_hi() -> Vec<ProtocolMessage> {
 }
 
 #[tokio::test]
+async fn unknown_message_role_rejected_at_protocol_entry() {
+    let res = service()
+        .handle(ClientRequest::AgentTurn {
+            id: "1".into(),
+            messages: vec![ProtocolMessage {
+                role: "moderator".into(),
+                content: "hi".into(),
+            }],
+            tools: vec![],
+            context: RequestContext::default(),
+        })
+        .await;
+    match res {
+        ClientResponse::Error { code, message, .. } => {
+            assert_eq!(code, ErrorCode::InvalidRequest);
+            assert!(message.contains("unknown message role"));
+        }
+        _ => panic!("expected invalid_request for unknown role"),
+    }
+}
+
+#[tokio::test]
 async fn unknown_tool_rejected_at_protocol_entry() {
     let res = service()
         .handle(ClientRequest::AgentTurn {

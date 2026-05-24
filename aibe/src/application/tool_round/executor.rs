@@ -119,7 +119,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::domain::{LlmStepResult, ToolCall, ToolName, ToolResult};
+    use crate::domain::{LlmStepResult, MessageRole, ToolCall, ToolName, ToolResult};
     use crate::ports::outbound::{ToolDefinition, ToolExecutor};
 
     struct StepLlm {
@@ -274,7 +274,7 @@ mod tests {
                 executed,
             } => {
                 assert_eq!(conversation.len(), 3);
-                assert_eq!(conversation[2].role, "tool");
+                assert_eq!(conversation[2].role, MessageRole::Tool);
                 assert_eq!(conversation[2].content, "file body");
                 assert_eq!(executed.len(), 1);
                 assert_eq!(executed[0].output.as_deref(), Some("file body"));
@@ -402,9 +402,9 @@ mod tests {
                 assert_eq!(executed[1].id, "c1");
                 assert_eq!(executed[2].id, "c2");
                 assert_eq!(conversation.len(), 4);
-                assert_eq!(conversation[1].role, "assistant");
-                assert_eq!(conversation[2].role, "tool");
-                assert_eq!(conversation[3].role, "tool");
+                assert_eq!(conversation[1].role, MessageRole::Assistant);
+                assert_eq!(conversation[2].role, MessageRole::Tool);
+                assert_eq!(conversation[3].role, MessageRole::Tool);
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
         }

@@ -10,7 +10,8 @@ use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{
-    AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, LlmStepResult, ToolCall, ToolName,
+    AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, LlmStepResult, MessageRole,
+    ToolCall, ToolName,
 };
 use aibe::ports::outbound::{
     LlmError, LlmProvider, ShellExecConfig, TerminationCapability, ToolDefinition, ToolsConfig,
@@ -587,7 +588,7 @@ impl LlmProvider for TruncationAssertLlm {
         if round == 1 {
             let tool_msg = messages
                 .iter()
-                .find(|m| m.role == "tool")
+                .find(|m| m.is_role(MessageRole::Tool))
                 .expect("tool result in conversation");
             assert!(
                 tool_msg.content.contains("[output truncated:"),
@@ -718,7 +719,7 @@ struct ReplayAssertLlm {
 #[async_trait]
 impl LlmProvider for ReplayAssertLlm {
     async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
-        if messages.iter().any(|m| m.role == "tool") {
+        if messages.iter().any(|m| m.is_role(MessageRole::Tool)) {
             self.saw_tool_in_complete.fetch_add(1, Ordering::SeqCst);
         }
         self.inner.complete(messages).await
@@ -743,7 +744,7 @@ struct ReplayFallbackLlm {
 impl LlmProvider for ReplayFallbackLlm {
     async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
         let n = self.complete_calls.fetch_add(1, Ordering::SeqCst);
-        if n == 0 && messages.iter().any(|m| m.role == "tool") {
+        if n == 0 && messages.iter().any(|m| m.is_role(MessageRole::Tool)) {
             return Err(LlmError::Provider("replay rejected".into()));
         }
         self.inner.complete(messages).await
