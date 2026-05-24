@@ -129,7 +129,7 @@ cargo test --workspace
 | `docs/0005_request-context-domain-spec.md` | RequestContext / AgentTurnContext ドメイン化（未実装） |
 | `docs/0006_max-tool-rounds-terminator-spec.md` | max_tool_rounds 終端戦略の port 化（実装済み） |
 | `docs/0007_agent-turn-loop-modularization-spec.md` | agent_turn 1 ラウンド実行の分割（実装済み） |
-| `docs/0008_chat-message-and-protocol-typing-spec.md` | ChatMessage / MessageRole 型強化（未実装） |
+| `docs/0008_chat-message-and-protocol-typing-spec.md` | ChatMessage / MessageRole 型強化（PR 1 実装済み、phase 2 未実装） |
 | `docs/0009_ai-tool-category-sync-spec.md` | ai カテゴリ表と aibe ツール名の同期強化（未実装） |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
