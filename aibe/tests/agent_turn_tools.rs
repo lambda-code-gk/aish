@@ -48,11 +48,13 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
+    let cwd = std::env::current_dir().expect("cwd");
     let req = serde_json::json!({
         "type": "agent_turn",
         "id": "turn-tools",
         "messages": [{"role": "user", "content": "read manifest"}],
-        "tools": ["read_file"]
+        "tools": ["read_file"],
+        "context": {"cwd": cwd.to_string_lossy()}
     });
     write_line(&mut writer, &req.to_string()).await;
     let result = read_line(&mut lines).await;
