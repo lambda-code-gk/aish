@@ -87,7 +87,7 @@
 | `ai` allowlist | 内部 `Vec<ToolName>`。**送信境界**（`aibe_client`）でのみ `Vec<String>` に落とす | `AskRequest` まで `String` を維持（型化の効果が薄れる） |
 | `AskRequest.tools` | `Vec<ToolName>`（domain 内部表現） | `ToolAllowlist` 型でラップ（0004 では Vec で十分、将来検討可） |
 | エラー型 | `UnknownToolError` を domain で定義し、protocol / ai はラップまたは変換 | クレートごとに独立した未知名エラー |
-| LLM 未知名 tool call | `parse_tool_calls` で `from_str` 失敗 → `LlmError::UnknownTool` → turn `error`（`tool_not_allowed`） | 実行時に `ToolRegistry::get` が `None` でエラー（遅い） |
+| LLM 未知名 tool call | `ToolCall.name` は生文字列。executor が `tool_not_implemented` の tool result を返し **ループ継続**（0001） | turn `error` で即終了 |
 
 ### `ToolName` API（確定仕様）
 

@@ -3,13 +3,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::ToolName;
-
 /// LLM が返したツール呼び出し（正規化済み）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
-    pub name: ToolName,
+    /// LLM が返した生のツール名（組み込み外の名前も保持する）。
+    pub name: String,
     pub arguments: Value,
     /// Gemini 等の provider 固有 part。wire / protocol には載せない。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,7 +27,7 @@ pub enum ExecutedToolStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutedToolCall {
     pub id: String,
-    pub name: ToolName,
+    pub name: String,
     pub arguments: Value,
     pub status: ExecutedToolStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,10 +39,10 @@ pub struct ExecutedToolCall {
 }
 
 impl ExecutedToolCall {
-    pub fn ok(id: String, name: ToolName, arguments: Value, output: String) -> Self {
+    pub fn ok(id: String, name: impl Into<String>, arguments: Value, output: String) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             arguments,
             status: ExecutedToolStatus::Ok,
             output: Some(output),
@@ -54,14 +53,14 @@ impl ExecutedToolCall {
 
     pub fn err(
         id: String,
-        name: ToolName,
+        name: impl Into<String>,
         arguments: Value,
         error: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
         Self {
             id,
-            name,
+            name: name.into(),
             arguments,
             status: ExecutedToolStatus::Error,
             output: None,
@@ -82,13 +81,13 @@ pub struct ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ToolName;
+    use crate::domain::{ToolName, READ_FILE};
 
     #[test]
     fn tool_call_serde_roundtrip() {
         let tc = ToolCall {
             id: "c1".into(),
-            name: ToolName::read_file(),
+            name: READ_FILE.to_string(),
             arguments: serde_json::json!({"path": "a.md"}),
             provider_extras: None,
         };
@@ -102,7 +101,7 @@ mod tests {
     fn executed_tool_call_serde_roundtrip() {
         let tc = ExecutedToolCall::ok(
             "c1".into(),
-            ToolName::shell_exec(),
+            ToolName::shell_exec().to_string(),
             serde_json::json!({"command": "echo"}),
             "hi".into(),
         );

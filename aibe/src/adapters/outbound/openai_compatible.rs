@@ -1,7 +1,5 @@
 //! OpenAI 互換 HTTP API アダプタ。
 
-use std::str::FromStr;
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::adapters::outbound::llm_backend::HttpBackendContext;
-use crate::domain::{ChatMessage, LlmStepResult, ToolCall, ToolName};
+use crate::domain::{ChatMessage, LlmStepResult, ToolCall};
 use crate::ports::outbound::{LlmError, LlmGenerationParams, LlmProvider, ToolDefinition};
 
 pub struct OpenAiCompatibleLlm {
@@ -87,7 +85,7 @@ fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
                             id: tc.id.clone(),
                             r#type: "function".to_string(),
                             function: ApiFunctionCall {
-                                name: tc.name.as_str().to_string(),
+                                name: tc.name.clone(),
                                 arguments: tc.arguments.to_string(),
                             },
                         })
@@ -111,11 +109,9 @@ fn parse_tool_calls(message: &ApiMessage) -> Result<Vec<ToolCall>, LlmError> {
         .iter()
         .map(|c| {
             let args: Value = serde_json::from_str(&c.function.arguments).unwrap_or(Value::Null);
-            let name =
-                ToolName::from_str(&c.function.name).map_err(|e| LlmError::UnknownTool(e.0))?;
             Ok(ToolCall {
                 id: c.id.clone(),
-                name,
+                name: c.function.name.clone(),
                 arguments: args,
                 provider_extras: None,
             })

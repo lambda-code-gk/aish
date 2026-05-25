@@ -8,8 +8,8 @@ use aibe::adapters::outbound::GeminiLlm;
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, MessageRole, ToolName};
-use aibe::ports::outbound::{LlmError, LlmProvider, TerminationCapability, ToolsConfig};
-use aibe::protocol::{ClientResponse, ErrorCode};
+use aibe::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
+use aibe::protocol::ClientResponse;
 use serde_json::{json, Value};
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -220,7 +220,7 @@ async fn provider_extras_preserves_thought_signature_on_resend() {
 }
 
 #[tokio::test]
-async fn complete_with_tools_rejects_unknown_tool_from_model() {
+async fn complete_with_tools_accepts_unknown_tool_name_from_model() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path_regex(r"/v1beta/models/test-model:generateContent$"))
@@ -237,19 +237,20 @@ async fn complete_with_tools_rejects_unknown_tool_from_model() {
         .await;
 
     let llm = gemini_llm(&server);
-    let err = llm
+    let step = llm
         .complete_with_tools(
             &[ChatMessage::user("do it")],
             &[aibe::application::tool_defs::definitions_for(&[ToolName::read_file()])[0].clone()],
         )
         .await
-        .unwrap_err();
+        .expect("parse unknown tool name without failing");
 
-    assert_eq!(err, LlmError::UnknownTool("delete_everything".into()));
+    assert_eq!(step.tool_calls.len(), 1);
+    assert_eq!(step.tool_calls[0].name, "delete_everything");
 }
 
 #[tokio::test]
-async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
+async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path_regex(r"/v1beta/models/test-model:generateContent$"))
@@ -262,6 +263,14 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
                 }}
             ]))),
         )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"/v1beta/models/test-model:generateContent$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(success_body(
+            json!([{ "text": "cannot delete, explained" }]),
+        )))
         .mount(&server)
         .await;
 
@@ -291,11 +300,21 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_not_allowed() {
         .await;
 
     match res {
-        ClientResponse::Error { code, message, .. } => {
-            assert_eq!(code, ErrorCode::ToolNotAllowed);
-            assert_eq!(message, "unknown tool: delete_everything");
+        ClientResponse::AgentTurnResult {
+            assistant_message,
+            tool_calls,
+            ..
+        } => {
+            assert_eq!(assistant_message.content, "cannot delete, explained");
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].error.as_deref(), Some("tool_not_implemented"));
+            assert!(tool_calls[0]
+                .message
+                .as_deref()
+                .unwrap_or("")
+                .contains("unknown tool: delete_everything"));
         }
-        other => panic!("expected tool_not_allowed, got {other:?}"),
+        other => panic!("expected agent_turn_result, got {other:?}"),
     }
 }
 

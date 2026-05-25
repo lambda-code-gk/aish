@@ -51,6 +51,12 @@ impl fmt::Display for ToolName {
     }
 }
 
+impl From<ToolName> for String {
+    fn from(name: ToolName) -> Self {
+        name.0
+    }
+}
+
 impl Serialize for ToolName {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

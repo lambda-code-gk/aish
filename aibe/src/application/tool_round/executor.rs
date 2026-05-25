@@ -1,10 +1,11 @@
 //! ツール付きエージェントループの 1 ラウンド実行。
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::application::tool_defs::definitions_for;
 use crate::application::tool_round::rejected::rejected_tool_result;
-use crate::domain::{ChatMessage, ExecutedToolCall, ToolName};
+use crate::domain::{is_known_tool, ChatMessage, ExecutedToolCall, ToolName};
 use crate::ports::outbound::{
     LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
 };
@@ -72,27 +73,37 @@ impl ToolRoundExecutor {
         next_conversation.push(step.assistant.clone());
 
         for tc in &step.tool_calls {
-            let (record, result) = if !allowed_tools.contains(&tc.name) {
-                rejected_tool_result(
-                    tc,
-                    "tool_not_allowed",
-                    format!("model requested disallowed tool: {}", tc.name),
-                )
-            } else if let Some(executor) = self.registry.get(&tc.name) {
-                executor
-                    .execute(
-                        &tc.id,
-                        &tc.arguments,
-                        self.tools_config.exec_timeout_ms,
-                        tool_ctx,
-                    )
-                    .await
-            } else {
+            let (record, result) = if !is_known_tool(&tc.name) {
                 rejected_tool_result(
                     tc,
                     "tool_not_implemented",
-                    format!("tool not implemented: {}", tc.name),
+                    format!("unknown tool: {}", tc.name),
                 )
+            } else {
+                let name =
+                    ToolName::from_str(&tc.name).expect("is_known_tool implies valid ToolName");
+                if !allowed_tools.contains(&name) {
+                    rejected_tool_result(
+                        tc,
+                        "tool_not_allowed",
+                        format!("model requested disallowed tool: {}", tc.name),
+                    )
+                } else if let Some(executor) = self.registry.get(&name) {
+                    executor
+                        .execute(
+                            &tc.id,
+                            &tc.arguments,
+                            self.tools_config.exec_timeout_ms,
+                            tool_ctx,
+                        )
+                        .await
+                } else {
+                    rejected_tool_result(
+                        tc,
+                        "tool_not_implemented",
+                        format!("tool not implemented: {}", tc.name),
+                    )
+                }
             };
             executed.push(record);
             let content = if result.is_error {
@@ -119,7 +130,9 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::domain::{LlmStepResult, MessageRole, ToolCall, ToolName, ToolResult};
+    use crate::domain::{
+        LlmStepResult, MessageRole, ToolCall, ToolName, ToolResult, READ_FILE, SHELL_EXEC,
+    };
     use crate::ports::outbound::{ToolDefinition, ToolExecutor};
 
     struct StepLlm {
@@ -249,7 +262,7 @@ mod tests {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::read_file(),
+                name: READ_FILE.to_string(),
                 arguments: json!({"path": "a.md"}),
                 provider_extras: None,
             }],
@@ -290,7 +303,7 @@ mod tests {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({"command": "ls"}),
                 provider_extras: None,
             }],
@@ -323,12 +336,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn continue_on_unknown_tool_name_from_model() {
+        let llm = StepLlm::new(vec![LlmStepResult::with_tool_calls(
+            "",
+            vec![ToolCall {
+                id: "c1".into(),
+                name: "dir_list".to_string(),
+                arguments: json!({}),
+                provider_extras: None,
+            }],
+        )]);
+        let exec = executor(llm, MapRegistry::new(vec![]));
+        let outcome = exec
+            .run_one_round(
+                &[ChatMessage::user("list")],
+                &[ToolName::read_file()],
+                &tool_ctx(),
+                &[],
+            )
+            .await
+            .expect("round");
+
+        match outcome {
+            RoundOutcome::Continue {
+                conversation,
+                executed,
+            } => {
+                assert!(conversation[2].content.contains("unknown tool: dir_list"));
+                assert_eq!(executed.len(), 1);
+                assert_eq!(executed[0].error.as_deref(), Some("tool_not_implemented"));
+                assert_eq!(executed[0].name, "dir_list");
+            }
+            RoundOutcome::Completed { .. } => panic!("expected Continue"),
+        }
+    }
+
+    #[tokio::test]
     async fn continue_on_unimplemented_tool() {
         let llm = StepLlm::new(vec![LlmStepResult::with_tool_calls(
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::read_file(),
+                name: READ_FILE.to_string(),
                 arguments: json!({"path": "a.md"}),
                 provider_extras: None,
             }],
@@ -364,13 +413,13 @@ mod tests {
             vec![
                 ToolCall {
                     id: "c1".into(),
-                    name: ToolName::read_file(),
+                    name: READ_FILE.to_string(),
                     arguments: json!({"path": "a.md"}),
                     provider_extras: None,
                 },
                 ToolCall {
                     id: "c2".into(),
-                    name: ToolName::read_file(),
+                    name: READ_FILE.to_string(),
                     arguments: json!({"path": "b.md"}),
                     provider_extras: None,
                 },

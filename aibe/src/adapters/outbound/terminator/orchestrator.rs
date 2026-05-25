@@ -37,13 +37,10 @@ impl ToolRoundTerminator for ToolRoundTerminatorOrchestrator {
         capability: &TerminationCapability,
     ) -> Result<TerminationResult, LlmError> {
         if Self::should_try_replay(self.policy, capability) {
-            match replay::conversation_replay(llm, conversation).await {
-                Ok(result) => return Ok(result),
-                Err(LlmError::Provider(_)) => {
-                    // Replay 実行時失敗 → SummaryPrompt に 1 回フォールバック
-                }
-                Err(e) => return Err(e),
+            if let Ok(result) = replay::conversation_replay(llm, conversation).await {
+                return Ok(result);
             }
+            // Replay 実行時失敗 → SummaryPrompt に 1 回フォールバック
         }
 
         summary::summary_prompt(llm, conversation, executed, max_rounds).await

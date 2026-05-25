@@ -1,7 +1,5 @@
 //! Google AI Studio Gemini API (`generateContent` v1beta) アダプタ。
 
-use std::str::FromStr;
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::adapters::outbound::llm_backend::HttpBackendContext;
-use crate::domain::{ChatMessage, LlmStepResult, MessageRole, ToolCall, ToolName};
+use crate::domain::{ChatMessage, LlmStepResult, MessageRole, ToolCall};
 use crate::ports::outbound::{LlmError, LlmGenerationParams, LlmProvider, ToolDefinition};
 
 pub struct GeminiLlm {
@@ -185,7 +183,7 @@ fn resolve_tool_name(messages: &[ChatMessage], tool_call_id: &str) -> String {
         if let Some(calls) = &msg.tool_calls {
             for tc in calls {
                 if tc.id == tool_call_id {
-                    return tc.name.as_str().to_string();
+                    return tc.name.clone();
                 }
             }
         }
@@ -196,7 +194,7 @@ fn resolve_tool_name(messages: &[ChatMessage], tool_call_id: &str) -> String {
 fn tool_call_to_part(tc: &ToolCall) -> Part {
     let mut fc = Map::new();
     fc.insert("id".into(), json!(tc.id));
-    fc.insert("name".into(), json!(tc.name.as_str()));
+    fc.insert("name".into(), json!(tc.name));
     fc.insert("args".into(), tc.arguments.clone());
 
     let mut part_obj = Map::new();
@@ -232,7 +230,6 @@ fn parse_candidate_parts(parts: &[Value], turn_index: usize) -> Result<LlmStepRe
                 .get("name")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| LlmError::Provider("functionCall missing name".into()))?;
-            let name = ToolName::from_str(name_str).map_err(|e| LlmError::UnknownTool(e.0))?;
             let args = fc.get("args").cloned().unwrap_or(Value::Object(Map::new()));
 
             let mut extras_map = Map::new();
@@ -244,7 +241,7 @@ fn parse_candidate_parts(parts: &[Value], turn_index: usize) -> Result<LlmStepRe
 
             tool_calls.push(ToolCall {
                 id,
-                name,
+                name: name_str.to_string(),
                 arguments: args,
                 provider_extras,
             });
@@ -459,7 +456,7 @@ struct PromptFeedback {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ToolName;
+    use crate::domain::READ_FILE;
 
     #[test]
     fn groups_consecutive_tool_messages() {
@@ -511,7 +508,7 @@ mod tests {
     fn restores_thought_signature_on_part() {
         let tc = ToolCall {
             id: "c1".into(),
-            name: ToolName::read_file(),
+            name: READ_FILE.to_string(),
             arguments: json!({}),
             provider_extras: Some(json!({
                 "gemini_part_index": 0,

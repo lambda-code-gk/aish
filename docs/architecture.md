@@ -240,7 +240,7 @@ aibe →  aish 禁止
 |--------|------|
 | `invalid_request` | リクエスト不正 |
 | `provider_error` | LLM API 失敗 |
-| `tool_not_allowed` | 未知ツール名、またはリクエスト外のツール呼び出し |
+| `tool_not_allowed` | クライアントがリクエスト `tools` に未実装名を指定した場合（turn `error`）。モデルが allowlist 外の**既知**ツールを呼んだ場合は tool result でループ継続 |
 | `internal_error` | 内部エラー |
 
 `agent_turn_result.status` には `"ok"` のほか、ツール上限到達時は `"max_tool_rounds"`（`type: error` ではない。`tool_calls` と最終 assistant 本文を返す）。

@@ -11,7 +11,7 @@ use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{
     AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, LlmStepResult, MessageRole,
-    ToolCall, ToolName,
+    ToolCall, ToolName, READ_FILE, SHELL_EXEC,
 };
 use aibe::ports::outbound::{
     LlmError, LlmProvider, ShellExecConfig, TerminationCapability, ToolDefinition, ToolsConfig,
@@ -97,7 +97,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({"command": "curl", "args": []}),
                 provider_extras: None,
             }],
@@ -141,7 +141,7 @@ async fn max_rounds_zero_programmatic_acts_as_one_round_limit() {
 
     let read_call = |id: &str| ToolCall {
         id: id.into(),
-        name: ToolName::read_file(),
+        name: READ_FILE.to_string(),
         arguments: json!({"path": file_path}),
         provider_extras: None,
     };
@@ -182,7 +182,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
 
     let read_call = |id: &str| ToolCall {
         id: id.into(),
-        name: ToolName::read_file(),
+        name: READ_FILE.to_string(),
         arguments: json!({"path": file_path}),
         provider_extras: None,
     };
@@ -230,7 +230,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({"command": "echo", "args": [payload]}),
                 provider_extras: None,
             }],
@@ -275,7 +275,7 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::read_file(),
+                name: READ_FILE.to_string(),
                 arguments: json!({"path": file_path}),
                 provider_extras: None,
             }],
@@ -311,13 +311,56 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
 }
 
 #[tokio::test]
+async fn model_unknown_tool_returns_tool_result_and_continues() {
+    let steps = vec![
+        LlmStepResult::with_tool_calls(
+            "",
+            vec![ToolCall {
+                id: "c1".into(),
+                name: "dir_list".to_string(),
+                arguments: json!({}),
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::text_only("use read_file with explicit paths"),
+    ];
+    let llm = Arc::new(ScriptedMockLlm::new(steps));
+    let cfg = ToolsConfig::default();
+    let svc = default_agent_turn_service(llm, cfg);
+    let res = svc
+        .run(
+            "1".into(),
+            vec![ChatMessage::user("list repo")],
+            vec![ToolName::read_file()],
+            process_cwd_context(),
+        )
+        .await;
+    match res {
+        ClientResponse::AgentTurnResult {
+            assistant_message,
+            tool_calls,
+            ..
+        } => {
+            assert_eq!(
+                assistant_message.content,
+                "use read_file with explicit paths"
+            );
+            assert_eq!(tool_calls.len(), 1);
+            assert_eq!(tool_calls[0].error.as_deref(), Some("tool_not_implemented"));
+            assert_eq!(tool_calls[0].name, "dir_list");
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn model_disallowed_tool_returns_tool_result_and_continues() {
     let steps = vec![
         LlmStepResult::with_tool_calls(
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({}),
                 provider_extras: None,
             }],
@@ -361,7 +404,7 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::read_file(),
+                name: READ_FILE.to_string(),
                 arguments: json!({"path": outside}),
                 provider_extras: None,
             }],
@@ -404,7 +447,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({"command": "false", "args": []}),
                 provider_extras: None,
             }],
@@ -448,7 +491,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({"command": "sleep", "args": ["5"]}),
                 provider_extras: None,
             }],
@@ -498,7 +541,7 @@ async fn shell_exec_runs_in_context_cwd() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::shell_exec(),
+                name: SHELL_EXEC.to_string(),
                 arguments: json!({"command": "cat", "args": ["note.txt"]}),
                 provider_extras: None,
             }],
@@ -546,7 +589,7 @@ async fn read_file_relative_path_uses_context_cwd() {
             "",
             vec![ToolCall {
                 id: "c1".into(),
-                name: ToolName::read_file(),
+                name: READ_FILE.to_string(),
                 arguments: json!({"path": "rel.txt"}),
                 provider_extras: None,
             }],
@@ -620,7 +663,7 @@ async fn max_tool_rounds_conversation_replay_strategy() {
 
     let read_call = |id: &str| ToolCall {
         id: id.into(),
-        name: ToolName::read_file(),
+        name: READ_FILE.to_string(),
         arguments: json!({"path": file_path}),
         provider_extras: None,
     };
@@ -676,7 +719,7 @@ async fn max_tool_rounds_replay_fallback_to_summary() {
 
     let read_call = |id: &str| ToolCall {
         id: id.into(),
-        name: ToolName::read_file(),
+        name: READ_FILE.to_string(),
         arguments: json!({"path": file_path}),
         provider_extras: None,
     };
