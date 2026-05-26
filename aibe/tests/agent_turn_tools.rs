@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::server;
-use aibe::domain::{LlmStepResult, ToolCall, ToolName, READ_FILE};
+use aibe::domain::{LlmStepResult, ToolCall, READ_FILE};
 use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
 use serde_json::json;
 use tempfile::tempdir;
