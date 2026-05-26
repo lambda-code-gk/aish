@@ -4,20 +4,20 @@
 
 レビューが提案する 3 スプリントの切り方。各 P0〜P3 との対応は各ファイル末尾を参照。
 
-## Sprint 1: v0.1 安定化
+## Sprint 1: v0.1 安定化 — **完了**（2026-05-26）
 
 **実装順（採用）** — [implementation-order.md](implementation-order.md):
 
 1. ~~`command_start` args のサニタイズ（+ テスト）~~ **完了** — [0012](../../done/0012_command-start-log-sanitize-spec.md)
 2. README の provider 不整合修正（`openai` → `openai_compatible` 明記）
-3. CI 追加 + `scripts/smoke-mock.sh`（mock aibe 導通）+ GitHub Actions で `cargo test --workspace` 等
-4. LICENSE 追加
+3. ~~CI 追加 + `scripts/smoke-mock.sh`~~ **完了** — [0014](../../done/0014_ci-smoke-stabilization-spec.md)
+4. ~~LICENSE 追加~~ **完了**（MIT、[LICENSE](../../../LICENSE)）
 
 **新機能は足さない。**
 
 詳細: [p0-stabilization.md](p0-stabilization.md)
 
-## Sprint 2: クライアント境界整理
+## Sprint 2: クライアント境界整理 — **着手待ち**
 
 - `aibe-protocol` 分離
 - 可能なら `aibe-client` 分離

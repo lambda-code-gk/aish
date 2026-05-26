@@ -213,12 +213,22 @@ OpenAI 公式 API も `provider = "openai_compatible"` を使う。`api_key` を
 
 ## Development
 
+品質ゲート（ローカル・CI 共通）:
+
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
 ./scripts/check-architecture.sh   # クレート境界 + ヘキサゴナルレイヤー
 ```
+
+mock aibe への導通スモーク（実 API キー不要）:
+
+```bash
+./scripts/smoke-mock.sh
+```
+
+GitHub Actions は [`.github/workflows/ci.yml`](.github/workflows/ci.yml) で `verify` と `smoke-mock` の 2 job を実行する。詳細は [docs/testing.md](docs/testing.md)。
 
 AI エージェント向けの開発規約: [AGENTS.md](AGENTS.md)
 
@@ -242,4 +252,4 @@ Issue や PR は歓迎します。大きな変更の前に [docs/architecture.md
 
 ## License
 
-ワークスペースのクレートは **MIT OR Apache-2.0**（`Cargo.toml` の `workspace.package.license`）を想定しています。リポジトリ直下の `LICENSE` ファイルは追って整備する場合があります。
+[MIT](LICENSE) — ワークスペースのクレートも `Cargo.toml` の `workspace.package.license` で MIT とします。

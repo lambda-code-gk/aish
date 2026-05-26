@@ -11,6 +11,16 @@
   ```bash
   cargo build -p aibe -p ai
   ```
+
+### 自動スモーク（CI と同じ契約）
+
+手動の B1（`tools enabled: none` + mock 応答）に相当する導通は、次で一括確認できる（`AIBE_CONFIG` / `AIBE_SOCKET_PATH` / `AI_CONFIG` は一時ディレクトリに隔離され、ホームの本番設定は読まない）。スクリプトは stdout / stderr の非空行が各 1 行かつ全文一致、`warning:` 行なしを検証する:
+
+```bash
+./scripts/smoke-mock.sh
+```
+
+仕様: [0014_ci-smoke-stabilization-spec.md](../done/0014_ci-smoke-stabilization-spec.md)。
 - 作業用ディレクトリ（以降 `$MANUAL`）:
   ```bash
   export MANUAL="$(mktemp -d)"
