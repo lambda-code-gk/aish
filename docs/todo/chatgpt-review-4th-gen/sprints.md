@@ -1,0 +1,38 @@
+# スプリント案
+
+[← 索引](README.md)
+
+レビューが提案する 3 スプリントの切り方。各 P0〜P3 との対応は各ファイル末尾を参照。
+
+## Sprint 1: v0.1 安定化
+
+**実装順（採用）** — [implementation-order.md](implementation-order.md):
+
+1. `command_start` args のサニタイズ（+ テスト）
+2. README の provider 不整合修正（`openai` → `openai_compatible` 明記）
+3. CI 追加 + `scripts/smoke-mock.sh`（mock aibe 導通）+ GitHub Actions で `cargo test --workspace` 等
+4. LICENSE 追加
+
+**新機能は足さない。**
+
+詳細: [p0-stabilization.md](p0-stabilization.md)
+
+## Sprint 2: クライアント境界整理
+
+- `aibe-protocol` 分離
+- 可能なら `aibe-client` 分離
+- `ai` は `aibe` 本体ではなく client/protocol のみに依存
+- `architecture.md` 更新
+- 既存テスト維持
+
+詳細: [p1-protocol-split.md](p1-protocol-split.md)
+
+## Sprint 3: AISH 体験の最小完成
+
+- `aish shell` の現在ログを `ai ask` が自動利用
+- `ai ask` のデフォルト context 確認
+- `read_file` / `grep` / `git_diff` 追加
+- `shell_exec` は明示指定時のみ
+- 人間向けの短い実行サマリ整備（`--verbose-tools` 以外）
+
+詳細: [p2-safe-tools.md](p2-safe-tools.md)、[p3-log-integration.md](p3-log-integration.md)
