@@ -169,7 +169,7 @@ cargo run -q -p ai -- ask "x" \
 
 ## C. 実 LLM + `read_file`（任意・API キー要）
 
-[aibe-openai-compatible.md](aibe-openai-compatible.md) と同様に `~/.config/aibe/config.toml` で `openai_compatible` を有効にする。
+[aibe-openai-compatible.md](aibe-openai-compatible.md) と同様に `~/.config/aibe/config.toml` で `provider = "openai_compatible"` を有効にする（OpenAI 公式 API も同じ provider 名）。
 
 追加で aibe 側:
 

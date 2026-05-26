@@ -192,10 +192,11 @@ aibe 内でサポート（設定の `provider`）:
 
 | プロバイダ | 説明 |
 |-----------|------|
-| `openai` | OpenAI API |
-| `openai_compatible` | OpenAI 互換（LM Studio 等） |
+| `openai_compatible` | OpenAI 公式 API および OpenAI 互換エンドポイント（LM Studio、vLLM 等） |
 | `gemini` | Google AI Studio（`generateContent` v1beta） |
 | `mock` | テスト・開発用 |
+
+OpenAI 公式 API も `provider = "openai_compatible"` を使う。`api_key` を設定し、`base_url` を省略すれば既定 `https://api.openai.com/v1` が使われる（`aibe` の `toml_config` と同じ）。
 
 手動検証:
 

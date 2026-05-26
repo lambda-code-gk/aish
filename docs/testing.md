@@ -29,7 +29,7 @@ CI 導入前も、完了報告前に上記をローカルで通す。
 - **単体**: JSON メッセージの serialize/deserialize、設定パース、allowlist、`agent_turn` ループ（`ScriptedMockLlm`）。ツール失敗は tool result で継続（allowlist 外 `shell_exec`、パス制限外 `read_file`、モデル幻覚ツール、subprocess 非ゼロ終了、`shell_exec` タイムアウト）
 - **統合**: Unix socket で `ping` / `agent_turn`（ツールなし・`read_file` ループ）が完走
 - **E2E**: デーモン起動 → クライアント 1 リクエスト → 応答（ネットワーク不要な fixture 推奨）
-- **手動**: 実プロバイダ + 実キーでの 1 ターン（`docs/manual/aibe-openai-compatible.md`）
+- **手動**: 実プロバイダ + 実キーでの 1 ターン（`openai_compatible` / Gemini — `docs/manual/aibe-openai-compatible.md` 等）
 
 ### aish
 

@@ -17,6 +17,11 @@ provider = "openai_compatible"
 api_key = "YOUR_API_KEY"
 base_url = "http://127.0.0.1:1234/v1"
 
+# OpenAI 公式 API も provider = "openai_compatible"（base_url 省略で https://api.openai.com/v1）
+# [llm.openai]
+# provider = "openai_compatible"
+# api_key = "YOUR_API_KEY"
+
 # [llm.mock]
 # provider = "mock"
 
