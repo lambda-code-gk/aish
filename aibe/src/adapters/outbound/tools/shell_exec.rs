@@ -2,12 +2,14 @@
 //!
 //! subprocess の cwd は [`ToolExecutionContext::base_dir`]（クライアントの `context.cwd`）。
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -35,6 +37,81 @@ struct ShellExecArgs {
     command: String,
     #[serde(default)]
     args: Vec<String>,
+}
+
+/// subprocess 実行結果（テスト seam: timeout 時に `child_pid` を返す）。
+#[derive(Debug)]
+pub(crate) enum ShellRunOutcome {
+    Completed {
+        exit_code: i32,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    },
+    TimedOut {
+        /// 単体テスト seam（`run_subprocess` 直接呼び出しで reap 検証）。
+        #[allow(dead_code)]
+        child_pid: u32,
+    },
+    Failed(String),
+}
+
+/// spawn / timeout / kill / reap を担う内部ヘルパー。
+pub(crate) async fn run_subprocess(mut cmd: Command, duration: Duration) -> ShellRunOutcome {
+    cmd.kill_on_drop(true);
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return ShellRunOutcome::Failed(format!("failed to spawn: {e}")),
+    };
+
+    let child_pid = child.id().unwrap_or(0);
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    match timeout(duration, child.wait()).await {
+        Ok(Ok(status)) => {
+            let stdout = read_stdout(&mut stdout_pipe).await;
+            let stderr = read_stderr(&mut stderr_pipe).await;
+            ShellRunOutcome::Completed {
+                exit_code: status.code().unwrap_or(-1),
+                stdout,
+                stderr,
+            }
+        }
+        Ok(Err(e)) => ShellRunOutcome::Failed(format!("failed to run command: {e}")),
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            drop(stdout_pipe);
+            drop(stderr_pipe);
+            ShellRunOutcome::TimedOut { child_pid }
+        }
+    }
+}
+
+async fn read_stdout(pipe: &mut Option<tokio::process::ChildStdout>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(reader) = pipe {
+        let _ = reader.read_to_end(&mut buf).await;
+    }
+    buf
+}
+
+async fn read_stderr(pipe: &mut Option<tokio::process::ChildStderr>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(reader) = pipe {
+        let _ = reader.read_to_end(&mut buf).await;
+    }
+    buf
+}
+
+fn build_command(parsed: &ShellExecArgs, cwd: &Path) -> Command {
+    let mut cmd = Command::new(&parsed.command);
+    cmd.args(&parsed.args);
+    cmd.current_dir(cwd);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd
 }
 
 #[async_trait]
@@ -122,29 +199,21 @@ impl ToolExecutor for ShellExecTool {
             );
         }
 
-        let mut cmd = Command::new(&parsed.command);
-        cmd.args(&parsed.args);
-        cmd.current_dir(ctx.base_dir());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
+        let cmd = build_command(&parsed, ctx.base_dir());
         let duration = Duration::from_millis(timeout_ms);
-        let run = async {
-            let child = cmd.spawn().map_err(|e| format!("failed to spawn: {e}"))?;
-            child
-                .wait_with_output()
-                .await
-                .map_err(|e| format!("failed to run command: {e}"))
-        };
 
-        match timeout(duration, run).await {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let code = output.status.code().unwrap_or(-1);
-                let body_raw = format!("exit_code: {code}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        match run_subprocess(cmd, duration).await {
+            ShellRunOutcome::Completed {
+                exit_code,
+                stdout,
+                stderr,
+            } => {
+                let stdout = String::from_utf8_lossy(&stdout);
+                let stderr = String::from_utf8_lossy(&stderr);
+                let body_raw =
+                    format!("exit_code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}");
                 let body = limit_tool_output(&body_raw, self.max_output_bytes);
-                if output.status.success() {
+                if exit_code == 0 {
                     (
                         ExecutedToolCall::ok(id.clone(), self.name(), args_value, body.clone()),
                         ToolResult {
@@ -160,7 +229,7 @@ impl ToolExecutor for ShellExecTool {
                             self.name(),
                             args_value,
                             "nonzero_exit",
-                            format!("process exited with {code}"),
+                            format!("process exited with {exit_code}"),
                         ),
                         ToolResult {
                             tool_call_id: id,
@@ -170,7 +239,18 @@ impl ToolExecutor for ShellExecTool {
                     )
                 }
             }
-            Ok(Err(msg)) => (
+            ShellRunOutcome::TimedOut { .. } => {
+                let msg = format!("command timed out after {timeout_ms}ms");
+                (
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
+                    ToolResult {
+                        tool_call_id: id,
+                        content: msg.clone(),
+                        is_error: true,
+                    },
+                )
+            }
+            ShellRunOutcome::Failed(msg) => (
                 ExecutedToolCall::err(
                     id.clone(),
                     self.name(),
@@ -184,17 +264,6 @@ impl ToolExecutor for ShellExecTool {
                     is_error: true,
                 },
             ),
-            Err(_) => {
-                let msg = format!("command timed out after {timeout_ms}ms");
-                (
-                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
-                    ToolResult {
-                        tool_call_id: id,
-                        content: msg.clone(),
-                        is_error: true,
-                    },
-                )
-            }
         }
     }
 }
@@ -203,9 +272,22 @@ impl ToolExecutor for ShellExecTool {
 mod tests {
     use super::*;
     use crate::adapters::outbound::tools::ConfigAllowlistPolicy;
+    use crate::domain::ClientCwd;
     use crate::ports::outbound::ShellExecConfig;
     use serde_json::json;
     use tempfile::tempdir;
+
+    fn process_reaped(pid: u32) -> bool {
+        if pid == 0 {
+            return true;
+        }
+        unsafe {
+            if libc::kill(pid as i32, 0) == 0 {
+                return false;
+            }
+            std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        }
+    }
 
     #[tokio::test]
     async fn command_runs_in_client_cwd() {
@@ -219,7 +301,6 @@ mod tests {
             allowed_commands: vec!["cat".into()],
         }));
         let tool = ShellExecTool::new(policy, 4096);
-        use crate::domain::ClientCwd;
         let ctx =
             ToolExecutionContext::new(ClientCwd::new(client_sub).expect("absolute client cwd"));
         let args = json!({ "command": "cat", "args": ["note.txt"] });
@@ -227,5 +308,45 @@ mod tests {
         let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
         assert!(!result.is_error, "{}", result.content);
         assert!(result.content.contains("from client cwd"));
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_and_reaps_child() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let cmd = build_command(
+            &ShellExecArgs {
+                command: "sleep".into(),
+                args: vec!["5".into()],
+            },
+            &cwd,
+        );
+
+        let outcome = run_subprocess(cmd, Duration::from_millis(100)).await;
+        let ShellRunOutcome::TimedOut { child_pid } = outcome else {
+            panic!("expected timeout, got {outcome:?}");
+        };
+        assert!(child_pid > 0, "child pid should be recorded");
+        assert!(
+            process_reaped(child_pid),
+            "child pid {child_pid} should be reaped after timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_timeout_returns_error_result() {
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["sleep".into()],
+        }));
+        let tool = ShellExecTool::new(policy, 4096);
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
+        );
+        let args = json!({ "command": "sleep", "args": ["5"] });
+
+        let (record, result) = tool.execute("tc1", &args, 100, &ctx).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("timed out"));
+        assert_eq!(record.error.as_deref(), Some("timeout"));
     }
 }
