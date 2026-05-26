@@ -78,6 +78,7 @@
 - **Unix 専用**: ファイルモード・ソケットパスは umask / `chmod` を意識する
 - aibe の socket: ユーザー私用ディレクトリ配下。`bind` 時は umask `077` + `chmod 600`（foreground / デーモン共通）
 - aish が起動するシェルは **ユーザー自身の権限** で動く。エージェントのツール実行はその権限を継承する — 高権限シェルでは aibe を動かさない運用を推奨
+- **`shell_exec` タイムアウト**: aibe は timeout 時に子プロセスへ `start_kill()` を送り、**明示 `wait()` で reap** する。`kill_on_drop(true)` は補助的な保険であり、明示 kill/reap の代替ではない
 
 ## 依存関係
 

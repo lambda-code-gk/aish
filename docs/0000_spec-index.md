@@ -16,9 +16,13 @@
 | 0012 | [0012_command-start-log-sanitize-spec.md](done/0012_command-start-log-sanitize-spec.md) | 実装済み | `command_start` の `command` / `args` サニタイズ |
 | 0013 | [0013_provider-docs-alignment-spec.md](done/0013_provider-docs-alignment-spec.md) | 実装済み | docs / provider 表記と OpenAI 公式 API の整合 |
 | 0014 | [0014_ci-smoke-stabilization-spec.md](done/0014_ci-smoke-stabilization-spec.md) | 実装済み | CI + スモーク（mock aibe 導通の自動化） |
+| 0015 | [0015_shell-exec-timeout-kill-spec.md](done/0015_shell-exec-timeout-kill-spec.md) | 実装済み | `shell_exec` タイムアウト時の子プロセス kill / reap |
+| 0016 | [0016_aish-shell-stdin-thread-spec.md](0016_aish-shell-stdin-thread-spec.md) | 未着手 | `aish shell` stdin 中継の FD 分離と終了時ハング解消 |
 
 **進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
 
 運用上の正本（要約）: [architecture.md](architecture.md)。実装済み一式: [done/](done/)。
 
-実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014**。
+実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015**。
+
+**P1 着手前（未着手）**: **0016**（`aish shell` stdin ハング）。P1 プロトコル分離と独立に進められる。
