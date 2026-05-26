@@ -363,7 +363,7 @@ pub struct ProfileRegistry {
 12. 優先順位 4 のとき wire に `llm_profile` キーが **含まれない**。
 13. `ai` / `aish` に API キー・provider 分岐が増えない。
 14. `cargo test --workspace` / `clippy` / `check-architecture.sh` が通る。
-15. `docs/aibe.config.example.toml` と manual が新形式を反映する。
+15. `../aibe.config.example.toml` と manual が新形式を反映する。
 
 ## テスト
 
@@ -400,7 +400,7 @@ pub struct ProfileRegistry {
 
 ### 手動
 
-- [docs/manual/llm-profiles.md](manual/llm-profiles.md)（実装時に追加）
+- [../manual/llm-profiles.md](../manual/llm-profiles.md)（実装時に追加）
 
 ## 実装マップ
 
@@ -420,11 +420,11 @@ pub struct ProfileRegistry {
 | `ai/src/adapters/outbound/toml_config.rs` | `[ask].default_profile` |
 | `ai/src/adapters/outbound/aibe_client.rs` | `llm_profile` 送信 |
 | `ai/src/domain/ask.rs` | `AskInput` / `AskRequest.llm_profile` |
-| `docs/aibe.config.example.toml` | 新形式例 |
-| `docs/architecture.md` | 設定・プロトコル節 |
-| `docs/0010_gemini-provider-spec.md` | env 節に legacy 限定の脚注 |
-| `docs/manual/llm-profiles.md` | 手動検証 |
-| `docs/0000_spec-index.md` | 0011 行 |
+| `../aibe.config.example.toml` | 新形式例 |
+| `../architecture.md` | 設定・プロトコル節 |
+| `0010_gemini-provider-spec.md` | env 節に legacy 限定の脚注 |
+| `../manual/llm-profiles.md` | 手動検証 |
+| `../0000_spec-index.md` | 0011 行 |
 | `AGENTS.md` | 0011 行 |
 
 ## 0010 / 0003 / 0008 との関係
@@ -437,10 +437,10 @@ pub struct ProfileRegistry {
 
 ## docs 同期（実装 PR に含める）
 
-- `docs/architecture.md` — 設定 2 段構造、プロトコル `llm_profile`、env ルール
-- `docs/aibe.config.example.toml` — 新形式を正とし、legacy をコメントで記載
-- `docs/0010_gemini-provider-spec.md` — env 節に「0011 以降 legacy 限定」の脚注
-- `docs/manual/llm-profiles.md` — 手動検証手順
+- `../architecture.md` — 設定 2 段構造、プロトコル `llm_profile`、env ルール
+- `../aibe.config.example.toml` — 新形式を正とし、legacy をコメントで記載
+- `0010_gemini-provider-spec.md` — env 節に「0011 以降 legacy 限定」の脚注
+- `../manual/llm-profiles.md` — 手動検証手順
 - 本ファイルの **状態** を「実装済み」に更新
 
 ## 未確定（実装前に決めてよい細部）

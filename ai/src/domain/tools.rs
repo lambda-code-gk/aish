@@ -1,5 +1,5 @@
-//! `ai ask` のツール allowlist 解決（`docs/0002_ai-tools-client-spec.md`）。
-//! cwd・送信 payload・レイヤー分割は `docs/0003_architecture-review-refactor-spec.md`。
+//! `ai ask` のツール allowlist 解決（`docs/done/0002_ai-tools-client-spec.md`）。
+//! cwd・送信 payload・レイヤー分割は `docs/done/0003_architecture-review-refactor-spec.md`。
 //!
 //! ツール名の正本は `aibe::ToolName` / `aibe::READ_FILE` / `aibe::SHELL_EXEC`。
 

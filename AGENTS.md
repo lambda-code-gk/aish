@@ -121,18 +121,9 @@ cargo test --workspace
 | `docs/manual/` | 手動検証チェックリスト |
 | `docs/codex-delegation.md` | Codex サブエージェント（権限・MCP 手順） |
 | `docs/codex-review.md` | オプション: 厚い diff パケット（`CODEX_USE_PACKET=1`） |
-| `docs/0000_spec-index.md` | 000x 仕様・指示書の一覧 |
-| `docs/0001_aibe-tool-agent-loop-spec.md` | aibe ツール付きエージェントループ仕様（ドラフト） |
-| `docs/0002_ai-tools-client-spec.md` | ai クライアントのツール連携仕様（ドラフト） |
-| `docs/0003_architecture-review-refactor-spec.md` | アーキテクチャレビュー反映（指示書・実装済み） |
-| `docs/0004_tool-name-type-adoption-spec.md` | ToolName 型の API 全面適用（実装済み） |
-| `docs/0005_request-context-domain-spec.md` | RequestContext / AgentTurnContext ドメイン化（実装済み） |
-| `docs/0006_max-tool-rounds-terminator-spec.md` | max_tool_rounds 終端戦略の port 化（実装済み） |
-| `docs/0007_agent-turn-loop-modularization-spec.md` | agent_turn 1 ラウンド実行の分割（実装済み） |
-| `docs/0008_chat-message-and-protocol-typing-spec.md` | ChatMessage / MessageRole 型強化（PR 1 実装済み、phase 2 未実装） |
-| `docs/0009_ai-tool-category-sync-spec.md` | ai カテゴリ表と aibe ツール名の同期強化（実装済み） |
-| `docs/0010_gemini-provider-spec.md` | Gemini プロバイダ（Google AI Studio / `generateContent` v1beta）（実装済み） |
-| `docs/0011_llm-profiles-spec.md` | LLM 接続定義 + プロファイル（2 段設定、`ai ask --profile`）（実装済み） |
+| `docs/0000_spec-index.md` | 000x / 001x 仕様・指示書の一覧 |
+| `docs/done/` | 実装済みの番号付き指示書（0001–0011） |
+| `docs/todo/` | 未着手・検討中のメモ |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |
 

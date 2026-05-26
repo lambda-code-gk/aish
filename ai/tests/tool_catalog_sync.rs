@@ -1,4 +1,4 @@
-//! `ai` カテゴリ表と `aibe::KNOWN_TOOLS` の同期（`docs/0009_ai-tool-category-sync-spec.md`）。
+//! `ai` カテゴリ表と `aibe::KNOWN_TOOLS` の同期（`docs/done/0009_ai-tool-category-sync-spec.md`）。
 
 use std::collections::BTreeSet;
 
@@ -24,7 +24,7 @@ fn assert_category_eq(category: &str, expected: &[&str]) {
         got.as_slice(),
         expected,
         "category {category} expansion mismatch (expected {expected:?}, got {got:?}); \
-         update ai/src/domain/tools.rs expand_category and docs/0002 カテゴリ表; \
+         update ai/src/domain/tools.rs expand_category and docs/done/0002 カテゴリ表; \
          see {CHECKLIST}"
     );
 }
@@ -58,7 +58,7 @@ fn full_category_covers_all_known_tools() {
         "@full must expand to exactly aibe::KNOWN_TOOLS.\n\
          missing from @full: {missing:?}\n\
          extra in @full (not in KNOWN_TOOLS): {extra:?}\n\
-         update ai/src/domain/tools.rs expand_category, docs/0002 カテゴリ表, \
+         update ai/src/domain/tools.rs expand_category, docs/done/0002 カテゴリ表, \
          and assign the new tool to a category; see {CHECKLIST}"
     );
 }

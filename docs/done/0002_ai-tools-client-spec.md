@@ -1,7 +1,7 @@
 # 0002 — ai クライアントのツール連携 — 仕様ドラフト
 
 > **出典**: Codex `spec`（2026-05-23）。レビュー反映（Cursor、2026-05-23）  
-> **状態**: 実装済み（2026-05-23、MVP）。正本の要約は `docs/architecture.md` と本ファイル。本仕様は `ai` の `ask` におけるツール allowlist 解決と表示契約を定義する。
+> **状態**: 実装済み（2026-05-23、MVP）。正本の要約は `../architecture.md` と本ファイル。本仕様は `ai` の `ask` におけるツール allowlist 解決と表示契約を定義する。
 
 ## 目的
 
@@ -38,7 +38,7 @@
 - 本仕様のツール名は `aibe` 側の公開名と一致する必要がある。
 - `ai` は `aibe` の設定ファイルを読まない。
 - `ai` が扱うツールは固定名とカテゴリエイリアスのみであり、UI ベースの列挙や動的補完は行わない。
-- リクエストの `tools`（クライアント allowlist）と、aibe 設定による実行ポリシー（`enabled`, `allowed_commands`, `allowed_roots` 等）は **独立** である。サーバ側の拒否・無効時の挙動は `docs/0001_aibe-tool-agent-loop-spec.md` に従う（turn 全体を即 `error` にせず、tool result で LLM に返してループ継続する場合がある）。
+- リクエストの `tools`（クライアント allowlist）と、aibe 設定による実行ポリシー（`enabled`, `allowed_commands`, `allowed_roots` 等）は **独立** である。サーバ側の拒否・無効時の挙動は `0001_aibe-tool-agent-loop-spec.md` に従う（turn 全体を即 `error` にせず、tool result で LLM に返してループ継続する場合がある）。
 
 ## 受け入れ条件
 
@@ -130,7 +130,7 @@ tools = "@read-only"
 # tools = ["@read-only", "read_file"]
 ```
 
-`docs/ai.config.example.toml` の `tools = "@read-only"` は **安全側の記載例** であり、仕様上の既定値ではない。
+`../ai.config.example.toml` の `tools = "@read-only"` は **安全側の記載例** であり、仕様上の既定値ではない。
 
 ### `tools`
 
@@ -157,7 +157,7 @@ tools = "@read-only"
 - カテゴリとリテラルの併記（例: `@read-only` + `shell_exec`）は **許可** する。展開後は `@full` と同集合になりうる。
 - MVP では `@inspect` などの別名は増やさない。
 - カテゴリ表は `ai` 側だけが知る。`aibe` はカテゴリを解釈しない。
-- カテゴリ表と `aibe::KNOWN_TOOLS` の同期は `ai/tests/tool_catalog_sync.rs` で検証する。新ツール追加手順: `docs/manual/ai-ask-tools.md` §新規組み込みツール追加チェックリスト（`docs/0009_ai-tool-category-sync-spec.md`）。
+- カテゴリ表と `aibe::KNOWN_TOOLS` の同期は `ai/tests/tool_catalog_sync.rs` で検証する。新ツール追加手順: `../manual/ai-ask-tools.md` §新規組み込みツール追加チェックリスト（`0009_ai-tool-category-sync-spec.md`）。
 
 ## 展開ルール
 
@@ -217,7 +217,7 @@ ai: tools enabled: none
 - **二重ゲート**: (1) 本仕様のクライアント allowlist（`ai` が `agent_turn.tools` に載せる名前）、(2) aibe サーバ設定（実行可否・コマンド allowlist・読取ルート）。`ai` は (2) を読まない。
 - `ai` が `shell_exec` をリクエストしても、aibe で無効・allowlist 外のときは **0001** に従い、多くの場合 turn `error` ではなく tool result として LLM に返る。クライアントは `tool_calls` と `--verbose-tools` で観測する。
 - `--tools` と config で `shell_exec` を明示しない限り、`ai` が `shell_exec` を allowlist に入れない。
-- `--verbose-tools` は引数や tool output を `stderr` に出す。共有端末や記録されたログでは注意する（`docs/security.md`）。
+- `--verbose-tools` は引数や tool output を `stderr` に出す。共有端末や記録されたログでは注意する（`../security.md`）。
 - `stdout` が最終応答だけであることは、シェル連携での誤パース防止にもなる。
 
 ## テスト
@@ -230,7 +230,7 @@ ai: tools enabled: none
 | 統合 | config `tools = "@read-only"` + CLI `--tools none` → `tools: []` |
 | 回帰 | `tools` 未指定の既存 `ai ask` 統合テスト |
 
-手動検証手順: `docs/manual/ai-ask-tools.md`（A/B: mock・隔離設定、C: 実 LLM + `read_file`）。実施記録は同ファイル末尾（C はユーザー確認済み）。
+手動検証手順: `../manual/ai-ask-tools.md`（A/B: mock・隔離設定、C: 実 LLM + `read_file`）。実施記録は同ファイル末尾（C はユーザー確認済み）。
 
 ## 影響クレート
 
@@ -240,7 +240,7 @@ ai: tools enabled: none
 | **aibe** | プロトコル変更なし。ツール名の `pub` 露出のみ（別コミット可） |
 | **docs** | `architecture.md`, `security.md`, `ai.config.example.toml`, `AGENTS.md` |
 
-レイヤー分割・cwd 必須・内部型強化は **`docs/0003_architecture-review-refactor-spec.md`**（0002 実装後の追補）。
+レイヤー分割・cwd 必須・内部型強化は **`0003_architecture-review-refactor-spec.md`**（0002 実装後の追補）。
 
 ## 未確定・推測
 

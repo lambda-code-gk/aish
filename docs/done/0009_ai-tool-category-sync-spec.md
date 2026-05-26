@@ -12,7 +12,7 @@
 ### 対象
 
 - カテゴリ展開結果が `aibe::KNOWN_TOOLS` と矛盾しないことの **テスト**
-- 新ツール追加時のチェックリスト — **運用正本**: [`docs/manual/ai-ask-tools.md`](manual/ai-ask-tools.md#新規組み込みツール追加チェックリスト)
+- 新ツール追加時のチェックリスト — **運用正本**: [`../manual/ai-ask-tools.md`](../manual/ai-ask-tools.md#新規組み込みツール追加チェックリスト)
 - 採用: **案 A** — `ai/tests/tool_catalog_sync.rs`
 
 ### 対象外
@@ -42,17 +42,17 @@
 
 | 内容 | 正本 |
 |------|------|
-| カテゴリ表の仕様 | `docs/0002_ai-tools-client-spec.md` §カテゴリ表 |
+| カテゴリ表の仕様 | `0002_ai-tools-client-spec.md` §カテゴリ表 |
 | カテゴリ展開の実装 | `ai/src/domain/tools.rs` `expand_category` |
 | ツール名定数 | `aibe::KNOWN_TOOLS`（0003） |
-| 新ツール追加の運用手順 | `docs/manual/ai-ask-tools.md` §新規組み込みツール追加チェックリスト |
+| 新ツール追加の運用手順 | `../manual/ai-ask-tools.md` §新規組み込みツール追加チェックリスト |
 | 同期テスト | `ai/tests/tool_catalog_sync.rs`（本指示書） |
 
 ## 受け入れ条件（案 A — 実装済み）
 
 1. `@read-only` → `{read_file}`、`@exec` → `{shell_exec}`、`@full` → `read_file`, `shell_exec`（固定順）が **それぞれ個別に** テストで固定される。
 2. `aibe::KNOWN_TOOLS` に新名が増え、`@full` がカバーしなければテストが失敗する。失敗メッセージに更新箇所とチェックリストへの参照を含む。
-3. `ai` の `expand_category` と `aibe::KNOWN_TOOLS` が **一致** することをテストで検証する。`docs/0002` カテゴリ表は **手動同期**（自動検証対象外）。
+3. `ai` の `expand_category` と `aibe::KNOWN_TOOLS` が **一致** することをテストで検証する。`0002` カテゴリ表（[0002_ai-tools-client-spec.md](0002_ai-tools-client-spec.md)）は **手動同期**（自動検証対象外）。
 
 ## 分類責務
 

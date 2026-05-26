@@ -1,6 +1,6 @@
 # LLM プロファイル（手動検証）
 
-`docs/0011_llm-profiles-spec.md` の受け入れ確認用チェックリスト。
+`docs/done/0011_llm-profiles-spec.md` の受け入れ確認用チェックリスト。
 
 ## 前提
 

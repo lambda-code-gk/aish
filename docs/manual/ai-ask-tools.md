@@ -1,6 +1,6 @@
 # ai ask ツール allowlist 手動検証
 
-`docs/0002_ai-tools-client-spec.md` の CLI / config / 表示契約を、実バイナリで確認する。
+`docs/done/0002_ai-tools-client-spec.md` の CLI / config / 表示契約を、実バイナリで確認する。
 
 自動テスト（`ai/tests/ask_integration.rs` 等）でカバーしていない **起動時 `stderr` 1 行** と、**実 aibe 経由の入出力分離** を主目的とする。
 
@@ -152,7 +152,7 @@ cargo run -q -p ai -- ask "verbose check" \
 
 ## 相対パスとカレントディレクトリ
 
-**方針（全ツール共通）**: 相対パス・`.` 付き許可ルートは **aibe デーモンの cwd ではなく `ai` を実行したディレクトリ**（`context.cwd`）を基準にする。ツール有効時は `context.cwd`（絶対パス）が **必須**（未送信は `invalid_request`）。詳細は `docs/0003_architecture-review-refactor-spec.md` と `docs/architecture.md`。
+**方針（全ツール共通）**: 相対パス・`.` 付き許可ルートは **aibe デーモンの cwd ではなく `ai` を実行したディレクトリ**（`context.cwd`）を基準にする。ツール有効時は `context.cwd`（絶対パス）が **必須**（未送信は `invalid_request`）。詳細は `docs/done/0003_architecture-review-refactor-spec.md` と `docs/architecture.md`。
 
 `read_file` / `shell_exec` の確認例（相対パス・相対引数は `cd` したディレクトリ基準）:
 
@@ -230,13 +230,13 @@ termination_strategy = "conversation_replay"
 
 ## 新規組み込みツール追加チェックリスト
 
-`aibe` に組み込みツールを追加するとき、カテゴリ表と `KNOWN_TOOLS` のドリフトを防ぐ。仕様: `docs/0009_ai-tool-category-sync-spec.md`。カテゴリ表の仕様正本: `docs/0002_ai-tools-client-spec.md` §カテゴリ表。
+`aibe` に組み込みツールを追加するとき、カテゴリ表と `KNOWN_TOOLS` のドリフトを防ぐ。仕様: `docs/done/0009_ai-tool-category-sync-spec.md`。カテゴリ表の仕様正本: `docs/done/0002_ai-tools-client-spec.md` §カテゴリ表。
 
 **分類責務**: メンテナが新ツールを `@read-only` / `@exec` / `@full` のどれに含めるか判断する。`@full` は常に **全** `aibe::KNOWN_TOOLS` を展開すること。
 
 1. **aibe** — `aibe/src/domain/tool_name.rs` の `KNOWN_TOOLS`、ツール定義・実装を追加
 2. **ai 展開** — `ai/src/domain/tools.rs` の `expand_category` を更新（該当カテゴリに新名を含め、`@full` が全 KNOWN_TOOLS をカバーするようにする）
-3. **仕様** — `docs/0002_ai-tools-client-spec.md` §カテゴリ表を更新
+3. **仕様** — `docs/done/0002_ai-tools-client-spec.md` §カテゴリ表を更新
 4. **テスト** — 次が成功すること:
    ```bash
    cargo test -p ai tool_catalog_sync

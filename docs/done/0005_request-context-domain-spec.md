@@ -177,8 +177,8 @@ impl AgentTurnService {
 
 ## docs 同期（実装 PR に含める）
 
-- `docs/security.md` — context tail に `aibe::ShellLogTail::MAX_BYTES` 参照を 1 行追加
-- `docs/architecture.md` — 必要なら context 節に domain 型名を追記（wire JSON 形は不変）
+- `../security.md` — context tail に `aibe::ShellLogTail::MAX_BYTES` 参照を 1 行追加
+- `../architecture.md` — 必要なら context 節に domain 型名を追記（wire JSON 形は不変）
 
 ## 未確定・残リスク
 

@@ -1,7 +1,7 @@
 # 0003 — アーキテクチャレビュー反映 — 指示書
 
 > **出典**: Codex `review`（2026-05-24）。Cursor 親が `feat/architecture-review-refactor` で実装。  
-> **状態**: 実装済み（2026-05-24）。正本の要約は `docs/architecture.md`（ツール cwd・プロトコル型）。本ファイルはレビュー指摘への対応方針と受け入れ条件を定義する。
+> **状態**: 実装済み（2026-05-24）。正本の要約は `../architecture.md`（ツール cwd・プロトコル型）。本ファイルはレビュー指摘への対応方針と受け入れ条件を定義する。
 
 ## 確定した設計判断（ユーザー / レビュー反映）
 
@@ -136,7 +136,7 @@ ai/src/ports/outbound/agent_client.rs         # AskRequest
 | 統合 | `ask_integration`: allowlist、`AgentTurnStatus` presenter 契約 |
 | 回帰 | `tools: []` 単発 LLM、既存 ping / socket protocol |
 
-手動: `docs/manual/ai-ask-tools.md`（cwd 節は architecture 正本に従う）。
+手動: `../manual/ai-ask-tools.md`（cwd 節は architecture 正本に従う）。
 
 ## 影響クレート
 
@@ -183,7 +183,7 @@ ai/src/ports/outbound/agent_client.rs         # AskRequest
 
 ## 残リスク
 
-- 手動検証（`docs/manual/ai-ask-tools.md`）は指示書作成時点で未再実施
+- 手動検証（`../manual/ai-ask-tools.md`）は指示書作成時点で未再実施
 - 静的 hexagonal チェックは依存方向のみ。ランタイムのプロバイダ差は別途
 - `ToolName` 未適用のため、将来ツール追加時は `domain/tool_name.rs` と `ai` カテゴリ表の同期が必要
 

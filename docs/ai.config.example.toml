@@ -4,5 +4,5 @@ socket_path = "~/.local/share/aibe/run.sock"
 
 [ask]
 # 文字列でも配列でもよい。CLI --tools があれば上書き（--tools none でこの回のみ []）。
-# キー省略時の既定は []。以下は安全側の例（docs/0002_ai-tools-client-spec.md）。
+# キー省略時の既定は []。以下は安全側の例（docs/done/0002_ai-tools-client-spec.md）。
 tools = "@read-only"

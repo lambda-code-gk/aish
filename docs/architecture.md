@@ -82,9 +82,9 @@ aibe →  aish 禁止
 |-----------|------|
 | `type` | 今後 `ping`, `cancel` 等を追加可能 |
 | `id` | 相関 ID |
-| `messages` | チャット履歴（プロバイダへ渡す前に aibe で正規化）。wire 上の `role` は `"user"` 等の **JSON 文字列のまま**（0008 以降も不変）。aibe 内部では `MessageRole` enum に変換して保持（未知 role は `invalid_request`）。詳細: `docs/0008_chat-message-and-protocol-typing-spec.md` |
+| `messages` | チャット履歴（プロバイダへ渡す前に aibe で正規化）。wire 上の `role` は `"user"` 等の **JSON 文字列のまま**（0008 以降も不変）。aibe 内部では `MessageRole` enum に変換して保持（未知 role は `invalid_request`）。詳細: `docs/done/0008_chat-message-and-protocol-typing-spec.md` |
 | `tools` | 有効にするツール名のリスト |
-| `llm_profile` | 任意。使用する LLM プロファイル名（`docs/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
+| `llm_profile` | 任意。使用する LLM プロファイル名（`docs/done/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
 
@@ -119,8 +119,8 @@ aibe →  aish 禁止
 | OpenAI 互換 | ローカル（LM Studio、vLLM 等） |
 | Gemini | Google AI Studio `generateContent`（`v1beta`）— `adapters/outbound/gemini.rs` |
 
-- 選択とエンドポイントは **aibe 設定ファイル** の LLM 接続 + プロファイルで指定（`docs/0011_llm-profiles-spec.md`）
-- Gemini の `thoughtSignature` 等は `ToolCall.provider_extras` に **part 単位**で保持し、次ラウンドの `functionCall` part に復元する（クライアント wire には載せない — `docs/0010_gemini-provider-spec.md`）
+- 選択とエンドポイントは **aibe 設定ファイル** の LLM 接続 + プロファイルで指定（`docs/done/0011_llm-profiles-spec.md`）
+- Gemini の `thoughtSignature` 等は `ToolCall.provider_extras` に **part 単位**で保持し、次ラウンドの `functionCall` part に復元する（クライアント wire には載せない — `docs/done/0010_gemini-provider-spec.md`）
 - アダプタは aibe 内に閉じる。`ai` / `aish` にプロバイダ分岐を書かない
 
 ## aish ログ
@@ -213,11 +213,11 @@ aibe →  aish 禁止
 
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
 - `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。**このとき `context.cwd`（絶対パス）は必須**。未送信・相対パスは `invalid_request` で拒否する。
-- `[tools] max_rounds` は **1 以上**。`config.toml` で `0` は設定読み込みエラー。プログラム上 `ToolsConfig { max_rounds: 0 }` のみ `effective_max_rounds()` で 1 に補正（`docs/0007_agent-turn-loop-modularization-spec.md`）。
+- `[tools] max_rounds` は **1 以上**。`config.toml` で `0` は設定読み込みエラー。プログラム上 `ToolsConfig { max_rounds: 0 }` のみ `effective_max_rounds()` で 1 に補正（`docs/done/0007_agent-turn-loop-modularization-spec.md`）。
 - 組み込みツール: `shell_exec`（設定 `allowed_commands` のみ。subprocess cwd は `context.cwd`）、`read_file`（`allowed_roots` 配下のみ。相対パスは `context.cwd` 基準）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
-- ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/0001_aibe-tool-agent-loop-spec.md`。
-- cwd 必須化・ドメイン型・レイヤー分割は `docs/0003_architecture-review-refactor-spec.md`。
+- ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/done/0001_aibe-tool-agent-loop-spec.md`。
+- cwd 必須化・ドメイン型・レイヤー分割は `docs/done/0003_architecture-review-refactor-spec.md`。
 - ループ 1 ラウンド（LLM step + tool 実行 + conversation 更新）は `application/tool_round/ToolRoundExecutor`（0007）。`AgentTurnService` は前処理・for-loop・max-round 時の `ToolRoundTerminator` 委譲。composition root は `application/server.rs`。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
@@ -272,4 +272,4 @@ aibe →  aish 禁止
 2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
 4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`
-5. **次**: インタラクティブ `shell_exec` 許可、ログマスクの拡張（ai ツール連携は `docs/0002_ai-tools-client-spec.md` 参照・実装済み）
+5. **次**: インタラクティブ `shell_exec` 許可、ログマスクの拡張（ai ツール連携は `docs/done/0002_ai-tools-client-spec.md` 参照・実装済み）
