@@ -8,7 +8,7 @@
 
 **実装順（採用）** — [implementation-order.md](implementation-order.md):
 
-1. `command_start` args のサニタイズ（+ テスト）
+1. ~~`command_start` args のサニタイズ（+ テスト）~~ **完了** — [0012](../../done/0012_command-start-log-sanitize-spec.md)
 2. README の provider 不整合修正（`openai` → `openai_compatible` 明記）
 3. CI 追加 + `scripts/smoke-mock.sh`（mock aibe 導通）+ GitHub Actions で `cargo test --workspace` 等
 4. LICENSE 追加

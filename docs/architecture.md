@@ -130,9 +130,9 @@ aibe →  aish 禁止
 
 | `event` | 内容 |
 |---------|------|
-| `command_start` | `command`, `args` |
-| `stdout` | `data` |
-| `stderr` | `data` |
+| `command_start` | `command`, `args`（追記前に `sanitize_log_text`） |
+| `stdout` | `data`（追記前に `sanitize_log_text`） |
+| `stderr` | `data`（追記前に `sanitize_log_text`） |
 | `exit` | `code`（任意） |
 
 - **CLI**: `aish exec [--log PATH] -- <program> [args...]`（未指定時は `~/.local/share/aish/sessions/session-<pid>.jsonl`）

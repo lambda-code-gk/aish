@@ -44,12 +44,19 @@
 
 `aish` はログ追記前に `sanitize_log_text` を通す（`aish/src/domain/sanitize.rs`）。
 
+| 適用先 | タイミング |
+|--------|------------|
+| `command_start` の `command` / 各 `args` | `LogEvent::command_start` 生成時（`exec` / `shell` 共通） |
+| `stdout` / `stderr` の `data` | `ExecuteAndRecord` / PTY 追記時 |
+
 | パターン | 置換 |
 |---------|------|
 | `sk-...`（OpenAI 形式） | `sk-[REDACTED]` |
 | `Bearer ...` | `Bearer [REDACTED]` |
 | `AIza...`（Google API キー形式） | `AIza[REDACTED]` |
 | 環境変数名に `KEY` / `TOKEN` / `SECRET` を含む `NAME=value` | `NAME=[REDACTED]` |
+
+`command_start` は `LogEvent::command_start` 経由でのみ安全化する。`CommandStart` の enum 直構築は使わない。
 
 完全な秘匿ではない。パスワードプロンプト直後の入力などは今後拡張する。
 

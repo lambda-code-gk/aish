@@ -13,9 +13,10 @@
 | 0009 | [0009_ai-tool-category-sync-spec.md](done/0009_ai-tool-category-sync-spec.md) | 実装済み | カテゴリ表と `KNOWN_TOOLS` の機械同期 |
 | 0010 | [0010_gemini-provider-spec.md](done/0010_gemini-provider-spec.md) | 実装済み | Gemini プロバイダ（Google AI Studio） |
 | 0011 | [0011_llm-profiles-spec.md](done/0011_llm-profiles-spec.md) | 実装済み | LLM 接続定義 + プロファイル（2 段設定） |
+| 0012 | [0012_command-start-log-sanitize-spec.md](done/0012_command-start-log-sanitize-spec.md) | 実装済み | `command_start` の `command` / `args` サニタイズ |
 
 **進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
 
 運用上の正本（要約）: [architecture.md](architecture.md)。実装済み一式: [done/](done/)。
 
-実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011**。
+実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012**。
