@@ -11,7 +11,17 @@ cargo test --workspace
 ./scripts/check-architecture.sh   # クレート境界 + scripts/check-hexagonal.sh（レイヤー）
 ```
 
-CI 導入前も、完了報告前に上記をローカルで通す。
+ローカルでも PR 前に上記を通す。GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）でも同じ品質ゲートを回す。
+
+### CI と smoke の役割分担
+
+| 手段 | 内容 |
+|------|------|
+| **`verify` job** | `fmt` / `clippy` / `cargo test --workspace` / `check-architecture.sh` |
+| **`smoke-mock` job** | [`scripts/smoke-mock.sh`](../scripts/smoke-mock.sh) — 実 binary・実 socket・`provider = "mock"` で `ai ask` 1 回 |
+| **ローカル smoke** | `./scripts/smoke-mock.sh`（CI と同じ。実 API キー不要） |
+
+`cargo test --workspace` はロジック・プロトコル・モック統合（例: `ai/tests/ask_integration.rs`）を広く網羅する。smoke は **CLI の `stdout` / `stderr` 契約** と設定ファイル参照・プロセス起動順を、テストでは拾いにくい経路で固定する。smoke は `cargo test` の代替ではない。
 
 ## テスト種別
 
@@ -29,7 +39,7 @@ CI 導入前も、完了報告前に上記をローカルで通す。
 - **単体**: JSON メッセージの serialize/deserialize、設定パース、allowlist、`agent_turn` ループ（`ScriptedMockLlm`）。ツール失敗は tool result で継続（allowlist 外 `shell_exec`、パス制限外 `read_file`、モデル幻覚ツール、subprocess 非ゼロ終了、`shell_exec` タイムアウト）
 - **統合**: Unix socket で `ping` / `agent_turn`（ツールなし・`read_file` ループ）が完走
 - **E2E**: デーモン起動 → クライアント 1 リクエスト → 応答（ネットワーク不要な fixture 推奨）
-- **手動**: 実プロバイダ + 実キーでの 1 ターン（`docs/manual/aibe-openai-compatible.md`）
+- **手動**: 実プロバイダ + 実キーでの 1 ターン（`openai_compatible` / Gemini — `docs/manual/aibe-openai-compatible.md` 等）
 
 ### aish
 

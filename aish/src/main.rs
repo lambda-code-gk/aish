@@ -59,10 +59,10 @@ fn run_shell(rest: &[String]) -> anyhow::Result<u8> {
 
     let mut log = JsonlFileLog::new(log_path);
     let log_path_display = log.path().display().to_string();
-    log.append(&LogEvent::CommandStart {
-        command: "interactive_shell".to_string(),
+    log.append(&LogEvent::command_start(&CommandSpec {
+        program: "interactive_shell".to_string(),
         args: vec![shell.clone()],
-    })
+    }))
     .map_err(|e| anyhow::anyhow!(e))?;
     let mut runner = PtyShell::new(&mut log);
     let mut app = RunShell::new(&mut runner);

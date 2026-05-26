@@ -8,7 +8,7 @@
 
 | ファイル | 内容 |
 |----------|------|
-| [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（OpenAI 互換）1 ターン |
+| [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（`openai_compatible`: 公式 OpenAI API / ローカル互換）1 ターン |
 | [gemini-provider.md](gemini-provider.md) | Gemini プロバイダ（Google AI Studio / `generateContent`） |
 | [llm-profiles.md](llm-profiles.md) | LLM 接続 + プロファイル（`--profile` / 2 段 config） |
 | [ai-ask-tools.md](ai-ask-tools.md) | `ai ask` の `--tools` / 表示契約（mock + 任意で実 LLM） |

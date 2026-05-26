@@ -113,12 +113,15 @@ aibe →  aish 禁止
 
 ## LLM プロバイダ（aibe 内）
 
-| プロバイダ | 用途 |
-|-----------|------|
-| OpenAI | 公式 API |
-| OpenAI 互換 | ローカル（LM Studio、vLLM 等） |
-| Gemini | Google AI Studio `generateContent`（`v1beta`）— `adapters/outbound/gemini.rs` |
+設定 `[llm.<name>]` の `provider`（`parse_provider_kind` の受け入れ値）:
 
+| `provider` | 用途 |
+|-----------|------|
+| `openai_compatible` | OpenAI 公式 API および OpenAI 互換（LM Studio、vLLM 等）。`base_url` 省略時の既定は `https://api.openai.com/v1` |
+| `gemini` | Google AI Studio `generateContent`（`v1beta`）— `adapters/outbound/gemini.rs` |
+| `mock` | テスト・開発 |
+
+- `provider = "openai"` は **未対応**（別名ではない）。公式 OpenAI も `openai_compatible` を使う
 - 選択とエンドポイントは **aibe 設定ファイル** の LLM 接続 + プロファイルで指定（`docs/done/0011_llm-profiles-spec.md`）
 - Gemini の `thoughtSignature` 等は `ToolCall.provider_extras` に **part 単位**で保持し、次ラウンドの `functionCall` part に復元する（クライアント wire には載せない — `docs/done/0010_gemini-provider-spec.md`）
 - アダプタは aibe 内に閉じる。`ai` / `aish` にプロバイダ分岐を書かない
@@ -130,9 +133,9 @@ aibe →  aish 禁止
 
 | `event` | 内容 |
 |---------|------|
-| `command_start` | `command`, `args` |
-| `stdout` | `data` |
-| `stderr` | `data` |
+| `command_start` | `command`, `args`（追記前に `sanitize_log_text`） |
+| `stdout` | `data`（追記前に `sanitize_log_text`） |
+| `stderr` | `data`（追記前に `sanitize_log_text`） |
 | `exit` | `code`（任意） |
 
 - **CLI**: `aish exec [--log PATH] -- <program> [args...]`（未指定時は `~/.local/share/aish/sessions/session-<pid>.jsonl`）
