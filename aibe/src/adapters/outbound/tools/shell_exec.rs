@@ -56,6 +56,9 @@ pub(crate) enum ShellRunOutcome {
 }
 
 /// spawn / timeout / kill / reap を担う内部ヘルパー。
+///
+/// stdout/stderr は `child.wait()` と並行して drain する。終了待ちのあとにだけ
+/// 読むと pipe buffer が詰まり、大量出力コマンドが誤 timeout しうる。
 pub(crate) async fn run_subprocess(mut cmd: Command, duration: Duration) -> ShellRunOutcome {
     cmd.kill_on_drop(true);
 
@@ -65,44 +68,52 @@ pub(crate) async fn run_subprocess(mut cmd: Command, duration: Duration) -> Shel
     };
 
     let child_pid = child.id().unwrap_or(0);
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
+    let stdout_task = tokio::spawn(drain_stdout(child.stdout.take()));
+    let stderr_task = tokio::spawn(drain_stderr(child.stderr.take()));
 
     match timeout(duration, child.wait()).await {
         Ok(Ok(status)) => {
-            let stdout = read_stdout(&mut stdout_pipe).await;
-            let stderr = read_stderr(&mut stderr_pipe).await;
+            let stdout = join_drain(stdout_task).await;
+            let stderr = join_drain(stderr_task).await;
             ShellRunOutcome::Completed {
                 exit_code: status.code().unwrap_or(-1),
                 stdout,
                 stderr,
             }
         }
-        Ok(Err(e)) => ShellRunOutcome::Failed(format!("failed to run command: {e}")),
+        Ok(Err(e)) => {
+            stdout_task.abort();
+            stderr_task.abort();
+            ShellRunOutcome::Failed(format!("failed to run command: {e}"))
+        }
         Err(_) => {
             let _ = child.start_kill();
             let _ = child.wait().await;
-            drop(stdout_pipe);
-            drop(stderr_pipe);
+            stdout_task.abort();
+            stderr_task.abort();
             ShellRunOutcome::TimedOut { child_pid }
         }
     }
 }
 
-async fn read_stdout(pipe: &mut Option<tokio::process::ChildStdout>) -> Vec<u8> {
+async fn drain_stdout(pipe: Option<tokio::process::ChildStdout>) -> Vec<u8> {
     let mut buf = Vec::new();
-    if let Some(reader) = pipe {
+    if let Some(mut reader) = pipe {
         let _ = reader.read_to_end(&mut buf).await;
     }
     buf
 }
 
-async fn read_stderr(pipe: &mut Option<tokio::process::ChildStderr>) -> Vec<u8> {
+async fn drain_stderr(pipe: Option<tokio::process::ChildStderr>) -> Vec<u8> {
     let mut buf = Vec::new();
-    if let Some(reader) = pipe {
+    if let Some(mut reader) = pipe {
         let _ = reader.read_to_end(&mut buf).await;
     }
     buf
+}
+
+async fn join_drain(task: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    task.await.unwrap_or_default()
 }
 
 fn build_command(parsed: &ShellExecArgs, cwd: &Path) -> Command {
@@ -200,7 +211,7 @@ impl ToolExecutor for ShellExecTool {
         }
 
         let cmd = build_command(&parsed, ctx.base_dir());
-        let duration = Duration::from_millis(timeout_ms);
+        let duration = Duration::from_millis(timeout_ms.max(1));
 
         match run_subprocess(cmd, duration).await {
             ShellRunOutcome::Completed {
@@ -330,6 +341,31 @@ mod tests {
             process_reaped(child_pid),
             "child pid {child_pid} should be reaped after timeout"
         );
+    }
+
+    #[tokio::test]
+    async fn large_stdout_completes_without_false_timeout() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let cmd = build_command(
+            &ShellExecArgs {
+                command: "sh".into(),
+                args: vec!["-c".into(), "head -c 131072 /dev/zero".into()],
+            },
+            &cwd,
+        );
+
+        let outcome = run_subprocess(cmd, Duration::from_secs(5)).await;
+        let ShellRunOutcome::Completed {
+            exit_code,
+            stdout,
+            stderr,
+        } = outcome
+        else {
+            panic!("expected completed, got {outcome:?}");
+        };
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout.len(), 131_072);
+        assert!(stderr.is_empty());
     }
 
     #[tokio::test]
