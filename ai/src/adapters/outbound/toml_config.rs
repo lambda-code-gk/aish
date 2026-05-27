@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use aibe::default_socket_path;
+use aibe_client::default_socket_path;
 use serde::Deserialize;
 
 use crate::domain::{tokens_from_config_value, AskToolsConfigRaw, ConfigToolsTokens};
@@ -90,7 +90,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    use aibe::ToolName;
+    use aibe_protocol::ToolName;
 
     use crate::domain::{resolve_tools, AskToolsConfigRaw};
 

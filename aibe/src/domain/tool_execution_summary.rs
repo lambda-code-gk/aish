@@ -1,6 +1,6 @@
 //! ツール上限到達時に LLM へ渡す実行記録の要約。
 
-use super::tool::{ExecutedToolCall, ExecutedToolStatus};
+use crate::domain::{ExecutedToolCall, ExecutedToolStatus};
 
 /// 実行済みツール呼び出しのプレーンテキスト要約。
 #[derive(Debug, Clone, PartialEq, Eq)]

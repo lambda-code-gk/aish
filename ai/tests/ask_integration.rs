@@ -1,21 +1,16 @@
 #![cfg(unix)]
 
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
-use ai::adapters::outbound::{render_response, AibeUnixClient, StdoutPresenter};
+use ai::adapters::outbound::{render_response, StdoutPresenter};
 use ai::application::{plan_ask_launch, Ask, AskRunOptions};
-use ai::domain::{resolve_tools, AskRequest, ConfigToolsTokens, ToolsResolveError};
+use ai::domain::{resolve_tools, ConfigToolsTokens, ToolsResolveError};
 use ai::ports::outbound::{AgentClient, AgentError};
-use aibe::adapters::outbound::MockLlm;
-use aibe::application::server;
-use aibe::domain::{ExecutedToolCall, ToolName};
-use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
-use aibe::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
+use aibe_protocol::{
+    AgentTurnStatus, ClientResponse, ExecutedToolCall, ProtocolMessageOut, ToolName,
+    MAX_TOOL_OUTPUT_BYTES,
+};
 use serde_json::json;
-use tempfile::tempdir;
-use tokio::runtime::Runtime;
 
 struct RecordingClient {
     last_tools: Arc<Mutex<Vec<String>>>,
@@ -34,7 +29,7 @@ impl RecordingClient {
 }
 
 impl AgentClient for RecordingClient {
-    fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
+    fn agent_turn(&self, request: &ai::domain::AskRequest) -> Result<ClientResponse, AgentError> {
         *self.last_tools.lock().expect("lock") = request
             .tools
             .iter()
@@ -50,47 +45,6 @@ impl AgentClient for RecordingClient {
             tool_calls: vec![],
         })
     }
-}
-
-#[test]
-fn ask_reaches_mock_aibe() {
-    let dir = tempdir().expect("tempdir");
-    let socket_path = dir.path().join("ai-test.sock");
-
-    let socket_for_server = socket_path.clone();
-    thread::spawn(move || {
-        let rt = Runtime::new().expect("runtime");
-        rt.block_on(async {
-            let registry = ProfileRegistry::single(
-                "default",
-                Arc::new(MockLlm::new()),
-                aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
-            );
-            server::run(socket_for_server, registry, ToolsConfig::default())
-                .await
-                .expect("server");
-        });
-    });
-
-    thread::sleep(Duration::from_millis(80));
-
-    let client = AibeUnixClient::new(&socket_path);
-    let presenter = StdoutPresenter;
-    let ask = Ask::new(
-        &client,
-        &presenter,
-        None::<&ai::adapters::outbound::FileLogTail>,
-    );
-    let resolved = resolve_tools(None, &ConfigToolsTokens::default()).expect("resolve");
-    ask.run(
-        "integration test".to_string(),
-        AskRunOptions {
-            resolved_tools: resolved,
-            verbose_tools: false,
-            llm_profile: None,
-        },
-    )
-    .expect("ask");
 }
 
 #[test]
@@ -131,7 +85,7 @@ fn unknown_tool_errors_without_connect() {
 
 #[test]
 fn presenter_max_tool_rounds_and_verbose_tools_contract() {
-    let huge = "z".repeat(aibe::ports::outbound::DEFAULT_MAX_TOOL_OUTPUT_BYTES + 200);
+    let huge = "z".repeat(MAX_TOOL_OUTPUT_BYTES + 200);
     let out = render_response(
         &ClientResponse::AgentTurnResult {
             id: "id".into(),

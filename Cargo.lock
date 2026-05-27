@@ -15,7 +15,8 @@ dependencies = [
 name = "ai"
 version = "0.1.0"
 dependencies = [
- "aibe",
+ "aibe-client",
+ "aibe-protocol",
  "anyhow",
  "serde",
  "serde_json",
@@ -29,6 +30,9 @@ dependencies = [
 name = "aibe"
 version = "0.1.0"
 dependencies = [
+ "ai",
+ "aibe-client",
+ "aibe-protocol",
  "anyhow",
  "async-trait",
  "libc",
@@ -41,6 +45,24 @@ dependencies = [
  "toml",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "aibe-client"
+version = "0.1.0"
+dependencies = [
+ "aibe-protocol",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "aibe-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

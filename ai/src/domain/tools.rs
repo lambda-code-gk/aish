@@ -1,11 +1,11 @@
 //! `ai ask` のツール allowlist 解決（`docs/done/0002_ai-tools-client-spec.md`）。
 //! cwd・送信 payload・レイヤー分割は `docs/done/0003_architecture-review-refactor-spec.md`。
 //!
-//! ツール名の正本は `aibe::ToolName` / `aibe::READ_FILE` / `aibe::SHELL_EXEC`。
+//! ツール名の正本は `aibe_protocol::ToolName` / `READ_FILE` / `SHELL_EXEC`。
 
 use std::str::FromStr;
 
-use aibe::{is_known_tool, ToolName, READ_FILE, SHELL_EXEC};
+use aibe_protocol::{is_known_tool, ToolName, READ_FILE, SHELL_EXEC};
 use thiserror::Error;
 
 /// 展開・検証済みツール名の集合。

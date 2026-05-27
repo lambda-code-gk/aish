@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["aibe", "aish", "ai"]
+members = ["aibe", "aibe-client", "aibe-protocol", "aish", "ai"]
 
 [workspace.package]
 version = "0.1.0"

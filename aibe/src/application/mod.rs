@@ -1,5 +1,6 @@
 pub mod agent_turn;
 pub mod llm_error;
+pub mod protocol_convert;
 pub mod request_service;
 pub mod server;
 pub mod tool_defs;

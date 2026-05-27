@@ -1,6 +1,6 @@
 //! aibe への outbound port。
 
-use aibe::protocol::ClientResponse;
+use aibe_protocol::ClientResponse;
 
 use crate::domain::AskRequest;
 

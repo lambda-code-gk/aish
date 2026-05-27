@@ -4,17 +4,9 @@
 
 pub mod adapters;
 pub mod application;
-
-pub use domain::{
-    is_known_tool, ShellLogTail, ToolName, UnknownToolError, KNOWN_TOOLS, READ_FILE, SHELL_EXEC,
-};
-pub mod client;
 pub mod daemon;
 pub mod domain;
 pub mod ports;
-pub mod protocol;
-
-use std::path::PathBuf;
 
 /// 常駐サーバのエントリポイント。
 pub fn run() -> ! {
@@ -27,7 +19,7 @@ pub fn run() -> ! {
 
 fn try_run() -> anyhow::Result<()> {
     let config = adapters::outbound::TomlConfig::load()?;
-    if client::ping(&config.socket_path) {
+    if aibe_client::ping(&config.socket_path) {
         eprintln!("aibe: already running at {}", config.socket_path.display());
         return Ok(());
     }
@@ -42,12 +34,4 @@ fn try_run() -> anyhow::Result<()> {
         profile_registry,
         tools_config,
     ))
-}
-
-/// デフォルトの Unix socket パス（`$HOME/.local/share/aibe/run.sock`）。
-pub fn default_socket_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
-        .join(".local/share/aibe")
-        .join("run.sock")
 }

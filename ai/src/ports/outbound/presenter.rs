@@ -1,6 +1,6 @@
 //! ユーザー向け表示 outbound port。
 
-use aibe::protocol::ClientResponse;
+use aibe_protocol::ClientResponse;
 
 use crate::domain::ToolsStartupLine;
 

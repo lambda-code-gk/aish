@@ -16,22 +16,30 @@ flowchart LR
 
   SH <--> aish
   ai -->|Unix socket\nstdio JSON| aibe
+  ai --> proto[aibe-protocol]
+  ai --> cl[aibe-client]
   ai -.->|ログ読み込み| aish
   aibe --> LLM
+  aibe --> proto
+  cl --> proto
 ```
 
 | コンポーネント | 役割 | ネットワーク |
 |----------------|------|--------------|
 | **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
+| **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
+| **aibe-client** | Unix socket の `ping` / `ensure_running` / 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
 | **aibe** | エージェントループ、ツール、プロバイダ呼び出し、Unix socket サーバ | LLM API へ（設定に従う） |
-| **ai** | aibe にリクエストし応答を表示。aish ログをコンテキストに使う | aibe のみ（LLM 直叩き禁止） |
+| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う | aibe デーモンのみ（LLM 直叩き禁止） |
 
 ## 依存ルール
 
 ```
-ai   →  aibe（クライアント用 API / クレート）のみ
-aish →  （aibe への path 依存禁止）
-aibe →  aish 禁止
+ai            →  aibe-protocol, aibe-client のみ（aibe / aish 禁止）
+aibe-client   →  aibe-protocol のみ
+aibe          →  aibe-protocol, aibe-client（aish 禁止）
+aibe-protocol →  （他ワークスペースクレート禁止。serde のみ）
+aish          →  （aibe への path 依存禁止）
 ```
 
 機械チェック:
@@ -44,8 +52,10 @@ aibe →  aish 禁止
 | クレート | 許容例 | 禁止例 |
 |---------|--------|--------|
 | aish | `libc`, PTY/プロセス系 | `aibe`, `reqwest`, `hyper`, LLM SDK |
-| aibe | `tokio`, HTTP クライアント、serde、プロバイダ SDK | `aish` |
-| ai | aibe クライアント、`serde` | `reqwest` 等の LLM 直叩き、API キー設定クレート |
+| aibe-protocol | `serde` | `aibe`, `aibe-client`, `aish`, `ai`, `tokio`, HTTP |
+| aibe-client | `aibe-protocol` | `aibe`, `aish`, `ai` |
+| aibe | `tokio`, HTTP クライアント、serde、プロバイダ SDK、`aibe-protocol`, `aibe-client` | `aish` |
+| ai | `aibe-protocol`, `aibe-client`, `serde` | `aibe`, `aish`, `reqwest` 等の LLM 直叩き |
 
 ## aibe デーモン
 
@@ -192,7 +202,7 @@ aibe →  aish 禁止
 | **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
 | **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask`。`[ask].tools` / `--tools` を展開して aibe の `tools` allowlist を構築 |
 
-`ai` は `aibe::protocol` のみをクレート依存し、`aish` には依存しない（ログはファイルパスで読む）。
+`ai` は **`aibe-protocol` と `aibe-client` のみ**を path 依存し、`aibe` 本体・`aish` には依存しない（ログはファイルパスで読む）。wire 型の正本は `aibe-protocol` クレート。
 
 ## プロトコル（実装済み）
 
@@ -235,7 +245,7 @@ aibe →  aish 禁止
 | **`ai` の責務** | ツール有効時は起動時の `std::env::current_dir()`（絶対パス）を `context.cwd` に載せる。`AskInput` → `AskRequest` 変換で検証する |
 | **既存** | `read_file` / `shell_exec` は上記に準拠 |
 
-実装の正本: `aibe::domain::ClientCwd`、`aibe::domain::AgentTurnContext`、`aibe::domain::ShellLogTail`（`aibe::ShellLogTail` として re-export）、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context` 形は従来どおり。内部では `RequestService` が protocol DTO を `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。会話メッセージは wire 上 `messages[].role` 文字列のまま受け取り、内部 `ChatMessage.role` は `MessageRole` enum（0008）。変換は `TryFrom<ProtocolMessage>` のみ。ツール名の正本は `aibe::domain::tool_name`（`ToolName` 値オブジェクト、`READ_FILE` / `SHELL_EXEC` / `KNOWN_TOOLS`）。NDJSON wire 上の `tools` / `tool_calls[].name` は従来どおり JSON 文字列。内部 API（`ToolCall` / `ExecutedToolCall` / `ToolDefinition` / `ai::ToolAllowlist`）は `ToolName` を使用する。
+実装の正本: **wire** — `aibe-protocol`（`ClientRequest` / `ClientResponse` / `ToolName` / `ExecutedToolCall` / `KNOWN_TOOLS` / 契約定数）。**server 内部** — `aibe::domain::{ClientCwd, AgentTurnContext, ShellLogTail, ChatMessage, ToolCall}`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context` 形は従来どおり。`RequestService` は `aibe_protocol::RequestContext` を `application/protocol_convert` の `TryFrom` で `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。会話メッセージは wire 上 `messages[].role` 文字列のまま受け取り、内部は `MessageRole` enum（0008）。`ai` の allowlist は `aibe_protocol::ToolName` を使用する。
 
 #### エラーコード（`type: error`）
 

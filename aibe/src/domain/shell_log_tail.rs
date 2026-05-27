@@ -1,11 +1,13 @@
 //! aish ログ tail（エージェント turn への注入用）。
 
+use aibe_protocol::SHELL_LOG_TAIL_MAX_BYTES;
+
 /// 正規化済みシェルログ tail。空・空白のみは `None`、超過分は truncate 済み。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellLogTail(String);
 
 impl ShellLogTail {
-    pub const MAX_BYTES: usize = 16 * 1024;
+    pub const MAX_BYTES: usize = SHELL_LOG_TAIL_MAX_BYTES;
 
     /// wire 文字列を正規化。空・空白のみ → `None`。超過 → `MAX_BYTES` で truncate。
     pub fn from_wire_opt(raw: &str) -> Option<Self> {

@@ -58,7 +58,7 @@ impl ConfigLoader for TomlConfig {
                     .as_ref()
                     .and_then(|c| c.socket_path.clone())
                     .map(expand_home)
-                    .unwrap_or_else(crate::default_socket_path)
+                    .unwrap_or_else(aibe_client::default_socket_path)
             });
 
         let llm = parse_llm_profiles(root.as_ref(), file_cfg.as_ref())?;

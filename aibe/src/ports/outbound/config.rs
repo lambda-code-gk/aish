@@ -10,7 +10,7 @@ use super::llm::LlmProvider;
 use super::termination_capability::TerminationCapability;
 
 /// `tool_calls` / LLM 向け tool result の既定上限（バイト）。
-pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = 32_768;
+pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = aibe_protocol::MAX_TOOL_OUTPUT_BYTES;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {

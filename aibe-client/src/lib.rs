@@ -1,4 +1,6 @@
-//! aibe クライアント向けユーティリティ（`ai` が利用）。
+//! aibe Unix socket クライアント（`ping` / `ensure_running`）。
+
+#![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -6,7 +8,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::protocol::{ClientRequest, ClientResponse};
+use aibe_protocol::{ClientRequest, ClientResponse};
+
+/// デフォルトの Unix socket パス（`$HOME/.local/share/aibe/run.sock`）。
+pub fn default_socket_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home)
+        .join(".local/share/aibe")
+        .join("run.sock")
+}
 
 /// 既存デーモンへ `ping` し、`pong` なら true。
 pub fn ping(socket_path: &Path) -> bool {

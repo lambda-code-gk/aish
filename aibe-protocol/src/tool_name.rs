@@ -1,4 +1,4 @@
-//! 組み込みツール名（正本）。
+//! 組み込みツール名（wire 契約）。
 
 use std::fmt;
 use std::str::FromStr;

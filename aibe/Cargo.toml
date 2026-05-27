@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aibe-client = { path = "../aibe-client" }
+aibe-protocol = { path = "../aibe-protocol" }
 libc = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
@@ -17,6 +19,7 @@ reqwest = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+ai = { path = "../ai" }
 tempfile = "3"
 tokio = { workspace = true }
 wiremock = "0.6"

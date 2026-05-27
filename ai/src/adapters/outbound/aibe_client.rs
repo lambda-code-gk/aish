@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-use aibe::protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
+use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
 
 use crate::domain::AskRequest;
 use crate::ports::outbound::{AgentClient, AgentError};

@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use crate::default_socket_path;
 use crate::ports::outbound::{
     AppConfig, ConfigError, ConfigLoader, LlmProfilesConfig, ToolsConfig,
 };
+use aibe_client::default_socket_path;
 
 /// `AIBE_SOCKET_PATH` のみ。LLM は mock。
 pub struct EnvConfig;

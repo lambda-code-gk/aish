@@ -11,7 +11,7 @@ use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
 use crate::ports::outbound::{ProfileRegistry, ToolsConfig};
-use crate::protocol::{ClientRequest, ClientResponse, ErrorCode};
+use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode};
 
 pub async fn run(
     socket_path: PathBuf,

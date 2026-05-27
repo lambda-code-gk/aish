@@ -7,7 +7,7 @@ use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::RequestService;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
-use aibe::protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
+use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 
 fn service() -> RequestService {
     let tools_config = ToolsConfig::default();

@@ -9,7 +9,9 @@ use crate::domain::{AgentTurnContext, ChatMessage, ToolName};
 use crate::ports::outbound::{
     LlmProvider, TerminationCapability, ToolExecutionContext, ToolRoundTerminator,
 };
-use crate::protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
+use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
+
+use crate::application::protocol_convert::protocol_message_out_from_chat;
 
 pub struct AgentTurnService {
     llm: Arc<dyn LlmProvider>,
@@ -73,7 +75,7 @@ impl AgentTurnService {
             Ok(assistant) => ClientResponse::AgentTurnResult {
                 id,
                 status: AgentTurnStatus::Ok,
-                assistant_message: ProtocolMessageOut::from_assistant(&assistant),
+                assistant_message: protocol_message_out_from_chat(&assistant),
                 tool_calls: vec![],
             },
             Err(e) => client_response_for_llm_error(id, e),
@@ -103,7 +105,7 @@ impl AgentTurnService {
                     return ClientResponse::AgentTurnResult {
                         id,
                         status: AgentTurnStatus::Ok,
-                        assistant_message: ProtocolMessageOut::from_assistant(&assistant),
+                        assistant_message: protocol_message_out_from_chat(&assistant),
                         tool_calls: round_executed,
                     };
                 }

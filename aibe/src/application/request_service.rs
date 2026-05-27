@@ -6,9 +6,9 @@ use crate::application::agent_turn::AgentTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::outbound::{ProfileRegistry, ToolRoundTerminator, ToolsConfig};
-use crate::protocol::{
-    ClientRequest, ClientResponse, ErrorCode, ProtocolMessageConversionError, RequestContext,
-};
+use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
+
+use crate::application::protocol_convert::ProtocolMessageConversionError;
 
 pub struct RequestService {
     profile_registry: ProfileRegistry,

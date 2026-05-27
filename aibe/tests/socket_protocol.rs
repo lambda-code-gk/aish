@@ -9,7 +9,7 @@ use std::sync::Arc;
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
 use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
-use aibe::protocol::{ClientRequest, ClientResponse};
+use aibe_protocol::{ClientRequest, ClientResponse};
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;

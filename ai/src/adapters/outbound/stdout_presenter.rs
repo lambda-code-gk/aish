@@ -1,8 +1,8 @@
 //! 標準出力プレゼンター。
 
-use aibe::domain::{ExecutedToolCall, ExecutedToolStatus};
-use aibe::ports::outbound::DEFAULT_MAX_TOOL_OUTPUT_BYTES;
-use aibe::protocol::{AgentTurnStatus, ClientResponse};
+use aibe_protocol::{
+    AgentTurnStatus, ClientResponse, ExecutedToolCall, ExecutedToolStatus, MAX_TOOL_OUTPUT_BYTES,
+};
 
 use crate::domain::ToolsStartupLine;
 use crate::ports::outbound::Presenter;
@@ -85,12 +85,12 @@ pub fn format_tool_call_line(tc: &ExecutedToolCall) -> String {
         ExecutedToolStatus::Ok => "ok",
         ExecutedToolStatus::Error => "error",
     };
-    let args = truncate_bytes(&tc.arguments.to_string(), DEFAULT_MAX_TOOL_OUTPUT_BYTES);
+    let args = truncate_bytes(&tc.arguments.to_string(), MAX_TOOL_OUTPUT_BYTES);
     let detail = match tc.status {
         ExecutedToolStatus::Ok => tc
             .output
             .as_deref()
-            .map(|s| truncate_bytes(s, DEFAULT_MAX_TOOL_OUTPUT_BYTES))
+            .map(|s| truncate_bytes(s, MAX_TOOL_OUTPUT_BYTES))
             .unwrap_or_default(),
         ExecutedToolStatus::Error => {
             let err = tc.error.as_deref().unwrap_or("");
@@ -117,10 +117,8 @@ pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use aibe::ToolName;
-
     use super::*;
-    use aibe::protocol::ProtocolMessageOut;
+    use aibe_protocol::{ProtocolMessageOut, ToolName};
     use serde_json::json;
 
     #[test]
@@ -177,7 +175,7 @@ mod tests {
 
     #[test]
     fn verbose_tools_on_stderr_not_stdout() {
-        let huge = "x".repeat(DEFAULT_MAX_TOOL_OUTPUT_BYTES + 500);
+        let huge = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 500);
         let huge_len = huge.len();
         let out = render_response(
             &ClientResponse::AgentTurnResult {
@@ -206,7 +204,7 @@ mod tests {
 
     #[test]
     fn format_tool_call_line_truncates_output() {
-        let huge = "y".repeat(DEFAULT_MAX_TOOL_OUTPUT_BYTES + 100);
+        let huge = "y".repeat(MAX_TOOL_OUTPUT_BYTES + 100);
         let huge_len = huge.len();
         let line = format_tool_call_line(&ExecutedToolCall::ok(
             "c1".into(),

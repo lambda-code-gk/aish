@@ -4,5 +4,5 @@
 
 | ファイル | 状態 | 概要 |
 |----------|------|------|
-| [chatgpt-review-4th-gen/](chatgpt-review-4th-gen/) | **Sprint 1 完了** / Sprint 2 着手待ち | 4 代目外部レビュー。P0（0012–0014 + LICENSE）は `feature/v0.1-stabilization` で実装済み。次: [p1-protocol-split.md](chatgpt-review-4th-gen/p1-protocol-split.md) |
+| [chatgpt-review-4th-gen/](chatgpt-review-4th-gen/) | **Sprint 2 完了** / Sprint 3 着手待ち | 4 代目外部レビュー。P1（0017 protocol/client 分離）は `feature/aibe-protocol-split` で実装済み。次: [p2-safe-tools.md](chatgpt-review-4th-gen/p2-safe-tools.md) |
 | [aibe-cli-llm-provider.md](aibe-cli-llm-provider.md) | 検討中 | aibe が HTTP API の代わりに Codex CLI / Claude Code CLI を呼ぶ可否と設計案 |

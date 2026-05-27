@@ -1,7 +1,7 @@
 //! LLM エラーを protocol レスポンスへ写す。
 
 use crate::ports::outbound::LlmError;
-use crate::protocol::{ClientResponse, ErrorCode};
+use aibe_protocol::{ClientResponse, ErrorCode};
 
 pub fn client_response_for_llm_error(id: String, err: LlmError) -> ClientResponse {
     match err {

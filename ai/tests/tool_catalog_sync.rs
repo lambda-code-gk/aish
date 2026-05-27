@@ -1,9 +1,9 @@
-//! `ai` カテゴリ表と `aibe::KNOWN_TOOLS` の同期（`docs/done/0009_ai-tool-category-sync-spec.md`）。
+//! `ai` カテゴリ表と `aibe_protocol::KNOWN_TOOLS` の同期（`docs/done/0009_ai-tool-category-sync-spec.md`）。
 
 use std::collections::BTreeSet;
 
 use ai::domain::{resolve_tools, ConfigToolsTokens};
-use aibe::{KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
+use aibe_protocol::{is_known_tool, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
 
 const CHECKLIST: &str = "docs/manual/ai-ask-tools.md#新規組み込みツール追加チェックリスト";
 
@@ -55,7 +55,7 @@ fn full_category_covers_all_known_tools() {
 
     assert!(
         missing.is_empty() && extra.is_empty(),
-        "@full must expand to exactly aibe::KNOWN_TOOLS.\n\
+        "@full must expand to exactly aibe_protocol::KNOWN_TOOLS.\n\
          missing from @full: {missing:?}\n\
          extra in @full (not in KNOWN_TOOLS): {extra:?}\n\
          update ai/src/domain/tools.rs expand_category, docs/done/0002 カテゴリ表, \
@@ -68,7 +68,7 @@ fn every_expanded_name_is_known_to_aibe() {
     for category in ["@read-only", "@exec", "@full"] {
         for name in resolve_category(category) {
             assert!(
-                aibe::is_known_tool(&name),
+                is_known_tool(&name),
                 "category {category} expanded to unknown tool {name}; \
                  see {CHECKLIST}"
             );

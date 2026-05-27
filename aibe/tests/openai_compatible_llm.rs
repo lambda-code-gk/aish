@@ -9,7 +9,7 @@ use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, ToolName};
 use aibe::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
-use aibe::protocol::{AgentTurnStatus, ClientResponse};
+use aibe_protocol::{AgentTurnStatus, ClientResponse};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

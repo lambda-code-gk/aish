@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use aibe::ToolName;
+use aibe_protocol::ToolName;
 use thiserror::Error;
 
 /// CLI / ユースケースが収集する入力（cwd は取得時点では未検証）。

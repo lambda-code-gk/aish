@@ -67,6 +67,22 @@ if toml_has "$ROOT/ai/Cargo.toml" '^[[:space:]]*aish[[:space:]]*='; then
   fail "ai must not depend on aish (read logs via paths/API, not crate coupling)"
 fi
 
+# ai → aibe 本体禁止（0017: protocol + client のみ）
+if toml_has "$ROOT/ai/Cargo.toml" '^[[:space:]]*aibe[[:space:]]*='; then
+  fail "ai must not depend on aibe crate (use aibe-protocol and aibe-client)"
+fi
+
+# split crate 境界（0017）
+check_forbidden_deps aibe-protocol aibe aibe-client aish ai
+check_forbidden_deps aibe-client aibe aish ai
+
+note "checking ai sources for direct aibe crate references..."
+while IFS= read -r -d '' f; do
+  if grep -qE '\baibe::|use[[:space:]]+aibe[[:space:]]*;' "$f"; then
+    fail "ai must not reference aibe crate in $f (use aibe_protocol / aibe_client)"
+  fi
+done < <(find "$ROOT/ai/src" "$ROOT/ai/tests" -name '*.rs' -print0 2>/dev/null)
+
 # HTTP / LLM SDK — aibe のみ許容（現状は未使用だが将来用）
 LLM_HTTP_DEPS=(
   reqwest

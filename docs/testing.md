@@ -21,7 +21,16 @@ cargo test --workspace
 | **`smoke-mock` job** | [`scripts/smoke-mock.sh`](../scripts/smoke-mock.sh) — 実 binary・実 socket・`provider = "mock"` で `ai ask` 1 回 |
 | **ローカル smoke** | `./scripts/smoke-mock.sh`（CI と同じ。実 API キー不要） |
 
-`cargo test --workspace` はロジック・プロトコル・モック統合（例: `ai/tests/ask_integration.rs`）を広く網羅する。smoke は **CLI の `stdout` / `stderr` 契約** と設定ファイル参照・プロセス起動順を、テストでは拾いにくい経路で固定する。smoke は `cargo test` の代替ではない。
+`cargo test --workspace` はロジック・プロトコル・モック統合（例: `ai/tests/ask_integration.rs`、`aibe/tests/ai_ask_e2e.rs`）を広く網羅する。smoke は **CLI の `stdout` / `stderr` 契約** と設定ファイル参照・プロセス起動順を、テストでは拾いにくい経路で固定する。smoke は `cargo test` の代替ではない。
+
+### 0017 以降のクレート別テスト配置
+
+| クレート | 単体 | 統合 / E2E |
+|----------|------|------------|
+| **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
+| **aibe-client** | — | `aibe-client/tests/client_ping.rs`、`ensure_running_*.rs`（mock `aibe` バイナリ起動は `tests/common/mod.rs`。`aibe` クレートへの path 依存なし） |
+| **aibe** | server / agent / tools | `socket_protocol.rs`（server + socket）、`ai_ask_e2e.rs`（`ai` + mock server） |
+| **ai** | 設定・allowlist・presenter | `ask_integration.rs`（Mock クライアントのみ。server 起動は `aibe` 側） |
 
 ## テスト種別
 

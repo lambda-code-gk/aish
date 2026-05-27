@@ -16,7 +16,7 @@ use aibe::domain::{
 use aibe::ports::outbound::{
     LlmError, LlmProvider, ShellExecConfig, TerminationCapability, ToolDefinition, ToolsConfig,
 };
-use aibe::protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
+use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
 use async_trait::async_trait;
 use serde_json::json;
 use tempfile::tempdir;

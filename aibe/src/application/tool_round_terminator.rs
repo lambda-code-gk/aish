@@ -5,7 +5,9 @@ use tracing::info;
 use crate::application::llm_error::client_response_for_llm_error;
 use crate::domain::{ChatMessage, ExecutedToolCall};
 use crate::ports::outbound::{LlmProvider, TerminationCapability, ToolRoundTerminator};
-use crate::protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
+use aibe_protocol::{AgentTurnStatus, ClientResponse};
+
+use crate::application::protocol_convert::protocol_message_out_from_chat;
 
 /// 最大ツールラウンド到達後、terminator port 経由で最終応答を生成する。
 pub async fn finish_after_max_tool_rounds(
@@ -30,7 +32,7 @@ pub async fn finish_after_max_tool_rounds(
             ClientResponse::AgentTurnResult {
                 id,
                 status: AgentTurnStatus::MaxToolRounds,
-                assistant_message: ProtocolMessageOut::from_assistant(&result.assistant),
+                assistant_message: protocol_message_out_from_chat(&result.assistant),
                 tool_calls: executed,
             }
         }

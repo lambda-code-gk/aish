@@ -1,18 +1,12 @@
 [package]
-name = "ai"
+name = "aibe-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-aibe-client = { path = "../aibe-client" }
 aibe-protocol = { path = "../aibe-protocol" }
-anyhow = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-toml = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { workspace = true }

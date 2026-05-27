@@ -9,7 +9,7 @@ use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{AibeUnixClient, FileLogTail, StdoutPresenter};
 use ai::application::{ensure_aibe_if_needed, plan_ask_launch, Ask, AskRunOptions};
 use ai::domain::{resolve_llm_profile, ToolsResolveError};
-use aibe::client;
+use aibe_client::ensure_running;
 
 fn main() -> ExitCode {
     match run() {
@@ -106,7 +106,7 @@ fn run() -> anyhow::Result<()> {
     .map_err(tools_resolve_to_anyhow)?;
 
     ensure_aibe_if_needed(&plan, |path| {
-        client::ensure_running(path).map_err(|e| anyhow::anyhow!(e))
+        ensure_running(path).map_err(|e| anyhow::anyhow!(e))
     })?;
 
     let client = AibeUnixClient::new(plan.socket_path);
