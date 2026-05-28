@@ -5,11 +5,12 @@ mod request;
 mod response;
 mod tool_name;
 
-pub use executed_tool::{ExecutedToolCall, ExecutedToolStatus};
+pub use executed_tool::{ExecutedToolCall, ExecutedToolStatus, ToolApprovalState, ToolRiskClass};
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
 pub use response::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
 pub use tool_name::{
-    is_known_tool, parse_tool_names, ToolName, UnknownToolError, KNOWN_TOOLS, READ_FILE, SHELL_EXEC,
+    is_known_tool, parse_tool_names, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS, GREP,
+    KNOWN_TOOLS, LIST_DIR, READ_FILE, SHELL_EXEC,
 };
 
 /// `RequestContext.shell_log_tail` の truncate 上限（バイト）。

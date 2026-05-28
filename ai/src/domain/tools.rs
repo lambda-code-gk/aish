@@ -5,7 +5,9 @@
 
 use std::str::FromStr;
 
-use aibe_protocol::{is_known_tool, ToolName, READ_FILE, SHELL_EXEC};
+use aibe_protocol::{
+    is_known_tool, ToolName, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+};
 use thiserror::Error;
 
 /// 展開・検証済みツール名の集合。
@@ -38,7 +40,7 @@ pub struct ResolvedTools {
 /// 起動時 `stderr` 1 行分のメタデータ（表示は adapter 層）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolsStartupLine {
-    /// `read_file` / `read_file, shell_exec` / `none`
+    /// `read_file, list_dir, grep, git_diff, git_status` / `shell_exec` / `none`
     pub enabled_list: String,
     /// 括弧内の元指定（`@read-only` 等）。`none` のときは `None`。
     pub source_hint: Option<String>,
@@ -168,9 +170,9 @@ fn empty_resolved() -> ResolvedTools {
 
 fn expand_category(token: &str) -> Result<Option<&'static [&'static str]>, ToolsResolveError> {
     match token {
-        "@read-only" => Ok(Some(&[READ_FILE])),
+        "@read-only" => Ok(Some(SAFE_TOOL_NAMES)),
         "@exec" => Ok(Some(&[SHELL_EXEC])),
-        "@full" => Ok(Some(&[READ_FILE, SHELL_EXEC])),
+        "@full" => Ok(Some(SAFE_TOOL_NAMES)),
         _ if token.starts_with('@') => Err(ToolsResolveError::UnknownCategory(token.to_string())),
         _ => Ok(None),
     }
@@ -178,10 +180,12 @@ fn expand_category(token: &str) -> Result<Option<&'static [&'static str]>, Tools
 
 fn shell_warning(resolved: &[ToolName], original_tokens: &[String]) -> bool {
     resolved.iter().any(|n| n.as_str() == SHELL_EXEC)
-        || original_tokens
+        && original_tokens
             .iter()
-            .any(|t| matches!(t.as_str(), SHELL_EXEC | "@exec" | "@full"))
+            .any(|t| matches!(t.as_str(), SHELL_EXEC | "@exec"))
 }
+
+const SAFE_TOOL_NAMES: &[&str] = &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
 
 fn dedup_preserve_order(names: Vec<ToolName>) -> Vec<ToolName> {
     let mut out = Vec::new();
@@ -222,7 +226,16 @@ mod tests {
     #[test]
     fn read_only_expands() {
         let r = resolve_tools(Some("@read-only"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.allowlist.names(), &[ToolName::read_file()]);
+        assert_eq!(
+            r.allowlist.names(),
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status()
+            ]
+        );
         assert!(!r.startup.warn_shell);
     }
 
@@ -231,25 +244,54 @@ mod tests {
         let r = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).unwrap();
         assert_eq!(
             r.allowlist.names(),
-            &[ToolName::read_file(), ToolName::shell_exec()]
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status()
+            ]
         );
-        assert!(r.startup.warn_shell);
+        assert!(!r.startup.warn_shell);
     }
 
     #[test]
     fn dedup_read_only_and_literal() {
         let r = resolve_tools(Some("@read-only,read_file"), &ConfigToolsTokens::default()).unwrap();
-        assert_eq!(r.allowlist.names(), &[ToolName::read_file()]);
+        assert_eq!(
+            r.allowlist.names(),
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status()
+            ]
+        );
     }
 
     #[test]
-    fn category_plus_shell_exec() {
+    fn literal_shell_exec_warns() {
         let r =
             resolve_tools(Some("@read-only,shell_exec"), &ConfigToolsTokens::default()).unwrap();
         assert_eq!(
             r.allowlist.names(),
-            &[ToolName::read_file(), ToolName::shell_exec()]
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status(),
+                ToolName::shell_exec()
+            ]
         );
+        assert!(r.startup.warn_shell);
+    }
+
+    #[test]
+    fn exec_category_warns() {
+        let r = resolve_tools(Some("@exec"), &ConfigToolsTokens::default()).unwrap();
+        assert_eq!(r.allowlist.names(), &[ToolName::shell_exec()]);
         assert!(r.startup.warn_shell);
     }
 
@@ -276,6 +318,15 @@ mod tests {
         let raw = AskToolsConfigRaw::Array(vec!["@read-only".into(), "read_file".into()]);
         let tokens = tokens_from_config_value(raw);
         let r = resolve_tools(None, &tokens).unwrap();
-        assert_eq!(r.allowlist.names(), &[ToolName::read_file()]);
+        assert_eq!(
+            r.allowlist.names(),
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status()
+            ]
+        );
     }
 }

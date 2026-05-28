@@ -120,7 +120,14 @@ tools = "@read-only,shell_exec"
         let resolved = resolve_tools(None, &tokens).expect("resolve");
         assert_eq!(
             resolved.allowlist.names(),
-            &[ToolName::read_file(), ToolName::shell_exec()]
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status(),
+                ToolName::shell_exec()
+            ]
         );
     }
 
@@ -150,6 +157,15 @@ tools = "@read-only"
         assert!(resolved.allowlist.is_empty());
 
         let from_config_only = resolve_tools(None, &cfg.ask_tools).expect("resolve");
-        assert_eq!(from_config_only.allowlist.names(), &[ToolName::read_file()]);
+        assert_eq!(
+            from_config_only.allowlist.names(),
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status()
+            ]
+        );
     }
 }

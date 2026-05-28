@@ -2,6 +2,8 @@
 
 [← 索引](README.md)
 
+正式指示書: [0018_safe-tools-policy-spec.md](../../0018_safe-tools-policy-spec.md)
+
 [concerns.md](concerns.md) §4 の方向性。`shell_exec` は万能すぎるため、専用ツールを増やして「安全にできること」を広げ、`shell_exec` は明示指定時のみ、という提案。
 
 ## 追加順（読み取り中心）

@@ -8,8 +8,12 @@ use thiserror::Error;
 
 pub const SHELL_EXEC: &str = "shell_exec";
 pub const READ_FILE: &str = "read_file";
+pub const LIST_DIR: &str = "list_dir";
+pub const GREP: &str = "grep";
+pub const GIT_DIFF: &str = "git_diff";
+pub const GIT_STATUS: &str = "git_status";
 
-pub const KNOWN_TOOLS: &[&str] = &[SHELL_EXEC, READ_FILE];
+pub const KNOWN_TOOLS: &[&str] = &[SHELL_EXEC, READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
 
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("unknown tool: {0}")]
@@ -30,6 +34,22 @@ impl ToolName {
 
     pub fn shell_exec() -> Self {
         Self(SHELL_EXEC.to_string())
+    }
+
+    pub fn list_dir() -> Self {
+        Self(LIST_DIR.to_string())
+    }
+
+    pub fn grep() -> Self {
+        Self(GREP.to_string())
+    }
+
+    pub fn git_diff() -> Self {
+        Self(GIT_DIFF.to_string())
+    }
+
+    pub fn git_status() -> Self {
+        Self(GIT_STATUS.to_string())
     }
 }
 
@@ -93,6 +113,10 @@ mod tests {
     fn from_str_accepts_known_tools() {
         assert_eq!("read_file".parse(), Ok(ToolName::read_file()));
         assert_eq!("shell_exec".parse(), Ok(ToolName::shell_exec()));
+        assert_eq!("list_dir".parse(), Ok(ToolName::list_dir()));
+        assert_eq!("grep".parse(), Ok(ToolName::grep()));
+        assert_eq!("git_diff".parse(), Ok(ToolName::git_diff()));
+        assert_eq!("git_status".parse(), Ok(ToolName::git_status()));
     }
 
     #[test]

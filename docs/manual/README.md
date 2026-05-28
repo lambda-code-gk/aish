@@ -14,5 +14,6 @@
 | [ai-ask-tools.md](ai-ask-tools.md) | `ai ask` の `--tools` / 表示契約（mock + 任意で実 LLM） |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
 | [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |
+| [codex-spec-impl-review-loop.md](codex-spec-impl-review-loop.md) | Codex 指示書→実装レビューの 7 ステップ運用手順 |
 
 テンプレは [testing.md](../testing.md) の「手動検証ドキュメント」を参照。

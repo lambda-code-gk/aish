@@ -113,7 +113,7 @@ cargo run -q -p ai -- ask "hello tools" \
 
 期待:
 
-- **stderr**: `ai: tools enabled: read_file (@read-only)`（`warning:` なし）
+- **stderr**: `ai: tools enabled: read_file, list_dir, grep, git_diff, git_status (@read-only)`（`warning:` なし）
 - **stdout**: mock 応答 1 行のみ
 
 ### B3. `shell_exec` 警告行
@@ -242,10 +242,10 @@ termination_strategy = "conversation_replay"
 
 `aibe` に組み込みツールを追加するとき、カテゴリ表と `KNOWN_TOOLS` のドリフトを防ぐ。仕様: `docs/done/0009_ai-tool-category-sync-spec.md`。カテゴリ表の仕様正本: `docs/done/0002_ai-tools-client-spec.md` §カテゴリ表。
 
-**分類責務**: メンテナが新ツールを `@read-only` / `@exec` / `@full` のどれに含めるか判断する。`@full` は常に **全** `aibe::KNOWN_TOOLS` を展開すること。
+**分類責務**: メンテナが新ツールを `@read-only` / `@exec` / `@full` のどれに含めるか判断する。`shell_exec` は危険操作のため **`@exec` または literal 指定のみ** で有効化し、`@full` には含めない。
 
-1. **aibe** — `aibe/src/domain/tool_name.rs` の `KNOWN_TOOLS`、ツール定義・実装を追加
-2. **ai 展開** — `ai/src/domain/tools.rs` の `expand_category` を更新（該当カテゴリに新名を含め、`@full` が全 KNOWN_TOOLS をカバーするようにする）
+1. **aibe** — `aibe-protocol/src/tool_name.rs` の `KNOWN_TOOLS`、`aibe/src/application/tool_defs.rs`、`aibe/src/adapters/outbound/tools/` にツール定義・実装を追加
+2. **ai 展開** — `ai/src/domain/tools.rs` の `expand_category` を更新（該当カテゴリに新名を含め、`@full` は safe tools 群のみを含める）
 3. **仕様** — `docs/done/0002_ai-tools-client-spec.md` §カテゴリ表を更新
 4. **テスト** — 次が成功すること:
    ```bash

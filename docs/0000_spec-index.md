@@ -19,6 +19,7 @@
 | 0015 | [0015_shell-exec-timeout-kill-spec.md](done/0015_shell-exec-timeout-kill-spec.md) | 実装済み | `shell_exec` タイムアウト時の子プロセス kill / reap |
 | 0016 | [0016_aish-shell-stdin-thread-spec.md](done/0016_aish-shell-stdin-thread-spec.md) | 実装済み | `aish shell` stdin 中継の FD 分離と終了時ハング解消 |
 | 0017 | [0017_aibe-protocol-client-split-spec.md](done/0017_aibe-protocol-client-split-spec.md) | 実装済み | `aibe-protocol` / `aibe-client` 分離 |
+| 0018 | [0018_safe-tools-policy-spec.md](0018_safe-tools-policy-spec.md) | 仕様ドラフト | 安全な読み取り系ツール + `shell_exec` 明示承認 |
 
 **進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
 

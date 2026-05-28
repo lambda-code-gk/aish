@@ -48,7 +48,7 @@ impl AgentClient for RecordingClient {
 }
 
 #[test]
-fn resolve_read_only_sends_read_file_to_aibe() {
+fn resolve_read_only_sends_safe_tools_to_aibe() {
     let client = RecordingClient::new();
     let presenter = StdoutPresenter;
     let ask = Ask::new(
@@ -67,7 +67,16 @@ fn resolve_read_only_sends_read_file_to_aibe() {
         },
     )
     .expect("ask");
-    assert_eq!(client.take_tools(), vec!["read_file".to_string()]);
+    assert_eq!(
+        client.take_tools(),
+        vec![
+            "read_file".to_string(),
+            "list_dir".to_string(),
+            "grep".to_string(),
+            "git_diff".to_string(),
+            "git_status".to_string()
+        ]
+    );
 }
 
 #[test]
