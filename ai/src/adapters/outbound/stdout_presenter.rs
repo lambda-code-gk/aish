@@ -98,10 +98,26 @@ pub fn format_tool_call_line(tc: &ExecutedToolCall) -> String {
             format!("{err}: {msg}")
         }
     };
-    format!(
+    let mut line = format!(
         "ai: tool {} {} args={args} output={detail}",
         tc.name, status
-    )
+    );
+    if let Some(risk) = tc.risk_class {
+        line.push_str(&format!(" risk={risk:?}"));
+    }
+    if let Some(approval) = tc.approval_state {
+        line.push_str(&format!(" approval={approval:?}"));
+    }
+    if let Some(dry_run) = tc.dry_run {
+        line.push_str(&format!(" dry_run={dry_run}"));
+    }
+    if let Some(decision) = tc.decision.as_deref() {
+        line.push_str(&format!(" decision={decision}"));
+    }
+    if let Some(source) = tc.approval_source.as_deref() {
+        line.push_str(&format!(" approval_source={source}"));
+    }
+    line
 }
 
 pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
@@ -118,7 +134,7 @@ pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aibe_protocol::{ProtocolMessageOut, ToolName};
+    use aibe_protocol::{ProtocolMessageOut, ToolApprovalState, ToolName, ToolRiskClass};
     use serde_json::json;
 
     #[test]
@@ -131,12 +147,20 @@ mod tests {
         let r = resolve_tools(Some("@read-only"), &ConfigToolsTokens::default()).unwrap();
         assert_eq!(
             format_tools_startup(&r.startup),
-            "ai: tools enabled: read_file (@read-only)"
+            "ai: tools enabled: read_file, list_dir, grep, git_diff, git_status (@read-only)"
         );
 
         let r = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).unwrap();
-        assert!(format_tools_startup(&r.startup).starts_with("warning: "));
-        assert!(format_tools_startup(&r.startup).contains("shell_exec"));
+        assert_eq!(
+            format_tools_startup(&r.startup),
+            "ai: tools enabled: read_file, list_dir, grep, git_diff, git_status (@full)"
+        );
+
+        let r = resolve_tools(Some("@exec"), &ConfigToolsTokens::default()).unwrap();
+        assert_eq!(
+            format_tools_startup(&r.startup),
+            "warning: ai: tools enabled: shell_exec (@exec)"
+        );
     }
 
     #[test]
@@ -214,5 +238,22 @@ mod tests {
         ));
         assert!(line.contains("[truncated]"));
         assert!(line.len() < huge_len + 80);
+    }
+
+    #[test]
+    fn format_tool_call_line_includes_audit_metadata_when_present() {
+        let line = format_tool_call_line(
+            &ExecutedToolCall::ok("c1".into(), ToolName::shell_exec(), json!({}), "ok".into())
+                .with_audit(
+                    ToolRiskClass::DangerousShell,
+                    ToolApprovalState::ExplicitClientOptIn,
+                    false,
+                ),
+        );
+        assert!(line.contains("risk=DangerousShell"));
+        assert!(line.contains("approval=ExplicitClientOptIn"));
+        assert!(line.contains("dry_run=false"));
+        assert!(line.contains("decision=executed"));
+        assert!(line.contains("approval_source=client_tools_allowlist"));
     }
 }

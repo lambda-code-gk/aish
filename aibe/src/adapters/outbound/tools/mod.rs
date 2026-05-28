@@ -1,10 +1,18 @@
 mod config_allowlist;
+mod git_diff;
+mod git_status;
+mod grep;
+mod list_dir;
 mod read_file;
 mod registry;
 mod shell_exec;
 mod tool_output;
 
 pub use config_allowlist::ConfigAllowlistPolicy;
+pub use git_diff::GitDiffTool;
+pub use git_status::GitStatusTool;
+pub use grep::GrepTool;
+pub use list_dir::ListDirTool;
 pub use read_file::ReadFileTool;
 pub use registry::DefaultToolRegistry;
 pub use shell_exec::ShellExecTool;
@@ -20,5 +28,9 @@ pub fn build_registry(tools_cfg: &ToolsConfig) -> Arc<dyn ToolRegistry> {
     Arc::new(DefaultToolRegistry::new(
         Arc::new(ShellExecTool::new(policy, max_output)),
         Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
+        Arc::new(ListDirTool::new(max_output)),
+        Arc::new(GrepTool::new(max_output)),
+        Arc::new(GitDiffTool::new(max_output)),
+        Arc::new(GitStatusTool::new(max_output)),
     ))
 }

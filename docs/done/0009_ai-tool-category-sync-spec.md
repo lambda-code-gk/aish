@@ -50,26 +50,29 @@
 
 ## 受け入れ条件（案 A — 実装済み）
 
-1. `@read-only` → `{read_file}`、`@exec` → `{shell_exec}`、`@full` → `read_file`, `shell_exec`（固定順）が **それぞれ個別に** テストで固定される。
-2. `aibe::KNOWN_TOOLS` に新名が増え、`@full` がカバーしなければテストが失敗する。失敗メッセージに更新箇所とチェックリストへの参照を含む。
-3. `ai` の `expand_category` と `aibe::KNOWN_TOOLS` が **一致** することをテストで検証する。`0002` カテゴリ表（[0002_ai-tools-client-spec.md](0002_ai-tools-client-spec.md)）は **手動同期**（自動検証対象外）。
+1. `@read-only` → `read_file`, `list_dir`, `grep`, `git_diff`, `git_status`、`@exec` → `{shell_exec}`、`@full` → `read_file`, `list_dir`, `grep`, `git_diff`, `git_status`（固定順）が **それぞれ個別に** テストで固定される。
+2. `aibe::KNOWN_TOOLS` に新名が増えたら、`ai` の literal 受け入れが壊れていないかを検証する。`@full` は safe tools のみを含み、`shell_exec` を含めない。失敗メッセージに更新箇所とチェックリストへの参照を含む。
+3. `ai` の `expand_category` が 0002 のカテゴリ表と一致することをテストで検証する。`aibe::KNOWN_TOOLS` の全列挙とは一致しない（`shell_exec` は `@full` に含めない）。`0002` カテゴリ表（[0002_ai-tools-client-spec.md](0002_ai-tools-client-spec.md)）は **手動同期**（自動検証対象外）。
 
 ## 分類責務
 
-新しい組み込みツールを `aibe` に追加するとき、**メンテナ** が `@read-only` / `@exec` / `@full` のどれに含めるか（または複数カテゴリ）を判断する。`@full` は常に **全 KNOWN_TOOLS** を含む集合とする（0002 §カテゴリ表）。
+新しい組み込みツールを `aibe` に追加するとき、**メンテナ** が `@read-only` / `@exec` / `@full` のどれに含めるか（または複数カテゴリ）を判断する。`@full` は常に **safe tools** を含む集合とし、`shell_exec` は含めない（0002 §カテゴリ表）。
 
 ## テスト
 
 実装: `ai/tests/tool_catalog_sync.rs`
 
 - 各カテゴリの展開集合を個別 assert
-- `@full` が `KNOWN_TOOLS` と集合一致することを assert
+- `@full` が safe tools と集合一致することを assert
 - 展開結果がすべて `aibe::is_known_tool` であることを assert
 
 ```rust
 #[test]
 fn read_only_category_expands() {
-    assert_category_eq("@read-only", &[READ_FILE]);
+    assert_category_eq(
+        "@read-only",
+        &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS],
+    );
 }
 
 #[test]
@@ -79,13 +82,15 @@ fn exec_category_expands() {
 
 #[test]
 fn full_category_expands_in_fixed_order() {
-    assert_category_eq("@full", &[READ_FILE, SHELL_EXEC]);
+    assert_category_eq(
+        "@full",
+        &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS],
+    );
 }
 
 #[test]
-fn full_category_covers_all_known_tools() {
-  // @full と KNOWN_TOOLS の差分を BTreeSet で比較し、
-  // missing / extra を失敗メッセージに出す
+fn full_category_excludes_shell_exec() {
+  // @full に shell_exec が含まれないことを assert する
 }
 ```
 

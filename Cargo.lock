@@ -36,6 +36,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "libc",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

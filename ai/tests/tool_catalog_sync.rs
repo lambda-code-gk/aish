@@ -1,9 +1,9 @@
-//! `ai` カテゴリ表と `aibe_protocol::KNOWN_TOOLS` の同期（`docs/done/0009_ai-tool-category-sync-spec.md`）。
-
 use std::collections::BTreeSet;
 
 use ai::domain::{resolve_tools, ConfigToolsTokens};
-use aibe_protocol::{is_known_tool, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
+use aibe_protocol::{
+    is_known_tool, ToolName, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+};
 
 const CHECKLIST: &str = "docs/manual/ai-ask-tools.md#新規組み込みツール追加チェックリスト";
 
@@ -31,7 +31,10 @@ fn assert_category_eq(category: &str, expected: &[&str]) {
 
 #[test]
 fn read_only_category_expands() {
-    assert_category_eq("@read-only", &[READ_FILE]);
+    assert_category_eq(
+        "@read-only",
+        &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS],
+    );
 }
 
 #[test]
@@ -41,26 +44,43 @@ fn exec_category_expands() {
 
 #[test]
 fn full_category_expands_in_fixed_order() {
-    assert_category_eq("@full", &[READ_FILE, SHELL_EXEC]);
+    assert_category_eq("@full", &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS]);
 }
 
 #[test]
-fn full_category_covers_all_known_tools() {
+fn full_category_does_not_include_shell_exec() {
     let expanded = resolve_category("@full");
-    let expanded_set: BTreeSet<_> = expanded.iter().map(String::as_str).collect();
-    let known_set: BTreeSet<_> = KNOWN_TOOLS.iter().copied().collect();
-
-    let missing: Vec<_> = known_set.difference(&expanded_set).copied().collect();
-    let extra: Vec<_> = expanded_set.difference(&known_set).copied().collect();
-
     assert!(
-        missing.is_empty() && extra.is_empty(),
-        "@full must expand to exactly aibe_protocol::KNOWN_TOOLS.\n\
-         missing from @full: {missing:?}\n\
-         extra in @full (not in KNOWN_TOOLS): {extra:?}\n\
-         update ai/src/domain/tools.rs expand_category, docs/done/0002 カテゴリ表, \
-         and assign the new tool to a category; see {CHECKLIST}"
+        !expanded.iter().any(|name| name == SHELL_EXEC),
+        "@full must not include shell_exec; see {CHECKLIST}"
     );
+}
+
+#[test]
+fn safe_tools_are_accepted_as_literals() {
+    let resolved = resolve_tools(
+        Some("read_file,list_dir,grep,git_diff,git_status"),
+        &ConfigToolsTokens::default(),
+    )
+    .expect("resolve");
+    assert_eq!(
+        resolved.allowlist.names(),
+        &[
+            ToolName::read_file(),
+            ToolName::list_dir(),
+            ToolName::grep(),
+            ToolName::git_diff(),
+            ToolName::git_status(),
+        ]
+    );
+}
+
+#[test]
+fn shell_exec_literal_is_still_known() {
+    let resolved =
+        resolve_tools(Some("shell_exec"), &ConfigToolsTokens::default()).expect("resolve");
+    assert_eq!(resolved.allowlist.names(), &[ToolName::shell_exec()]);
+    assert!(resolved.startup.warn_shell);
 }
 
 #[test]
@@ -74,4 +94,17 @@ fn every_expanded_name_is_known_to_aibe() {
             );
         }
     }
+}
+
+#[test]
+fn categories_cover_safe_tools_without_shell() {
+    let full: BTreeSet<_> = resolve_category("@full")
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let safe: BTreeSet<_> = [READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(full, safe);
 }

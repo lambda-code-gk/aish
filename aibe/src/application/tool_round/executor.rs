@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use crate::application::tool_defs::definitions_for;
 use crate::application::tool_round::rejected::rejected_tool_result;
-use crate::domain::{is_known_tool, ChatMessage, ExecutedToolCall, ToolName};
+use crate::domain::{
+    is_known_tool, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName, ToolRiskClass,
+    GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+};
 use crate::ports::outbound::{
     LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
 };
@@ -27,6 +30,22 @@ pub struct ToolRoundExecutor {
     llm: Arc<dyn LlmProvider>,
     registry: Arc<dyn ToolRegistry>,
     tools_config: ToolsConfig,
+}
+
+fn classify_tool(name: &str) -> (ToolRiskClass, ToolApprovalState) {
+    match name {
+        SHELL_EXEC => (
+            ToolRiskClass::DangerousShell,
+            ToolApprovalState::ExplicitClientOptIn,
+        ),
+        READ_FILE | LIST_DIR | GREP | GIT_DIFF | GIT_STATUS => {
+            (ToolRiskClass::ReadOnly, ToolApprovalState::NotRequired)
+        }
+        _ => (
+            ToolRiskClass::WriteLike,
+            ToolApprovalState::ExplicitClientOptIn,
+        ),
+    }
 }
 
 impl ToolRoundExecutor {
@@ -105,7 +124,8 @@ impl ToolRoundExecutor {
                     )
                 }
             };
-            executed.push(record);
+            let (risk, approval) = classify_tool(&record.name);
+            executed.push(record.with_audit(risk, approval, false));
             let content = if result.is_error {
                 format!("[tool error]\n{}", result.content)
             } else {

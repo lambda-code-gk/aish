@@ -56,7 +56,7 @@
 
 ### 3. 明示時のみ `shell_exec`
 
-- `shell_exec` は明示された場合のみ有効にする（カテゴリ `@exec` / `@full`、リテラル `shell_exec`、またはそれらを含む展開結果）。
+- `shell_exec` は明示された場合のみ有効にする（カテゴリ `@exec`、リテラル `shell_exec`、またはそれらを含む展開結果）。`@full` には含めない。
 - `config` または CLI に書かれていない限り、`ai` が勝手に `shell_exec` を追加してはいけない。
 - `@full` を config の既定にすることは推奨しない（例示用）。運用上の既定は `[]` またはユーザーが選んだ `@read-only` 等。
 
@@ -76,7 +76,7 @@
 ### 6. 起動時の通知
 
 - `ai` はツール解決後の実ツール名を **毎回** `stderr` に 1 行表示する（`[]` のときも `none` と表示）。
-- 展開後の allowlist に `shell_exec` が含まれる場合、または指定トークンに `@exec` / `@full` / リテラル `shell_exec` がある場合は `warning:` を付ける。
+- 展開後の allowlist に `shell_exec` が含まれる場合、または指定トークンに `@exec` / リテラル `shell_exec` がある場合は `warning:` を付ける。
 
 ## CLI
 
@@ -90,7 +90,7 @@ ai ask <message> [--log PATH] [--socket PATH] [--no-start] [--tools LIST] [--ver
 
 - **1 つの文字列**をカンマ区切りでトークン分割する（CLI 専用の構文）。
 - 余白は解析時に trim する。
-- `@` プレフィックス付きカテゴリと固定ツール名（`read_file`, `shell_exec`）を混在できる。
+- `@` プレフィックス付きカテゴリと固定ツール名（`read_file`, `list_dir`, `grep`, `git_diff`, `git_status`, `shell_exec`）を混在できる。
 - `--tools` は config より優先する。
 
 #### `--tools none`（config 上書き）
@@ -105,7 +105,7 @@ ai ask <message> [--log PATH] [--socket PATH] [--no-start] [--tools LIST] [--ver
 ai ask "..." --tools @read-only,shell_exec
 ```
 
-- 展開後は `read_file`, `shell_exec`（`@full` と同集合。意図が読める場合に使う）。
+- 展開後は safe tools + `shell_exec`。`@full` とは別物。意図が読める場合に使う。
 
 ### `--verbose-tools`
 
@@ -145,16 +145,16 @@ tools = "@read-only"
 |------|--------|
 | `none` | `[]` |
 | `@none` | `[]` |
-| `@read-only` | `read_file` |
+| `@read-only` | `read_file`, `list_dir`, `grep`, `git_diff`, `git_status` |
 | `@exec` | `shell_exec` |
-| `@full` | `read_file`, `shell_exec` |
+| `@full` | `read_file`, `list_dir`, `grep`, `git_diff`, `git_status` |
 
 ### 補足
 
-- `@full` の展開順は固定で `read_file`, `shell_exec` とする。
+- `@full` の展開順は固定で `read_file`, `list_dir`, `grep`, `git_diff`, `git_status` とする。
 - `none` / `@none` は単独指定のみ有効である。
 - `none` / `@none` と他トークンの併記はエラーとする。
-- カテゴリとリテラルの併記（例: `@read-only` + `shell_exec`）は **許可** する。展開後は `@full` と同集合になりうる。
+- カテゴリとリテラルの併記（例: `@read-only` + `shell_exec`）は **許可** する。展開後は safe tools + `shell_exec` となる。
 - MVP では `@inspect` などの別名は増やさない。
 - カテゴリ表は `ai` 側だけが知る。`aibe` はカテゴリを解釈しない。
 - カテゴリ表と `aibe::KNOWN_TOOLS` の同期は `ai/tests/tool_catalog_sync.rs` で検証する。新ツール追加手順: `../manual/ai-ask-tools.md` §新規組み込みツール追加チェックリスト（`0009_ai-tool-category-sync-spec.md`）。
@@ -204,9 +204,9 @@ warning: ai: max tool rounds reached; showing partial assistant reply
 ### 起動時メッセージ例
 
 ```text
-ai: tools enabled: read_file (@read-only)
-warning: ai: tools enabled: read_file, shell_exec (@full)
-warning: ai: tools enabled: read_file, shell_exec (@read-only,shell_exec)
+ai: tools enabled: read_file, list_dir, grep, git_diff, git_status (@read-only)
+ai: tools enabled: read_file, list_dir, grep, git_diff, git_status (@full)
+warning: ai: tools enabled: read_file, list_dir, grep, git_diff, git_status, shell_exec (@read-only,shell_exec)
 warning: ai: tools enabled: shell_exec (@exec)
 warning: ai: tools enabled: shell_exec (shell_exec)
 ai: tools enabled: none
