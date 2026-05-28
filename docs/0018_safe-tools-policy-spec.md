@@ -1,169 +1,148 @@
-# 0018 — 安全なツール体系と `shell_exec` 明示承認の正式指示書 — 仕様ドラフト
+# 0018 — safe-tools-policy の docs 同期指示書 — 仕様ドラフト
 
-> **出典**: `docs/todo/chatgpt-review-4th-gen/p2-safe-tools.md`、`concerns.md` §4、`implementation-order.md` Sprint 3。  
-> **状態**: **実装反映済み（v1）**
+> **出典**: `docs/architecture.md`、`docs/manual/ai-ask-tools.md`、`docs/todo/chatgpt-review-4th-gen/p2-safe-tools.md`。
+> **状態**: **仕様ドラフト（docs 同期用）**
 
 ## 目的
 
-`aish` ワークスペースでは、LLM が日常的に使う経路を `shell_exec` へ寄せるのではなく、まず **安全な読み取り系ツール** で完結できる範囲を広げる。`shell_exec` は例外経路として残すが、**明示指定・承認・監査** を前提にして、読み取り目的では使わせない。
+`safe-tools-policy` の正本は `docs/architecture.md` にある一方で、検証方針は `docs/testing.md`、危険操作の扱いは `docs/security.md` に分散している。さらに、`docs/0000_spec-index.md` と `docs/todo/README.md` の文言が「何を正式指示書として読むべきか」を十分に示していない。
 
-同時に、将来の書き込み系ツールに対しては **dry-run → 承認 → 実行** の順を必須化する。ここで定めるのは、単なる UI の警告ではなく、`ai` と `aibe` の両方で強制できる運用契約である。
+この指示書は、**実装仕様ではなく docs の同期基準** を固定する。対象は `safe tools`、`shell_exec` の明示承認、write-like tools の dry-run / approval、監査の考え方である。本文で新しい機能を定義し直さない。
 
 ## 背景
 
-現状の `ai` は `@read-only` / `@exec` / `@full` のカテゴリでツールを解決し、`shell_exec` が有効なときは stderr に警告を出す。`aibe` 側は `shell_exec` と `read_file` を持つが、`read-only` に相当するツールはまだ `read_file` 中心で、`list_dir`、`grep`、`git_diff`、`git_status` のような安全な代替が不足している。
+`docs/architecture.md` には、`read_file` / `list_dir` / `grep` / `git_diff` / `git_status` を safe tools とし、`shell_exec` を `@exec` か literal 指定でのみ許可する方針が書かれている。`docs/manual/ai-ask-tools.md` には `ai ask` の手動確認手順がある。
 
-その結果、次の問題がある。
+一方で、`docs/testing.md` はテスト種別の総論が中心で、safe-tools-policy の unit / integration / manual の対応表がない。`docs/security.md` も、秘密情報・ログ・timeout/reap の説明はあるが、`shell_exec` の明示承認や future write-like tools の dry-run / approval を security の正本として明示していない。
 
-1. 本来はファイル読み取りや差分確認で足りる作業でも、LLM が `shell_exec` を選びやすい。
-2. `shell_exec` を有効化すると、実質的に任意コード実行に近づく。
-3. 危険な操作に対する dry-run / approval / audit の契約が、クレート境界に沿っていない。
+その結果、次の誤読が起きやすい。
+
+1. `safe tools` の位置づけが `architecture.md` と `testing.md` で揃っていない。
+2. `shell_exec` の危険操作としての扱いが `security.md` で十分に言い切られていない。
+3. `docs/0000_spec-index.md` と `docs/todo/README.md` の文言が、0018 を「何のための正式指示書か」まで示していない。
 
 ## スコープ
 
 ### 対象
 
-- `aibe-protocol` の tool 名・実行結果メタデータの拡張
-- `aibe` の domain/application/adapters における安全な読み取り系ツールの追加
-- `aibe` の tool 実行ガード、dry-run / approval / audit の共通化
-- `ai` のツールカテゴリ解決、`shell_exec` の明示承認導線、stderr 表示
-- `docs/architecture.md`、`docs/testing.md`、`docs/security.md`、`docs/manual/` の更新
-- `docs/0000_spec-index.md` と `docs/todo/README.md` の状態同期
+- `docs/testing.md` の safe-tools-policy 向け追記
+- `docs/security.md` の safe-tools-policy 向け追記
+- `docs/0000_spec-index.md` の 0018 行の要約文言調整
+- `docs/todo/README.md` の 0018 参照文言調整
+- 必要なら `docs/todo/chatgpt-review-4th-gen/p2-safe-tools.md` の案内文言調整
 
 ### 非対象
 
-- `aish` のシェル実行・ログ収集の機能拡張
-- `aibe-client` の transport 変更
-- LLM プロバイダの追加・変更
-- `shell_exec` の allowlist 設定 UI 変更
-- 書き込み系ツール本体（`write_file`、`replace_file`、`apply_patch`）の実装
-- プロセスグループ kill など、`shell_exec` の子孫プロセス制御の再設計
+- `aibe` / `ai` / `aish` のコード変更
+- 新しい tool 実装
+- protocol / transport / socket 仕様変更
+- `docs/manual/ai-ask-tools.md` の本文変更
+- `docs/architecture.md` の設計変更
+- API キー、設定値、実行コマンドの追加
 
-## 確定した設計判断
+## 正本の扱い（優先順位）
+
+この指示書（0018）は **docs 同期の補助指示書** であり、実装仕様の上位正本ではない。解釈が衝突した場合は、次の優先順位で読む。
+
+| 文書 | 役割 |
+|------|------|
+| `docs/architecture.md` | **上位正本**。safe tools / `shell_exec` / cwd / protocol の仕様を定義する |
+| `docs/testing.md` | 領域別正本（検証）。どの unit / integration / manual が policy を担保するかを定義する |
+| `docs/security.md` | 領域別正本（安全）。危険操作、承認、監査、秘密情報、dry-run を定義する |
+| `docs/manual/ai-ask-tools.md` | 運用手順の正本。実行手順と確認方法を定義する |
+
+## 確定した方針
 
 | 項目 | 方針 |
 |------|------|
-| **読み取り系の優先** | `read_file` に加えて `list_dir`、`grep`、`git_diff`、`git_status` を安全な標準ツールとして追加する。読み取り目的では `shell_exec` を使わない。 |
-| **`@read-only`** | `read_file`、`list_dir`、`grep`、`git_diff`、`git_status` を展開する。`shell_exec` は含めない。 |
-| **`@exec`** | `shell_exec` のみを展開する。これ以外のツールは含めない。 |
-| **`@full`** | 「利用可能な安全ツールの全体」を意味し、`shell_exec` は含めない。`shell_exec` は `@full` では有効化しない。 |
-| **`shell_exec` の扱い** | ユーザーが `shell_exec` または `@exec` を明示した場合のみ候補に入る。`ai` は毎回警告し、`aibe` は受信した `allowed_tools`（クライアント allowlist）に `shell_exec` がない要求を拒否する。 |
-| **承認の強制点** | v1 では `allowed_tools`（クライアント allowlist）を承認ソースとして `aibe` が server-side で再検証する。将来 token 化する場合も server-side enforcement を維持する。 |
-| **dry-run** | 書き込み系ツールは、実行前に dry-run の差分/計画を返し、その結果に対する承認がない限り実行しない。今回は write ツール本体は追加しないが、共通契約とテストは用意する。 |
-| **監査** | 危険度の高い tool request について、`requested_tools`、`risk_class`、`decision`、`approval_source`、`dry_run` の有無が追跡できること。 |
-| **server-side enforcement** | `ai` の確認漏れや別クライアントからの直送を防ぐため、`aibe` 側でも policy を持つ。 |
-| **read-only tools の実装責務** | `aibe` 側の adapter が持つ。`ai` は名前解決と表示、`aibe` は実行。 |
+| safe tools の文言 | `read_file` / `list_dir` / `grep` / `git_diff` / `git_status` を safe tools として扱い、読み取り目的で `shell_exec` を使う説明は置かない |
+| `shell_exec` | `@exec` または literal 指定の明示がある場合のみ dangerous tool として扱う |
+| write-like tools | `write_file` / `replace_file` / `apply_patch` は dry-run → approval → execute を前提に文書化する |
+| server-side enforcement | client 側の警告だけに依存せず、aibe 側でも拒否できる前提で書く |
+| audit | dangerous request には `risk_class` / `approval_state` / `dry_run` を追跡できることを明記する |
+| 既存文言 | 既存の説明を壊さず、補足で増やす |
 
-## 実装タスク
+## 実装タスク分解
 
-### 1. `aibe-protocol` / domain
+### 1. `docs/testing.md`
 
-- `ToolName` と `KNOWN_TOOLS` に安全ツールの名前を追加する。
-- tool risk を表す型を追加する。少なくとも `read_only`、`dangerous_shell`、`write_like` を区別できること。
-- `ExecutedToolCall` に、監査で使える最小限のメタデータを追加する。少なくとも `risk_class`、`approval_state`、`dry_run` の有無を表現できること。
-- 既存の JSON 形を壊さない範囲で serde roundtrip を更新する。
+- safe-tools-policy に対応する `unit / integration / manual` の所在を追加する
+- `ai/tests/` と `aibe/tests/` の役割を、`@read-only` / `@exec` / literal `shell_exec` の観点で明記する
+- `docs/manual/ai-ask-tools.md` の手順がどの検証に対応するかを明示する
 
-### 2. `aibe` application
+### 2. `docs/security.md`
 
-- `application/tool_defs.rs` に新しい読み取り系ツールの定義を追加する。
-- `application/tool_round/executor.rs` の tool dispatch で、`tool_name` ごとの risk を参照できるようにする。
-- dangerous tool の実行前に policy を問い合わせる共通経路を追加する。
-- approval が必要な tool については、v1 では `allowed_tools` を承認ソースとして `aibe` 側で拒否/許可を判断し、`ai` 側の警告は補助に留める。
-- audit sink を application boundary に用意し、dangerous request の決定を記録する。
+- `shell_exec` の明示承認を security の正本として再記述する
+- write-like tools の dry-run / approval / execute の順序を追記する
+- dangerous request の監査観点を追加する
 
-### 3. `aibe` adapters
+### 3. `docs/0000_spec-index.md`
 
-- `adapters/outbound/tools/` に `list_dir`、`grep`、`git_diff`、`git_status` を追加する。
-- それぞれのツールは `ToolExecutionContext::base_dir` / `resolve_path` を使い、`aibe` の cwd を直接参照しない。
-- `grep` はファイル内容の検索に限定し、外部 shell の任意実行に落ちないようにする。
-- `git_diff` / `git_status` は git リポジトリ内でのみ動作し、読み取り結果だけを返す。
-- `shell_exec` は adapter 内でも dangerous 扱いを明示し、policy を通さずに spawn しない。
-- 監査は structured log か、少なくともテストで検証できるイベントとして残す。
+- 0018 の要約文言を `docs` 同期の正式指示書として整える
+- 0018 が未実装機能ではなく、文書整備タスクであることを誤読しにくくする
 
-### 4. `ai`
+### 4. `docs/todo/README.md`
 
-- `ai/src/domain/tools.rs` のカテゴリ展開を更新する。`@read-only` と `@full` は安全ツールのみを返し、`shell_exec` は含めない。
-- `shell_exec` は `@exec` または literal 指定でしか有効化しない。
-- dangerous tools を有効にする場合、`ai ask` は stderr に明示的な警告と確認要求を出す。
-- 非対話モードでは、承認なしの dangerous tool request を開始しない。
-- `stdout_presenter` と `--verbose-tools` の表示は、追加された監査メタデータに追従する。
+- 0018 への参照文言を、P2 の docs 同期指示書として整える
+- 既存の sprint 状態表現と矛盾しないようにする
 
-### 5. docs / manual
+### 5. 参照整合の確認
 
-- `docs/architecture.md` に新しい tool 群と risk/approval/dry-run の契約を追記する。
-- `docs/testing.md` に unit / integration / manual の所在を追記する。
-- `docs/security.md` に `shell_exec` の明示承認と、write-like の dry-run/approval 方針を追記する。
-- `docs/manual/ai-ask-tools.md` に safe tools と dangerous tools の確認手順を追加する。
+- `docs/architecture.md` と `docs/manual/ai-ask-tools.md` を参照し、本文の用語を合わせる
+- もし manual と食い違う表現が見つかれば、先に manual との対応関係を整理してから本文を修正する
 
 ## 受け入れ条件
 
-### 1. 安全な読み取り系ツールが追加される
+### 1. `docs/testing.md` が検証の正本になる
 
-- `@read-only` で `read_file`、`list_dir`、`grep`、`git_diff`、`git_status` が利用できる。
-- これらのツールはファイル読み取り・差分表示・状態確認に限定される。
-- 読み取り目的の実装に `shell_exec` を使う必要がないことを示す unit test がある。
+- safe-tools-policy に対応する `unit / integration / manual` の所在が、ファイル名つきで読める
+- `ai` と `aibe` のどのテストが policy を担保するかが追える
+- `docs/manual/ai-ask-tools.md` が manual 検証の入口として明示される
 
-### 2. `shell_exec` は明示指定時のみ有効化される
+### 2. `docs/security.md` が危険操作の正本になる
 
-- `@full` では `shell_exec` が自動で入らない。
-- `shell_exec` は `@exec` か literal 名の明示指定がなければ候補に入らない。
-- `ai ask` は dangerous tools を有効化するとき、stderr に警告を出す。
-- 承認なし（`allowed_tools` に `shell_exec` が含まれない）の dangerous tool request は、`aibe` 側の server-side enforcement で必ず拒否される。`ai` の拒否だけでは不十分である。
+- `shell_exec` が `@exec` か literal 指定でのみ許可される方針が明記される
+- write-like tools が dry-run → approval → execute を前提にする方針が明記される
+- dangerous request の監査に必要な観点が列挙される
 
-### 3. 監査・承認・dry-run の契約が実装される
+### 3. 索引と todo の文言が整合する
 
-- dangerous request には `risk_class`、`decision`、`approval_state` を追跡できる。
-- `aibe` は dangerous request を server-side で再検証し、v1 では `allowed_tools` 由来の承認情報がない request を拒否する。
-- write-like contract の dry-run は、実行本体とは別の結果として表現できる。
-- approval を必要とする tool は、承認と実行の対応が追跡可能である。
+- `docs/0000_spec-index.md` の 0018 行が、現在の 0018 本文の性質と矛盾しない
+- `docs/todo/README.md` の 0018 参照が、P2 の docs 同期指示書であることを示す
 
-### 4. クレート境界を守る
+### 4. 既存の正本と矛盾しない
 
-- `ai` は `aibe` 本体へ戻らず、必要な wire だけに依存する。
-- `aibe` の tool 実装は `aibe` 内に閉じる。
-- `check-architecture.sh` と `check-hexagonal.sh` が通ること。
+- `docs/architecture.md` の safe tools 方針と衝突しない
+- `docs/manual/ai-ask-tools.md` の手順と用語が食い違わない
 
-### 5. docs とテストが同期する
+### 5. 仮実装を残さない
 
-- `docs/architecture.md`、`docs/testing.md`、`docs/security.md`、`docs/manual/ai-ask-tools.md` が実装と一致する。
-- `docs/0000_spec-index.md` に本指示書が登録される。
-- `docs/todo/README.md` の関連リンクと状態が更新される。
+- 「とりあえず」「未定」「あとで書く」だけの空欄を残さない
+- 実装未了の機能を、完了したかのような文言で書かない
 
 ## テスト計画
 
 | 種別 | 対象 | 期待 |
 |------|------|------|
-| **unit** | `aibe` の tool adapter、policy、audit metadata | `list_dir` / `grep` / `git_diff` / `git_status` の出力・境界・エラーが安定している。dangerous request の拒否と承認済み経路を分けて検証できる。 |
-| **unit** | `ai/src/domain/tools.rs` | `@read-only`、`@exec`、`@full` の展開が安全方針どおりである。`shell_exec` が `@full` に含まれない。 |
-| **integration** | `ai/tests/` と `aibe/tests/` | `ai ask --tools @read-only` で safe tools だけが有効になる。`shell_exec` を明示したケースでは警告と承認が必要になる。 |
-| **integration** | `aibe/tests/` | `aibe` が server-side で dangerous request を拒否できる。approval 付き request は通る。 |
-| **manual** | `docs/manual/ai-ask-tools.md` に手順化 | safe tools の表示、`shell_exec` の警告、拒否/承認の見え方を確認できる。 |
+| **integration** | `ai/tests/tool_catalog_sync.rs`、`ai/tests/tool_names_sync.rs`（`tests/` 配下の統合テスト）と `aibe` の tool policy 関連 unit | `@read-only` / `@exec` / `@full` の展開や safe tools の扱いが、本文の説明と一致する |
+| **integration** | `ai/tests/ask_integration.rs`、`aibe/tests/request_tool_validation.rs`、`aibe/tests/agent_turn_loop.rs`、`aibe/tests/socket_protocol.rs` | `shell_exec` の拒否、warning 表示、server-side enforcement の入口検証が追える（承認済み通過は追加テストで補完対象） |
+| **manual** | `docs/manual/ai-ask-tools.md` | safe tools の表示、`shell_exec` の warning、拒否 / 承認の見え方を確認できる |
 
-### テスト実装の要点
+### 補足
 
-- `list_dir` と `git_status` は実ファイルシステム依存を最小化し、fixture ディレクトリで検証する。
-- `grep` は固定 fixture に対する検索結果を検証する。
-- `git_diff` は temporary git repo を使って diff の形を固定する。
-- dangerous request のテストは、承認なし拒否と承認あり通過の 2 本を必ず分ける。
-- `ai` のカテゴリ展開テストは、`KNOWN_TOOLS` とカテゴリ表のドリフトを防ぐ既存テストに統合する。
+- この指示書自体は docs 同期のためのものであり、新しい runtime テストを要求しない
+- ただし、本文が既存テストの場所と齟齬を起こさないことは必須である
 
-## docs 更新一覧
+## docs 更新対象
 
-- `docs/architecture.md` — safe tools 群、risk class、approval/dry-run、`shell_exec` の明示承認
-- `docs/testing.md` — unit / integration / manual の配置と実行観点
-- `docs/security.md` — dangerous tool の承認、監査、dry-run 方針
-- `docs/manual/ai-ask-tools.md` — safe tools と `shell_exec` の確認手順
-- `docs/0000_spec-index.md` — 0018 を仕様ドラフトとして追加
-- `docs/todo/README.md` — `chatgpt-review-4th-gen/` の次段階を 0018 に接続
+- `docs/testing.md`
+- `docs/security.md`
+- `docs/0000_spec-index.md`
+- `docs/todo/README.md`
+- 必要なら `docs/todo/chatgpt-review-4th-gen/p2-safe-tools.md`
 
-## 未確定・見送り
+## 未確定・残リスク
 
-- `shell_exec` の承認トークンの wire 形は、実装時に `aibe-protocol` へ追加する。命名は実装に合わせてよいが、server-side で検証できることは必須。
-- `write_file`、`replace_file`、`apply_patch` の実装自体は本指示書の範囲外。次段階で dry-run 可能な tool として追加する。
-- `grep` の内部 backend は `rg` でも `grep` でもよいが、対外的な tool 名と JSON 契約は固定する。
-
-## 残リスク
-
-- `shell_exec` を有効にした時点で、allowlist 範囲内の任意コマンド実行リスクは残る。
-- `grep` / `git_diff` / `git_status` も、巨大リポジトリでは性能劣化の余地がある。
-- approval の UX を `ai` 側だけに寄せると、別クライアントからの bypass が残る。server-side enforcement を省略しないこと。
+- `docs/manual/ai-ask-tools.md` の文言が将来変わると、`docs/testing.md` / `docs/security.md` 側も追従が必要になる
+- `shell_exec` の警告文言や safe tools の表示順は、実装側の変更に合わせて再同期が必要になる
+- docs 同期だけでは runtime の安全性は変わらないため、実装変更が入ると別の指示書が必要になる

@@ -66,6 +66,15 @@
 - `cwd` はツール有効時に `ai` のカレントディレクトリ（絶対パス）を送り、`read_file` / `shell_exec` の相対パス解決に使う。**未送信・相対パスは aibe が `invalid_request` で拒否する**（aibe プロセス cwd へのフォールバックはしない）
 - ユーザーが明示しない限り、全セッション履歴を一度に送らない設計を推奨
 
+### safe tools / dangerous tools
+
+- 読み取り目的では `read_file` / `list_dir` / `grep` / `git_diff` / `git_status` を優先し、`shell_exec` を読み取り代替として使わない
+- `shell_exec` は `@exec` か literal 指定が明示された場合のみ dangerous tool として扱う
+- dangerous request は client 側の warning に依存せず、aibe 側でも server-side で拒否できる前提にする
+- write-like tools は dry-run → approval → execute の順で扱い、実行前に結果の確認経路を残す
+- dangerous request の監査観点として `risk_class`、`approval_state`、`dry_run` などのメタデータを追える設計を推奨する
+- manual や logs に残す説明は、本番設定や秘密情報を含めない
+
 ### ai のツール表示
 
 - `ai ask` の `stdout` は最終 `assistant_message.content` のみに保つ。

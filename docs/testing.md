@@ -63,6 +63,13 @@ cargo test --workspace
 - **E2E**: モック aibe + フィクスチャログで 1 セッション
 - **手動**: `ai` → 実 aibe → 表示（キーはユーザー環境のみ）。ツール allowlist は `docs/manual/ai-ask-tools.md`
 
+### 0018 safe-tools-policy の検証観点
+
+- **integration**: `ai/tests/tool_catalog_sync.rs`、`ai/tests/tool_names_sync.rs`（`tests/` 配下の統合テスト）と `aibe` の tool policy 関連 unit で `@read-only` / `@exec` / `@full` の展開と safe tools の扱いを固定する
+- **integration**: `ai/tests/ask_integration.rs` で `shell_exec` の warning 表示を確認し、`aibe/tests/request_tool_validation.rs`・`aibe/tests/agent_turn_loop.rs`・`aibe/tests/socket_protocol.rs` で拒否と server-side enforcement の入口検証を確認する（承認済み通過経路は別途追加テストで補完対象）
+- **manual**: `docs/manual/ai-ask-tools.md` の手順で safe tools の表示、`shell_exec` の warning、拒否 / 承認の見え方を確認する
+- **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる
+
 ## モック・フィクスチャ
 
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
