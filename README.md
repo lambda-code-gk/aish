@@ -170,11 +170,26 @@ cargo run -p ai
 ### Ask the agent (`ai`)
 
 ```text
-ai ask <message> [--log PATH] [--socket PATH] [--no-start]
+ai ask <message> [--log PATH] [--session ID] [--no-log]
+                 [--socket PATH] [--no-start]
                  [--tools LIST] [--profile NAME] [--verbose-tools]
 ```
 
-- `--log` — aish の JSONL ログをコンテキストに含める
+- `--log` — 指定 JSONL をコンテキストに含める（`--session` より優先）
+- `--session ID` — `AISH_SESSION_DIR/current_log` 経由でログを読む（下記「環境変数」参照）
+- `--no-log` — ログを載せない（最優先）
+- `AI_ASK_LOG=session` — 上と同じく `AISH_SESSION_DIR` からログを読む（ユーザーが export。`aish` は設定しない）
+
+#### 環境変数（`ai ask` のシェルログ）
+
+| 変数 | 誰が設定 | 意味 |
+|------|----------|------|
+| **`AISH_SESSION_DIR`** | `aish shell` が子シェルへ export（**絶対パス**） | セッション dir（`<log_dir>/<12桁hex>/`）。`ai` が参照する唯一のセッション環境変数 |
+| **`AI_ASK_LOG=session`** | ユーザー（任意） | 設定時のみ、`AISH_SESSION_DIR/current_log` を tail して送る |
+
+- **`--session ID`**: `ID` は **`basename "$AISH_SESSION_DIR"` と一致** すること（例: `002f15d02b54`）
+- 別ペインでは `export AISH_SESSION_DIR=/abs/path/to/sessions/<12桁hex>` してから `--session` または `AI_ASK_LOG=session` を使う
+- `current_log` は symlink。`ai` は **symlink 先が `AISH_SESSION_DIR` 内の通常ファイルとして開けること** を検証してから読む
 - `--tools` — 有効化するツールカテゴリ（詳細: [docs/manual/ai-ask-tools.md](docs/manual/ai-ask-tools.md)）
 - `--profile` — aibe 設定のプロファイル名
 - `--no-start` — 既に起動済みの aibe のみ利用
@@ -185,16 +200,31 @@ ai ask <message> [--log PATH] [--socket PATH] [--no-start]
 # 単発コマンド実行 + ログ
 cargo run -p aish -- exec --log /tmp/session.jsonl -- ls -la
 
-# 対話シェル + ログ
-cargo run -p aish -- shell --log /tmp/session.jsonl
+# 対話シェル（セッション dir + AISH_SESSION_DIR を子シェルへ export）
+cargo run -p aish -- shell
+
+# 現在のセッション情報（aish shell 内。`AISH_SESSION_DIR` 必須）
+cargo run -p aish -- session
+cargo run -p aish -- session --format json
+cargo run -p aish -- session --format env   # eval 向け
 ```
+
+**共通 `--format`**（`tsv` | `json` | `env`、既定 `tsv`）は、**情報を stdout に出すサブコマンド**向けの共通オプション。全サブコマンドで指定可能だが、現状 stdout に反映するのは `session` のみ。`exec` / `shell` 等の実行系は将来のサブコマンド追加時に CLI を揃えるため受理のみ（挙動は変わらない）。詳細: [docs/architecture.md](docs/architecture.md)（aish CLI 節）。
 
 手順: [docs/manual/aish-shell-log.md](docs/manual/aish-shell-log.md)
 
-ログを渡して質問する例:
+`aish shell` 内でログ付き質問する例:
 
 ```bash
-cargo run -p ai -- ask "直前のコマンド結果を要約して" --log /tmp/session.jsonl
+export AI_ASK_LOG=session   # 任意（ユーザー設定）
+ai ask "直前のエラーを要約して"
+```
+
+別ペインから指定セッションへ:
+
+```bash
+export AISH_SESSION_DIR=~/.local/share/aish/sessions/<12桁hex>
+ai ask --session <12桁hex> "…"
 ```
 
 ## Supported LLM providers

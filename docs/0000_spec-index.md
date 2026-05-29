@@ -20,6 +20,7 @@
 | 0016 | [0016_aish-shell-stdin-thread-spec.md](done/0016_aish-shell-stdin-thread-spec.md) | 実装済み | `aish shell` stdin 中継の FD 分離と終了時ハング解消 |
 | 0017 | [0017_aibe-protocol-client-split-spec.md](done/0017_aibe-protocol-client-split-spec.md) | 実装済み | `aibe-protocol` / `aibe-client` 分離 |
 | 0018 | [0018_safe-tools-policy-spec.md](done/0018_safe-tools-policy-spec.md) | 実装済み | `safe-tools-policy` の docs 同期（`testing.md` / `security.md`） |
+| 0019 | [0019_aish-session-log-integration-spec.md](done/0019_aish-session-log-integration-spec.md) | 実装済み | `aish shell` セッション dir + `ai ask` ログ連携（P3） |
 
 **進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
 

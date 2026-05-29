@@ -148,16 +148,43 @@ aish          →  （aibe への path 依存禁止）
 | `stderr` | `data`（追記前に `sanitize_log_text`） |
 | `exit` | `code`（任意） |
 
-- **CLI**: `aish exec [--log PATH] -- <program> [args...]`（未指定時は `~/.local/share/aish/sessions/session-<pid>.jsonl`）
-- **保存場所（設計）**: 設定または環境変数。例: `~/.local/share/aish/sessions/<session-id>.jsonl`
-- 詳細スキーマは aish 実装時にこの節を拡張する
+- **CLI**:
+  - `aish exec [--format tsv|json|env] [--log PATH] -- <program> [args...]`（未指定時は `log_dir/session-<pid>.jsonl`）
+  - `aish shell [--format tsv|json|env]` — セッション dir 方式（`docs/done/0019_aish-session-log-integration-spec.md`）
+  - `aish session [--format tsv|json|env]` — 現在セッション（`AISH_SESSION_DIR` 必須）
+- **共通 `--format`**（情報表示系サブコマンド向け）:
+  - 値: **`tsv`（既定）** | **`json`** | **`env`**
+  - **全サブコマンド**で指定可能。composition root（`aish/src/main.rs`）が `strip_common_options`（`adapters/inbound/cli.rs`）で先に解析し、未知の値はエラーにする
+  - **情報表示系**サブコマンドのみ stdout の形式に反映する。現状は **`session` のみ**が該当
+  - **実行系**（`exec`, `shell` 等）は現状 `--format` を出力に使わないが、将来追加する情報表示系と CLI を揃えるため **受理のみ** 行う（指定しても挙動は変わらない）
+  - 形式の意味（情報表示系で共通）:
+    - `tsv` — `key\tvalue` 行（人間閲覧・簡易スクリプト向け）
+    - `json` — 構造化 JSON オブジェクト（パイプ・ツール連携向け）
+    - `env` — `KEY='value'` 行（`eval "$(aish … --format env)"` 向け。値は shell 単一引用符でエスケープ）
+  - 新しい情報表示系サブコマンドを追加するときは、同じ `--format` と上記3形式を実装する（domain の `OutputFormat` / `SessionInfo::render` パターンを参照）
+- **対話シェル（`aish shell`）の layout**（`0019`）:
+
+```text
+<config log_dir>/<session-id>/
+  log.jsonl
+  current_log -> log.jsonl
+```
+
+- **session-id**: `2020-01-01T00:00:00Z` 起点の経過ミリ秒を **12 桁小文字 hex**（ゼロ埋め）
+- **起動時**: `stderr` に session id を表示。子シェルへ `AISH_SESSION_DIR`（セッション dir 絶対パス）を export
+- **掃除**: `aish shell` 起動時のみ。`max_sessions`（config、既定 50）超過分をディレクトリ名の辞書順で削除
+- **`ai ask` 連携**（`ai` は `aish` クレート非依存）:
+  - 既定はログを載せない
+  - `AI_ASK_LOG=session` かつ `AISH_SESSION_DIR` → `current_log` を解決し、symlink 先が session dir 内の通常ファイルとして **open 可能**なことを検証してから tail
+  - `--session <id>` → 同上（`id` は `basename(AISH_SESSION_DIR)` と一致）
+  - `--log PATH` / `--no-log` の優先順は `0019` 参照
 
 ## 設定ファイル
 
 | 対象 | 例のパス | 内容 |
 |------|----------|------|
 | aibe | `~/.config/aibe/config.toml` | LLM 接続 `[llm.<name>]`、プロファイル `[profiles.<name>]`、`default_profile`、socket、tools |
-| aish | `~/.config/aish/config.toml` | ログディレクトリ、シェル起動オプション |
+| aish | `~/.config/aish/config.toml` | `log_dir`、`max_sessions`（既定 50）、シェル起動 |
 | ai | `~/.config/ai/config.toml` | aibe socket、`[ask].default_profile`、`[ask].tools` |
 
 - リポジトリに **実キーをコミットしない**

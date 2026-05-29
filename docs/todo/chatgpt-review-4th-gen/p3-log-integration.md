@@ -20,4 +20,6 @@ ai ask "今のエラーを直す方針を出して"
 
 「ただの CLI LLM クライアント」から抜ける、という評価。
 
+正式指示書: [0019_aish-session-log-integration-spec.md](../../done/0019_aish-session-log-integration-spec.md)（**実装済み**）
+
 スプリントへの落とし込み: [sprints.md](sprints.md) Sprint 3

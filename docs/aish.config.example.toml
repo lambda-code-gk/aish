@@ -1,4 +1,5 @@
 # コピー先: ~/.config/aish/config.toml
 
 log_dir = "~/.local/share/aish/sessions"
+max_sessions = 50
 shell = "/bin/bash"

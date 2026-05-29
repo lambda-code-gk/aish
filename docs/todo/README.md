@@ -4,5 +4,5 @@
 
 | ファイル | 状態 | 概要 |
 |----------|------|------|
-| [chatgpt-review-4th-gen/](chatgpt-review-4th-gen/) | **Sprint 2 完了** / Sprint 3 着手待ち | 4 代目外部レビュー。P1（0017）・P2 docs 同期（[0018](../done/0018_safe-tools-policy-spec.md)）は実装済み |
+| [chatgpt-review-4th-gen/](chatgpt-review-4th-gen/) | **Sprint 3 P3 完了** | 4 代目外部レビュー。P3 ログ連携は [0019](../done/0019_aish-session-log-integration-spec.md) |
 | [aibe-cli-llm-provider.md](aibe-cli-llm-provider.md) | 検討中 | aibe が HTTP API の代わりに Codex CLI / Claude Code CLI を呼ぶ可否と設計案 |

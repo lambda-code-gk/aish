@@ -3,6 +3,8 @@
 use std::ffi::CString;
 use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
+use std::os::unix::ffi::OsStringExt;
+use std::path::Path;
 
 use crate::domain::sanitize_log_text;
 use crate::ports::outbound::{InteractiveShellError, InteractiveShellRunner, SessionLog};
@@ -30,17 +32,22 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
 }
 
 impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
-    fn run_shell(&mut self, shell: &str) -> Result<i32, InteractiveShellError> {
+    fn run_shell(&mut self, shell: &str, session_dir: &Path) -> Result<i32, InteractiveShellError> {
         let shell_c =
             CString::new(shell).map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
         let arg_i = CString::new("-i").map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+        let session_dir = session_dir
+            .canonicalize()
+            .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+        let session_dir_c = CString::new(session_dir.into_os_string().into_vec())
+            .map_err(|_| InteractiveShellError::Failed("AISH_SESSION_DIR contains NUL".into()))?;
 
         let (master, slave) = open_pty_pair()?;
 
         match unsafe { libc::fork() } {
             -1 => Err(InteractiveShellError::Failed("fork failed".into())),
             0 => {
-                child_exec_shell(master, slave, &shell_c, &arg_i);
+                child_exec_shell(master, slave, &shell_c, &arg_i, &session_dir_c);
                 unreachable!();
             }
             child => {
@@ -132,13 +139,28 @@ fn waitpid_loop(
 }
 
 /// fork 子専用。`?` やパニックで親に戻らないこと。
-fn child_exec_shell(master: RawFd, slave: RawFd, shell: &CString, arg_i: &CString) {
+fn child_exec_shell(
+    master: RawFd,
+    slave: RawFd,
+    shell: &CString,
+    arg_i: &CString,
+    session_dir: &CString,
+) {
     unsafe {
         libc::close(master);
     }
 
     if let Err(e) = setup_controlling_tty(slave) {
         child_die(&e.to_string());
+    }
+
+    let key = CString::new("AISH_SESSION_DIR").expect("static key");
+    let rc = unsafe { libc::setenv(key.as_ptr(), session_dir.as_ptr(), 1) };
+    if rc != 0 {
+        child_die(&format!(
+            "setenv(AISH_SESSION_DIR): {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
     let argv = [shell.as_ptr(), arg_i.as_ptr(), std::ptr::null()];

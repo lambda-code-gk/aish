@@ -9,6 +9,7 @@ use serde::Deserialize;
 pub struct AishConfig {
     pub log_dir: PathBuf,
     pub shell: String,
+    pub max_sessions: usize,
 }
 
 const DEFAULT_CONFIG: &str = ".config/aish/config.toml";
@@ -42,10 +43,13 @@ impl AishConfig {
         if let Some(shell) = file.shell {
             cfg.shell = shell;
         }
+        if let Some(max) = file.max_sessions {
+            cfg.max_sessions = max;
+        }
         cfg
     }
 
-    pub fn default_session_log(&self) -> PathBuf {
+    pub fn default_exec_log(&self) -> PathBuf {
         let name = format!("session-{}.jsonl", std::process::id());
         self.log_dir.join(name)
     }
@@ -57,6 +61,7 @@ impl Default for AishConfig {
         Self {
             log_dir: PathBuf::from(home).join(".local/share/aish/sessions"),
             shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()),
+            max_sessions: 50,
         }
     }
 }
@@ -73,4 +78,5 @@ fn expand_home(path: String) -> PathBuf {
 struct FileConfig {
     log_dir: Option<String>,
     shell: Option<String>,
+    max_sessions: Option<usize>,
 }

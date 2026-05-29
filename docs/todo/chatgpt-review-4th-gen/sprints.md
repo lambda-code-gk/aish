@@ -28,10 +28,10 @@
 
 詳細: [p1-protocol-split.md](p1-protocol-split.md)
 
-## Sprint 3: AISH 体験の最小完成 — **着手待ち**
+## Sprint 3: AISH 体験の最小完成 — **P3 完了**（0019）
 
-- `aish shell` の現在ログを `ai ask` が自動利用（P3）
-- `ai ask` のデフォルト context 確認（P3）
+- ~~`aish shell` の現在ログを `ai ask` が自動利用（P3）~~ **実装済み** — [0019](../../done/0019_aish-session-log-integration-spec.md)
+- ~~`ai ask` のデフォルト context 確認（P3）~~ **実装済み**（`AI_ASK_LOG=session` / `--session`）
 - ~~`read_file` / `grep` / `git_diff` / `git_status` / `list_dir` 追加~~ **実装済み**（safe tools）
 - ~~`shell_exec` は明示指定時のみ~~ **実装済み**
 - 人間向けの短い実行サマリ整備（`--verbose-tools` 以外）

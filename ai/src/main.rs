@@ -2,13 +2,16 @@
 
 #![cfg(unix)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{AibeUnixClient, FileLogTail, StdoutPresenter};
 use ai::application::{ensure_aibe_if_needed, plan_ask_launch, Ask, AskRunOptions};
-use ai::domain::{resolve_llm_profile, ToolsResolveError};
+use ai::domain::{
+    resolve_llm_profile, resolve_shell_log_for_ask, ShellLogChoice, ShellLogResolveError,
+    ToolsResolveError,
+};
 use aibe_client::ensure_running;
 
 fn main() -> ExitCode {
@@ -34,6 +37,8 @@ fn run() -> anyhow::Result<()> {
 
     let mut message_parts = Vec::new();
     let mut log_path = None;
+    let mut session_id = None;
+    let mut no_log = false;
     let mut socket_path = None;
     let mut auto_start = true;
     let mut tools_cli = None;
@@ -50,6 +55,18 @@ fn run() -> anyhow::Result<()> {
                         .clone(),
                 );
                 i += 2;
+            }
+            "--session" => {
+                session_id = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| anyhow::anyhow!("--session requires a session id"))?
+                        .clone(),
+                );
+                i += 2;
+            }
+            "--no-log" => {
+                no_log = true;
+                i += 1;
             }
             "--socket" => {
                 socket_path = Some(PathBuf::from(
@@ -95,6 +112,22 @@ fn run() -> anyhow::Result<()> {
     }
     let message = message_parts.join(" ");
 
+    let log_choice = resolve_shell_log_for_ask(
+        no_log,
+        log_path.as_deref().map(Path::new),
+        session_id.as_deref(),
+        std::env::var("AI_ASK_LOG").ok().as_deref(),
+        std::env::var("AISH_SESSION_DIR")
+            .ok()
+            .as_deref()
+            .map(Path::new),
+    )
+    .map_err(shell_log_resolve_to_anyhow)?;
+
+    if let ShellLogChoice::Path(ref path) = log_choice {
+        eprintln!("ai: using shell log: {}", path.display());
+    }
+
     let cfg = AiConfig::load();
     let socket_path = socket_path.unwrap_or(cfg.socket_path);
     let plan = plan_ask_launch(
@@ -120,13 +153,16 @@ fn run() -> anyhow::Result<()> {
         llm_profile,
     };
 
-    if let Some(path) = log_path {
-        let log = FileLogTail::new(PathBuf::from(path));
-        let ask = Ask::new(&client, &presenter, Some(&log));
-        ask.run(message, options)?;
-    } else {
-        let ask = Ask::new(&client, &presenter, None::<&FileLogTail>);
-        ask.run(message, options)?;
+    match log_choice {
+        ShellLogChoice::Path(path) => {
+            let log = FileLogTail::new(path);
+            let ask = Ask::new(&client, &presenter, Some(&log));
+            ask.run(message, options)?;
+        }
+        ShellLogChoice::None => {
+            let ask = Ask::new(&client, &presenter, None::<&FileLogTail>);
+            ask.run(message, options)?;
+        }
     }
 
     Ok(())
@@ -136,8 +172,12 @@ fn tools_resolve_to_anyhow(e: ToolsResolveError) -> anyhow::Error {
     anyhow::anyhow!(e)
 }
 
+fn shell_log_resolve_to_anyhow(e: ShellLogResolveError) -> anyhow::Error {
+    anyhow::anyhow!(e)
+}
+
 fn print_usage() {
     eprintln!(
-        "usage: ai ask <message> [--log PATH] [--socket PATH] [--no-start] [--tools LIST] [--profile NAME] [--verbose-tools]"
+        "usage: ai ask <message> [--log PATH] [--session ID] [--no-log] [--socket PATH] [--no-start] [--tools LIST] [--profile NAME] [--verbose-tools]"
     );
 }
