@@ -57,12 +57,10 @@
 5. 以下が成功すること:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-# アーキテクチャに触れた変更では:
-./scripts/check-architecture.sh   # クレート境界 + check-hexagonal.sh（application→adapters 等）
+./scripts/verify.sh
 ```
+
+（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh`）
 
 ## 報告義務（必須）
 

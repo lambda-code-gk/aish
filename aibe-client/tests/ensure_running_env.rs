@@ -5,8 +5,10 @@
 mod common;
 
 use aibe_client::{ensure_running, ping};
+use serial_test::serial;
 
 #[test]
+#[serial]
 fn ensure_running_waits_on_custom_socket_path() {
     let daemon = common::MockAibeDaemon::start();
     assert!(ping(&daemon.socket_path));

@@ -10,16 +10,26 @@ use std::time::{Duration, Instant};
 use aibe_client::ping;
 use tempfile::TempDir;
 
-/// `cargo test` 実行時の `aibe` バイナリ（`aibe` への path 依存なし）。
+/// `cargo test` 実行時の `aibe` バイナリ（`aibe` クレートへの path 依存なし）。
 pub fn aibe_binary() -> PathBuf {
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
+
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_aibe") {
         let path = PathBuf::from(p);
         if path.is_file() {
             return path;
         }
     }
-    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../target/{profile}/aibe"))
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let path = PathBuf::from(target_dir).join(&profile).join("aibe");
+        if path.is_file() {
+            return path;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../target")
+        .join(&profile)
+        .join("aibe")
 }
 
 /// 一時設定で mock provider の `aibe -f` を起動し、socket が応答するまで待つ。

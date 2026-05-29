@@ -118,6 +118,20 @@ while IFS= read -r -d '' f; do
   fi
 done < <(find "$ROOT/aibe/src" -name '*.rs' -print0 2>/dev/null)
 
+# ツールの外部プロセス: timeout + cmd.output() 直叩き禁止（run_subprocess 経由）
+note "checking tool subprocess policy (run_subprocess)..."
+TOOLS_DIR="$ROOT/aibe/src/adapters/outbound/tools"
+if [[ -d "$TOOLS_DIR" ]]; then
+  while IFS= read -r -d '' f; do
+    case "$(basename "$f")" in
+      subprocess.rs) continue ;;
+    esac
+    if grep -qE 'timeout[[:space:]]*\([^)]*\.output\(\)' "$f"; then
+      fail "use run_subprocess instead of timeout(..., cmd.output()) in ${f#"$ROOT/"}"
+    fi
+  done < <(find "$TOOLS_DIR" -name '*.rs' -print0 2>/dev/null)
+fi
+
 if [[ "$failures" -gt 0 ]]; then
   echo "ARCHITECTURE: $failures check(s) failed" >&2
   exit 1

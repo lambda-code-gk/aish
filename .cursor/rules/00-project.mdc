@@ -26,12 +26,10 @@ alwaysApply: true
 ## 変更後の確認
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
+./scripts/verify.sh
 ```
 
-アーキテクチャに触れた変更では `./scripts/check-architecture.sh` も実行する（内包: `scripts/check-hexagonal.sh` でレイヤー依存）。
+（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh`）
 
 ## Git
 

@@ -26,11 +26,36 @@
 - Step 2/5 のレビューは「重大 / 中 / 軽微」で出させる
 - Step 3/6 は「指摘が 0 件になるまで」繰り返す
 - Step 4 は Cursor 側で実装する（ユーザー指示を優先）
-- 検証コマンドは必ず実行する
-  - `cargo fmt --all -- --check`
-  - `cargo clippy --workspace -- -D warnings`
-  - `cargo test --workspace`
-  - `./scripts/check-architecture.sh`（境界に触れる変更）
+- 検証コマンドは必ず実行する（推奨: 一括）
+
+```bash
+./scripts/verify.sh
+```
+
+`verify.sh` を `| tail` などで包むと、完了まで無出力に見えるので避ける。静的検査だけなら `VERIFY_SKIP_TEST=1 ./scripts/verify.sh`。
+
+個別に回す場合:
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `./scripts/check-architecture.sh`（クレート境界 + subprocess 方針 + hexagonal）
+- `./scripts/check-docs-consistency.sh`（README / 仕様索引 / testing.md / review todo）
+
+## 外部レビュー（ZIP 等）の突き合わせ
+
+ChatGPT 等の外部レビューを取り込むときは、次を機械確認してから着手する。
+
+```bash
+./scripts/check-docs-consistency.sh
+./scripts/check-architecture.sh
+```
+
+手動で見る観点:
+
+- README のクレート数・依存の向きが `docs/architecture.md` と一致しているか
+- `aibe` ツールの外部プロセスが `run_subprocess` 経由か（`check-architecture.sh` が検出）
+- P3 前提（`ai ask --log` のみ等）が未実装なら、スコープを指示書に明記するか
 
 ## 使い回し用プロンプト雛形
 

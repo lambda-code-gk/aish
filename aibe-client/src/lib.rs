@@ -2,13 +2,19 @@
 
 #![cfg(unix)]
 
+mod unix_connect;
+
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use aibe_protocol::{ClientRequest, ClientResponse};
+
+use unix_connect::connect_unix_stream;
+
+/// `ping` の connect / read / write 上限。
+const PING_IO_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// デフォルトの Unix socket パス（`$HOME/.local/share/aibe/run.sock`）。
 pub fn default_socket_path() -> PathBuf {
@@ -24,10 +30,12 @@ pub fn ping(socket_path: &Path) -> bool {
 }
 
 pub fn ping_result(socket_path: &Path) -> std::io::Result<bool> {
-    let mut stream = match UnixStream::connect(socket_path) {
+    let mut stream = match connect_unix_stream(socket_path, PING_IO_TIMEOUT) {
         Ok(s) => s,
         Err(_) => return Ok(false),
     };
+    let _ = stream.set_read_timeout(Some(PING_IO_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(PING_IO_TIMEOUT));
     let req = serde_json::to_string(&ClientRequest::Ping {
         id: "health".to_string(),
     })
@@ -84,4 +92,25 @@ fn resolve_aibe_binary() -> PathBuf {
         }
     }
     PathBuf::from("aibe")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+
+    #[test]
+    fn ping_missing_socket_returns_false_within_deadline() {
+        let path =
+            std::env::temp_dir().join(format!("aibe-client-missing-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let start = Instant::now();
+        assert!(!ping(&path));
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "ping blocked for {:?}",
+            start.elapsed()
+        );
+    }
 }

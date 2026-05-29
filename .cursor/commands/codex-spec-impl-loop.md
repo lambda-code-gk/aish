@@ -2,7 +2,10 @@
 description: Codexの指示書→実装→レビューの7ステップを実行
 ---
 
-次の 7 ステップをこの順で実行してください。対象タスクは「$ARGUMENTS」です。
+次の 7 ステップをこの順で実行してください。
+
+**対象タスク**: 「$ARGUMENTS」  
+（未指定なら `docs/0000_spec-index.md` の進行中指示書、またはユーザーが開いている `docs/00xx_*` / `docs/done/00xx_*` を確認して確認する）
 
 ```text
 1. codexで指示書を書かせる
@@ -18,17 +21,17 @@ description: Codexの指示書→実装→レビューの7ステップを実行
 - Step 2/5 は「重大 / 中 / 軽微」でレビュー結果を出す
 - Step 3/6 は指摘がなくなるまでループする
 - Step 4 の実装と修正は Cursor 側で行う
-- 変更後は次を実行する:
+- 変更後は `./scripts/verify.sh` を実行する（個別に回す場合は下記と同等）
   - `cargo fmt --all -- --check`
   - `cargo clippy --workspace -- -D warnings`
   - `cargo test --workspace`
-  - アーキテクチャに触れる変更では `./scripts/check-architecture.sh`
+  - `./scripts/check-architecture.sh`
+  - `./scripts/check-docs-consistency.sh`
+- 完了時: 指示書を `docs/done/` へ移す場合は `docs/0000_spec-index.md` と `docs/todo/README.md` を同じ変更で更新
 - `git commit` / `git push` はユーザー明示時のみ
 
-参照ファイル:
-- `docs/done/0018_safe-tools-policy-spec.md`
+参照:
+- `docs/0000_spec-index.md` — 指示書一覧
 - `docs/codex-delegation.md`
 - `docs/manual/codex-spec-impl-review-loop.md`
-- `docs/architecture.md`
-- `docs/testing.md`
-- `docs/security.md`
+- `docs/architecture.md` / `docs/testing.md` / `docs/security.md`

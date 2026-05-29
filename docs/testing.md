@@ -5,19 +5,28 @@ aish ワークスペースのテスト種別、置き場所、実行方法。機
 ## 実行コマンド（標準）
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-./scripts/check-architecture.sh   # クレート境界 + scripts/check-hexagonal.sh（レイヤー）
+./scripts/verify.sh
 ```
 
-ローカルでも PR 前に上記を通す。GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）でも同じ品質ゲートを回す。
+個別に回す場合:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace -- -D warnings
+cargo build -p aibe   # aibe-client 統合テストが spawn するバイナリ
+cargo test --workspace --exclude aibe-client
+cargo test -p aibe-client -- --test-threads=1
+./scripts/check-architecture.sh   # クレート境界 + subprocess 方針 + check-hexagonal.sh
+./scripts/check-docs-consistency.sh   # README / 仕様索引 / testing.md 表の実在パス
+```
+
+ローカルでも PR 前に `verify.sh` を通す。GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）の `verify` job も同じ。
 
 ### CI と smoke の役割分担
 
 | 手段 | 内容 |
 |------|------|
-| **`verify` job** | `fmt` / `clippy` / `cargo test --workspace` / `check-architecture.sh` |
+| **`verify` job** | `./scripts/verify.sh`（`aibe-client` は直列テスト。`| tail` で包むと無出力に見えるので避ける） |
 | **`smoke-mock` job** | [`scripts/smoke-mock.sh`](../scripts/smoke-mock.sh) — 実 binary・実 socket・`provider = "mock"` で `ai ask` 1 回 |
 | **ローカル smoke** | `./scripts/smoke-mock.sh`（CI と同じ。実 API キー不要） |
 
@@ -28,7 +37,7 @@ cargo test --workspace
 | クレート | 単体 | 統合 / E2E |
 |----------|------|------------|
 | **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
-| **aibe-client** | — | `aibe-client/tests/client_ping.rs`、`ensure_running_*.rs`（mock `aibe` バイナリ起動は `tests/common/mod.rs`。`aibe` クレートへの path 依存なし） |
+| **aibe-client** | `ping` の connect タイムアウト（`lib.rs`） | `client_ping.rs`、`ensure_running_*.rs`（`serial_test` で直列。mock 起動は `tests/common/mod.rs`） |
 | **aibe** | server / agent / tools | `socket_protocol.rs`（server + socket）、`ai_ask_e2e.rs`（`ai` + mock server） |
 | **ai** | 設定・allowlist・presenter | `ask_integration.rs`（Mock クライアントのみ。server 起動は `aibe` 側） |
 

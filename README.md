@@ -227,11 +227,10 @@ OpenAI 公式 API も `provider = "openai_compatible"` を使う。`api_key` を
 品質ゲート（ローカル・CI 共通）:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace
-./scripts/check-architecture.sh   # クレート境界 + ヘキサゴナルレイヤー
+./scripts/verify.sh
 ```
+
+（`fmt` / `clippy` / `test` / クレート境界・subprocess 方針 / docs 整合）
 
 mock aibe への導通スモーク（実 API キー不要）:
 

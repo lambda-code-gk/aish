@@ -30,9 +30,9 @@
 ```text
 1. CI とスモークテストで壊れにくくする          ← Sprint 1 完了（0014）
 2. command_start ログの漏洩リスクを塞ぐ        ← Sprint 1 完了（0012）
-3. aibe-protocol / client 境界を整理する      ← Sprint 2（P1）着手待ち
+3. aibe-protocol / client 境界を整理する      ← Sprint 2（P1）完了（0017）
 ```
 
-1・2 まで済み（2026-05-26、`feature/v0.1-stabilization`）。3 を進めると、次の機能を安心して積める基盤になる、という結論。
+1〜3 まで済み（P0/P1、2026-05-26〜）。次は Sprint 3（P2 残り + P3）— [implementation-order.md](implementation-order.md)。
 
 詳細: [p0-stabilization.md](p0-stabilization.md)、[concerns.md](concerns.md) §2、[p1-protocol-split.md](p1-protocol-split.md)
