@@ -25,13 +25,15 @@
 
 ## Overview
 
-aish は 3 つのクレートで構成されます。
+aish ワークスペースは **5 つのクレート**で構成されます。
 
 | クレート | 種別 | 役割 |
 |---------|------|------|
+| **aibe-protocol** | ライブラリ | wire DTO（NDJSON / serde）、`ToolName`、契約定数 |
+| **aibe-client** | ライブラリ | Unix socket の `ping` / `ensure_running`、既定 socket パス |
 | **aibe** | ライブラリ + バイナリ | LLM プロバイダ呼び出し、ツール付きエージェントループ、Unix domain socket サーバ |
 | **aish** | バイナリ | シェル起動・コマンド実行、入出力を JSONL ログに記録（**ネットワークなし**） |
-| **ai** | バイナリ | aibe へリクエストし応答を表示。aish ログを任意でコンテキストに利用（**LLM を直接呼ばない**） |
+| **ai** | バイナリ | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログを任意でコンテキストに利用（**LLM を直接呼ばない**） |
 
 設計の正本は [docs/architecture.md](docs/architecture.md) です。
 
@@ -41,6 +43,7 @@ aish は 3 つのクレートで構成されます。
 
 - **aish** — シェル体験とログ（秘密や LLM 設定を持たない）
 - **aibe** — エージェントとプロバイダ（API キーはここだけ）
+- **aibe-protocol** / **aibe-client** — クライアント向け wire 型と socket ヘルパ（`ai` が利用）
 - **ai** — ユーザー向けクライアント（aibe 経由のみ）
 
 これにより、ログのコンテキスト連携と、監査可能な LLM 接続点を両立します。
@@ -55,19 +58,27 @@ flowchart LR
   aish[aish\nシェル・ログ]
   ai[ai\nクライアント]
   aibe[aibe\nエージェント]
+  proto[aibe-protocol]
+  cl[aibe-client]
   LLM[LLM API]
 
   SH <--> aish
   ai -->|Unix socket\nNDJSON| aibe
+  ai --> proto
+  ai --> cl
+  cl --> proto
   ai -.->|ログ読み込み| aish
   aibe --> LLM
+  aibe --> proto
 ```
 
 **依存の向き**（厳守）:
 
 ```text
-ai   →  aibe のみ
-aish →  aibe へ依存しない（シェル + ログのみ）
+ai            →  aibe-protocol, aibe-client のみ
+aibe-client   →  aibe-protocol のみ
+aibe          →  aibe-protocol, aibe-client
+aish          →  aibe へ依存しない（シェル + ログのみ）
 ```
 
 機械チェック: `./scripts/check-architecture.sh`

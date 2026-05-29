@@ -54,3 +54,10 @@ allowed_commands = ["ls", "git", "cargo", "echo"]
 
 [tools.read_file]
 allowed_roots = [".", "~/projects"]
+
+# list_dir / grep の探索上限（timeout 前のメモリ・I/O 抑制）
+[tools.explore]
+max_list_entries = 10_000
+max_grep_files_scanned = 5_000
+max_grep_matches = 5_000
+max_grep_file_bytes = 1_048_576

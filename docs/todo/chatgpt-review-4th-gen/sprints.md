@@ -17,22 +17,23 @@
 
 詳細: [p0-stabilization.md](p0-stabilization.md)
 
-## Sprint 2: クライアント境界整理 — **着手待ち**
+## Sprint 2: クライアント境界整理 — **完了**（0017）
 
-- `aibe-protocol` 分離
-- 可能なら `aibe-client` 分離
-- `ai` は `aibe` 本体ではなく client/protocol のみに依存
-- `architecture.md` 更新
+- ~~`aibe-protocol` 分離~~
+- ~~`aibe-client` 分離~~
+- ~~`ai` は `aibe` 本体ではなく client/protocol のみに依存~~
+- ~~`architecture.md` 更新~~
+- P2 docs 同期（0018）— **完了**
 - 既存テスト維持
 
 詳細: [p1-protocol-split.md](p1-protocol-split.md)
 
-## Sprint 3: AISH 体験の最小完成
+## Sprint 3: AISH 体験の最小完成 — **着手待ち**
 
-- `aish shell` の現在ログを `ai ask` が自動利用
-- `ai ask` のデフォルト context 確認
-- `read_file` / `grep` / `git_diff` 追加
-- `shell_exec` は明示指定時のみ
+- `aish shell` の現在ログを `ai ask` が自動利用（P3）
+- `ai ask` のデフォルト context 確認（P3）
+- ~~`read_file` / `grep` / `git_diff` / `git_status` / `list_dir` 追加~~ **実装済み**（safe tools）
+- ~~`shell_exec` は明示指定時のみ~~ **実装済み**
 - 人間向けの短い実行サマリ整備（`--verbose-tools` 以外）
 
 詳細: [p2-safe-tools.md](p2-safe-tools.md)、[p3-log-integration.md](p3-log-integration.md)

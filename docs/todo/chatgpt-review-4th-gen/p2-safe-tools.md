@@ -2,9 +2,9 @@
 
 [← 索引](README.md)
 
-正式指示書: [0018_safe-tools-policy-spec.md](../../0018_safe-tools-policy-spec.md)
+正式指示書（docs 同期・実装済み）: [0018_safe-tools-policy-spec.md](../../done/0018_safe-tools-policy-spec.md)
 
-[concerns.md](concerns.md) §4 の方向性。`shell_exec` は万能すぎるため、専用ツールを増やして「安全にできること」を広げ、`shell_exec` は明示指定時のみ、という提案。
+[concerns.md](concerns.md) §4 の方向性。`shell_exec` は万能すぎるため、専用ツールを増やして「安全にできること」を広げ、`shell_exec` は明示指定時のみ、という提案。以後の正本は 0018 の正式指示書に寄せる。
 
 ## 追加順（読み取り中心）
 

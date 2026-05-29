@@ -9,9 +9,11 @@ pub mod tools;
 
 pub use command_policy::CommandPolicy;
 pub use config::{
-    AppConfig, ConfigError, ConfigLoader, LlmBackend, LlmGenerationParams, LlmProfile,
-    LlmProfilesConfig, LlmProviderKind, ProfileRegistry, ReadFileConfig, ShellExecConfig,
-    TerminationStrategy, ToolsConfig, DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
+    AppConfig, ConfigError, ConfigLoader, ExploreLimitsConfig, LlmBackend, LlmGenerationParams,
+    LlmProfile, LlmProfilesConfig, LlmProviderKind, ProfileRegistry, ReadFileConfig,
+    ShellExecConfig, TerminationStrategy, ToolsConfig, DEFAULT_MAX_GREP_FILES_SCANNED,
+    DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_MATCHES, DEFAULT_MAX_LIST_ENTRIES,
+    DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
 };
 pub use llm::{LlmError, LlmProvider};
 pub use termination_capability::TerminationCapability;

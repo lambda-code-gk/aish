@@ -68,12 +68,18 @@
 
 ### safe tools / dangerous tools
 
-- 読み取り目的では `read_file` / `list_dir` / `grep` / `git_diff` / `git_status` を優先し、`shell_exec` を読み取り代替として使わない
-- `shell_exec` は `@exec` か literal 指定が明示された場合のみ dangerous tool として扱う
-- dangerous request は client 側の warning に依存せず、aibe 側でも server-side で拒否できる前提にする
-- write-like tools は dry-run → approval → execute の順で扱い、実行前に結果の確認経路を残す
-- dangerous request の監査観点として `risk_class`、`approval_state`、`dry_run` などのメタデータを追える設計を推奨する
-- manual や logs に残す説明は、本番設定や秘密情報を含めない
+設計の上位正本: [architecture.md](architecture.md)。検証の所在: [testing.md](testing.md) の「0018 safe-tools-policy」。
+
+| 区分 | ツール例 | 許可の考え方 |
+|------|----------|--------------|
+| **safe** | `read_file`, `list_dir`, `grep`, `git_diff`, `git_status` | `@read-only` / `@full` で既定有効。読み取り目的で `shell_exec` を使わない |
+| **dangerous** | `shell_exec` | `@exec` または literal 指定が **明示** された場合のみ。それ以外は aibe が拒否する |
+| **将来（未実装）** | `write_file`, `replace_file`, `apply_patch` | 導入時は dry-run → approval → execute の順を前提にする（現リポジトリに当該ツールはない） |
+
+- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示する。`shell_exec` 有効時は warning を出す。表示は補助情報であり、実行許可の最終判断ではない（[architecture.md](architecture.md) のツール方針と [manual/ai-ask-tools.md](manual/ai-ask-tools.md) の手順を参照）。
+- **server 側（`aibe`）**: allowlist 外ツール・不正な `cwd`・パス境界違反などは **server-side で拒否** する。client の warning の有無に依存しない。
+- **監査（推奨）**: dangerous request には、将来のログ・プロトコル拡張で `risk_class`、`approval_state`、`dry_run` などを追跡できる設計を推奨する（現行 wire 型にすべてが載っているわけではない）。
+- manual や logs に残す説明は、本番設定や秘密情報を含めない。
 
 ### ai のツール表示
 
@@ -87,7 +93,8 @@
 - **Unix 専用**: ファイルモード・ソケットパスは umask / `chmod` を意識する
 - aibe の socket: ユーザー私用ディレクトリ配下。`bind` 時は umask `077` + `chmod 600`（foreground / デーモン共通）
 - aish が起動するシェルは **ユーザー自身の権限** で動く。エージェントのツール実行はその権限を継承する — 高権限シェルでは aibe を動かさない運用を推奨
-- **`shell_exec` タイムアウト**: aibe は timeout 時に子プロセスへ `start_kill()` を送り、**明示 `wait()` で reap** する。`kill_on_drop(true)` は補助的な保険であり、明示 kill/reap の代替ではない
+- **外部コマンドのタイムアウト**（`shell_exec` / `git_diff` / `git_status` / `git rev-parse`）: aibe は timeout 時に子プロセスへ `start_kill()` を送り、**明示 `wait()` で reap** する（共通 `run_subprocess`）。`kill_on_drop(true)` は補助的な保険であり、明示 kill/reap の代替ではない
+- **`list_dir` / `grep`**: `[tools.explore]` の件数・走査上限で timeout 前のメモリ・I/O を抑制する（`docs/aibe.config.example.toml`）
 
 ## 依存関係
 

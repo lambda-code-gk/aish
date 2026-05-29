@@ -1,17 +1,17 @@
 //! `git_status` ツール（読み取り専用）。
 
-use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
-
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
-use tokio::time::timeout;
 
 use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
 use crate::ports::outbound::{ToolExecutionContext, ToolExecutor};
 
+use super::git_common::{
+    ensure_within_base_dir, git_root_for, path_from_args, relative_path, run_git_command,
+    GitCommandError,
+};
 use super::tool_output::limit_tool_output;
 
 pub struct GitStatusTool {
@@ -28,95 +28,6 @@ impl GitStatusTool {
 struct GitStatusArgs {
     #[serde(default)]
     path: Option<String>,
-}
-
-fn path_from_args(ctx: &ToolExecutionContext, path: Option<&str>) -> Result<PathBuf, String> {
-    let candidate = path
-        .map(Path::new)
-        .map(|p| {
-            if p.is_absolute() {
-                Err("path must be relative to client cwd".to_string())
-            } else if p.components().any(|c| matches!(c, Component::ParentDir)) {
-                Err("path must not contain '..'".to_string())
-            } else {
-                Ok(ctx.resolve_path(p))
-            }
-        })
-        .transpose()?
-        .unwrap_or_else(|| ctx.base_dir().to_path_buf());
-    Ok(candidate)
-}
-
-async fn ensure_within_base_dir(path: &Path, base_dir: &Path) -> Result<(), String> {
-    let canonical_base = tokio::fs::canonicalize(base_dir)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut probe = path.to_path_buf();
-    while !tokio::fs::try_exists(&probe)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        let Some(parent) = probe.parent() else {
-            return Err("path escapes client cwd".to_string());
-        };
-        probe = parent.to_path_buf();
-    }
-    let canonical_probe = tokio::fs::canonicalize(&probe)
-        .await
-        .map_err(|e| e.to_string())?;
-    if !canonical_probe.starts_with(&canonical_base) {
-        return Err("path escapes client cwd".to_string());
-    }
-    Ok(())
-}
-
-async fn git_root_for(path: &Path) -> Result<PathBuf, String> {
-    let mut start_dir = if path.is_dir() {
-        path.to_path_buf()
-    } else {
-        path.parent()
-            .ok_or_else(|| "path has no parent directory".to_string())?
-            .to_path_buf()
-    };
-    while !start_dir.exists() {
-        let Some(parent) = start_dir.parent() else {
-            break;
-        };
-        start_dir = parent.to_path_buf();
-    }
-    if start_dir.is_file() {
-        start_dir = start_dir
-            .parent()
-            .ok_or_else(|| "path has no parent directory".to_string())?
-            .to_path_buf();
-    }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&start_dir)
-        .arg("rev-parse")
-        .arg("--show-toplevel")
-        .output()
-        .await
-        .map_err(|e| format!("failed to run git rev-parse: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if root.is_empty() {
-        Err("git root not found".to_string())
-    } else {
-        Ok(PathBuf::from(root))
-    }
-}
-
-fn relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
-    path.strip_prefix(root).ok().and_then(|rel| {
-        if rel.as_os_str().is_empty() {
-            None
-        } else {
-            Some(rel.to_path_buf())
-        }
-    })
 }
 
 #[async_trait]
@@ -190,11 +101,16 @@ impl ToolExecutor for GitStatusTool {
                 },
             );
         }
-        let root = match git_root_for(&target).await {
+        let root = match git_root_for(&target, timeout_ms).await {
             Ok(root) => root,
             Err(msg) => {
+                let code = if msg.contains("timed out") {
+                    "timeout"
+                } else {
+                    "not_a_repo"
+                };
                 return (
-                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "not_a_repo", &msg),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, code, &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg,
@@ -215,30 +131,17 @@ impl ToolExecutor for GitStatusTool {
             cmd.arg("--").arg(rel);
         }
 
-        let duration = Duration::from_millis(timeout_ms.max(1));
-        let output = match timeout(duration, cmd.output()).await {
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) => {
-                let msg = format!("failed to run git status: {e}");
+        let (stdout, _stderr) = match run_git_command(cmd, timeout_ms, "status").await {
+            Ok(out) => out,
+            Err(e) => {
+                let code = match &e {
+                    GitCommandError::TimedOut(_) => "timeout",
+                    GitCommandError::NonZeroExit(_) => "nonzero_exit",
+                    GitCommandError::Failed(_) => "execution_failed",
+                };
+                let msg = e.user_message("status");
                 return (
-                    ExecutedToolCall::err(
-                        id.clone(),
-                        self.name(),
-                        args_value,
-                        "execution_failed",
-                        &msg,
-                    ),
-                    ToolResult {
-                        tool_call_id: id,
-                        content: msg,
-                        is_error: true,
-                    },
-                );
-            }
-            Err(_) => {
-                let msg = format!("git status timed out after {timeout_ms}ms");
-                return (
-                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, code, &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg.clone(),
@@ -248,22 +151,10 @@ impl ToolExecutor for GitStatusTool {
             }
         };
 
-        if !output.status.success() {
-            let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return (
-                ExecutedToolCall::err(id.clone(), self.name(), args_value, "nonzero_exit", &msg),
-                ToolResult {
-                    tool_call_id: id,
-                    content: msg,
-                    is_error: true,
-                },
-            );
-        }
-
         let body = format!(
             "repo_root: {}\n{}\n",
             root.display(),
-            String::from_utf8_lossy(&output.stdout).trim_end()
+            String::from_utf8_lossy(&stdout).trim_end()
         );
         let out = limit_tool_output(&body, self.max_output_bytes);
         (
@@ -287,36 +178,25 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("tracked.txt"), "one\n").expect("write");
         let root = dir.path();
-        Command::new("git")
+        tokio::process::Command::new("git")
             .arg("init")
             .current_dir(root)
             .output()
             .await
             .expect("git init");
-        Command::new("git")
-            .args(["config", "user.email", "a@example.com"])
-            .current_dir(root)
-            .output()
-            .await
-            .expect("git config email");
-        Command::new("git")
-            .args(["config", "user.name", "A"])
-            .current_dir(root)
-            .output()
-            .await
-            .expect("git config name");
-        Command::new("git")
-            .args(["add", "tracked.txt"])
-            .current_dir(root)
-            .output()
-            .await
-            .expect("git add");
-        Command::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(root)
-            .output()
-            .await
-            .expect("git commit");
+        for args in [
+            &["config", "user.email", "a@example.com"][..],
+            &["config", "user.name", "A"][..],
+            &["add", "tracked.txt"][..],
+            &["commit", "-m", "init"][..],
+        ] {
+            tokio::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .await
+                .expect("git setup");
+        }
         std::fs::write(root.join("tracked.txt"), "one\ntwo\n").expect("modify");
         std::fs::write(root.join("new.txt"), "new\n").expect("new");
 

@@ -1,7 +1,7 @@
 # ChatGPT レビュー — 4 代目 AISH（2026-05-26）
 
 > **出典**: ユーザー共有の ChatGPT レビュー（`main` の README / 設計文書前提）。  
-> **状態**: P0〜P3 を採用。**Sprint 1（P0）完了**（2026-05-26、`feature/v0.1-stabilization`）。次は Sprint 2（P1）。**着手順**: [implementation-order.md](implementation-order.md)。
+> **状態**: P0〜P3 を採用。**Sprint 1（P0）・Sprint 2（P1 / 0017）・P2 docs 同期（0018）完了**。**次**: Sprint 3（P2 残り + P3）。**着手順**: [implementation-order.md](implementation-order.md)。現在地の要約は [../README.md](../README.md)。
 
 ## 一覧
 

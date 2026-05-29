@@ -10,17 +10,23 @@ use serde_json::Value;
 use tokio::time::timeout;
 
 use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
-use crate::ports::outbound::{ToolExecutionContext, ToolExecutor};
+use crate::ports::outbound::{ExploreLimitsConfig, ToolExecutionContext, ToolExecutor};
 
 use super::tool_output::limit_tool_output;
 
+const TRUNCATION_NOTE: &str = "\n... (grep truncated: scan or match limit reached)";
+
 pub struct GrepTool {
     max_output_bytes: usize,
+    explore: ExploreLimitsConfig,
 }
 
 impl GrepTool {
-    pub fn new(max_output_bytes: usize) -> Self {
-        Self { max_output_bytes }
+    pub fn new(max_output_bytes: usize, explore: ExploreLimitsConfig) -> Self {
+        Self {
+            max_output_bytes,
+            explore,
+        }
     }
 }
 
@@ -35,7 +41,18 @@ fn has_parent_traversal(path: &Path) -> bool {
     path.components().any(|c| matches!(c, Component::ParentDir))
 }
 
-async fn grep_file(regex: &Regex, root: &Path, path: &Path) -> Result<Vec<String>, String> {
+async fn grep_file(
+    regex: &Regex,
+    root: &Path,
+    path: &Path,
+    max_file_bytes: usize,
+    max_matches: usize,
+    matches: &mut Vec<String>,
+) -> Result<bool, String> {
+    let metadata = tokio::fs::metadata(path).await.map_err(|e| e.to_string())?;
+    if metadata.len() > max_file_bytes as u64 {
+        return Ok(false);
+    }
     let content = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| e.to_string())?;
@@ -47,13 +64,15 @@ async fn grep_file(regex: &Regex, root: &Path, path: &Path) -> Result<Vec<String
     } else {
         rel.to_path_buf()
     };
-    let mut out = Vec::new();
     for (idx, line) in content.lines().enumerate() {
         if regex.is_match(line) {
-            out.push(format!("{}:{}:{}", rel.display(), idx + 1, line));
+            matches.push(format!("{}:{}:{}", rel.display(), idx + 1, line));
+            if matches.len() >= max_matches {
+                return Ok(true);
+            }
         }
     }
-    Ok(out)
+    Ok(false)
 }
 
 async fn walk_and_grep(
@@ -61,7 +80,8 @@ async fn walk_and_grep(
     base_dir: &Path,
     path: &Path,
     recursive: bool,
-) -> Result<Vec<String>, String> {
+    limits: &ExploreLimitsConfig,
+) -> Result<(Vec<String>, bool), String> {
     let canonical_base = tokio::fs::canonicalize(base_dir)
         .await
         .map_err(|e| e.to_string())?;
@@ -75,7 +95,17 @@ async fn walk_and_grep(
         .await
         .map_err(|e| e.to_string())?;
     if metadata.is_file() {
-        return grep_file(regex, &canonical_base, &canonical_path).await;
+        let mut lines = Vec::new();
+        let truncated = grep_file(
+            regex,
+            &canonical_base,
+            &canonical_path,
+            limits.max_grep_file_bytes,
+            limits.max_grep_matches,
+            &mut lines,
+        )
+        .await?;
+        return Ok((lines, truncated));
     }
     if !metadata.is_dir() {
         return Err("path is not a file or directory".to_string());
@@ -83,7 +113,9 @@ async fn walk_and_grep(
 
     let mut stack = vec![canonical_path];
     let mut lines = Vec::new();
-    while let Some(dir) = stack.pop() {
+    let mut files_scanned = 0usize;
+    let mut truncated = false;
+    'walk: while let Some(dir) = stack.pop() {
         let mut read_dir = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
         let mut children = Vec::new();
         while let Some(entry) = read_dir.next_entry().await.map_err(|e| e.to_string())? {
@@ -102,13 +134,28 @@ async fn walk_and_grep(
                 continue;
             }
             if meta.is_file() {
-                if let Ok(matches) = grep_file(regex, &canonical_base, &child).await {
-                    lines.extend(matches);
+                files_scanned += 1;
+                if files_scanned > limits.max_grep_files_scanned {
+                    truncated = true;
+                    break 'walk;
+                }
+                if grep_file(
+                    regex,
+                    &canonical_base,
+                    &child,
+                    limits.max_grep_file_bytes,
+                    limits.max_grep_matches,
+                    &mut lines,
+                )
+                .await?
+                {
+                    truncated = true;
+                    break 'walk;
                 }
             }
         }
     }
-    Ok(lines)
+    Ok((lines, truncated))
 }
 
 #[async_trait]
@@ -215,15 +262,19 @@ impl ToolExecutor for GrepTool {
         let duration = Duration::from_millis(timeout_ms.max(1));
         match timeout(
             duration,
-            walk_and_grep(&regex, ctx.base_dir(), &target, true),
+            walk_and_grep(&regex, ctx.base_dir(), &target, true, &self.explore),
         )
         .await
         {
-            Ok(Ok(lines)) => {
+            Ok(Ok((lines, truncated))) => {
                 let rendered = if lines.is_empty() {
                     "no matches".to_string()
                 } else {
-                    lines.join("\n")
+                    let mut out = lines.join("\n");
+                    if truncated {
+                        out.push_str(TRUNCATION_NOTE);
+                    }
+                    out
                 };
                 let rendered = limit_tool_output(&rendered, self.max_output_bytes);
                 (
@@ -273,7 +324,7 @@ mod tests {
         std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
         std::fs::write(dir.path().join("sub/other.txt"), "omega\nalpha\n").expect("write");
         let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
-        let tool = GrepTool::new(4096);
+        let tool = GrepTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"pattern":"alpha"});
         let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
         assert!(!result.is_error, "{}", result.content);
@@ -287,7 +338,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("note.txt"), "alpha\n").expect("write");
         let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
-        let tool = GrepTool::new(4096);
+        let tool = GrepTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"pattern":"alpha","path":"/tmp/note.txt"});
         let (_record, result) = tool.execute("tc2", &args, 5000, &ctx).await;
         assert!(result.is_error);
@@ -298,7 +349,7 @@ mod tests {
     async fn rejects_parent_traversal_path() {
         let dir = tempfile::tempdir().expect("tempdir");
         let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
-        let tool = GrepTool::new(4096);
+        let tool = GrepTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"pattern":"alpha","path":"../note.txt"});
         let (_record, result) = tool.execute("tc3", &args, 5000, &ctx).await;
         assert!(result.is_error);
@@ -321,7 +372,7 @@ mod tests {
 
         let ctx =
             ToolExecutionContext::new(ClientCwd::new(base.path().to_path_buf()).expect("cwd"));
-        let tool = GrepTool::new(4096);
+        let tool = GrepTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"pattern":"alpha","path":"secret_link.txt"});
         let (_record, result) = tool.execute("tc4", &args, 5000, &ctx).await;
         assert!(result.is_error);

@@ -26,7 +26,7 @@ description: Codexの指示書→実装→レビューの7ステップを実行
 - `git commit` / `git push` はユーザー明示時のみ
 
 参照ファイル:
-- `docs/0018_safe-tools-policy-spec.md`
+- `docs/done/0018_safe-tools-policy-spec.md`
 - `docs/codex-delegation.md`
 - `docs/manual/codex-spec-impl-review-loop.md`
 - `docs/architecture.md`

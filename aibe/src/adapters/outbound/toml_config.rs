@@ -436,6 +436,40 @@ fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
                 tools.termination_strategy = strategy;
             }
         }
+        if let Some(e) = t.explore.as_ref() {
+            if let Some(n) = e.max_list_entries {
+                if n == 0 {
+                    return Err(ConfigError::Invalid(
+                        "[tools.explore] max_list_entries must be at least 1".into(),
+                    ));
+                }
+                tools.explore.max_list_entries = n;
+            }
+            if let Some(n) = e.max_grep_files_scanned {
+                if n == 0 {
+                    return Err(ConfigError::Invalid(
+                        "[tools.explore] max_grep_files_scanned must be at least 1".into(),
+                    ));
+                }
+                tools.explore.max_grep_files_scanned = n;
+            }
+            if let Some(n) = e.max_grep_matches {
+                if n == 0 {
+                    return Err(ConfigError::Invalid(
+                        "[tools.explore] max_grep_matches must be at least 1".into(),
+                    ));
+                }
+                tools.explore.max_grep_matches = n;
+            }
+            if let Some(n) = e.max_grep_file_bytes {
+                if n == 0 {
+                    return Err(ConfigError::Invalid(
+                        "[tools.explore] max_grep_file_bytes must be at least 1".into(),
+                    ));
+                }
+                tools.explore.max_grep_file_bytes = n;
+            }
+        }
     }
     Ok(tools)
 }
@@ -463,6 +497,15 @@ struct ToolsSection {
     termination_strategy: Option<String>,
     shell_exec: Option<ShellExecSection>,
     read_file: Option<ReadFileSection>,
+    explore: Option<ExploreSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExploreSection {
+    max_list_entries: Option<usize>,
+    max_grep_files_scanned: Option<usize>,
+    max_grep_matches: Option<usize>,
+    max_grep_file_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

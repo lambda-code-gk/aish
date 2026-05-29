@@ -9,17 +9,23 @@ use serde_json::Value;
 use tokio::time::timeout;
 
 use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
-use crate::ports::outbound::{ToolExecutionContext, ToolExecutor};
+use crate::ports::outbound::{ExploreLimitsConfig, ToolExecutionContext, ToolExecutor};
 
 use super::tool_output::limit_tool_output;
 
+const TRUNCATION_NOTE: &str = "\n... (list truncated: max_list_entries reached)";
+
 pub struct ListDirTool {
     max_output_bytes: usize,
+    explore: ExploreLimitsConfig,
 }
 
 impl ListDirTool {
-    pub fn new(max_output_bytes: usize) -> Self {
-        Self { max_output_bytes }
+    pub fn new(max_output_bytes: usize, explore: ExploreLimitsConfig) -> Self {
+        Self {
+            max_output_bytes,
+            explore,
+        }
     }
 }
 
@@ -52,7 +58,8 @@ async fn collect_entries(
     root: &Path,
     recursive: bool,
     base_dir: &Path,
-) -> Result<Vec<String>, String> {
+    max_entries: usize,
+) -> Result<(Vec<String>, bool), String> {
     let canonical_root = tokio::fs::canonicalize(root)
         .await
         .map_err(|e| e.to_string())?;
@@ -71,7 +78,8 @@ async fn collect_entries(
 
     let mut stack = vec![canonical_root.clone()];
     let mut lines = Vec::new();
-    while let Some(dir) = stack.pop() {
+    let mut truncated = false;
+    'walk: while let Some(dir) = stack.pop() {
         let mut read_dir = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
         let mut paths = Vec::new();
         while let Some(entry) = read_dir.next_entry().await.map_err(|e| e.to_string())? {
@@ -95,6 +103,10 @@ async fn collect_entries(
                 display.push('/');
             }
             lines.push(format!("{kind} {display}"));
+            if lines.len() >= max_entries {
+                truncated = true;
+                break 'walk;
+            }
 
             if recursive && metadata.is_dir() {
                 stack.push(path);
@@ -103,7 +115,7 @@ async fn collect_entries(
     }
 
     lines.sort();
-    Ok(lines)
+    Ok((lines, truncated))
 }
 
 #[async_trait]
@@ -171,15 +183,24 @@ impl ToolExecutor for ListDirTool {
         let duration = Duration::from_millis(timeout_ms.max(1));
         match timeout(
             duration,
-            collect_entries(&target, parsed.recursive, ctx.base_dir()),
+            collect_entries(
+                &target,
+                parsed.recursive,
+                ctx.base_dir(),
+                self.explore.max_list_entries,
+            ),
         )
         .await
         {
-            Ok(Ok(entries)) => {
+            Ok(Ok((entries, truncated))) => {
                 let output = if entries.is_empty() {
                     "no entries".to_string()
                 } else {
-                    entries.join("\n")
+                    let mut out = entries.join("\n");
+                    if truncated {
+                        out.push_str(TRUNCATION_NOTE);
+                    }
+                    out
                 };
                 let output = limit_tool_output(&output, self.max_output_bytes);
                 (
@@ -223,12 +244,31 @@ mod tests {
     use crate::domain::ClientCwd;
 
     #[tokio::test]
+    async fn truncates_when_max_entries_reached() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for i in 0..5 {
+            std::fs::write(dir.path().join(format!("f{i}.txt")), "x").expect("write");
+        }
+        let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
+        let limits = ExploreLimitsConfig {
+            max_list_entries: 3,
+            ..ExploreLimitsConfig::default()
+        };
+        let tool = ListDirTool::new(4096, limits);
+        let (_record, result) = tool
+            .execute("tc0", &serde_json::json!({}), 5000, &ctx)
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("max_list_entries"));
+    }
+
+    #[tokio::test]
     async fn lists_directory_entries() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("a.txt"), "a").expect("write");
         std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
         let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
-        let tool = ListDirTool::new(4096);
+        let tool = ListDirTool::new(4096, ExploreLimitsConfig::default());
         let (_record, result) = tool
             .execute("tc1", &serde_json::json!({}), 5000, &ctx)
             .await;
@@ -241,7 +281,7 @@ mod tests {
     async fn rejects_absolute_path() {
         let dir = tempfile::tempdir().expect("tempdir");
         let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
-        let tool = ListDirTool::new(4096);
+        let tool = ListDirTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"path": "/tmp"});
         let (_record, result) = tool.execute("tc2", &args, 5000, &ctx).await;
         assert!(result.is_error);
@@ -252,7 +292,7 @@ mod tests {
     async fn rejects_parent_traversal_path() {
         let dir = tempfile::tempdir().expect("tempdir");
         let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
-        let tool = ListDirTool::new(4096);
+        let tool = ListDirTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"path": "../outside"});
         let (_record, result) = tool.execute("tc3", &args, 5000, &ctx).await;
         assert!(result.is_error);
@@ -271,7 +311,7 @@ mod tests {
 
         let ctx =
             ToolExecutionContext::new(ClientCwd::new(base.path().to_path_buf()).expect("cwd"));
-        let tool = ListDirTool::new(4096);
+        let tool = ListDirTool::new(4096, ExploreLimitsConfig::default());
         let args = serde_json::json!({"path": "link_out"});
         let (_record, result) = tool.execute("tc4", &args, 5000, &ctx).await;
         assert!(result.is_error);

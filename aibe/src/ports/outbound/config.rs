@@ -12,6 +12,15 @@ use super::termination_capability::TerminationCapability;
 /// `tool_calls` / LLM 向け tool result の既定上限（バイト）。
 pub const DEFAULT_MAX_TOOL_OUTPUT_BYTES: usize = aibe_protocol::MAX_TOOL_OUTPUT_BYTES;
 
+/// `list_dir` が返すエントリ行の既定上限。
+pub const DEFAULT_MAX_LIST_ENTRIES: usize = 10_000;
+/// `grep` が走査するファイル数の既定上限。
+pub const DEFAULT_MAX_GREP_FILES_SCANNED: usize = 5_000;
+/// `grep` が返すマッチ行の既定上限。
+pub const DEFAULT_MAX_GREP_MATCHES: usize = 5_000;
+/// `grep` が 1 ファイルあたり読むバイトの既定上限。
+pub const DEFAULT_MAX_GREP_FILE_BYTES: usize = 1_048_576;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub socket_path: PathBuf,
@@ -52,6 +61,16 @@ pub struct ToolsConfig {
     pub termination_strategy: TerminationStrategy,
     pub shell_exec: ShellExecConfig,
     pub read_file: ReadFileConfig,
+    pub explore: ExploreLimitsConfig,
+}
+
+/// `list_dir` / `grep` の探索上限（timeout 前のメモリ・I/O 抑制）。
+#[derive(Debug, Clone)]
+pub struct ExploreLimitsConfig {
+    pub max_list_entries: usize,
+    pub max_grep_files_scanned: usize,
+    pub max_grep_matches: usize,
+    pub max_grep_file_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +108,18 @@ impl Default for ToolsConfig {
             read_file: ReadFileConfig {
                 allowed_roots: vec![PathBuf::from(".")],
             },
+            explore: ExploreLimitsConfig::default(),
+        }
+    }
+}
+
+impl Default for ExploreLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_list_entries: DEFAULT_MAX_LIST_ENTRIES,
+            max_grep_files_scanned: DEFAULT_MAX_GREP_FILES_SCANNED,
+            max_grep_matches: DEFAULT_MAX_GREP_MATCHES,
+            max_grep_file_bytes: DEFAULT_MAX_GREP_FILE_BYTES,
         }
     }
 }

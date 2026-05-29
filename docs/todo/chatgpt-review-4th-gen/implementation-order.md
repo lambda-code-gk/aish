@@ -3,15 +3,16 @@
 [← 索引](README.md)
 
 **記録日**: 2026-05-26  
-**状態**: 採用 — **Sprint 1（P0）完了**（2026-05-26）。**次**: Sprint 2（P1）。各ステップは feature ブランチ + 意味単位の commit。
+**状態**: 採用 — **Sprint 1（P0）・Sprint 2（P1 / 0017）・P2 docs 同期（0018）完了**（2026-05-29 時点）。**次**: Sprint 3（P2 残り + P3）。各ステップは feature ブランチ + 意味単位の commit。
 
 ## 全体の流れ
 
 ```text
 0. 突き合わせ（verification）— 完了 → [verification.md](verification.md)
 1. Sprint 1 / P0 — v0.1 安定化 — **完了**
-2. Sprint 2 / P1 — aibe-protocol / aibe-client 境界 — **着手待ち**
-3. Sprint 3 / P2+P3 — 安全なツール拡張 + aish ログ連携
+2. Sprint 2 / P1 — aibe-protocol / aibe-client 境界 — **完了**（0017）
+3. P2 docs — safe-tools-policy 同期 — **完了**（0018）
+4. Sprint 3 / P2 残り + P3 — 安全なツール拡張 + aish ログ連携 — **着手待ち**
 ```
 
 P1 以降は P0 がマージ可能な状態になってから。プロジェクト優先順位（セキュリティ > 体験 > 保守性）に合わせ、**Sprint 1 内の順序はレビュー表の番号とは異なる**（下記）。

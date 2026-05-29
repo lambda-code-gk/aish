@@ -65,10 +65,23 @@ cargo test --workspace
 
 ### 0018 safe-tools-policy の検証観点
 
-- **integration**: `ai/tests/tool_catalog_sync.rs`、`ai/tests/tool_names_sync.rs`（`tests/` 配下の統合テスト）と `aibe` の tool policy 関連 unit で `@read-only` / `@exec` / `@full` の展開と safe tools の扱いを固定する
-- **integration**: `ai/tests/ask_integration.rs` で `shell_exec` の warning 表示を確認し、`aibe/tests/request_tool_validation.rs`・`aibe/tests/agent_turn_loop.rs`・`aibe/tests/socket_protocol.rs` で拒否と server-side enforcement の入口検証を確認する（承認済み通過経路は別途追加テストで補完対象）
-- **manual**: `docs/manual/ai-ask-tools.md` の手順で safe tools の表示、`shell_exec` の warning、拒否 / 承認の見え方を確認する
-- **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる
+正式指示書: [0018_safe-tools-policy-spec.md](done/0018_safe-tools-policy-spec.md)。設計の上位正本は [architecture.md](architecture.md)。
+
+| 種別 | ファイル | 担保する観点 |
+|------|----------|--------------|
+| **integration** | `ai/tests/tool_catalog_sync.rs` | `@read-only` / `@exec` / `@full` の展開。`@full` に `shell_exec` が含まれないこと |
+| **integration** | `ai/tests/tool_names_sync.rs` | `KNOWN_TOOLS` とカテゴリ表の機械同期 |
+| **integration** | `ai/tests/ask_integration.rs` | 起動時ツール表示・`shell_exec` 有効時の warning 文言 |
+| **integration** | `aibe/tests/request_tool_validation.rs` | allowlist 外ツール・`cwd` 未送信などの server-side 拒否 |
+| **integration** | `aibe/tests/agent_turn_loop.rs` | `agent_turn` ループと tool result 継続の入口 |
+| **integration** | `aibe/tests/agent_turn_tools.rs` | safe tools / `shell_exec` を含むツール実行経路 |
+| **integration** | `aibe/tests/socket_protocol.rs` | socket 経由の `agent_turn` と拒否応答 |
+| **unit** | `aibe/src/adapters/outbound/tools/shell_exec.rs`（`#[cfg(test)]`） | `run_subprocess` の timeout / kill / reap、大量 stdout の非誤 timeout |
+| **manual** | [manual/ai-ask-tools.md](manual/ai-ask-tools.md) | safe tools 表示、`shell_exec` の warning、拒否 / 承認の見え方 |
+
+- **client / server の役割**: `ai` 側テストは allowlist 解決と起動時表示。`aibe` 側テストは実行時拒否とループ継続。client の warning だけに依存しないことは `aibe` の拒否テストで追う。
+- **補完対象**: `shell_exec` が allowlist に含まれた場合の承認済み通過経路は、現状の統合テストだけでは十分に固定されていない。追加する場合は 0018 とは別の指示書で扱う。
+- **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる。
 
 ## モック・フィクスチャ
 
