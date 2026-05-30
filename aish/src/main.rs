@@ -4,7 +4,9 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use aish::adapters::inbound::{strip_common_options, CommonOptionsError};
+use clap::Parser;
+
+use aish::adapters::inbound::{AishCli, AishCommand};
 use aish::adapters::outbound::toml_config::AishConfig;
 use aish::adapters::outbound::{
     create_shell_session, prune_old_sessions, read_session_info, resolve_sessions_parent,
@@ -16,6 +18,10 @@ use aish::domain::{CommandSpec, LogEvent};
 use aish::ports::outbound::SessionLog;
 
 fn main() -> ExitCode {
+    if AishCli::try_complete_env() {
+        return ExitCode::SUCCESS;
+    }
+
     match run() {
         Ok(code) => ExitCode::from(code),
         Err(e) => {
@@ -26,45 +32,39 @@ fn main() -> ExitCode {
 }
 
 fn run() -> anyhow::Result<u8> {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(cmd) = args.first().map(String::as_str) else {
-        print_usage();
-        anyhow::bail!("missing subcommand");
-    };
-    let cmd = cmd.to_string();
-    args.remove(0);
-    match cmd.as_str() {
-        "exec" => run_exec(&mut args),
-        "shell" => run_shell(&mut args),
-        "session" => run_session(&mut args),
-        _ => {
-            print_usage();
-            anyhow::bail!("unknown subcommand: {cmd}");
+    let cli = AishCli::parse();
+    match cli.command {
+        AishCommand::Exec {
+            format: _,
+            log,
+            command,
+        } => run_exec(log, command),
+        AishCommand::Shell { format: _ } => run_shell(),
+        AishCommand::Session { format } => run_session(format.into()),
+        AishCommand::Complete { shell } => {
+            AishCli::run_complete(shell)?;
+            Ok(0)
         }
     }
 }
 
-fn run_session(args: &mut Vec<String>) -> anyhow::Result<u8> {
-    let common = strip_common_options(args).map_err(common_options_to_anyhow)?;
-    if !args.is_empty() {
-        anyhow::bail!("usage: aish session [--format tsv|json|env]");
-    }
+fn run_session(format: aish::domain::OutputFormat) -> anyhow::Result<u8> {
     let dir = session_dir_from_env().map_err(session_read_to_anyhow)?;
     let info = read_session_info(&dir).map_err(session_read_to_anyhow)?;
-    let out = format_session(&info, common.format);
+    let out = format_session(&info, format);
     io::stdout()
         .write_all(out.as_bytes())
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(0)
 }
 
-fn run_exec(args: &mut Vec<String>) -> anyhow::Result<u8> {
-    let _common = strip_common_options(args).map_err(common_options_to_anyhow)?;
-    let (log_path, cmd_args) = parse_exec_log_args(args)?;
-    let program = cmd_args
+fn run_exec(log: Option<PathBuf>, command: Vec<String>) -> anyhow::Result<u8> {
+    let cfg = AishConfig::load();
+    let log_path = log.unwrap_or_else(|| cfg.default_exec_log());
+    let program = command
         .first()
         .ok_or_else(|| anyhow::anyhow!("missing command after --"))?;
-    let command_args: Vec<String> = cmd_args[1..].to_vec();
+    let command_args: Vec<String> = command[1..].to_vec();
 
     let spec = CommandSpec {
         program: program.clone(),
@@ -80,12 +80,7 @@ fn run_exec(args: &mut Vec<String>) -> anyhow::Result<u8> {
     Ok(result.exit_code.unwrap_or(0) as u8)
 }
 
-fn run_shell(args: &mut Vec<String>) -> anyhow::Result<u8> {
-    let _common = strip_common_options(args).map_err(common_options_to_anyhow)?;
-    reject_shell_log_flag(args)?;
-    if !args.is_empty() {
-        anyhow::bail!("usage: aish shell [--format tsv|json|env]");
-    }
+fn run_shell() -> anyhow::Result<u8> {
     let cfg = AishConfig::load();
     let parent = resolve_sessions_parent(&cfg);
     let layout = create_shell_session(&parent).map_err(session_store_to_anyhow)?;
@@ -110,23 +105,6 @@ fn run_shell(args: &mut Vec<String>) -> anyhow::Result<u8> {
     Ok(code as u8)
 }
 
-fn reject_shell_log_flag(rest: &[String]) -> anyhow::Result<()> {
-    let mut i = 0;
-    while i < rest.len() {
-        if rest[i] == "--log" {
-            anyhow::bail!(
-                "aish shell: --log is not supported; logs are written under the session directory (see aish config log_dir)"
-            );
-        }
-        i += 1;
-    }
-    Ok(())
-}
-
-fn common_options_to_anyhow(e: CommonOptionsError) -> anyhow::Error {
-    anyhow::anyhow!(e)
-}
-
 fn session_store_to_anyhow(e: SessionStoreError) -> anyhow::Error {
     anyhow::anyhow!(e)
 }
@@ -135,32 +113,15 @@ fn session_read_to_anyhow(e: SessionReadError) -> anyhow::Error {
     anyhow::anyhow!(e)
 }
 
-fn parse_exec_log_args(args: &[String]) -> anyhow::Result<(PathBuf, Vec<String>)> {
-    let cfg = AishConfig::load();
-    let mut log_path = cfg.default_exec_log();
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "--log" {
-            let path = args
-                .get(i + 1)
-                .ok_or_else(|| anyhow::anyhow!("--log requires a path"))?;
-            log_path = PathBuf::from(path);
-            i += 2;
-            continue;
-        }
-        if args[i] == "--" {
-            return Ok((log_path, args[i + 1..].to_vec()));
-        }
-        i += 1;
-    }
-    anyhow::bail!("missing -- before command");
-}
+#[cfg(test)]
+mod cli_tests {
+    use clap::CommandFactory;
 
-fn print_usage() {
-    eprintln!(
-        "usage:\n  \
-         aish exec [--format tsv|json|env] [--log PATH] -- <program> [args...]\n  \
-         aish shell [--format tsv|json|env]\n  \
-         aish session [--format tsv|json|env]"
-    );
+    use aish::adapters::inbound::AishCli;
+
+    #[test]
+    fn cli_includes_complete_subcommand() {
+        let cmd = AishCli::command();
+        assert!(cmd.find_subcommand("complete").is_some());
+    }
 }

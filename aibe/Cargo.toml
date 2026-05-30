@@ -18,6 +18,8 @@ toml = { workspace = true }
 reqwest = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
 
 [dev-dependencies]
 ai = { path = "../ai" }

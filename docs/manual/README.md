@@ -13,6 +13,7 @@
 | [llm-profiles.md](llm-profiles.md) | LLM 接続 + プロファイル（`--profile` / 2 段 config） |
 | [ai-ask-tools.md](ai-ask-tools.md) | `ai ask` の `--tools` / 表示契約（mock + 任意で実 LLM） |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
+| [tab-completion.md](tab-completion.md) | CLI Tab 補完（bash / zsh / PATH / cargo run / aish shell） |
 | [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |
 | [codex-spec-impl-review-loop.md](codex-spec-impl-review-loop.md) | Codex 指示書→実装レビューの 7 ステップ運用手順 |
 

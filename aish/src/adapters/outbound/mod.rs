@@ -3,6 +3,7 @@ mod process_shell;
 mod pty_shell;
 mod session_info;
 mod session_store;
+pub mod shell_completion;
 pub mod toml_config;
 
 pub use jsonl_log::JsonlFileLog;
@@ -12,4 +13,7 @@ pub use session_info::{read_session_info, session_dir_from_env, SessionReadError
 pub use session_store::{
     create_shell_session, prune_old_sessions, resolve_sessions_parent, SessionLayout,
     SessionStoreError,
+};
+pub use shell_completion::{
+    detect_child_shell, prepare_interactive_rc, ChildShellKind, ShellRcLayout,
 };

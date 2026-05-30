@@ -5,16 +5,23 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::Parser;
+
 use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{AibeUnixClient, FileLogTail, StdoutPresenter};
 use ai::application::{ensure_aibe_if_needed, plan_ask_launch, Ask, AskRunOptions};
+use ai::clap_cli::{AiCli, AiCommand};
 use ai::domain::{
-    resolve_llm_profile, resolve_shell_log_for_ask, ShellLogChoice, ShellLogResolveError,
-    ToolsResolveError,
+    resolve_llm_profile, resolve_shell_log_for_ask, validate_ask_arg_order, ShellLogChoice,
+    ShellLogResolveError, ToolsResolveError,
 };
 use aibe_client::ensure_running;
 
 fn main() -> ExitCode {
+    if AiCli::try_complete_env() {
+        return ExitCode::SUCCESS;
+    }
+
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -25,88 +32,50 @@ fn main() -> ExitCode {
 }
 
 fn run() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
-        print_usage();
-        anyhow::bail!("missing subcommand");
-    }
-    if args[0] != "ask" {
-        print_usage();
-        anyhow::bail!("unknown subcommand");
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some("ask") {
+        validate_ask_arg_order(&raw[2..]).map_err(|e| anyhow::anyhow!(e))?;
     }
 
-    let mut message_parts = Vec::new();
-    let mut log_path = None;
-    let mut session_id = None;
-    let mut no_log = false;
-    let mut socket_path = None;
-    let mut auto_start = true;
-    let mut tools_cli = None;
-    let mut profile_cli = None;
-    let mut verbose_tools = false;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--log" => {
-                log_path = Some(
-                    args.get(i + 1)
-                        .ok_or_else(|| anyhow::anyhow!("--log requires a path"))?
-                        .clone(),
-                );
-                i += 2;
-            }
-            "--session" => {
-                session_id = Some(
-                    args.get(i + 1)
-                        .ok_or_else(|| anyhow::anyhow!("--session requires a session id"))?
-                        .clone(),
-                );
-                i += 2;
-            }
-            "--no-log" => {
-                no_log = true;
-                i += 1;
-            }
-            "--socket" => {
-                socket_path = Some(PathBuf::from(
-                    args.get(i + 1)
-                        .ok_or_else(|| anyhow::anyhow!("--socket requires a path"))?
-                        .clone(),
-                ));
-                i += 2;
-            }
-            "--no-start" => {
-                auto_start = false;
-                i += 1;
-            }
-            "--tools" => {
-                tools_cli = Some(
-                    args.get(i + 1)
-                        .ok_or_else(|| anyhow::anyhow!("--tools requires a list"))?
-                        .clone(),
-                );
-                i += 2;
-            }
-            "--profile" => {
-                profile_cli = Some(
-                    args.get(i + 1)
-                        .ok_or_else(|| anyhow::anyhow!("--profile requires a name"))?
-                        .clone(),
-                );
-                i += 2;
-            }
-            "--verbose-tools" => {
-                verbose_tools = true;
-                i += 1;
-            }
-            part => {
-                message_parts.push(part.to_string());
-                i += 1;
-            }
-        }
+    let cli = AiCli::parse();
+    match cli.command {
+        AiCommand::Complete { shell } => AiCli::run_complete(shell).map_err(|e| anyhow::anyhow!(e)),
+        AiCommand::Ask {
+            log,
+            session,
+            no_log,
+            socket,
+            no_start,
+            tools,
+            profile,
+            verbose_tools,
+            message,
+        } => run_ask(
+            message,
+            log,
+            session,
+            no_log,
+            socket,
+            no_start,
+            tools,
+            profile,
+            verbose_tools,
+        ),
     }
+}
 
+#[allow(clippy::too_many_arguments)]
+fn run_ask(
+    message_parts: Vec<String>,
+    log_path: Option<PathBuf>,
+    session_id: Option<String>,
+    no_log: bool,
+    socket_path: Option<PathBuf>,
+    auto_start: bool,
+    tools_cli: Option<String>,
+    profile_cli: Option<String>,
+    verbose_tools: bool,
+) -> anyhow::Result<()> {
     if message_parts.is_empty() {
         anyhow::bail!("missing message");
     }
@@ -176,8 +145,23 @@ fn shell_log_resolve_to_anyhow(e: ShellLogResolveError) -> anyhow::Error {
     anyhow::anyhow!(e)
 }
 
-fn print_usage() {
-    eprintln!(
-        "usage: ai ask <message> [--log PATH] [--session ID] [--no-log] [--socket PATH] [--no-start] [--tools LIST] [--profile NAME] [--verbose-tools]"
-    );
+#[cfg(test)]
+mod cli_tests {
+    use clap::CommandFactory;
+
+    use ai::clap_cli::AiCli;
+    use ai::domain::{validate_ask_arg_order, AskArgOrderError};
+
+    #[test]
+    fn ask_rejects_options_after_message() {
+        let err =
+            validate_ask_arg_order(&["hello".into(), "--log".into(), "/tmp/x".into()]).unwrap_err();
+        assert_eq!(err, AskArgOrderError);
+    }
+
+    #[test]
+    fn cli_includes_complete_subcommand() {
+        let cmd = AiCli::command();
+        assert!(cmd.find_subcommand("complete").is_some());
+    }
 }

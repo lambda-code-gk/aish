@@ -3,9 +3,11 @@
 use std::ffi::CString;
 use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 
+use crate::adapters::outbound::ShellRcLayout;
 use crate::domain::sanitize_log_text;
 use crate::ports::outbound::{InteractiveShellError, InteractiveShellRunner, SessionLog};
 
@@ -35,7 +37,6 @@ impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
     fn run_shell(&mut self, shell: &str, session_dir: &Path) -> Result<i32, InteractiveShellError> {
         let shell_c =
             CString::new(shell).map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
-        let arg_i = CString::new("-i").map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
         let session_dir = session_dir
             .canonicalize()
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
@@ -43,11 +44,13 @@ impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
             .map_err(|_| InteractiveShellError::Failed("AISH_SESSION_DIR contains NUL".into()))?;
 
         let (master, slave) = open_pty_pair()?;
+        let rc_layout = crate::adapters::outbound::prepare_interactive_rc(shell)
+            .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
 
         match unsafe { libc::fork() } {
             -1 => Err(InteractiveShellError::Failed("fork failed".into())),
             0 => {
-                child_exec_shell(master, slave, &shell_c, &arg_i, &session_dir_c);
+                child_exec_shell(master, slave, &shell_c, &session_dir_c, rc_layout.as_ref());
                 unreachable!();
             }
             child => {
@@ -143,8 +146,8 @@ fn child_exec_shell(
     master: RawFd,
     slave: RawFd,
     shell: &CString,
-    arg_i: &CString,
     session_dir: &CString,
+    rc_layout: Option<&ShellRcLayout>,
 ) {
     unsafe {
         libc::close(master);
@@ -163,7 +166,35 @@ fn child_exec_shell(
         ));
     }
 
-    let argv = [shell.as_ptr(), arg_i.as_ptr(), std::ptr::null()];
+    if let Some(layout) = rc_layout {
+        if let Some(zdot) = layout.zdotdir.as_ref() {
+            let zdot_c = path_to_cstring(zdot);
+            let zdot_key = CString::new("ZDOTDIR").expect("static key");
+            let rc = unsafe { libc::setenv(zdot_key.as_ptr(), zdot_c.as_ptr(), 1) };
+            if rc != 0 {
+                child_die(&format!(
+                    "setenv(ZDOTDIR): {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+    }
+
+    let arg_i = CString::new("-i").expect("static -i");
+    let mut argv: Vec<*const libc::c_char> = vec![shell.as_ptr()];
+
+    let rcfile_c = rc_layout
+        .and_then(|l| l.bash_rcfile.as_ref())
+        .map(|p| path_to_cstring(p));
+    let dash_rcfile = CString::new("--rcfile").expect("static --rcfile");
+    if let Some(ref rcfile) = rcfile_c {
+        // `--rcfile` must precede `-i`; `bash -i --rcfile …` is rejected as an invalid `--`.
+        argv.push(dash_rcfile.as_ptr());
+        argv.push(rcfile.as_ptr());
+    }
+    argv.push(arg_i.as_ptr());
+    argv.push(std::ptr::null());
+
     unsafe {
         libc::close(slave);
         if libc::execvp(shell.as_ptr(), argv.as_ptr()) == -1 {
@@ -174,6 +205,11 @@ fn child_exec_shell(
             ));
         }
     }
+}
+
+fn path_to_cstring(path: &Path) -> CString {
+    CString::new(path.as_os_str().as_bytes().to_vec())
+        .unwrap_or_else(|_| CString::new("/").expect("fallback path"))
 }
 
 fn child_die(msg: &str) -> ! {

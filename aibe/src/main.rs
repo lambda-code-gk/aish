@@ -5,9 +5,23 @@
 
 #[cfg(unix)]
 fn main() {
-    let foreground = std::env::args().any(|a| a == "--foreground" || a == "-f");
+    use aibe::clap_cli::{AibeCli, AibeCommand};
+    use clap::Parser;
 
-    if !foreground {
+    if AibeCli::try_complete_env() {
+        return;
+    }
+
+    let cli = AibeCli::parse();
+    if let Some(AibeCommand::Complete { shell }) = cli.command {
+        if let Err(e) = AibeCli::run_complete(shell) {
+            eprintln!("aibe: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if !cli.foreground {
         if let Err(e) = aibe::daemon::daemonize() {
             eprintln!("aibe: failed to daemonize: {e}");
             std::process::exit(1);

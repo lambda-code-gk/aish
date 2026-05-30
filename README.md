@@ -170,10 +170,13 @@ cargo run -p ai
 ### Ask the agent (`ai`)
 
 ```text
-ai ask <message> [--log PATH] [--session ID] [--no-log]
+ai ask [OPTIONS] <message>
+                 [--log PATH] [--session ID] [--no-log]
                  [--socket PATH] [--no-start]
                  [--tools LIST] [--profile NAME] [--verbose-tools]
 ```
+
+- **引数順**: オプションはすべてメッセージより前。`ai ask hello --log x` はエラー。
 
 - `--log` — 指定 JSONL をコンテキストに含める（`--session` より優先）
 - `--session ID` — `AISH_SESSION_DIR/current_log` 経由でログを読む（下記「環境変数」参照）
@@ -226,6 +229,16 @@ ai ask "直前のエラーを要約して"
 export AISH_SESSION_DIR=~/.local/share/aish/sessions/<12桁hex>
 ai ask --session <12桁hex> "…"
 ```
+
+### Tab 補完（bash / zsh）
+
+```bash
+eval "$(aish complete bash)"
+eval "$(ai complete bash)"
+eval "$(aibe complete bash)"
+```
+
+`cargo run` 委譲と `aish shell` 内の検証: [docs/manual/tab-completion.md](docs/manual/tab-completion.md)。
 
 ## Supported LLM providers
 

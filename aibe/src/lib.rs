@@ -4,6 +4,7 @@
 
 pub mod adapters;
 pub mod application;
+pub mod clap_cli;
 pub mod daemon;
 pub mod domain;
 pub mod ports;

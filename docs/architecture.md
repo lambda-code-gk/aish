@@ -148,13 +148,16 @@ aish          →  （aibe への path 依存禁止）
 | `stderr` | `data`（追記前に `sanitize_log_text`） |
 | `exit` | `code`（任意） |
 
-- **CLI**:
+- **CLI**（`clap` + `clap_complete`。各バイナリに `complete bash|zsh`）:
   - `aish exec [--format tsv|json|env] [--log PATH] -- <program> [args...]`（未指定時は `log_dir/session-<pid>.jsonl`）
-  - `aish shell [--format tsv|json|env]` — セッション dir 方式（`docs/done/0019_aish-session-log-integration-spec.md`）
+  - `aish shell [--format tsv|json|env]` — セッション dir 方式（`docs/done/0019_aish-session-log-integration-spec.md`）。bash / zsh 子シェルでは一時 rcfile で Tab 補完を有効化
   - `aish session [--format tsv|json|env]` — 現在セッション（`AISH_SESSION_DIR` 必須）
+  - `ai ask [OPTIONS] <message>` — **オプションはメッセージより前**（`docs/done/0021_tab-completion-spec.md`）
+  - `aibe [--foreground|-f]` — デーモン起動
+  - 動的補完: `ai ask --profile`（`AIBE_CONFIG` の `[profiles.*]`）、`--session`（`AISH_CONFIG` の `log_dir` 内 session id）。詳細: [manual/tab-completion.md](manual/tab-completion.md)
 - **共通 `--format`**（情報表示系サブコマンド向け）:
   - 値: **`tsv`（既定）** | **`json`** | **`env`**
-  - **全サブコマンド**で指定可能。composition root（`aish/src/main.rs`）が `strip_common_options`（`adapters/inbound/cli.rs`）で先に解析し、未知の値はエラーにする
+  - **全サブコマンド**で指定可能。composition root が `clap` で解析し、未知の値はエラーにする
   - **情報表示系**サブコマンドのみ stdout の形式に反映する。現状は **`session` のみ**が該当
   - **実行系**（`exec`, `shell` 等）は現状 `--format` を出力に使わないが、将来追加する情報表示系と CLI を揃えるため **受理のみ** 行う（指定しても挙動は変わらない）
   - 形式の意味（情報表示系で共通）:

@@ -49,7 +49,7 @@ fn shell_rejects_extra_args() {
         .expect("run");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("usage: aish shell"));
+    assert!(stderr.contains("bogus"));
 }
 
 #[test]
