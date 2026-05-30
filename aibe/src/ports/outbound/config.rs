@@ -73,10 +73,51 @@ pub struct ExploreLimitsConfig {
     pub max_grep_file_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShellExecApprovalMode {
+    /// 実行前承認を要求しない（即拒否）。
+    Never,
+    /// 実行直前にクライアントへ yes/no を求める（既定）。
+    #[default]
+    Ask,
+    /// 承認 UI なしで実行する。
+    Always,
+}
+
+impl ShellExecApprovalMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "never" => Some(Self::Never),
+            "ask" => Some(Self::Ask),
+            "always" => Some(Self::Always),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Ask => "ask",
+            Self::Always => "always",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellExecConfig {
     pub enabled: bool,
     pub allowed_commands: Vec<String>,
+    pub approval: ShellExecApprovalMode,
+}
+
+impl Default for ShellExecConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allowed_commands: vec![],
+            approval: ShellExecApprovalMode::Ask,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +145,7 @@ impl Default for ToolsConfig {
             shell_exec: ShellExecConfig {
                 enabled: true,
                 allowed_commands: vec![],
+                approval: ShellExecApprovalMode::Ask,
             },
             read_file: ReadFileConfig {
                 allowed_roots: vec![PathBuf::from(".")],

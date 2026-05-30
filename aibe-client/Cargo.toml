@@ -8,6 +8,7 @@ license.workspace = true
 aibe-protocol = { path = "../aibe-protocol" }
 serde_json = { workspace = true }
 socket2 = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

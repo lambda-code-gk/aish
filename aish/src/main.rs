@@ -83,10 +83,13 @@ fn run_exec(args: &mut Vec<String>) -> anyhow::Result<u8> {
 fn run_shell(args: &mut Vec<String>) -> anyhow::Result<u8> {
     let _common = strip_common_options(args).map_err(common_options_to_anyhow)?;
     reject_shell_log_flag(args)?;
+    if !args.is_empty() {
+        anyhow::bail!("usage: aish shell [--format tsv|json|env]");
+    }
     let cfg = AishConfig::load();
     let parent = resolve_sessions_parent(&cfg);
-    prune_old_sessions(&parent, cfg.max_sessions).map_err(session_store_to_anyhow)?;
     let layout = create_shell_session(&parent).map_err(session_store_to_anyhow)?;
+    prune_old_sessions(&parent, cfg.max_sessions).map_err(session_store_to_anyhow)?;
 
     eprintln!("aish: session {} (dir {})", layout.id, layout.dir.display());
 

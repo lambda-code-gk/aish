@@ -19,6 +19,13 @@ pub enum ClientRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         llm_profile: Option<String>,
     },
+    /// `shell_exec` 実行前承認の応答（同一 socket 接続上）。
+    ShellExecApproval {
+        id: String,
+        turn_id: String,
+        tool_call_id: String,
+        approved: bool,
+    },
 }
 
 /// プロトコル上のメッセージ（serde 用）。

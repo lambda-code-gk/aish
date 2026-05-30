@@ -28,7 +28,7 @@ flowchart LR
 |----------------|------|--------------|
 | **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
-| **aibe-client** | Unix socket の `ping` / `ensure_running` / 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
+| **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
 | **aibe** | エージェントループ、ツール、プロバイダ呼び出し、Unix socket サーバ | LLM API へ（設定に従う） |
 | **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う | aibe デーモンのみ（LLM 直叩き禁止） |
 
@@ -172,7 +172,7 @@ aish          →  （aibe への path 依存禁止）
 
 - **session-id**: `2020-01-01T00:00:00Z` 起点の経過ミリ秒を **12 桁小文字 hex**（ゼロ埋め）
 - **起動時**: `stderr` に session id を表示。子シェルへ `AISH_SESSION_DIR`（セッション dir 絶対パス）を export
-- **掃除**: `aish shell` 起動時のみ。`max_sessions`（config、既定 50）超過分をディレクトリ名の辞書順で削除
+- **掃除**: `aish shell` 起動時、`create_shell_session` **の後**に `max_sessions`（config、既定 50）超過分をディレクトリ名の辞書順で削除（新規セッションは残す）
 - **`ai ask` 連携**（`ai` は `aish` クレート非依存）:
   - 既定はログを載せない
   - `AI_ASK_LOG=session` かつ `AISH_SESSION_DIR` → `current_log` を解決し、symlink 先が session dir 内の通常ファイルとして **open 可能**なことを検証してから tail
@@ -254,7 +254,7 @@ aish          →  （aibe への path 依存禁止）
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
 - `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。**このとき `context.cwd`（絶対パス）は必須**。未送信・相対パスは `invalid_request` で拒否する。
 - `[tools] max_rounds` は **1 以上**。`config.toml` で `0` は設定読み込みエラー。プログラム上 `ToolsConfig { max_rounds: 0 }` のみ `effective_max_rounds()` で 1 に補正（`docs/done/0007_agent-turn-loop-modularization-spec.md`）。
-- 組み込みツール: safe tools は `read_file` / `list_dir` / `grep` / `git_diff` / `git_status`。`shell_exec` は危険操作として `@exec` か literal 指定でのみ許可する（`@full` には含めない）。`shell_exec` は設定 `allowed_commands` のみ実行し、subprocess cwd は `context.cwd`。外部コマンド（`shell_exec` / `git_*`）は timeout 時に子プロセスを kill して明示 reap（共通 `run_subprocess`）。
+- 組み込みツール: safe tools は `read_file` / `list_dir` / `grep` / `git_diff` / `git_status`。`shell_exec` は危険操作として `@exec` か literal 指定でのみ許可する（`@full` には含めない）。`shell_exec` は設定 `allowed_commands` のみ実行し、subprocess cwd は `context.cwd`。`[tools.shell_exec] shell_exec_approval = "never" | "ask" | "always"`（既定 `ask`）で実行前 yes/no（同一 Unix 接続上の `shell_exec_approval_prompt` / `shell_exec_approval` 往復）。外部コマンド（`shell_exec` / `git_*`）は timeout 時に子プロセスを kill して明示 reap（共通 `run_subprocess`）。
 - `list_dir` / `grep` は `[tools.explore]` の件数・走査上限で timeout 前のメモリ・I/O を抑制する（`docs/aibe.config.example.toml`）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
 - ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/done/0001_aibe-tool-agent-loop-spec.md`。
@@ -312,5 +312,5 @@ aish          →  （aibe への path 依存禁止）
 1. **aibe**（済）: socket + `ping` + `agent_turn` + ツールループ + `MockLlm` / OpenAI 互換 / Gemini
 2. **aish**（済）: `aish exec -- <cmd>` と JSONL 追記
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
-4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`
-5. **次**: インタラクティブ `shell_exec` 許可、ログマスクの拡張（ai ツール連携は `docs/done/0002_ai-tools-client-spec.md` 参照・実装済み）
+4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`、`shell_exec` 実行前承認（0020）
+5. **次**: ログ context の構造化（P4-4）、ログマスクの拡張

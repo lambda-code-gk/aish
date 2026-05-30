@@ -37,9 +37,10 @@ cargo test -p aibe-client -- --test-threads=1
 | クレート | 単体 | 統合 / E2E |
 |----------|------|------------|
 | **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
-| **aibe-client** | `ping` の connect タイムアウト（`lib.rs`） | `client_ping.rs`、`ensure_running_*.rs`（`serial_test` で直列。mock 起動は `tests/common/mod.rs`） |
-| **aibe** | server / agent / tools | `socket_protocol.rs`（server + socket）、`ai_ask_e2e.rs`（`ai` + mock server） |
-| **ai** | 設定・allowlist・presenter | `ask_integration.rs`（Mock クライアントのみ。server 起動は `aibe` 側） |
+| **aibe-client** | transport（`send_request` / `agent_turn` + 承認往復）、`ping` タイムアウト | `transport.rs`、`client_ping.rs`、`ensure_running_*.rs` |
+| **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
+| **ai** | `--session` hex 検証・presenter / allowlist | `shell_log_resolve.rs`、`ask_integration.rs` |
+| **aibe** | server / agent / tools / 承認 | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs` |
 
 ## テスト種別
 

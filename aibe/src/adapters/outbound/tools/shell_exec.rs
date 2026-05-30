@@ -11,8 +11,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 
-use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
-use crate::ports::outbound::{CommandPolicy, ToolExecutionContext, ToolExecutor};
+use crate::domain::{ExecutedToolCall, ShellExecApprovalOutcome, ToolName, ToolResult};
+use crate::ports::outbound::{
+    CommandPolicy, ShellExecApprovalMode, ToolExecutionContext, ToolExecutor,
+};
 
 use super::subprocess::{run_subprocess, ShellRunOutcome};
 use super::tool_output::limit_tool_output;
@@ -116,7 +118,7 @@ impl ToolExecutor for ShellExecTool {
 
         if !self.policy.is_command_allowed(&parsed.command) {
             let msg = "command not in allowed_commands";
-            return (
+            return finish_shell_exec(
                 ExecutedToolCall::err(
                     id.clone(),
                     self.name(),
@@ -129,9 +131,79 @@ impl ToolExecutor for ShellExecTool {
                     content: msg.to_string(),
                     is_error: true,
                 },
+                self.policy.shell_exec_approval_mode(),
+                ShellExecApprovalOutcome::NotApplicable,
             );
         }
 
+        let approval_mode = self.policy.shell_exec_approval_mode();
+        match approval_mode {
+            ShellExecApprovalMode::Never => {
+                let msg = "shell_exec rejected by shell_exec_approval=never";
+                return finish_shell_exec(
+                    ExecutedToolCall::err(
+                        id.clone(),
+                        self.name(),
+                        args_value,
+                        "approval_denied",
+                        msg,
+                    ),
+                    ToolResult {
+                        tool_call_id: id,
+                        content: msg.to_string(),
+                        is_error: true,
+                    },
+                    approval_mode,
+                    ShellExecApprovalOutcome::PolicyNever,
+                );
+            }
+            ShellExecApprovalMode::Ask => {
+                let Some(gate) = ctx.approval_gate() else {
+                    let msg = "shell_exec approval required but no interactive client connected";
+                    return finish_shell_exec(
+                        ExecutedToolCall::err(
+                            id.clone(),
+                            self.name(),
+                            args_value,
+                            "approval_unavailable",
+                            msg,
+                        ),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: msg.to_string(),
+                            is_error: true,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::ApprovalUnavailable,
+                    );
+                };
+                if !gate
+                    .request_shell_exec_approval(&id, &parsed.command, &parsed.args)
+                    .await
+                {
+                    let msg = "shell_exec rejected by user";
+                    return finish_shell_exec(
+                        ExecutedToolCall::err(
+                            id.clone(),
+                            self.name(),
+                            args_value,
+                            "approval_denied",
+                            msg,
+                        ),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: msg.to_string(),
+                            is_error: true,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::UserDenied,
+                    );
+                }
+            }
+            ShellExecApprovalMode::Always => {}
+        }
+
+        let exec_outcome = exec_outcome_for_mode(approval_mode);
         let cmd = build_command(&parsed, ctx.base_dir());
         let duration = Duration::from_millis(timeout_ms.max(1));
 
@@ -147,16 +219,18 @@ impl ToolExecutor for ShellExecTool {
                     format!("exit_code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}");
                 let body = limit_tool_output(&body_raw, self.max_output_bytes);
                 if exit_code == 0 {
-                    (
+                    finish_shell_exec(
                         ExecutedToolCall::ok(id.clone(), self.name(), args_value, body.clone()),
                         ToolResult {
                             tool_call_id: id,
                             content: body,
                             is_error: false,
                         },
+                        approval_mode,
+                        exec_outcome,
                     )
                 } else {
-                    (
+                    finish_shell_exec(
                         ExecutedToolCall::err(
                             id.clone(),
                             self.name(),
@@ -169,21 +243,25 @@ impl ToolExecutor for ShellExecTool {
                             content: body,
                             is_error: true,
                         },
+                        approval_mode,
+                        exec_outcome,
                     )
                 }
             }
             ShellRunOutcome::TimedOut { .. } => {
                 let msg = format!("command timed out after {timeout_ms}ms");
-                (
+                finish_shell_exec(
                     ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg.clone(),
                         is_error: true,
                     },
+                    approval_mode,
+                    exec_outcome,
                 )
             }
-            ShellRunOutcome::Failed(msg) => (
+            ShellRunOutcome::Failed(msg) => finish_shell_exec(
                 ExecutedToolCall::err(
                     id.clone(),
                     self.name(),
@@ -196,9 +274,31 @@ impl ToolExecutor for ShellExecTool {
                     content: msg,
                     is_error: true,
                 },
+                approval_mode,
+                exec_outcome,
             ),
         }
     }
+}
+
+fn exec_outcome_for_mode(mode: ShellExecApprovalMode) -> ShellExecApprovalOutcome {
+    match mode {
+        ShellExecApprovalMode::Ask => ShellExecApprovalOutcome::UserApproved,
+        ShellExecApprovalMode::Always => ShellExecApprovalOutcome::AutoApproved,
+        ShellExecApprovalMode::Never => ShellExecApprovalOutcome::PolicyNever,
+    }
+}
+
+fn finish_shell_exec(
+    record: ExecutedToolCall,
+    result: ToolResult,
+    approval_mode: ShellExecApprovalMode,
+    outcome: ShellExecApprovalOutcome,
+) -> (ExecutedToolCall, ToolResult) {
+    (
+        record.with_shell_exec_audit(approval_mode.as_str(), outcome),
+        result,
+    )
 }
 
 #[cfg(test)]
@@ -206,8 +306,8 @@ mod tests {
     use super::*;
     use crate::adapters::outbound::tools::subprocess::{run_subprocess, ShellRunOutcome};
     use crate::adapters::outbound::tools::ConfigAllowlistPolicy;
-    use crate::domain::ClientCwd;
-    use crate::ports::outbound::ShellExecConfig;
+    use crate::domain::{ClientCwd, ToolApprovalState};
+    use crate::ports::outbound::{ShellExecApprovalMode, ShellExecConfig};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -233,6 +333,7 @@ mod tests {
         let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
             enabled: true,
             allowed_commands: vec!["cat".into()],
+            approval: ShellExecApprovalMode::Always,
         }));
         let tool = ShellExecTool::new(policy, 4096);
         let ctx =
@@ -292,10 +393,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn never_approval_rejects_without_running() {
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Never,
+        }));
+        let tool = ShellExecTool::new(policy, 4096);
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
+        );
+        let args = json!({ "command": "echo", "args": ["hi"] });
+
+        let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("never"));
+        assert_eq!(record.error.as_deref(), Some("approval_denied"));
+        assert_eq!(
+            record.approval_source.as_deref(),
+            Some("shell_exec_approval=never")
+        );
+        assert_eq!(record.decision.as_deref(), Some("rejected_by_policy"));
+    }
+
+    #[tokio::test]
+    async fn ask_without_gate_records_approval_unavailable() {
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Ask,
+        }));
+        let tool = ShellExecTool::new(policy, 4096);
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
+        );
+        let args = json!({ "command": "echo", "args": ["hi"] });
+
+        let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(result.is_error);
+        assert_eq!(record.error.as_deref(), Some("approval_unavailable"));
+        assert_eq!(record.decision.as_deref(), Some("approval_unavailable"));
+        assert_eq!(record.approval_state, Some(ToolApprovalState::NotRequired));
+    }
+
+    #[tokio::test]
+    async fn ask_denied_by_gate_records_user_denied() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+
+        struct DenyGate;
+
+        #[async_trait]
+        impl ShellExecApprovalGate for DenyGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> bool {
+                false
+            }
+        }
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Ask,
+        }));
+        let tool = ShellExecTool::new(policy, 4096);
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
+        )
+        .with_turn_id("turn-1")
+        .with_approval_gate(Arc::new(DenyGate));
+        let args = json!({ "command": "echo", "args": ["hi"] });
+
+        let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(result.is_error);
+        assert_eq!(record.error.as_deref(), Some("approval_denied"));
+        assert_eq!(record.decision.as_deref(), Some("rejected_by_user"));
+        assert_eq!(
+            record.approval_state,
+            Some(ToolApprovalState::ExplicitClientOptIn)
+        );
+    }
+
+    #[tokio::test]
     async fn execute_timeout_returns_error_result() {
         let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
             enabled: true,
             allowed_commands: vec!["sleep".into()],
+            approval: ShellExecApprovalMode::Always,
         }));
         let tool = ShellExecTool::new(policy, 4096);
         let ctx = ToolExecutionContext::new(

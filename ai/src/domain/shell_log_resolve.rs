@@ -1,7 +1,7 @@
 //! `ai ask` のシェルログパス解決（0019）。
 
 use std::fs::File;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 pub const AI_ASK_LOG_SESSION: &str = "session";
 
@@ -85,26 +85,13 @@ fn resolve_session_current_log(
 }
 
 fn validate_session_id(id: &str) -> Result<(), ShellLogResolveError> {
-    if id.is_empty() {
+    if id.len() != 12 {
         return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
     }
-    if id == "." || id == ".." || id.starts_with('.') || id.ends_with('.') {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    if id.contains('/') || id.contains('\\') {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    if id.contains("..") {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    if id.bytes().any(|b| b.is_ascii_control()) {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    let path = Path::new(id);
-    if path.components().count() != 1 {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    if matches!(path.components().next(), Some(Component::ParentDir)) {
+    if !id
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
     }
     Ok(())
@@ -200,6 +187,19 @@ mod tests {
         let err =
             resolve_shell_log_for_ask(false, None, Some("../x"), None, Some(&session)).unwrap_err();
         assert!(matches!(err, ShellLogResolveError::InvalidSessionId(_)));
+    }
+
+    #[test]
+    fn session_rejects_non_hex_and_wrong_length() {
+        let (_root, session) = session_fixture();
+        for bad in ["123", "002F15D02B54", "002f15d02b54extra", "gggggggggggg"] {
+            let err = resolve_shell_log_for_ask(false, None, Some(bad), None, Some(&session))
+                .unwrap_err();
+            assert!(
+                matches!(err, ShellLogResolveError::InvalidSessionId(_)),
+                "expected invalid for {bad:?}"
+            );
+        }
     }
 
     #[test]

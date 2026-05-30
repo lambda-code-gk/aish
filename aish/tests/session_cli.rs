@@ -42,6 +42,17 @@ fn session_subcommand_json_format() {
 }
 
 #[test]
+fn shell_rejects_extra_args() {
+    let out = Command::new(env!("CARGO_BIN_EXE_aish"))
+        .args(["shell", "bogus"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("usage: aish shell"));
+}
+
+#[test]
 fn session_subcommand_env_not_set() {
     let out = Command::new(env!("CARGO_BIN_EXE_aish"))
         .env_remove("AISH_SESSION_DIR")

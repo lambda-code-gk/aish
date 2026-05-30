@@ -7,7 +7,8 @@ use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, ChatMessage, ToolName};
 use crate::ports::outbound::{
-    LlmProvider, TerminationCapability, ToolExecutionContext, ToolRoundTerminator,
+    LlmProvider, ShellExecApprovalGate, TerminationCapability, ToolExecutionContext,
+    ToolRoundTerminator,
 };
 use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
 
@@ -41,6 +42,7 @@ impl AgentTurnService {
         messages: Vec<ChatMessage>,
         tools: Vec<ToolName>,
         context: AgentTurnContext,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
     ) -> ClientResponse {
         if messages.is_empty() {
             return ClientResponse::error(
@@ -60,12 +62,16 @@ impl AgentTurnService {
             return ClientResponse::error(id, ErrorCode::InvalidRequest, e.to_string());
         }
 
-        let tool_ctx = ToolExecutionContext::new(
+        let mut tool_ctx = ToolExecutionContext::new(
             context
                 .client_cwd
                 .clone()
                 .expect("validate_tools_enabled ensures cwd"),
-        );
+        )
+        .with_turn_id(id.clone());
+        if let Some(gate) = approval_gate {
+            tool_ctx = tool_ctx.with_approval_gate(gate);
+        }
 
         self.run_with_tools(id, conversation, tools, tool_ctx).await
     }

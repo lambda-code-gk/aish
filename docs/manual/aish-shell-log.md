@@ -132,13 +132,14 @@ cat /tmp/exec-test.jsonl
 |-----------|------|
 | `--no-log` | ログなし（最優先） |
 | `--log PATH` | 指定ファイル（`--session` より優先） |
-| `--session ID` | `AISH_SESSION_DIR/current_log`（`ID` は dir 名と一致） |
+| `--session ID` | `AISH_SESSION_DIR/current_log`（`ID` は **12 桁小文字 hex** で dir 名と一致） |
 
 ## よくある失敗
 
 - `aish shell: --log is not supported` — `shell` では `--log` は使えない
 - `--session requires AISH_SESSION_DIR` — `aish shell` の子シェルで実行するか、`AISH_SESSION_DIR` を export
 - `--session <id> does not match AISH_SESSION_DIR` — id と `basename "$AISH_SESSION_DIR"` が一致していない
+- `invalid session id` — `--session` は 12 桁の小文字 hex（`0-9a-f`）のみ
 - `AISH_SESSION_DIR is not set` — `aish session` は `aish shell` の子シェル内、または `AISH_SESSION_DIR` を export した環境でのみ使える
 
 **本手順は AI 未実施時は完了報告に「未実施」と明記する。**

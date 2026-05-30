@@ -36,16 +36,19 @@ fn user_hi() -> Vec<ProtocolMessage> {
 #[tokio::test]
 async fn unknown_message_role_rejected_at_protocol_entry() {
     let res = service()
-        .handle(ClientRequest::AgentTurn {
-            id: "1".into(),
-            messages: vec![ProtocolMessage {
-                role: "moderator".into(),
-                content: "hi".into(),
-            }],
-            tools: vec![],
-            context: RequestContext::default(),
-            llm_profile: None,
-        })
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "1".into(),
+                messages: vec![ProtocolMessage {
+                    role: "moderator".into(),
+                    content: "hi".into(),
+                }],
+                tools: vec![],
+                context: RequestContext::default(),
+                llm_profile: None,
+            },
+            None,
+        )
         .await;
     match res {
         ClientResponse::Error { code, message, .. } => {
@@ -59,16 +62,19 @@ async fn unknown_message_role_rejected_at_protocol_entry() {
 #[tokio::test]
 async fn unknown_tool_rejected_at_protocol_entry() {
     let res = service()
-        .handle(ClientRequest::AgentTurn {
-            id: "1".into(),
-            messages: user_hi(),
-            tools: vec!["nope".into()],
-            context: RequestContext {
-                cwd: Some("/tmp".into()),
-                ..Default::default()
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "1".into(),
+                messages: user_hi(),
+                tools: vec!["nope".into()],
+                context: RequestContext {
+                    cwd: Some("/tmp".into()),
+                    ..Default::default()
+                },
+                llm_profile: None,
             },
-            llm_profile: None,
-        })
+            None,
+        )
         .await;
     match res {
         ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::ToolNotAllowed),
@@ -79,13 +85,16 @@ async fn unknown_tool_rejected_at_protocol_entry() {
 #[tokio::test]
 async fn missing_cwd_takes_priority_over_unknown_tool() {
     let res = service()
-        .handle(ClientRequest::AgentTurn {
-            id: "1".into(),
-            messages: user_hi(),
-            tools: vec!["nope".into(), "read_file".into()],
-            context: RequestContext::default(),
-            llm_profile: None,
-        })
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "1".into(),
+                messages: user_hi(),
+                tools: vec!["nope".into(), "read_file".into()],
+                context: RequestContext::default(),
+                llm_profile: None,
+            },
+            None,
+        )
         .await;
     match res {
         ClientResponse::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidRequest),
@@ -96,13 +105,16 @@ async fn missing_cwd_takes_priority_over_unknown_tool() {
 #[tokio::test]
 async fn text_only_without_cwd_is_ok() {
     let res = service()
-        .handle(ClientRequest::AgentTurn {
-            id: "1".into(),
-            messages: user_hi(),
-            tools: vec![],
-            context: RequestContext::default(),
-            llm_profile: None,
-        })
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "1".into(),
+                messages: user_hi(),
+                tools: vec![],
+                context: RequestContext::default(),
+                llm_profile: None,
+            },
+            None,
+        )
         .await;
     match res {
         ClientResponse::AgentTurnResult { .. } => {}
@@ -113,16 +125,19 @@ async fn text_only_without_cwd_is_ok() {
 #[tokio::test]
 async fn empty_shell_log_tail_does_not_inject_prefix() {
     let res = service()
-        .handle(ClientRequest::AgentTurn {
-            id: "1".into(),
-            messages: user_hi(),
-            tools: vec![],
-            context: RequestContext {
-                shell_log_tail: Some("".into()),
-                ..Default::default()
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "1".into(),
+                messages: user_hi(),
+                tools: vec![],
+                context: RequestContext {
+                    shell_log_tail: Some("".into()),
+                    ..Default::default()
+                },
+                llm_profile: None,
             },
-            llm_profile: None,
-        })
+            None,
+        )
         .await;
     match res {
         ClientResponse::AgentTurnResult { .. } => {}

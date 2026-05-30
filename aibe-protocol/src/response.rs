@@ -17,6 +17,14 @@ pub enum ClientResponse {
         assistant_message: ProtocolMessageOut,
         tool_calls: Vec<ExecutedToolCall>,
     },
+    /// `shell_exec` 実行前にクライアントへ yes/no を求める。
+    ShellExecApprovalPrompt {
+        id: String,
+        turn_id: String,
+        tool_call_id: String,
+        command: String,
+        args: Vec<String>,
+    },
     Error {
         id: String,
         code: ErrorCode,

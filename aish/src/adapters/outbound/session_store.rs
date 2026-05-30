@@ -130,4 +130,28 @@ mod tests {
         assert!(layout.log_path.is_file());
         assert!(layout.dir.join("current_log").exists());
     }
+
+    #[test]
+    fn prune_after_create_keeps_new_session_and_respects_max() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for id in ["000000000001", "000000000002", "000000000003"] {
+            fs::create_dir(dir.path().join(id)).expect("mkdir");
+        }
+        let layout = create_shell_session(dir.path()).expect("create");
+        prune_old_sessions(dir.path(), 3).expect("prune");
+        assert!(
+            layout.dir.exists(),
+            "newly created session must not be pruned"
+        );
+        assert!(!dir.path().join("000000000001").exists());
+        assert!(dir.path().join("000000000002").exists());
+        assert!(dir.path().join("000000000003").exists());
+        let count = fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter(|e| e.file_name().to_str().is_some_and(is_managed_session_name))
+            .count();
+        assert_eq!(count, 3);
+    }
 }

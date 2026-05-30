@@ -51,6 +51,7 @@ max_tool_output_bytes = 32_768
 [tools.shell_exec]
 enabled = true
 allowed_commands = ["ls", "git", "cargo", "echo"]
+# shell_exec_approval = "ask"   # never | ask | always（既定 ask）
 
 [tools.read_file]
 allowed_roots = [".", "~/projects"]

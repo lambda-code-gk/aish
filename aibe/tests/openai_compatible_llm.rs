@@ -134,6 +134,7 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
                 ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
                 None,
             ),
+            None,
         )
         .await;
 

@@ -1,9 +1,8 @@
-//! aibe Unix socket クライアントアダプタ（同期 I/O）。
+//! aibe Unix socket クライアントアダプタ（`aibe-client` transport 利用）。
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
+use aibe_client::{agent_turn as transport_agent_turn, ClientError, ShellExecApprovalPrompt};
 use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
 
 use crate::domain::AskRequest;
@@ -23,14 +22,9 @@ impl AibeUnixClient {
     fn socket_path(&self) -> &Path {
         &self.socket_path
     }
-}
 
-impl AgentClient for AibeUnixClient {
-    fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
-        let mut stream = UnixStream::connect(self.socket_path())
-            .map_err(|e| AgentError::Request(format!("connect to aibe: {e}")))?;
-
-        let request = ClientRequest::AgentTurn {
+    fn to_client_request(request: &AskRequest) -> ClientRequest {
+        ClientRequest::AgentTurn {
             id: correlation_id(),
             messages: vec![ProtocolMessage {
                 role: "user".to_string(),
@@ -49,20 +43,47 @@ impl AgentClient for AibeUnixClient {
                     .map(|p| p.to_string_lossy().into_owned()),
             },
             llm_profile: request.llm_profile.clone(),
-        };
-
-        let payload =
-            serde_json::to_string(&request).map_err(|e| AgentError::Request(e.to_string()))?;
-        writeln!(stream, "{payload}").map_err(|e| AgentError::Request(e.to_string()))?;
-
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| AgentError::Request(e.to_string()))?;
-
-        serde_json::from_str(line.trim()).map_err(|e| AgentError::Request(e.to_string()))
+        }
     }
+}
+
+impl AgentClient for AibeUnixClient {
+    fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
+        let wire = Self::to_client_request(request);
+        transport_agent_turn(self.socket_path(), wire, prompt_shell_exec_approval)
+            .map_err(map_client_error)
+    }
+}
+
+fn map_client_error(e: ClientError) -> AgentError {
+    match e {
+        ClientError::Connect(io) => AgentError::Request(format!("connect to aibe: {io}")),
+        ClientError::Serialize(msg)
+        | ClientError::Deserialize(msg)
+        | ClientError::Unexpected(msg) => AgentError::Request(msg),
+    }
+}
+
+fn prompt_shell_exec_approval(prompt: ShellExecApprovalPrompt) -> bool {
+    eprintln!("ai: shell_exec approval required:");
+    eprintln!("  command: {}", prompt.command);
+    if prompt.args.is_empty() {
+        eprintln!("  args: (none)");
+    } else {
+        eprintln!("  args: {}", prompt.args.join(" "));
+    }
+    eprint!("Execute? [y/N] ");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut line = String::new();
+    let Ok(n) = std::io::stdin().read_line(&mut line) else {
+        eprintln!("ai: shell_exec denied (stdin unavailable)");
+        return false;
+    };
+    if n == 0 {
+        eprintln!("ai: shell_exec denied (non-interactive stdin)");
+        return false;
+    }
+    matches!(line.trim(), "y" | "Y" | "yes" | "Yes" | "YES")
 }
 
 fn correlation_id() -> String {

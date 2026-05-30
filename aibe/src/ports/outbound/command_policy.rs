@@ -4,4 +4,5 @@
 pub trait CommandPolicy: Send + Sync {
     fn shell_exec_enabled(&self) -> bool;
     fn is_command_allowed(&self, command: &str) -> bool;
+    fn shell_exec_approval_mode(&self) -> crate::ports::outbound::ShellExecApprovalMode;
 }

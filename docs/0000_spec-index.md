@@ -21,6 +21,7 @@
 | 0017 | [0017_aibe-protocol-client-split-spec.md](done/0017_aibe-protocol-client-split-spec.md) | 実装済み | `aibe-protocol` / `aibe-client` 分離 |
 | 0018 | [0018_safe-tools-policy-spec.md](done/0018_safe-tools-policy-spec.md) | 実装済み | `safe-tools-policy` の docs 同期（`testing.md` / `security.md`） |
 | 0019 | [0019_aish-session-log-integration-spec.md](done/0019_aish-session-log-integration-spec.md) | 実装済み | `aish shell` セッション dir + `ai ask` ログ連携（P3） |
+| 0020 | [0020_p4-daily-use-polish-spec.md](done/0020_p4-daily-use-polish-spec.md) | 実装済み | P4 日常利用前の仕上げ（`aish shell` / `aibe-client` / `shell_exec` 承認） |
 
 **進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
 

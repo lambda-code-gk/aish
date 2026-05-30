@@ -425,6 +425,16 @@ fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
             if let Some(cmds) = shell.allowed_commands.clone() {
                 tools.shell_exec.allowed_commands = cmds;
             }
+            if let Some(mode) = shell.shell_exec_approval.as_deref() {
+                match crate::ports::outbound::ShellExecApprovalMode::parse(mode) {
+                    Some(parsed) => tools.shell_exec.approval = parsed,
+                    None => {
+                        return Err(ConfigError::Invalid(format!(
+                            "[tools.shell_exec] shell_exec_approval must be never, ask, or always (got {mode:?})"
+                        )));
+                    }
+                }
+            }
         }
         if let Some(rf) = t.read_file.as_ref() {
             if let Some(roots) = rf.allowed_roots.clone() {
@@ -512,6 +522,7 @@ struct ExploreSection {
 struct ShellExecSection {
     enabled: Option<bool>,
     allowed_commands: Option<Vec<String>>,
+    shell_exec_approval: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -28,6 +28,23 @@ pub enum ToolApprovalState {
     ExplicitClientOptIn,
 }
 
+/// `shell_exec` 監査用の承認結果（`with_shell_exec_audit`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellExecApprovalOutcome {
+    /// `shell_exec_approval=never` によるポリシー拒否。
+    PolicyNever,
+    /// 承認フロー外（allowlist 不一致など）。
+    NotApplicable,
+    /// `always` による自動実行。
+    AutoApproved,
+    /// `ask` でユーザーが承認した後の実行（または実行失敗）。
+    UserApproved,
+    /// `ask` でユーザーが拒否。
+    UserDenied,
+    /// `ask` だが対話クライアント / gate が無い。
+    ApprovalUnavailable,
+}
+
 /// クライアント向け `tool_calls` 記録。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutedToolCall {
@@ -119,6 +136,55 @@ impl ExecutedToolCall {
         );
         self
     }
+
+    pub fn with_shell_exec_audit(
+        mut self,
+        approval_mode: &str,
+        outcome: ShellExecApprovalOutcome,
+    ) -> Self {
+        self.risk_class = Some(ToolRiskClass::DangerousShell);
+        self.dry_run = Some(false);
+        self.approval_source = Some(format!("shell_exec_approval={approval_mode}"));
+        match outcome {
+            ShellExecApprovalOutcome::PolicyNever => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("rejected_by_policy".into());
+            }
+            ShellExecApprovalOutcome::NotApplicable => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some(if self.status == ExecutedToolStatus::Ok {
+                    "executed".into()
+                } else {
+                    "rejected_or_failed".into()
+                });
+            }
+            ShellExecApprovalOutcome::AutoApproved => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some(if self.status == ExecutedToolStatus::Ok {
+                    "executed".into()
+                } else {
+                    "rejected_or_failed".into()
+                });
+            }
+            ShellExecApprovalOutcome::UserApproved => {
+                self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
+                self.decision = Some(if self.status == ExecutedToolStatus::Ok {
+                    "executed".into()
+                } else {
+                    "rejected_or_failed".into()
+                });
+            }
+            ShellExecApprovalOutcome::UserDenied => {
+                self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
+                self.decision = Some("rejected_by_user".into());
+            }
+            ShellExecApprovalOutcome::ApprovalUnavailable => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("approval_unavailable".into());
+            }
+        }
+        self
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +205,24 @@ mod tests {
         let back: ExecutedToolCall = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.name, tc.name);
         assert_eq!(back.output, tc.output);
+    }
+
+    #[test]
+    fn shell_exec_audit_unavailable_is_not_user_denied() {
+        let tc = ExecutedToolCall::err(
+            "c3".into(),
+            ToolName::shell_exec().to_string(),
+            serde_json::json!({"command": "echo"}),
+            "approval_unavailable",
+            "no gate",
+        )
+        .with_shell_exec_audit("ask", ShellExecApprovalOutcome::ApprovalUnavailable);
+        assert_eq!(tc.approval_state, Some(ToolApprovalState::NotRequired));
+        assert_eq!(tc.decision.as_deref(), Some("approval_unavailable"));
+        assert_eq!(
+            tc.approval_source.as_deref(),
+            Some("shell_exec_approval=ask")
+        );
     }
 
     #[test]

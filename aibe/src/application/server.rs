@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Mutex;
 
+use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
-use crate::ports::outbound::{ProfileRegistry, ToolsConfig};
+use crate::ports::outbound::{ProfileRegistry, ShellExecApprovalGate, ToolsConfig};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode};
 
 pub async fn run(
@@ -67,17 +69,39 @@ fn bind_unix_listener(path: &Path) -> anyhow::Result<UnixListener> {
 }
 
 async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> anyhow::Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
+    let (reader, writer) = stream.into_split();
+    let writer = Arc::new(Mutex::new(writer));
+    let lines = Arc::new(Mutex::new(BufReader::new(reader).lines()));
 
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        let line = {
+            let mut guard = lines.lock().await;
+            match guard.next_line().await? {
+                Some(line) => line,
+                None => break,
+            }
+        };
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
 
         let response = match serde_json::from_str::<ClientRequest>(line) {
-            Ok(req) => handler.handle(req).await,
+            Ok(req) => {
+                let gate = match &req {
+                    ClientRequest::AgentTurn { id, .. } => {
+                        let gate: Arc<dyn ShellExecApprovalGate> =
+                            Arc::new(ConnectionApprovalGate::new(
+                                id.clone(),
+                                Arc::clone(&writer),
+                                Arc::clone(&lines),
+                            ));
+                        Some(gate)
+                    }
+                    _ => None,
+                };
+                handler.handle(req, gate).await
+            }
             Err(e) => ClientResponse::error(
                 String::new(),
                 ErrorCode::InvalidRequest,
@@ -85,26 +109,27 @@ async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> a
             ),
         };
 
-        write_response_line(&mut writer, &response).await?;
+        write_response_line(&writer, &response).await?;
     }
 
     Ok(())
 }
 
 async fn write_response_line(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    writer: &Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     response: &ClientResponse,
 ) -> anyhow::Result<()> {
     use std::io::ErrorKind;
 
     let out = serde_json::to_string(response)? + "\n";
-    if let Err(e) = writer.write_all(out.as_bytes()).await {
+    let mut w = writer.lock().await;
+    if let Err(e) = w.write_all(out.as_bytes()).await {
         if e.kind() == ErrorKind::BrokenPipe {
             return Ok(());
         }
         return Err(e.into());
     }
-    if let Err(e) = writer.flush().await {
+    if let Err(e) = w.flush().await {
         if e.kind() == ErrorKind::BrokenPipe {
             return Ok(());
         }

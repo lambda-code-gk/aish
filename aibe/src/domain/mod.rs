@@ -17,7 +17,7 @@ pub use tool::{ToolCall, ToolResult};
 pub use tool_execution_summary::ToolExecutionSummary;
 
 pub use aibe_protocol::{
-    is_known_tool, parse_tool_names, ExecutedToolCall, ExecutedToolStatus, ToolApprovalState,
-    ToolName, ToolRiskClass, UnknownToolError, GIT_DIFF, GIT_STATUS, GREP, KNOWN_TOOLS, LIST_DIR,
-    READ_FILE, SHELL_EXEC,
+    is_known_tool, parse_tool_names, ExecutedToolCall, ExecutedToolStatus,
+    ShellExecApprovalOutcome, ToolApprovalState, ToolName, ToolRiskClass, UnknownToolError,
+    GIT_DIFF, GIT_STATUS, GREP, KNOWN_TOOLS, LIST_DIR, READ_FILE, SHELL_EXEC,
 };

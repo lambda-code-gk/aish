@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::ports::outbound::{CommandPolicy, ShellExecConfig};
+use crate::ports::outbound::{CommandPolicy, ShellExecApprovalMode, ShellExecConfig};
 
 pub struct ConfigAllowlistPolicy {
     config: ShellExecConfig,
@@ -56,6 +56,10 @@ impl CommandPolicy for ConfigAllowlistPolicy {
         }
         false
     }
+
+    fn shell_exec_approval_mode(&self) -> ShellExecApprovalMode {
+        self.config.approval
+    }
 }
 
 #[cfg(test)]
@@ -66,6 +70,7 @@ mod tests {
         ConfigAllowlistPolicy::new(ShellExecConfig {
             enabled: true,
             allowed_commands: allowed.iter().map(|s| (*s).to_string()).collect(),
+            approval: ShellExecApprovalMode::Always,
         })
     }
 
@@ -89,6 +94,7 @@ mod tests {
         let p = ConfigAllowlistPolicy::new(ShellExecConfig {
             enabled: true,
             allowed_commands: vec![],
+            approval: ShellExecApprovalMode::Always,
         });
         assert!(!p.is_command_allowed("ls"));
     }

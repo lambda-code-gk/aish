@@ -1,15 +1,20 @@
-//! aibe Unix socket クライアント（`ping` / `ensure_running`）。
+//! aibe Unix socket クライアント（transport / ping / ensure_running）。
 
 #![cfg(unix)]
 
+mod transport;
 mod unix_connect;
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use aibe_protocol::{ClientRequest, ClientResponse};
+
+pub use transport::{
+    agent_turn, read_response_line, send_request, ClientError, ShellExecApprovalPrompt,
+};
 
 use unix_connect::connect_unix_stream;
 
@@ -36,13 +41,11 @@ pub fn ping_result(socket_path: &Path) -> std::io::Result<bool> {
     };
     let _ = stream.set_read_timeout(Some(PING_IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(PING_IO_TIMEOUT));
-    let req = serde_json::to_string(&ClientRequest::Ping {
+    let req = ClientRequest::Ping {
         id: "health".to_string(),
-    })
-    .expect("serialize ping");
-    writeln!(stream, "{req}")?;
-    stream.flush()?;
-    let mut reader = BufReader::new(stream);
+    };
+    send_request(&mut stream, &req)?;
+    let mut reader = BufReader::new(&mut stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let Ok(ClientResponse::Pong { .. }) = serde_json::from_str::<ClientResponse>(line.trim())

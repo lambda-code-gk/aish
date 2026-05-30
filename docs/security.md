@@ -73,12 +73,12 @@
 | 区分 | ツール例 | 許可の考え方 |
 |------|----------|--------------|
 | **safe** | `read_file`, `list_dir`, `grep`, `git_diff`, `git_status` | `@read-only` / `@full` で既定有効。読み取り目的で `shell_exec` を使わない |
-| **dangerous** | `shell_exec` | `@exec` または literal 指定が **明示** された場合のみ。それ以外は aibe が拒否する |
+| **dangerous** | `shell_exec` | `@exec` または literal 指定が **明示** された場合のみ。それ以外は aibe が拒否する。実行前承認は aibe 設定 `[tools.shell_exec] shell_exec_approval`（`never` / `ask` / `always`、既定 `ask`）。`ask` は同一 Unix 接続上で `command` / `args` を表示して yes/no（非対話 stdin は fail-closed） |
 | **将来（未実装）** | `write_file`, `replace_file`, `apply_patch` | 導入時は dry-run → approval → execute の順を前提にする（現リポジトリに当該ツールはない） |
 
-- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示する。`shell_exec` 有効時は warning を出す。表示は補助情報であり、実行許可の最終判断ではない（[architecture.md](architecture.md) のツール方針と [manual/ai-ask-tools.md](manual/ai-ask-tools.md) の手順を参照）。
-- **server 側（`aibe`）**: allowlist 外ツール・不正な `cwd`・パス境界違反などは **server-side で拒否** する。client の warning の有無に依存しない。
-- **監査（推奨）**: dangerous request には、将来のログ・プロトコル拡張で `risk_class`、`approval_state`、`dry_run` などを追跡できる設計を推奨する（現行 wire 型にすべてが載っているわけではない）。
+- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示。`shell_exec` 有効時は warning。`shell_exec_approval=ask` では実行直前 yes/no も **stderr**（`Execute? [y/N]`）。
+- **server 側（`aibe`）**: allowlist 外・`shell_exec_approval=never`・ユーザー拒否は tool result（`status=error`）で LLM に返し turn 継続可能。client warning の有無に依存しない。
+- **監査**: `tool_calls` に `risk_class` / `approval_state` / `approval_source`（例: `shell_exec_approval=ask`）/ `decision` を載せる（0020）。
 - manual や logs に残す説明は、本番設定や秘密情報を含めない。
 
 ### ai のツール表示

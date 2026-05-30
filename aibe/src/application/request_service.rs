@@ -5,7 +5,9 @@ use std::sync::Arc;
 use crate::application::agent_turn::AgentTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
-use crate::ports::outbound::{ProfileRegistry, ToolRoundTerminator, ToolsConfig};
+use crate::ports::outbound::{
+    ProfileRegistry, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig,
+};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
 
 use crate::application::protocol_convert::ProtocolMessageConversionError;
@@ -32,9 +34,18 @@ impl RequestService {
         }
     }
 
-    pub async fn handle(&self, request: ClientRequest) -> ClientResponse {
+    pub async fn handle(
+        &self,
+        request: ClientRequest,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+    ) -> ClientResponse {
         match request {
             ClientRequest::Ping { id } => ClientResponse::Pong { id },
+            ClientRequest::ShellExecApproval { .. } => ClientResponse::error(
+                String::new(),
+                ErrorCode::InvalidRequest,
+                "shell_exec_approval must be sent during an active agent_turn",
+            ),
             ClientRequest::AgentTurn {
                 id,
                 messages,
@@ -91,7 +102,9 @@ impl RequestService {
                     termination_capability,
                 );
 
-                agent_turn.run(id, messages, tools, ctx).await
+                agent_turn
+                    .run(id, messages, tools, ctx, approval_gate)
+                    .await
             }
         }
     }

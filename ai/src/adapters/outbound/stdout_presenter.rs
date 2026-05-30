@@ -77,6 +77,10 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
             stdout: None,
             stderr: vec![format!("aibe error: {message}")],
         },
+        ClientResponse::ShellExecApprovalPrompt { .. } => PresenterOutput {
+            stdout: None,
+            stderr: vec!["ai: internal error: unexpected shell_exec approval prompt".into()],
+        },
     }
 }
 

@@ -5,7 +5,10 @@ mod request;
 mod response;
 mod tool_name;
 
-pub use executed_tool::{ExecutedToolCall, ExecutedToolStatus, ToolApprovalState, ToolRiskClass};
+pub use executed_tool::{
+    ExecutedToolCall, ExecutedToolStatus, ShellExecApprovalOutcome, ToolApprovalState,
+    ToolRiskClass,
+};
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
 pub use response::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
 pub use tool_name::{

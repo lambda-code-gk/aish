@@ -14,7 +14,8 @@ use aibe::domain::{
     ToolCall, ToolName, READ_FILE, SHELL_EXEC,
 };
 use aibe::ports::outbound::{
-    LlmError, LlmProvider, ShellExecConfig, TerminationCapability, ToolDefinition, ToolsConfig,
+    LlmError, LlmProvider, ShellExecApprovalMode, ShellExecConfig, TerminationCapability,
+    ToolDefinition, ToolsConfig,
 };
 use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
 use async_trait::async_trait;
@@ -59,6 +60,7 @@ async fn empty_tools_uses_complete_path() {
             vec![ChatMessage::user("hi")],
             vec![],
             AgentTurnContext::for_text_only(None),
+            None,
         )
         .await;
     match res {
@@ -82,6 +84,7 @@ async fn tools_without_cwd_is_rejected() {
             vec![ChatMessage::user("hi")],
             vec![ToolName::read_file()],
             AgentTurnContext::for_text_only(None),
+            None,
         )
         .await;
     match res {
@@ -109,6 +112,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
     cfg.shell_exec = ShellExecConfig {
         enabled: true,
         allowed_commands: vec!["echo".into()],
+        approval: ShellExecApprovalMode::Always,
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -117,6 +121,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
             vec![ChatMessage::user("fetch")],
             vec![ToolName::shell_exec()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -161,6 +166,7 @@ async fn max_rounds_zero_programmatic_acts_as_one_round_limit() {
             vec![ChatMessage::user("read")],
             vec![ToolName::read_file()],
             cwd_context(dir.path()),
+            None,
         )
         .await;
     match res {
@@ -202,6 +208,7 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
             vec![ChatMessage::user("read all")],
             vec![ToolName::read_file()],
             cwd_context(dir.path()),
+            None,
         )
         .await;
     match res {
@@ -243,6 +250,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
     cfg.shell_exec = ShellExecConfig {
         enabled: true,
         allowed_commands: vec!["echo".into()],
+        approval: ShellExecApprovalMode::Always,
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -251,6 +259,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
             vec![ChatMessage::user("run")],
             vec![ToolName::shell_exec()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -297,6 +306,7 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
             vec![ChatMessage::user("read")],
             vec![ToolName::read_file()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -333,6 +343,7 @@ async fn model_unknown_tool_returns_tool_result_and_continues() {
             vec![ChatMessage::user("list repo")],
             vec![ToolName::read_file()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -376,6 +387,7 @@ async fn model_disallowed_tool_returns_tool_result_and_continues() {
             vec![ChatMessage::user("clean disk")],
             vec![ToolName::read_file()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -423,6 +435,7 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
             vec![ChatMessage::user("read secret")],
             vec![ToolName::read_file()],
             cwd_context(dir.path()),
+            None,
         )
         .await;
     match res {
@@ -459,6 +472,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
     cfg.shell_exec = ShellExecConfig {
         enabled: true,
         allowed_commands: vec!["false".into()],
+        approval: ShellExecApprovalMode::Always,
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -467,6 +481,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
             vec![ChatMessage::user("run check")],
             vec![ToolName::shell_exec()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -504,6 +519,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
     cfg.shell_exec = ShellExecConfig {
         enabled: true,
         allowed_commands: vec!["sleep".into()],
+        approval: ShellExecApprovalMode::Always,
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -512,6 +528,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
             vec![ChatMessage::user("nap")],
             vec![ToolName::shell_exec()],
             process_cwd_context(),
+            None,
         )
         .await;
     match res {
@@ -553,6 +570,7 @@ async fn shell_exec_runs_in_context_cwd() {
     cfg.shell_exec = ShellExecConfig {
         enabled: true,
         allowed_commands: vec!["cat".into()],
+        approval: ShellExecApprovalMode::Always,
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -564,6 +582,7 @@ async fn shell_exec_runs_in_context_cwd() {
                 ClientCwd::new(client_sub.clone()).expect("absolute cwd"),
                 None,
             ),
+            None,
         )
         .await;
     match res {
@@ -609,6 +628,7 @@ async fn read_file_relative_path_uses_context_cwd() {
                 ClientCwd::new(client_sub.clone()).expect("absolute cwd"),
                 None,
             ),
+            None,
         )
         .await;
     match res {
@@ -691,6 +711,7 @@ async fn max_tool_rounds_conversation_replay_strategy() {
             vec![ChatMessage::user("read all")],
             vec![ToolName::read_file()],
             cwd_context(dir.path()),
+            None,
         )
         .await;
     match res {
@@ -746,6 +767,7 @@ async fn max_tool_rounds_replay_fallback_to_summary() {
             vec![ChatMessage::user("read all")],
             vec![ToolName::read_file()],
             cwd_context(dir.path()),
+            None,
         )
         .await;
     match res {

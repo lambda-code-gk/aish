@@ -124,8 +124,13 @@ impl ToolRoundExecutor {
                     )
                 }
             };
-            let (risk, approval) = classify_tool(&record.name);
-            executed.push(record.with_audit(risk, approval, false));
+            let record = if record.risk_class.is_some() {
+                record
+            } else {
+                let (risk, approval) = classify_tool(&record.name);
+                record.with_audit(risk, approval, false)
+            };
+            executed.push(record);
             let content = if result.is_error {
                 format!("[tool error]\n{}", result.content)
             } else {

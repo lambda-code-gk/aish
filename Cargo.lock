@@ -57,6 +57,7 @@ dependencies = [
  "serial_test",
  "socket2 0.5.10",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]

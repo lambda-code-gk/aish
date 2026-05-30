@@ -128,6 +128,18 @@ cargo run -q -p ai -- ask "x" \
 
 - **stderr** 先頭行: `warning: ai: tools enabled: shell_exec (@exec)`
 
+### B3b. `shell_exec` 実行前承認（`shell_exec_approval=ask`）
+
+aibe 設定で `[tools.shell_exec] shell_exec_approval = "ask"`（既定）かつ allowlist にコマンドがある状態で、モデルが `shell_exec` を呼ぶ経路を手動確認する。
+
+期待:
+
+- **stderr** に `ai: shell_exec approval required:` と `command` / `args` が表示される
+- `Execute? [y/N]` プロンプトが **stdout ではなく stderr**
+- `N` または空 Enter で拒否され、turn は `tool_calls` に `approval_source=shell_exec_approval=ask` 付きで継続可能
+
+（mock LLM だけでは再現しない。実 LLM + `@exec` + allowlist 設定が必要。）
+
 ### B4. config 上書き `--tools none`
 
 `AI_CONFIG` は `@read-only` のまま:
