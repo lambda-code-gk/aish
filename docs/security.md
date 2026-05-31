@@ -88,6 +88,14 @@
 - `tool_calls` の引数や出力には秘密情報が含まれうるため、共有端末や記録されたログでは注意する。
 - `stderr` の通知文は補助情報であり、ツール実行の監査ログの代替ではない。
 
+### ai の output filter（`AI_FILTER` / `[ask].filter`）
+
+- filter は **ユーザー端末上**で `/bin/sh -c` として実行される。assistant 本文が stdin に渡る。
+- filter 文字列はユーザー自身が設定する。**任意のシェルコマンド**として扱い、設定ファイルや env に信頼できない第三者の入力を置かない。
+- filter の stdout はターミナルにそのまま出る。機密を含む応答を加工する場合も、シェル履歴・ログへの露出に注意する。
+- filter stderr はユーザー stderr に透過する。filter がハングすると `ai ask` も終了しない（タイムアウトなし）。
+- `aish` は filter を export しない。`aish shell` 内で使う場合はユーザーが明示的に `export AI_FILTER=...` する。
+
 ## 権限・プロセス
 
 - **Unix 専用**: ファイルモード・ソケットパスは umask / `chmod` を意識する

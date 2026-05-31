@@ -38,7 +38,7 @@ fn ai_ask_reaches_mock_aibe() {
     thread::sleep(Duration::from_millis(80));
 
     let client = AibeUnixClient::new(&socket_path);
-    let presenter = StdoutPresenter;
+    let presenter = StdoutPresenter::new(None);
     let ask = Ask::new(
         &client,
         &presenter,

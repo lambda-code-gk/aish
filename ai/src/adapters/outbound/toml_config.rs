@@ -13,6 +13,7 @@ pub struct AiConfig {
     pub socket_path: PathBuf,
     pub ask_tools: ConfigToolsTokens,
     pub ask_default_profile: Option<String>,
+    pub ask_filter: Option<String>,
 }
 
 const DEFAULT_CONFIG: &str = ".config/ai/config.toml";
@@ -24,6 +25,7 @@ impl AiConfig {
             socket_path: default_socket_path(),
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
+            ask_filter: None,
         };
         if path.is_file() {
             if let Ok(raw) = fs::read_to_string(&path) {
@@ -39,6 +41,7 @@ impl AiConfig {
                             });
                         }
                         cfg.ask_default_profile = ask.default_profile;
+                        cfg.ask_filter = ask.filter.filter(|s| !s.is_empty());
                     }
                 }
             }
@@ -76,6 +79,7 @@ struct FileConfig {
 struct AskSection {
     tools: Option<AskToolsToml>,
     default_profile: Option<String>,
+    filter: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,7 +96,7 @@ mod tests {
 
     use aibe_protocol::ToolName;
 
-    use crate::domain::{resolve_tools, AskToolsConfigRaw};
+    use crate::domain::{resolve_output_filter, resolve_tools, AskToolsConfigRaw};
 
     #[test]
     fn parses_ask_tools_string_and_array() {
@@ -167,5 +171,48 @@ tools = "@read-only"
                 ToolName::git_status()
             ]
         );
+    }
+
+    #[test]
+    fn load_ask_filter_from_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&path).expect("create");
+        writeln!(
+            f,
+            r#"
+[ask]
+filter = "cat -n"
+"#
+        )
+        .expect("write");
+
+        unsafe {
+            std::env::set_var("AI_CONFIG", &path);
+            std::env::remove_var("AI_FILTER");
+        }
+        let cfg = AiConfig::load();
+        unsafe {
+            std::env::remove_var("AI_CONFIG");
+        }
+        assert_eq!(cfg.ask_filter.as_deref(), Some("cat -n"));
+        assert_eq!(
+            resolve_output_filter(None, cfg.ask_filter.as_deref()),
+            Some("cat -n".into())
+        );
+    }
+
+    #[test]
+    fn env_filter_overrides_config_filter() {
+        unsafe {
+            std::env::set_var("AI_FILTER", "sed 's/a/b/'");
+        }
+        assert_eq!(
+            resolve_output_filter(std::env::var("AI_FILTER").ok(), Some("cat -n")),
+            Some("sed 's/a/b/'".into())
+        );
+        unsafe {
+            std::env::remove_var("AI_FILTER");
+        }
     }
 }

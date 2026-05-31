@@ -72,6 +72,7 @@ fi
 
 # ルート直下に残った 00xx 指示書（done 移動漏れ）
 while IFS= read -r -d '' f; do
+  rel="${f#"$ROOT/docs/"}"
   fail "stale spec at docs root (move to docs/done/): ${f#"$ROOT/"}"
 done < <(find "$ROOT/docs" -maxdepth 1 -name '[0-9][0-9][0-9][0-9]_*-spec.md' -print0 2>/dev/null)
 

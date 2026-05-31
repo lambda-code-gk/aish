@@ -39,7 +39,7 @@ cargo test -p aibe-client -- --test-threads=1
 | **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
 | **aibe-client** | transport（`send_request` / `agent_turn` + 承認往復）、`ping` タイムアウト | `transport.rs`、`client_ping.rs`、`ensure_running_*.rs` |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
-| **ai** | `--session` hex 検証・presenter / allowlist | `shell_log_resolve.rs`、`ask_integration.rs` |
+| **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
 | **aibe** | server / agent / tools / 承認 | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs` |
 
 ## テスト種別
@@ -92,6 +92,19 @@ cargo test -p aibe-client -- --test-threads=1
 - **client / server の役割**: `ai` 側テストは allowlist 解決と起動時表示。`aibe` 側テストは実行時拒否とループ継続。client の warning だけに依存しないことは `aibe` の拒否テストで追う。
 - **補完対象**: `shell_exec` が allowlist に含まれた場合の承認済み通過経路は、現状の統合テストだけでは十分に固定されていない。追加する場合は 0018 とは別の指示書で扱う。
 - **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる。
+
+### 0022 output filter の検証観点
+
+正式指示書: [0022_ai-filter-spec.md](done/0022_ai-filter-spec.md)。
+
+| 種別 | ファイル | 担保する観点 |
+|------|----------|--------------|
+| **unit** | `ai/src/domain/output_filter.rs` | `AI_FILTER` > `[ask].filter` の優先順位 |
+| **unit** | `ai/src/adapters/outbound/output_filter.rs` | `/bin/sh -c`、stdin pipe、非ゼロ終了、spawn 失敗 |
+| **unit** | `ai/src/adapters/outbound/stdout_presenter.rs` | 空 assistant の stdout 不出力、stderr 非対象 |
+| **unit** | `ai/src/adapters/outbound/toml_config.rs` | `[ask].filter` の読み込み |
+| **integration** | `ai/tests/ask_integration.rs` | filter 付き `Ask` が完走すること |
+| **manual** | [manual/ai-ask-tools.md](manual/ai-ask-tools.md) | `AI_FILTER` / config filter の stdout 変換、stderr 非対象、失敗時 warning |
 
 ## モック・フィクスチャ
 

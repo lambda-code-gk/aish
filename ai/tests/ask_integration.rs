@@ -50,7 +50,7 @@ impl AgentClient for RecordingClient {
 #[test]
 fn resolve_read_only_sends_safe_tools_to_aibe() {
     let client = RecordingClient::new();
-    let presenter = StdoutPresenter;
+    let presenter = StdoutPresenter::new(None);
     let ask = Ask::new(
         &client,
         &presenter,
@@ -125,6 +125,27 @@ fn presenter_max_tool_rounds_and_verbose_tools_contract() {
         "expected verbose tool line on stderr: {:?}",
         out.stderr
     );
+}
+
+#[test]
+fn ask_with_filter_completes() {
+    let client = RecordingClient::new();
+    let presenter = StdoutPresenter::new(Some("cat".into()));
+    let ask = Ask::new(
+        &client,
+        &presenter,
+        None::<&ai::adapters::outbound::FileLogTail>,
+    );
+    let resolved = resolve_tools(None, &ConfigToolsTokens::default()).expect("resolve");
+    ask.run(
+        "filtered".to_string(),
+        AskRunOptions {
+            resolved_tools: resolved,
+            verbose_tools: false,
+            llm_profile: None,
+        },
+    )
+    .expect("ask");
 }
 
 #[test]

@@ -250,6 +250,63 @@ termination_strategy = "conversation_replay"
 - `status: max_tool_rounds` の `agent_turn_result`（`type: error` ではない）
 - Replay が provider error になった場合は SummaryPrompt に自動フォールバック（設定は `conversation_replay` のままでよい）
 
+## D. output filter（`AI_FILTER` / `[ask].filter`）
+
+仕様: [0022_ai-filter-spec.md](../done/0022_ai-filter-spec.md)。mock aibe 前提（上記「共通: 隔離用設定」）。
+
+### D1. 環境変数 filter
+
+```bash
+# mock aibe 起動済み（B0 と同様）
+export AI_FILTER='sed "s/^/ai: /"'
+ai ask --no-start --socket "$AIBE_SOCKET_PATH" hello
+```
+
+期待:
+
+- stdout が `ai: ok`（mock の assistant 本文 `ok` に prefix）。末尾改行は `sed` 任せ
+- stderr に `ai: tools enabled:` 行（filter 対象外）
+
+### D2. config filter
+
+```bash
+cat >>"$AI_CONFIG" <<'EOF'
+filter = "tr a-z A-Z"
+EOF
+unset AI_FILTER
+ai ask --no-start --socket "$AIBE_SOCKET_PATH" hello
+```
+
+期待: stdout が `OK`（大文字化）
+
+### D3. filter 非ゼロ終了
+
+```bash
+export AI_FILTER='cat; exit 1'
+ai ask --no-start --socket "$AIBE_SOCKET_PATH" hello
+```
+
+期待:
+
+- stdout に `ok`（filter stdout）
+- stderr に `warning: ai: filter exited with status 1`
+- `ai` 終了コード 0
+
+### D4. filter 非ゼロ（stdout 空）
+
+```bash
+export AI_FILTER='__no_such_command_xyz__'
+ai ask --no-start --socket "$AIBE_SOCKET_PATH" hello
+```
+
+期待:
+
+- stdout 不出力（filter stdout が空のため未加工フォールバックは **しない**）
+- stderr に `warning: ai: filter exited with status 127`（環境により数値は異なる場合あり）
+- `ai` 終了コード 0
+
+spawn 失敗時の未加工フォールバックは unit test（`output_filter::spawn_failed_with_missing_shell`）で担保する。
+
 ## 新規組み込みツール追加チェックリスト
 
 `aibe` に組み込みツールを追加するとき、カテゴリ表と `KNOWN_TOOLS` のドリフトを防ぐ。仕様: `docs/done/0009_ai-tool-category-sync-spec.md`。カテゴリ表の仕様正本: `docs/done/0002_ai-tools-client-spec.md` §カテゴリ表。

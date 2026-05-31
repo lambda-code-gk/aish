@@ -12,8 +12,8 @@ use ai::adapters::outbound::{AibeUnixClient, FileLogTail, StdoutPresenter};
 use ai::application::{ensure_aibe_if_needed, plan_ask_launch, Ask, AskRunOptions};
 use ai::clap_cli::{AiCli, AiCommand};
 use ai::domain::{
-    resolve_llm_profile, resolve_shell_log_for_ask, validate_ask_arg_order, ShellLogChoice,
-    ShellLogResolveError, ToolsResolveError,
+    resolve_llm_profile, resolve_output_filter, resolve_shell_log_for_ask, validate_ask_arg_order,
+    ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use aibe_client::ensure_running;
 
@@ -112,7 +112,9 @@ fn run_ask(
     })?;
 
     let client = AibeUnixClient::new(plan.socket_path);
-    let presenter = StdoutPresenter;
+    let output_filter =
+        resolve_output_filter(std::env::var("AI_FILTER").ok(), cfg.ask_filter.as_deref());
+    let presenter = StdoutPresenter::new(output_filter);
     let llm_profile =
         resolve_llm_profile(profile_cli.as_deref(), cfg.ask_default_profile.as_deref());
 

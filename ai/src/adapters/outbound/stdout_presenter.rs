@@ -1,5 +1,7 @@
 //! 標準出力プレゼンター。
 
+use std::io::Write;
+
 use aibe_protocol::{
     AgentTurnStatus, ClientResponse, ExecutedToolCall, ExecutedToolStatus, MAX_TOOL_OUTPUT_BYTES,
 };
@@ -7,13 +9,63 @@ use aibe_protocol::{
 use crate::domain::ToolsStartupLine;
 use crate::ports::outbound::Presenter;
 
-pub struct StdoutPresenter;
+use super::output_filter::{
+    apply_output_filter, format_filter_exit_status, write_filter_streams, FilterRunOutcome,
+};
+
+#[derive(Debug, Clone, Default)]
+pub struct StdoutPresenter {
+    output_filter: Option<String>,
+}
 
 /// `show_response` が書き込む内容（テスト・契約検証用）。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PresenterOutput {
     pub stdout: Option<String>,
     pub stderr: Vec<String>,
+}
+
+impl StdoutPresenter {
+    pub fn new(output_filter: Option<String>) -> Self {
+        Self { output_filter }
+    }
+
+    fn emit_assistant_stdout(&self, content: &str) {
+        if content.is_empty() {
+            return;
+        }
+        if let Some(filter) = &self.output_filter {
+            self.emit_filtered_stdout(content, filter);
+        } else {
+            println!("{content}");
+        }
+    }
+
+    fn emit_filtered_stdout(&self, content: &str, filter: &str) {
+        match apply_output_filter(content, filter) {
+            FilterRunOutcome::Success { stdout, stderr } => {
+                let _ = write_filter_streams(&stdout, &stderr);
+            }
+            FilterRunOutcome::NonZeroExit {
+                status,
+                stdout,
+                stderr,
+            } => {
+                eprintln!(
+                    "warning: ai: filter exited with status {}",
+                    format_filter_exit_status(&status)
+                );
+                let _ = write_filter_streams(&stdout, &stderr);
+            }
+            FilterRunOutcome::SpawnFailed { message, stderr } => {
+                eprintln!("warning: ai: filter failed: {message}");
+                println!("{content}");
+                if !stderr.is_empty() {
+                    let _ = std::io::stderr().write_all(&stderr);
+                }
+            }
+        }
+    }
 }
 
 impl Presenter for StdoutPresenter {
@@ -23,8 +75,8 @@ impl Presenter for StdoutPresenter {
 
     fn show_response(&self, response: &ClientResponse, verbose_tools: bool) {
         let out = render_response(response, verbose_tools);
-        if let Some(s) = out.stdout {
-            println!("{s}");
+        if let Some(s) = out.stdout.as_deref() {
+            self.emit_assistant_stdout(s);
         }
         for line in out.stderr {
             eprintln!("{line}");
@@ -64,10 +116,12 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
                     stderr.push(format_tool_call_line(tc));
                 }
             }
-            PresenterOutput {
-                stdout: Some(assistant_message.content.clone()),
-                stderr,
-            }
+            let stdout = if assistant_message.content.is_empty() {
+                None
+            } else {
+                Some(assistant_message.content.clone())
+            };
+            PresenterOutput { stdout, stderr }
         }
         ClientResponse::Pong { id } => PresenterOutput {
             stdout: None,
@@ -180,6 +234,23 @@ mod tests {
         let out = render_response(&ClientResponse::Pong { id: "x".into() }, false);
         assert!(out.stdout.is_none());
         assert_eq!(out.stderr, vec!["ai: pong (x)"]);
+    }
+
+    #[test]
+    fn empty_assistant_has_no_stdout() {
+        let out = render_response(
+            &ClientResponse::AgentTurnResult {
+                id: "id".into(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: String::new(),
+                },
+                tool_calls: vec![],
+            },
+            false,
+        );
+        assert!(out.stdout.is_none());
     }
 
     #[test]

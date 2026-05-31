@@ -181,6 +181,12 @@ aish          →  （aibe への path 依存禁止）
   - `AI_ASK_LOG=session` かつ `AISH_SESSION_DIR` → `current_log` を解決し、symlink 先が session dir 内の通常ファイルとして **open 可能**なことを検証してから tail
   - `--session <id>` → 同上（`id` は `basename(AISH_SESSION_DIR)` と一致）
   - `--log PATH` / `--no-log` の優先順は `0019` 参照
+- **`ai ask` の output filter**（`0022`）:
+  - 対象は `AgentTurnResult.assistant_message.content` のみ（`stdout`）。tools 起動行・warning・`--verbose-tools`・エラーは `stderr` のまま
+  - 優先順: 非空 `AI_FILTER` > 非空 `[ask].filter` > なし（CLI フラグなし）
+  - 実行: `/bin/sh -c` に stdin pipe。filter stdout は `write_all`（改行は filter 任せ）。filter stderr は透過
+  - 空 assistant は filter 未起動・stdout 不出力。filter 非ゼロ終了でも `ai` は 0 終了（warning のみ）。spawn 失敗時は未加工本文をフォールバック
+  - 将来の対話モード等でも同 env/config を再利用する想定。`aish` からの export は今回なし
 
 ## 設定ファイル
 
@@ -188,7 +194,7 @@ aish          →  （aibe への path 依存禁止）
 |------|----------|------|
 | aibe | `~/.config/aibe/config.toml` | LLM 接続 `[llm.<name>]`、プロファイル `[profiles.<name>]`、`default_profile`、socket、tools |
 | aish | `~/.config/aish/config.toml` | `log_dir`、`max_sessions`（既定 50）、シェル起動 |
-| ai | `~/.config/ai/config.toml` | aibe socket、`[ask].default_profile`、`[ask].tools` |
+| ai | `~/.config/ai/config.toml` | aibe socket、`[ask].default_profile`、`[ask].tools`、`[ask].filter`（assistant 本文の output filter。`AI_FILTER` が非空なら上書き） |
 
 - リポジトリに **実キーをコミットしない**
 - 例示用は `docs/` または `*.example.toml` のみ
@@ -230,7 +236,7 @@ aish          →  （aibe への path 依存禁止）
 |---------|------------------|----------------------|-------------------------|
 | **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ToolRoundTerminator`, `ToolExecutor`, `CommandPolicy`, `ConfigLoader` | Unix NDJSON リスナ、ツール（`read_file`, `list_dir`, `grep`, `git_diff`, `git_status`, `shell_exec`）、終端戦略（`terminator/`） |
 | **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
-| **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask`。`[ask].tools` / `--tools` を展開して aibe の `tools` allowlist を構築 |
+| **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask`。`[ask].tools` / `--tools` を展開して aibe の `tools` allowlist を構築。assistant 本文は `StdoutPresenter` + 任意の output filter（`AI_FILTER` / `[ask].filter`） |
 
 `ai` は **`aibe-protocol` と `aibe-client` のみ**を path 依存し、`aibe` 本体・`aish` には依存しない（ログはファイルパスで読む）。wire 型の正本は `aibe-protocol` クレート。
 
