@@ -30,7 +30,7 @@ flowchart LR
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
 | **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
 | **aibe** | エージェントループ、ツール、プロバイダ呼び出し、Unix socket サーバ | LLM API へ（設定に従う） |
-| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う | aibe デーモンのみ（LLM 直叩き禁止） |
+| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
 
 ## 依存ルール
 

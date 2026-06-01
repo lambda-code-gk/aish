@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use aibe_client::{agent_turn as transport_agent_turn, ClientError, ShellExecApprovalPrompt};
+use aibe_client::{agent_turn as transport_agent_turn, ClientError};
+
+use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
 
 use crate::domain::AskRequest;
@@ -62,28 +64,6 @@ fn map_client_error(e: ClientError) -> AgentError {
         | ClientError::Deserialize(msg)
         | ClientError::Unexpected(msg) => AgentError::Request(msg),
     }
-}
-
-fn prompt_shell_exec_approval(prompt: ShellExecApprovalPrompt) -> bool {
-    eprintln!("ai: shell_exec approval required:");
-    eprintln!("  command: {}", prompt.command);
-    if prompt.args.is_empty() {
-        eprintln!("  args: (none)");
-    } else {
-        eprintln!("  args: {}", prompt.args.join(" "));
-    }
-    eprint!("Execute? [y/N] ");
-    let _ = std::io::Write::flush(&mut std::io::stderr());
-    let mut line = String::new();
-    let Ok(n) = std::io::stdin().read_line(&mut line) else {
-        eprintln!("ai: shell_exec denied (stdin unavailable)");
-        return false;
-    };
-    if n == 0 {
-        eprintln!("ai: shell_exec denied (non-interactive stdin)");
-        return false;
-    }
-    matches!(line.trim(), "y" | "Y" | "yes" | "Yes" | "YES")
 }
 
 fn correlation_id() -> String {

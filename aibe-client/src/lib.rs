@@ -13,7 +13,8 @@ use std::time::Duration;
 use aibe_protocol::{ClientRequest, ClientResponse};
 
 pub use transport::{
-    agent_turn, read_response_line, send_request, ClientError, ShellExecApprovalPrompt,
+    agent_turn, agent_turn_on_stream, read_response_line, send_request, ClientError,
+    ShellExecApprovalPrompt,
 };
 
 use unix_connect::connect_unix_stream;

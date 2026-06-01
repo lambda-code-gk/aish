@@ -76,7 +76,7 @@
 | **dangerous** | `shell_exec` | `@exec` または literal 指定が **明示** された場合のみ。それ以外は aibe が拒否する。実行前承認は aibe 設定 `[tools.shell_exec] shell_exec_approval`（`never` / `ask` / `always`、既定 `ask`）。`ask` は同一 Unix 接続上で `command` / `args` を表示して yes/no（非対話 stdin は fail-closed） |
 | **将来（未実装）** | `write_file`, `replace_file`, `apply_patch` | 導入時は dry-run → approval → execute の順を前提にする（現リポジトリに当該ツールはない） |
 
-- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示。`shell_exec` 有効時は warning。`shell_exec_approval=ask` では実行直前 yes/no も **stderr**（`Execute? [y/N]`）。
+- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示。`shell_exec` 有効時は warning。`shell_exec_approval=ask` では実行直前 yes/no も **stderr**（`Execute? [y/N]`）。stdin が TTY でない場合は **読む前に拒否**（`stdin.is_terminal()`）。`command` / `args` は `escape_default` 相当で表示し、ANSI / 制御文字の見た目偽装を防ぐ（0023）。
 - **server 側（`aibe`）**: allowlist 外・`shell_exec_approval=never`・ユーザー拒否は tool result（`status=error`）で LLM に返し turn 継続可能。client warning の有無に依存しない。
 - **監査**: `tool_calls` に `risk_class` / `approval_state` / `approval_source`（例: `shell_exec_approval=ask`）/ `decision` を載せる（0020）。
 - manual や logs に残す説明は、本番設定や秘密情報を含めない。

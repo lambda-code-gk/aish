@@ -2,6 +2,7 @@ mod aibe_client;
 mod dynamic_completion;
 mod file_log;
 mod output_filter;
+mod shell_exec_approval_ui;
 mod stdout_presenter;
 pub mod toml_config;
 

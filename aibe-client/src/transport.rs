@@ -54,14 +54,13 @@ fn read_response_from_reader<R: BufRead>(reader: &mut R) -> Result<ClientRespons
     serde_json::from_str(line.trim()).map_err(|e| ClientError::Deserialize(e.to_string()))
 }
 
-/// `agent_turn` を送り、承認 prompt があれば `on_approval` で応答する。
-pub fn agent_turn(
-    socket_path: &std::path::Path,
+/// 接続済み stream 上で `agent_turn` と承認往復を行う（テスト・カスタム接続向け）。
+pub fn agent_turn_on_stream(
+    stream: UnixStream,
     request: ClientRequest,
     mut on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
 ) -> Result<ClientResponse, ClientError> {
-    let mut writer =
-        connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
+    let mut writer = stream;
     let mut reader = BufReader::new(writer.try_clone().map_err(ClientError::Connect)?);
     send_request(&mut writer, &request).map_err(ClientError::Connect)?;
 
@@ -95,6 +94,16 @@ pub fn agent_turn(
             final_resp => return Ok(final_resp),
         }
     }
+}
+
+/// `agent_turn` を送り、承認 prompt があれば `on_approval` で応答する。
+pub fn agent_turn(
+    socket_path: &std::path::Path,
+    request: ClientRequest,
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+) -> Result<ClientResponse, ClientError> {
+    let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
+    agent_turn_on_stream(stream, request, on_approval)
 }
 
 #[cfg(test)]

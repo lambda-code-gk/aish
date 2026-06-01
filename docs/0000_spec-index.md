@@ -24,6 +24,7 @@
 | 0020 | [0020_p4-daily-use-polish-spec.md](done/0020_p4-daily-use-polish-spec.md) | 実装済み | P4 日常利用前の仕上げ（`aish shell` / `aibe-client` / `shell_exec` 承認） |
 | 0021 | [0021_tab-completion-spec.md](done/0021_tab-completion-spec.md) | 実装済み | CLI Tab 補完（`aish` / `ai` / `aibe`、bash / zsh、`clap` 移行） |
 | 0022 | [0022_ai-filter-spec.md](done/0022_ai-filter-spec.md) | 実装済み | `AI_FILTER` / `[ask].filter` による assistant 本文の output filter |
+| 0023 | [0023_shell-exec-approval-hardening-spec.md](done/0023_shell-exec-approval-hardening-spec.md) | 実装済み | `shell_exec` 承認 UI: 非対話 stdin fail-closed、表示 escape、`aibe-client` 往復テスト |
 
 **進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
 

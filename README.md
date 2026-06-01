@@ -30,7 +30,7 @@ aish ワークスペースは **5 つのクレート**で構成されます。
 | クレート | 種別 | 役割 |
 |---------|------|------|
 | **aibe-protocol** | ライブラリ | wire DTO（NDJSON / serde）、`ToolName`、契約定数 |
-| **aibe-client** | ライブラリ | Unix socket の `ping` / `ensure_running`、既定 socket パス |
+| **aibe-client** | ライブラリ | Unix socket の `ping` / `ensure_running` / `agent_turn` transport（承認往復含む）、既定 socket パス |
 | **aibe** | ライブラリ + バイナリ | LLM プロバイダ呼び出し、ツール付きエージェントループ、Unix domain socket サーバ |
 | **aish** | バイナリ | シェル起動・コマンド実行、入出力を JSONL ログに記録（**ネットワークなし**） |
 | **ai** | バイナリ | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログを任意でコンテキストに利用（**LLM を直接呼ばない**） |

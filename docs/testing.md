@@ -37,7 +37,8 @@ cargo test -p aibe-client -- --test-threads=1
 | クレート | 単体 | 統合 / E2E |
 |----------|------|------------|
 | **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
-| **aibe-client** | transport（`send_request` / `agent_turn` + 承認往復）、`ping` タイムアウト | `transport.rs`、`client_ping.rs`、`ensure_running_*.rs` |
+| **aibe-client** | socket 往復の契約固定（`agent_turn` 承認 prompt → approval → final、TTY 非依存） | `transport.rs`、`tests/agent_turn_approval.rs`、`client_ping.rs`、`ensure_running_*.rs` |
+| **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
 | **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
 | **aibe** | server / agent / tools / 承認 | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs` |
@@ -91,6 +92,7 @@ cargo test -p aibe-client -- --test-threads=1
 
 - **client / server の役割**: `ai` 側テストは allowlist 解決と起動時表示。`aibe` 側テストは実行時拒否とループ継続。client の warning だけに依存しないことは `aibe` の拒否テストで追う。
 - **補完対象**: `shell_exec` が allowlist に含まれた場合の承認済み通過経路は、現状の統合テストだけでは十分に固定されていない。追加する場合は 0018 とは別の指示書で扱う。
+- **0023**: `ai` は `shell_exec_approval_ui` の unit で TTY/escape を固定。`aibe-client/tests/agent_turn_approval.rs` で transport 往復を固定。pipe への `printf y` は [manual/ai-ask-tools.md](manual/ai-ask-tools.md) B3c で手動確認。
 - **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる。
 
 ### 0022 output filter の検証観点
