@@ -105,7 +105,7 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 | 値 | 用途 |
 |----|------|
 | `subagent` | 既定。調査・実装・修正・検証など自由記述 |
-| `spec` | 仕様ドラフト（`docs/` に書いてよい） |
+| `spec` | **設計書**を `docs/spec/` に出力。実装指示は `docs/tasks/` |
 | `review` | 変更の監査（パケット任意） |
 | `audit` | 境界・セキュリティ横断 |
 | `spike` | 設計比較・調査のみ |
@@ -115,7 +115,7 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 ## Codex に任せてよいこと
 
 - リポジトリ内の読取・編集・`cargo fmt` / `clippy` / `test` / `./scripts/check-architecture.sh`
-- 仕様ドラフト（`docs/`）
+- 設計書（`docs/spec/`）・実装指示書（`docs/tasks/`）
 - 横断調査・指摘・修正案の実装（サブエージェントとして）
 
 ## 親（Cursor）が担うこと

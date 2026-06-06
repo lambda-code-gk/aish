@@ -27,6 +27,7 @@ Role: ${TASK} for aish workspace (Codex subagent). You may read and edit within 
 - \`git commit\` / \`git push\` は **ユーザーが明示したときのみ**。
 - API キー・実設定をリポジトリに書かない。\`.env\` / credentials は触らない。
 - 出力は **日本語**。推測は「推測」と明記。
+- ドキュメント（既定）: **設計書** → \`docs/spec/00xx_<topic>-spec.md\`、**実装指示書** → \`docs/tasks/00xx_<topic>-implementation-spec.md\`（設計と**同じ番号**）。完了コミット時に実装指示書のみ \`docs/done/\` へ移動。一覧は \`docs/0000_spec-index.md\`。
 EOF
 
 if [[ -n "$EXTRA_ROOTS" ]]; then

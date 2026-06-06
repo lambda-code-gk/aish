@@ -60,9 +60,20 @@ Prefer ./scripts/verify.sh after code changes (or fmt/clippy/test/check-architec
 No require_escalated retries on the same command.
 ```
 
+## ドキュメント出力（既定）
+
+特段指定がなければ次に従う。
+
+| 種別 | 出力先 | 移動 |
+|------|--------|------|
+| 設計書 | `docs/spec/`（`00xx_<topic>-spec.md`） | 完了後も残す |
+| 実装指示書（Cursor 実装用） | `docs/tasks/`（**設計と同じ 00xx**、`-implementation-spec.md`） | **コミット時**に `docs/done/` へ移動 |
+
+一覧・番号: `docs/0000_spec-index.md`。
+
 タスク別の追記（任意）:
 
-- **spec**: 仕様は docs/ に。受け入れ条件・未確定を明示。
+- **spec**: 設計書は `docs/spec/`。実装指示は `docs/tasks/`。受け入れ条件・未確定を明示。
 - **review**: 重大/中/低、通過、要確認。パケット同梱時はそれも参照。
 - **audit**: クレート境界・秘密・docs 整合・本番経路のスタブ。
 
