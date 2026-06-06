@@ -23,7 +23,7 @@
 
 - `[[external_commands]]` は `shell_exec` のテンプレートであり、AISH のポリシー外の CLI を明示登録するためのもの。
 - `risk_class` は `DangerousShell` のまま扱う。`approval_state` は既存の `shell_exec_approval` に従う。
-- `approval_source` は少なくとも `shell_exec_approval=<mode>` を残し、必要ならプリセット名も追えるようにする。
+- `shell_exec_approval` の最終解決は CLI > preset > `AIBE_CONFIG`（`[tools.shell_exec].shell_exec_approval`）の順で、`--yes-exec` は実効 mode が `ask` の場合にのみ有効にする。`never` をクライアント側で上書きしてはいけない。
 - AISH は CLI の内部 sandbox / login / tool catalog / thread を検証しない。ユーザー責任で管理する。
 
 ## 秘密情報
@@ -99,6 +99,10 @@
 - **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示。`shell_exec` 有効時は warning。`shell_exec_approval=ask` では実行直前 yes/no も **stderr**（`Execute? [y/N]`）。stdin が TTY でない場合は **読む前に拒否**（`stdin.is_terminal()`）。`command` / `args` は `escape_default` 相当で表示し、ANSI / 制御文字の見た目偽装を防ぐ（0023）。
 - **server 側（`aibe`）**: allowlist 外・`shell_exec_approval=never`・ユーザー拒否は tool result（`status=error`）で LLM に返し turn 継続可能。client warning の有無に依存しない。
 - **監査**: `tool_calls` に `risk_class` / `approval_state` / `approval_source`（例: `shell_exec_approval=ask`）/ `decision` を載せる（0020）。
+
+### `ai` の表示メタデータ
+
+- `dry-run` / `status` / `doctor` は raw な `[ask].filter` や `AI_FILTER` の値を出さず、`enabled` / `source` / `masked` のメタデータだけを返す。assistant 本文のフィルタ文字列そのものはログや診断出力に残さない。
 - manual や logs に残す説明は、本番設定や秘密情報を含めない。
 
 ### ai のツール表示

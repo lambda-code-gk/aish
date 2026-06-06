@@ -223,7 +223,7 @@ fn dry_run_masks_message_and_skips_aibe() {
     let out = Command::new(env!("CARGO_BIN_EXE_ai"))
         .env("AI_CONFIG", &cfg_path)
         .env("HOME", home.path())
-        .args(["--quiet", "--dry-run", "--format", "env", "hello"])
+        .args(["--quiet", "--dry-run", "--format", "json", "hello"])
         .output()
         .expect("run ai dry-run");
 
@@ -237,7 +237,7 @@ fn dry_run_masks_message_and_skips_aibe() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let stdout = String::from_utf8(out.stdout).expect("utf8");
-    assert!(stdout.contains("AI_MESSAGE_MASKED='<masked>'"));
-    assert!(!stdout.contains("hello"));
+    let json: Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(json["message_masked"], "<masked>");
+    assert_eq!(json["message_source"], "argv");
 }

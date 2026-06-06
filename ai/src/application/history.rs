@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::{
-    HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryPayload, HistoryRecordKind,
-    HistoryRecordStatus, HistorySummary,
+    HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryMessage, HistoryPayload,
+    HistoryRecordKind, HistoryRecordStatus, HistorySummary,
 };
 use crate::ports::outbound::{HistoryStore, HistoryStoreError};
 
@@ -15,6 +15,7 @@ pub struct HistoryRecordInput {
     pub conversation_id: Option<String>,
     pub preset: Option<String>,
     pub profile: Option<String>,
+    pub shell_exec_approval: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -34,8 +35,11 @@ pub struct HistoryReplayInput {
     pub llm_profile: Option<String>,
     pub preset: Option<String>,
     pub session_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub shell_exec_approval: Option<String>,
     pub socket_path: String,
     pub log_tail_bytes: usize,
+    pub request_messages: Vec<HistoryMessage>,
 }
 
 pub fn current_time_ms() -> u64 {
@@ -94,6 +98,7 @@ pub fn record_turn<S: HistoryStore>(
         conversation_id: input.conversation_id.clone(),
         preset: input.preset.clone(),
         profile: input.profile.clone(),
+        shell_exec_approval: input.shell_exec_approval.clone(),
         socket_path: input.socket_path.clone(),
         request_kind: input.request_kind.clone(),
         request_summary: input.request_summary.clone(),
@@ -111,8 +116,11 @@ pub fn record_turn<S: HistoryStore>(
         llm_profile: payload.llm_profile.clone(),
         preset: payload.preset.clone(),
         session_id: payload.session_id.clone(),
+        conversation_id: payload.conversation_id.clone(),
+        shell_exec_approval: payload.shell_exec_approval.clone(),
         socket_path: payload.socket_path.clone(),
         log_tail_bytes: payload.log_tail_bytes,
+        request_messages: payload.request_messages.clone(),
     };
     store.append(&entry, &payload)?;
     Ok(history_id)
@@ -192,9 +200,10 @@ mod tests {
         let input = HistoryRecordInput {
             command: "ask".into(),
             session_id: Some("sess".into()),
-            conversation_id: None,
+            conversation_id: Some("conv".into()),
             preset: Some("fast".into()),
             profile: Some("fast".into()),
+            shell_exec_approval: Some("ask".into()),
             socket_path: "/tmp/sock".into(),
             request_kind: HistoryRecordKind::Ask,
             request_summary: HistorySummary::new("request"),
@@ -212,8 +221,14 @@ mod tests {
             llm_profile: Some("fast".into()),
             preset: Some("fast".into()),
             session_id: Some("sess".into()),
+            conversation_id: Some("conv".into()),
+            shell_exec_approval: Some("ask".into()),
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 16,
+            request_messages: vec![HistoryMessage {
+                role: "user".into(),
+                content: "hello".into(),
+            }],
         };
         record_turn(&store, &input, &payload).expect("record");
         let listed = list_history(
@@ -228,5 +243,7 @@ mod tests {
         .expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].history_id, history_id);
+        assert_eq!(listed[0].conversation_id.as_deref(), Some("conv"));
+        assert_eq!(listed[0].shell_exec_approval.as_deref(), Some("ask"));
     }
 }

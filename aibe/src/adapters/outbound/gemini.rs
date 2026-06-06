@@ -44,6 +44,13 @@ impl GeminiLlm {
         )
     }
 
+    fn stream_generate_content_url(&self) -> String {
+        format!(
+            "{}/models/{}:streamGenerateContent?alt=sse",
+            self.backend.base_url, self.model
+        )
+    }
+
     fn generation_config(&self) -> Option<GenerationConfig> {
         if self.params.temperature.is_none() && self.params.max_output_tokens.is_none() {
             return None;
@@ -80,6 +87,79 @@ impl GeminiLlm {
 
         serde_json::from_str(&text)
             .map_err(|e| LlmError::Provider(format!("invalid response JSON: {e}; body: {text}")))
+    }
+
+    async fn stream_generate_content(
+        &self,
+        body: GenerateContentRequest,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<GeminiResponse, LlmError> {
+        let response = self
+            .backend
+            .client
+            .post(self.stream_generate_content_url())
+            .header("x-goog-api-key", &self.backend.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LlmError::Provider(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response
+                .text()
+                .await
+                .map_err(|e| LlmError::Provider(e.to_string()))?;
+            return Err(LlmError::Provider(format!("HTTP {status}: {text}")));
+        }
+
+        let mut response = response;
+        let mut buffer = String::new();
+        let mut accumulated = String::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| LlmError::Provider(e.to_string()))?
+        {
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(split) = buffer.find("\n\n") {
+                let event = buffer[..split].to_string();
+                buffer.drain(..split + 2);
+                for line in event.lines() {
+                    let Some(data) = line.strip_prefix("data:") else {
+                        continue;
+                    };
+                    let payload = data.trim();
+                    let parsed: GeminiResponse = serde_json::from_str(payload).map_err(|e| {
+                        LlmError::Provider(format!("invalid stream JSON: {e}; body: {payload}"))
+                    })?;
+                    if let Ok(content) = validate_response(&parsed) {
+                        let turn_index = model_turn_index(&[]);
+                        let step = parse_candidate_parts(&content.parts, turn_index)?;
+                        if !step.assistant.content.is_empty() {
+                            let delta = step
+                                .assistant
+                                .content
+                                .strip_prefix(&accumulated)
+                                .unwrap_or(step.assistant.content.as_str())
+                                .to_string();
+                            accumulated.push_str(&delta);
+                            on_delta(delta);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(GeminiResponse {
+            candidates: vec![Candidate {
+                content: Some(CandidateContent {
+                    parts: vec![json!({ "text": accumulated })],
+                }),
+                finish_reason: None,
+            }],
+            prompt_feedback: None,
+        })
     }
 }
 
@@ -342,6 +422,25 @@ impl LlmProvider for GeminiLlm {
         let content = validate_response(&parsed)?;
         let turn_index = model_turn_index(messages);
         parse_candidate_parts(&content.parts, turn_index)
+    }
+
+    async fn complete_streaming(
+        &self,
+        messages: &[ChatMessage],
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<ChatMessage, LlmError> {
+        let body = GenerateContentRequest {
+            contents: messages_to_contents(messages),
+            system_instruction: build_system_instruction(messages),
+            tools: None,
+            tool_config: None,
+            generation_config: self.generation_config(),
+        };
+        let parsed = self.stream_generate_content(body, on_delta).await?;
+        let content = validate_response(&parsed)?;
+        let turn_index = model_turn_index(messages);
+        let step = parse_candidate_parts(&content.parts, turn_index)?;
+        Ok(step.assistant)
     }
 }
 

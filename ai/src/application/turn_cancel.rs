@@ -8,9 +8,7 @@ static ACTIVE_CANCEL: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
 /// 現在のターン用 cancel フラグを有効化する。`ctrlc` handler は初回のみ登録する。
 pub fn register_turn_cancel(flag: Arc<AtomicBool>) -> Result<(), ctrlc::Error> {
-    *ACTIVE_CANCEL
-        .lock()
-        .expect("ACTIVE_CANCEL mutex poisoned") = Some(flag);
+    *ACTIVE_CANCEL.lock().expect("ACTIVE_CANCEL mutex poisoned") = Some(flag);
     let mut init_error = None;
     CTRLC_INIT.call_once(|| {
         if let Err(e) = ctrlc::set_handler(|| {

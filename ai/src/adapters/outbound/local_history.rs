@@ -162,6 +162,7 @@ mod tests {
             conversation_id: None,
             preset: Some("fast".into()),
             profile: Some("fast".into()),
+            shell_exec_approval: Some("ask".into()),
             socket_path: "/tmp/sock".into(),
             request_kind: crate::domain::HistoryRecordKind::Ask,
             request_summary: crate::domain::HistorySummary::new("req"),
@@ -179,8 +180,11 @@ mod tests {
             llm_profile: Some("fast".into()),
             preset: Some("fast".into()),
             session_id: Some("sess".into()),
+            conversation_id: Some("conv".into()),
+            shell_exec_approval: Some("ask".into()),
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 16,
+            request_messages: vec![],
         };
         store.append(&entry, &payload).expect("append");
         let entries = store.list().expect("list");

@@ -11,6 +11,7 @@ use crate::domain::{
 };
 use crate::ports::outbound::{
     LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig, TurnCancellation,
+    TurnEventSink,
 };
 
 /// 1 ラウンドの結果。max-round 終端は `AgentTurnService` + terminator が担当。
@@ -75,21 +76,74 @@ impl ToolRoundExecutor {
         allowed_tools: &[ToolName],
         tool_ctx: &ToolExecutionContext,
         executed_so_far: &[ExecutedToolCall],
+        events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<&Arc<TurnCancellation>>,
     ) -> Result<RoundOutcome, LlmError> {
         let tool_defs = definitions_for(allowed_tools);
         let step = if let Some(cancel) = cancellation {
-            tokio::select! {
-                res = self.llm.complete_with_tools(conversation, &tool_defs) => res?,
-                _ = cancel.wait() => {
-                    return Ok(RoundOutcome::Cancelled {
-                        executed: executed_so_far.to_vec(),
-                    });
+            if let Some(events) = events.as_ref() {
+                let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                let forwarder_events = Arc::clone(events);
+                let turn_id = tool_ctx.turn_id().to_string();
+                let stream_forwarder = tokio::spawn(async move {
+                    while let Some(delta) = delta_rx.recv().await {
+                        forwarder_events.assistant_streaming(&turn_id, delta).await;
+                    }
+                });
+                let mut on_delta = |delta: String| {
+                    let _ = delta_tx.send(delta);
+                };
+                let step = tokio::select! {
+                    res = self.llm.complete_with_tools_streaming(conversation, &tool_defs, &mut on_delta) => res?,
+                    _ = cancel.wait() => {
+                        drop(delta_tx);
+                        stream_forwarder.abort();
+                        return Ok(RoundOutcome::Cancelled {
+                            executed: executed_so_far.to_vec(),
+                        });
+                    }
+                };
+                drop(delta_tx);
+                if let Some(handle) = Some(stream_forwarder) {
+                    let _ = handle.await;
+                }
+                step
+            } else {
+                let mut ignore_delta = |_delta: String| {};
+                tokio::select! {
+                    res = self.llm.complete_with_tools_streaming(conversation, &tool_defs, &mut ignore_delta) => res?,
+                    _ = cancel.wait() => {
+                        return Ok(RoundOutcome::Cancelled {
+                            executed: executed_so_far.to_vec(),
+                        });
+                    }
                 }
             }
+        } else if let Some(events) = events.as_ref() {
+            let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let forwarder_events = Arc::clone(events);
+            let turn_id = tool_ctx.turn_id().to_string();
+            let stream_forwarder = tokio::spawn(async move {
+                while let Some(delta) = delta_rx.recv().await {
+                    forwarder_events.assistant_streaming(&turn_id, delta).await;
+                }
+            });
+            let mut on_delta = |delta: String| {
+                let _ = delta_tx.send(delta);
+            };
+            let step = self
+                .llm
+                .complete_with_tools_streaming(conversation, &tool_defs, &mut on_delta)
+                .await?;
+            drop(delta_tx);
+            if let Some(handle) = Some(stream_forwarder) {
+                let _ = handle.await;
+            }
+            step
         } else {
+            let mut ignore_delta = |_delta: String| {};
             self.llm
-                .complete_with_tools(conversation, &tool_defs)
+                .complete_with_tools_streaming(conversation, &tool_defs, &mut ignore_delta)
                 .await?
         };
 
@@ -294,6 +348,7 @@ mod tests {
                 &tool_ctx(),
                 &[],
                 None,
+                None,
             )
             .await
             .expect("round");
@@ -334,6 +389,7 @@ mod tests {
                 &tool_ctx(),
                 &[],
                 None,
+                None,
             )
             .await
             .expect("round");
@@ -372,6 +428,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
                 None,
             )
             .await
@@ -413,6 +470,7 @@ mod tests {
                 &tool_ctx(),
                 &[],
                 None,
+                None,
             )
             .await
             .expect("round");
@@ -450,6 +508,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
                 None,
             )
             .await
@@ -505,6 +564,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &prior,
+                None,
                 None,
             )
             .await

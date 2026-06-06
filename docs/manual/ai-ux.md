@@ -1,6 +1,6 @@
 # ai UX 手動検証
 
-`ai chat`、`--progress`、assistant streaming、`--timeout`、`--yes-exec` の確認手順。
+`ai chat`、`--progress`、assistant streaming、`--timeout`、`--yes-exec`、終了コードの確認手順。
 
 ## 前提
 
@@ -16,11 +16,15 @@ export PATH="$PWD/target/debug:$PATH"
 3. `ai ask --progress ...` を実行し、stderr に progress 行が出ることを確認する。
 4. `ai ask --timeout 1 ...` を実行し、タイムアウトで cancel 経路に入ることを確認する。
 5. `ai ask --yes-exec ...` を実行し、`shell_exec` 承認がセッション内で再利用されることを確認する。
+6. `ai chat --dry-run --format json` を実行し、`command=chat` で aibe に接続しないことを確認する。
+7. `ai chat` で 2 回以上 turn を打ち、各 turn の assistant 応答が逐次表示されることと、`/exit` で終了することを確認する。
+8. `ai chat` で日本語を入力し、Backspace・左右矢印で編集しても文字化けや送信エラーにならないこと。
+9. `ai history --command chat` で同一 `conversation_id` が記録されていること、`ai rerun <2nd_id>` で会話文脈が復元されることを確認する。
 
 ## 期待結果
 
-- `chat` は各 turn の応答を順に表示する。
+- `chat` は TTY 上で Unicode 対応の行編集（Backspace・カーソル移動）を使う。
 - `--progress` は stderr に phase を出す。
 - `--timeout` は turn を打ち切る。
 - `--yes-exec` は `shell_exec_approval=ask` のみを bypass し、`never` は越えない。
-
+- `ai` の exit code は概ね `0` / `2` / `3` / `4` / `5` / `130` に分かれ、`130` は SIGINT、`2` は入力/引数の不正、`3` は内部/中断系、`4` は provider エラー、`5` は tool 系エラーを表す。

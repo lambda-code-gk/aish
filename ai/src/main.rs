@@ -14,8 +14,8 @@ use clap::Parser;
 
 use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{
-    external_command_names, AibeUnixClient, FileLogTail, LocalHistoryStore, StdoutPresenter,
-    YesExecCache,
+    external_command_names, load_shell_exec_approval, read_chat_line, AibeUnixClient,
+    ChatReadLineResult, FileLogTail, LocalHistoryStore, StdoutPresenter, YesExecCache,
 };
 use ai::application::{
     build_response_summary, build_summary, ensure_aibe_if_needed, list_history, next_history_id,
@@ -24,10 +24,12 @@ use ai::application::{
 use ai::clap_cli::{AiCli, AiCommand, HistoryStatusArg, OutputFormatArg, TurnOptions};
 use ai::domain::{
     resolve_log_tail_bytes, resolve_output_filter, resolve_shell_log_for_ask,
-    validate_ask_arg_order, AskInput, ConfigToolsTokens, DiagnosticsReport, DryRunReport,
-    HistoryIndexFilter, HistoryRecordKind, HistoryRecordStatus, OutputFormat, ShellLogChoice,
-    ShellLogResolveError, ToolsResolveError,
+    validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens,
+    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
+    LogTailResolveError, OutputFormat, OutputFormatError, ShellLogChoice, ShellLogResolveError,
+    ToolsResolveError,
 };
+use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalPrompt};
@@ -39,21 +41,24 @@ fn main() -> ExitCode {
     }
 
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("ai: {e}");
-            ExitCode::FAILURE
+            exit_code_for_anyhow(&e)
         }
     }
 }
 
-fn run() -> anyhow::Result<()> {
+fn run() -> anyhow::Result<ExitCode> {
     let normalized = AiCli::normalized_args_for_completion();
     validate_normalized_ask_args(&normalized)?;
     let cli = AiCli::parse_from(normalized);
 
     match cli.command {
-        AiCommand::Complete { shell } => AiCli::run_complete(shell).map_err(|e| anyhow::anyhow!(e)),
+        AiCommand::Complete { shell } => {
+            AiCli::run_complete(shell).map_err(|e| anyhow::anyhow!(e))?;
+            Ok(ExitCode::SUCCESS)
+        }
         AiCommand::Ask {
             turn,
             file,
@@ -126,6 +131,7 @@ struct ResolvedTurnSettings {
     session_id: Option<String>,
     shell_log_choice: ShellLogChoice,
     output_filter: Option<String>,
+    output_filter_meta: FilterMetadata,
     llm_profile: Option<String>,
     ask_tools: ConfigToolsTokens,
     tools_cli: Option<String>,
@@ -134,76 +140,122 @@ struct ResolvedTurnSettings {
     progress: bool,
     timeout_secs: Option<u64>,
     yes_exec: bool,
+    shell_exec_approval: Option<String>,
 }
 
-fn run_ask(args: AskArgs) -> anyhow::Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnCancelSource {
+    Sigint,
+    Timeout,
+}
+
+#[derive(Debug, Clone)]
+struct TurnExecutionOutcome {
+    response: ClientResponse,
+    cancel_source: Option<TurnCancelSource>,
+    streamed: bool,
+}
+
+fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let message = resolve_ask_message(args.file.clone(), args.message)?;
     let settings = resolve_turn_settings(&cfg, &args.turn)?;
     if args.turn.dry_run {
-        let report = DryRunReport {
-            command: "ask".to_string(),
-            message_source: message.source,
-            message_length: message.content.len(),
-            message_masked: "<masked>".to_string(),
-            config_socket_path: cfg.socket_path.display().to_string(),
-            ask_default_profile: cfg.ask_default_profile.clone(),
-            ask_filter: cfg.ask_filter.clone(),
-            ask_tools: cfg.ask_tools.0.clone(),
-            socket_path: settings.socket_path.display().to_string(),
-            aish_session_dir: std::env::var("AISH_SESSION_DIR").ok(),
-            implicit_session_id: implicit_session_id_from_env(),
-            ai_ask_log: std::env::var("AI_ASK_LOG").ok(),
-            shell_log_choice: render_shell_log_choice(&settings.shell_log_choice),
-            shell_log_path: render_shell_log_path(&settings.shell_log_choice),
-            shell_log_error: None,
-            dry_run: true,
-            preset: settings.preset_name.clone(),
-            log_tail_bytes: settings.log_tail_bytes,
-        };
+        let report = build_dry_run_report(
+            "ask",
+            &message.source,
+            message.content.len(),
+            &cfg,
+            &settings,
+        );
         let format = settings.output_format.unwrap_or(OutputFormat::Tsv);
         write_stdout(report.render(format))?;
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
-    execute_turn(&cfg, "ask", message, settings, None, None)
+    let response = execute_turn(
+        &cfg,
+        "ask",
+        message.clone(),
+        settings,
+        None,
+        None,
+        vec![ProtocolMessage {
+            role: "user".to_string(),
+            content: message.content,
+        }],
+        None,
+    )?;
+    Ok(exit_code_for_response(
+        &response.response,
+        response.cancel_source,
+    ))
 }
 
-fn run_chat(turn: TurnOptions) -> anyhow::Result<()> {
+fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let settings = resolve_turn_settings(&cfg, &turn)?;
-    let mut line = String::new();
+    if turn.dry_run {
+        let report = build_dry_run_report("chat", "repl", 0, &cfg, &settings);
+        let format = settings.output_format.unwrap_or(OutputFormat::Tsv);
+        write_stdout(report.render(format))?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let conversation_id = next_conversation_id();
+    let mut transcript: Vec<ProtocolMessage> = Vec::new();
     loop {
-        line.clear();
-        eprint!("ai> ");
-        use std::io::Write;
-        std::io::stderr().flush().ok();
-        let n = std::io::stdin().read_line(&mut line)?;
-        if n == 0 {
-            break;
-        }
-        let content = line.trim_end().to_string();
+        let content = match read_chat_line().map_err(|e| anyhow::anyhow!(e))? {
+            ChatReadLineResult::Input(line) => line,
+            ChatReadLineResult::Eof => break,
+        };
         if content.is_empty() || content == "/exit" {
             if content == "/exit" {
                 break;
             }
             continue;
         }
-        execute_turn(
+        let user_message = ResolvedMessage {
+            source: "chat".to_string(),
+            content: content.clone(),
+        };
+        let mut messages = transcript.clone();
+        messages.push(ProtocolMessage {
+            role: "user".to_string(),
+            content: content.clone(),
+        });
+        let outcome = execute_turn(
             &cfg,
             "chat",
-            ResolvedMessage {
-                source: "chat".to_string(),
-                content,
-            },
+            user_message,
             settings.clone(),
             None,
             None,
+            messages,
+            Some(conversation_id.clone()),
         )?;
+        let exit_code = exit_code_for_response(&outcome.response, outcome.cancel_source);
+        match &outcome.response {
+            ClientResponse::AgentTurnResult {
+                assistant_message, ..
+            } => {
+                transcript.push(ProtocolMessage {
+                    role: "user".to_string(),
+                    content: content.clone(),
+                });
+                transcript.push(ProtocolMessage {
+                    role: "assistant".to_string(),
+                    content: assistant_message.content.clone(),
+                });
+            }
+            ClientResponse::Error { .. } | ClientResponse::Cancelled { .. } => {
+                return Ok(exit_code);
+            }
+            _ => {}
+        }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
-fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<()> {
+fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let store = LocalHistoryStore::new(cfg.history_dir.clone());
     let payload = store
@@ -212,12 +264,26 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<()> {
     let settings = resolve_turn_settings(&cfg, &turn)?;
     let message = ResolvedMessage {
         source: format!("history:{history_id}"),
-        content: payload.user_message,
+        content: payload.user_message.clone(),
     };
-    execute_turn(&cfg, "retry", message, settings, None, None)
+    let messages = replay_messages_from_payload(&payload);
+    let response = execute_turn(
+        &cfg,
+        "retry",
+        message.clone(),
+        settings,
+        None,
+        None,
+        messages,
+        payload.conversation_id.clone(),
+    )?;
+    Ok(exit_code_for_response(
+        &response.response,
+        response.cancel_source,
+    ))
 }
 
-fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<()> {
+fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let store = LocalHistoryStore::new(cfg.history_dir.clone());
     let payload = store
@@ -249,17 +315,24 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<()> {
     merged_turn.no_log = true;
     merged_turn.log = None;
     merged_turn.session = None;
-    execute_turn(
+    let messages = replay_messages_from_payload(&payload);
+    let response = execute_turn(
         &cfg,
         "rerun",
-        message,
+        message.clone(),
         resolve_turn_settings(&cfg, &merged_turn)?,
         payload.shell_log_tail.clone(),
         payload.client_cwd.map(PathBuf::from),
-    )
+        messages,
+        payload.conversation_id.clone(),
+    )?;
+    Ok(exit_code_for_response(
+        &response.response,
+        response.cancel_source,
+    ))
 }
 
-fn run_history(args: HistoryArgs) -> anyhow::Result<()> {
+fn run_history(args: HistoryArgs) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let store = LocalHistoryStore::new(cfg.history_dir.clone());
     let status = match args.status {
@@ -291,9 +364,10 @@ fn run_history(args: HistoryArgs) -> anyhow::Result<()> {
         eprintln!("ai: history: {} record(s)", entry_count);
     }
     write_stdout(stdout)?;
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_turn(
     cfg: &AiConfig,
     command: &str,
@@ -301,7 +375,9 @@ fn execute_turn(
     settings: ResolvedTurnSettings,
     shell_log_override: Option<String>,
     client_cwd_override: Option<PathBuf>,
-) -> anyhow::Result<()> {
+    messages: Vec<ProtocolMessage>,
+    conversation_id: Option<String>,
+) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
     let shell_log_tail_text = if let Some(text) = shell_log_override {
         Some(text)
@@ -359,16 +435,24 @@ fn execute_turn(
     };
     let request = ask_input.into_request()?;
     let turn_id = next_history_id();
-    let client_request = request_from_ask(turn_id.clone(), request)?;
+    let request_messages = history_messages_from_protocol(&messages);
+    let client_request = request_from_messages(
+        turn_id.clone(),
+        request,
+        messages,
+        shell_log_tail_text.clone(),
+    )?;
 
-    let response = if settings.timeout_secs.is_some() || settings.progress || settings.yes_exec {
+    let yes_exec_effective =
+        settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
+    let response = if settings.timeout_secs.is_some() || settings.progress || yes_exec_effective {
         run_agent_turn_async(
             plan.socket_path.clone(),
             client_request,
             presenter.clone(),
             cfg.history_dir.clone(),
             settings.session_id.clone(),
-            settings.yes_exec,
+            yes_exec_effective,
             settings.progress,
             settings.timeout_secs,
         )?
@@ -379,11 +463,18 @@ fn execute_turn(
             presenter.clone(),
             cfg.history_dir.clone(),
             settings.session_id.clone(),
-            settings.yes_exec,
+            yes_exec_effective,
             settings.progress,
         )?
     };
 
+    let TurnExecutionOutcome {
+        response,
+        cancel_source,
+        streamed,
+    } = response;
+    let streamed =
+        streamed || settings.progress || settings.timeout_secs.is_some() || yes_exec_effective;
     let response_error = match &response {
         ClientResponse::Error { message, .. } => Some(message.clone()),
         ClientResponse::Cancelled { reason, .. } => Some(
@@ -393,7 +484,6 @@ fn execute_turn(
         ),
         _ => None,
     };
-    let streamed = settings.progress || settings.timeout_secs.is_some() || settings.yes_exec;
 
     let tool_calls = match &response {
         ClientResponse::AgentTurnResult { tool_calls, .. } => tool_calls.len(),
@@ -421,9 +511,10 @@ fn execute_turn(
     let record_input = HistoryRecordInput {
         command: command.to_string(),
         session_id: settings.session_id.clone(),
-        conversation_id: None,
+        conversation_id: conversation_id.clone(),
         preset: settings.preset_name.clone(),
         profile: settings.llm_profile.clone(),
+        shell_exec_approval: settings.shell_exec_approval.clone(),
         socket_path: settings.socket_path.display().to_string(),
         request_kind: match command {
             "retry" => HistoryRecordKind::Retry,
@@ -451,17 +542,21 @@ fn execute_turn(
         llm_profile: settings.llm_profile.clone(),
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
+        conversation_id,
+        shell_exec_approval: settings.shell_exec_approval.clone(),
         socket_path: settings.socket_path.display().to_string(),
         log_tail_bytes: settings.log_tail_bytes,
+        request_messages,
     };
     let store = LocalHistoryStore::new(cfg.history_dir.clone());
     record_turn(&store, &record_input, &replay_input).map_err(history_store_to_anyhow)?;
     presenter.show_response(&response, settings.verbose_tools, streamed);
 
-    if response_error.is_some() {
-        anyhow::bail!("aibe returned an error response");
-    }
-    Ok(())
+    Ok(TurnExecutionOutcome {
+        response,
+        cancel_source,
+        streamed,
+    })
 }
 
 fn run_agent_turn_sync(
@@ -472,7 +567,7 @@ fn run_agent_turn_sync(
     session_id: Option<String>,
     yes_exec: bool,
     progress: bool,
-) -> anyhow::Result<ClientResponse> {
+) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
         request,
@@ -495,7 +590,7 @@ fn run_agent_turn_async(
     yes_exec: bool,
     progress: bool,
     timeout_secs: Option<u64>,
-) -> anyhow::Result<ClientResponse> {
+) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
         request,
@@ -518,17 +613,20 @@ fn run_agent_turn_core(
     yes_exec: bool,
     progress: bool,
     timeout_secs: Option<u64>,
-) -> anyhow::Result<ClientResponse> {
+) -> anyhow::Result<TurnExecutionOutcome> {
     let turn_id = request_turn_id(&request)?;
     let worker_client = AibeUnixClient::new(socket_path.clone());
     let cancel_client = AibeUnixClient::new(socket_path);
     let cancel_guard = TurnCancelGuard::new().map_err(|e| anyhow::anyhow!("{e}"))?;
     let cancel_requested = Arc::clone(cancel_guard.flag());
+    let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut cancel_source: Option<TurnCancelSource> = None;
 
     let (tx, rx) = mpsc::channel();
     let presenter_thread = Arc::clone(&presenter);
     let history_dir_thread = history_dir.clone();
     let turn_id_thread = turn_id.clone();
+    let streamed_thread = Arc::clone(&streamed);
     thread::spawn(move || {
         let mut yes_exec_cache = if yes_exec {
             Some(YesExecCache::load(
@@ -547,6 +645,9 @@ fn run_agent_turn_core(
                 }
             },
             |chunk| {
+                if !presenter_thread.is_quiet() {
+                    streamed_thread.store(true, Ordering::SeqCst);
+                }
                 presenter_thread.show_stream_chunk(&chunk);
             },
             |prompt: ShellExecApprovalPrompt| {
@@ -578,11 +679,15 @@ fn run_agent_turn_core(
     let start = Instant::now();
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
+            if cancel_source.is_none() {
+                cancel_source = Some(TurnCancelSource::Sigint);
+            }
             let _ = cancel_client.cancel_turn(&turn_id);
         }
         if let Some(deadline) = timeout {
             if start.elapsed() >= deadline && !cancel_requested.load(Ordering::SeqCst) {
                 cancel_requested.store(true, Ordering::SeqCst);
+                cancel_source = Some(TurnCancelSource::Timeout);
                 let _ = cancel_client.cancel_turn(&turn_id);
             }
         }
@@ -594,7 +699,11 @@ fn run_agent_turn_core(
                 ) {
                     continue;
                 }
-                return Ok(resp);
+                return Ok(TurnExecutionOutcome {
+                    response: resp,
+                    cancel_source,
+                    streamed: streamed.load(Ordering::SeqCst),
+                });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -613,16 +722,14 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
     }
 }
 
-fn request_from_ask(
+fn request_from_messages(
     turn_id: String,
     request: ai::domain::AskRequest,
+    messages: Vec<ProtocolMessage>,
+    shell_log_tail: Option<String>,
 ) -> anyhow::Result<ClientRequest> {
-    let messages = vec![ProtocolMessage {
-        role: "user".to_string(),
-        content: request.user_message,
-    }];
     let context = RequestContext {
-        shell_log_tail: request.shell_log_tail,
+        shell_log_tail,
         cwd: request.client_cwd.map(|p| p.display().to_string()),
     };
     Ok(ClientRequest::AgentTurn {
@@ -636,6 +743,129 @@ fn request_from_ask(
         context,
         llm_profile: request.llm_profile,
     })
+}
+
+fn exit_code_for_response(
+    response: &ClientResponse,
+    cancel_source: Option<TurnCancelSource>,
+) -> ExitCode {
+    match response {
+        ClientResponse::AgentTurnResult { .. } => ExitCode::SUCCESS,
+        ClientResponse::Cancelled { .. } => match cancel_source {
+            Some(TurnCancelSource::Sigint) => ExitCode::from(130),
+            _ => ExitCode::from(3),
+        },
+        ClientResponse::Error { code, .. } => match code {
+            aibe_protocol::ErrorCode::InvalidRequest => ExitCode::from(2),
+            aibe_protocol::ErrorCode::ProviderError => ExitCode::from(4),
+            aibe_protocol::ErrorCode::ToolError
+            | aibe_protocol::ErrorCode::ToolTimeout
+            | aibe_protocol::ErrorCode::ToolNotAllowed => ExitCode::from(5),
+            aibe_protocol::ErrorCode::MaxToolRounds => ExitCode::SUCCESS,
+            aibe_protocol::ErrorCode::InternalError => ExitCode::from(3),
+        },
+        ClientResponse::Pong { .. }
+        | ClientResponse::Progress { .. }
+        | ClientResponse::AssistantStreaming { .. }
+        | ClientResponse::ShellExecApprovalPrompt { .. } => ExitCode::SUCCESS,
+    }
+}
+
+fn exit_code_for_anyhow(err: &anyhow::Error) -> ExitCode {
+    if err.downcast_ref::<AskRequestError>().is_some()
+        || err.downcast_ref::<AskArgOrderError>().is_some()
+        || err.downcast_ref::<ToolsResolveError>().is_some()
+        || err.downcast_ref::<ShellLogResolveError>().is_some()
+        || err.downcast_ref::<LogTailResolveError>().is_some()
+        || err.downcast_ref::<OutputFormatError>().is_some()
+    {
+        return ExitCode::from(2);
+    }
+
+    let s = err.to_string();
+    if s.contains("unknown preset")
+        || s.contains("missing message")
+        || s.contains("cannot be combined")
+        || s.contains("invalid message role")
+        || s.contains("client cwd is unavailable")
+        || s.contains("unknown tool")
+    {
+        return ExitCode::from(2);
+    }
+    if s.contains("connect to aibe")
+        || s.contains("deserialize response")
+        || s.contains("invalid JSON")
+        || s.contains("agent turn worker disconnected")
+        || s.contains("shell_log")
+        || s.contains("log tail")
+        || s.contains("timeout")
+    {
+        return ExitCode::from(3);
+    }
+    ExitCode::FAILURE
+}
+
+fn next_conversation_id() -> String {
+    format!("conv-{}", next_history_id())
+}
+
+fn build_dry_run_report(
+    command: &str,
+    message_source: &str,
+    message_length: usize,
+    cfg: &AiConfig,
+    settings: &ResolvedTurnSettings,
+) -> DryRunReport {
+    DryRunReport {
+        command: command.to_string(),
+        message_source: message_source.to_string(),
+        message_length,
+        message_masked: "<masked>".to_string(),
+        config_socket_path: cfg.socket_path.display().to_string(),
+        ask_default_profile: cfg.ask_default_profile.clone(),
+        ask_filter: settings.output_filter_meta.clone(),
+        ask_tools: cfg.ask_tools.0.clone(),
+        socket_path: settings.socket_path.display().to_string(),
+        aish_session_dir: std::env::var("AISH_SESSION_DIR").ok(),
+        implicit_session_id: implicit_session_id_from_env(),
+        ai_ask_log: std::env::var("AI_ASK_LOG").ok(),
+        shell_log_choice: render_shell_log_choice(&settings.shell_log_choice),
+        shell_log_path: render_shell_log_path(&settings.shell_log_choice),
+        shell_log_error: None,
+        dry_run: true,
+        preset: settings.preset_name.clone(),
+        log_tail_bytes: settings.log_tail_bytes,
+    }
+}
+
+fn history_messages_from_protocol(messages: &[ProtocolMessage]) -> Vec<HistoryMessage> {
+    messages
+        .iter()
+        .map(|message| HistoryMessage {
+            role: message.role.clone(),
+            content: message.content.clone(),
+        })
+        .collect()
+}
+
+fn protocol_messages_from_history(messages: &[HistoryMessage]) -> Vec<ProtocolMessage> {
+    messages
+        .iter()
+        .map(|message| ProtocolMessage {
+            role: message.role.clone(),
+            content: message.content.clone(),
+        })
+        .collect()
+}
+
+fn replay_messages_from_payload(payload: &HistoryPayload) -> Vec<ProtocolMessage> {
+    if !payload.request_messages.is_empty() {
+        return protocol_messages_from_history(&payload.request_messages);
+    }
+    vec![ProtocolMessage {
+        role: "user".to_string(),
+        content: payload.user_message.clone(),
+    }]
 }
 
 fn progress_phase_name(phase: aibe_protocol::ProgressPhase) -> String {
@@ -687,11 +917,21 @@ fn resolve_turn_settings(
             .and_then(|p| p.filter.as_deref())
             .or(cfg.ask_filter.as_deref()),
     );
+    let output_filter_meta = resolve_filter_metadata(
+        std::env::var("AI_FILTER").ok(),
+        preset.and_then(|p| p.filter.as_deref()),
+        cfg.ask_filter.as_deref(),
+    );
     let llm_profile = resolve_llm_profile_with_preset(
         turn.profile.as_deref(),
         preset.and_then(|p| p.profile.as_deref()),
         cfg.ask_default_profile.as_deref(),
     );
+    let aibe_shell_exec = load_shell_exec_approval();
+    let shell_exec_approval = preset
+        .and_then(|p| p.shell_exec_approval.clone())
+        .filter(|s| !s.is_empty())
+        .or(aibe_shell_exec.mode.clone());
     Ok(ResolvedTurnSettings {
         quiet: turn.quiet || preset.and_then(|p| p.quiet).unwrap_or(false),
         output_format: turn.format.map(Into::into),
@@ -701,6 +941,7 @@ fn resolve_turn_settings(
         session_id: resolve_turn_session_id(turn.session.as_deref())?,
         shell_log_choice,
         output_filter,
+        output_filter_meta,
         llm_profile,
         ask_tools: preset
             .and_then(|p| p.tools.clone())
@@ -711,7 +952,29 @@ fn resolve_turn_settings(
         progress: turn.progress,
         timeout_secs: turn.timeout,
         yes_exec: turn.yes_exec,
+        shell_exec_approval,
     })
+}
+
+fn resolve_filter_metadata(
+    env: Option<String>,
+    preset: Option<&str>,
+    config: Option<&str>,
+) -> FilterMetadata {
+    let (enabled, source) = if env.as_ref().is_some_and(|s| !s.is_empty()) {
+        (true, "env".to_string())
+    } else if preset.is_some_and(|s| !s.is_empty()) {
+        (true, "preset".to_string())
+    } else if config.is_some_and(|s| !s.is_empty()) {
+        (true, "config".to_string())
+    } else {
+        (false, "none".to_string())
+    };
+    FilterMetadata {
+        enabled,
+        source,
+        masked: true,
+    }
 }
 
 fn resolve_llm_profile_with_preset(
@@ -739,7 +1002,7 @@ fn run_diagnostic_command(
     format: OutputFormat,
     socket_override: Option<PathBuf>,
     is_doctor: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let socket_path = socket_override.unwrap_or(cfg.socket_path.clone());
     let ping = ping_detailed(&socket_path);
@@ -752,7 +1015,11 @@ fn run_diagnostic_command(
         command: command.to_string(),
         config_socket_path: cfg.socket_path.display().to_string(),
         ask_default_profile: cfg.ask_default_profile.clone(),
-        ask_filter: cfg.ask_filter.clone(),
+        ask_filter: resolve_filter_metadata(
+            std::env::var("AI_FILTER").ok(),
+            None,
+            cfg.ask_filter.as_deref(),
+        ),
         ask_tools: cfg.ask_tools.0.clone(),
         socket_path: socket_path.display().to_string(),
         socket_alive,
@@ -783,14 +1050,14 @@ fn run_diagnostic_command(
         }
     }
     write_stdout(report.render(format))?;
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_ping_command(
     quiet: bool,
     format: OutputFormat,
     socket_override: Option<PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let socket_path = socket_override.unwrap_or(cfg.socket_path.clone());
     let ping = ping_detailed(&socket_path);
@@ -803,7 +1070,11 @@ fn run_ping_command(
         command: "ping".to_string(),
         config_socket_path: cfg.socket_path.display().to_string(),
         ask_default_profile: cfg.ask_default_profile.clone(),
-        ask_filter: cfg.ask_filter.clone(),
+        ask_filter: resolve_filter_metadata(
+            std::env::var("AI_FILTER").ok(),
+            None,
+            cfg.ask_filter.as_deref(),
+        ),
         ask_tools: cfg.ask_tools.0.clone(),
         socket_path: socket_path.display().to_string(),
         socket_alive,
@@ -832,7 +1103,7 @@ fn run_ping_command(
     write_stdout(report.render(format))?;
 
     if report.socket_alive {
-        Ok(())
+        Ok(ExitCode::SUCCESS)
     } else {
         Err(anyhow::anyhow!(
             report
@@ -886,7 +1157,7 @@ fn resolve_ask_message(
     anyhow::bail!("missing message");
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ResolvedMessage {
     source: String,
     content: String,
@@ -1023,6 +1294,8 @@ mod cli_tests {
     use clap::CommandFactory;
 
     use ai::clap_cli::AiCli;
+    use ai::domain::{HistoryMessage, HistoryPayload};
+    use aibe_protocol::{ClientResponse, ErrorCode};
 
     #[test]
     fn ask_rejects_options_after_message() {
@@ -1035,5 +1308,117 @@ mod cli_tests {
     fn cli_includes_complete_subcommand() {
         let cmd = AiCli::command();
         assert!(cmd.find_subcommand("complete").is_some());
+    }
+
+    #[test]
+    fn exit_codes_map_to_response_shape() {
+        assert_eq!(
+            crate::exit_code_for_response(
+                &ClientResponse::Cancelled {
+                    id: "id".into(),
+                    turn_id: "id".into(),
+                    reason: Some("cancelled".into()),
+                },
+                Some(crate::TurnCancelSource::Sigint),
+            ),
+            std::process::ExitCode::from(130)
+        );
+        assert_eq!(
+            crate::exit_code_for_response(
+                &ClientResponse::Error {
+                    id: "id".into(),
+                    code: ErrorCode::InvalidRequest,
+                    message: "bad".into(),
+                },
+                None,
+            ),
+            std::process::ExitCode::from(2)
+        );
+        assert_eq!(
+            crate::exit_code_for_anyhow(&anyhow::anyhow!("unknown preset: fast")),
+            std::process::ExitCode::from(2)
+        );
+        assert_eq!(
+            crate::exit_code_for_response(
+                &ClientResponse::Error {
+                    id: "id".into(),
+                    code: ErrorCode::ProviderError,
+                    message: "bad".into(),
+                },
+                None,
+            ),
+            std::process::ExitCode::from(4)
+        );
+        assert_eq!(
+            crate::exit_code_for_response(
+                &ClientResponse::Error {
+                    id: "id".into(),
+                    code: ErrorCode::ToolError,
+                    message: "bad".into(),
+                },
+                None,
+            ),
+            std::process::ExitCode::from(5)
+        );
+    }
+
+    #[test]
+    fn replay_messages_prefers_saved_transcript() {
+        let payload = HistoryPayload {
+            history_id: "id".into(),
+            command: "chat".into(),
+            user_message: "turn2".into(),
+            request_messages: vec![
+                HistoryMessage {
+                    role: "user".into(),
+                    content: "turn1".into(),
+                },
+                HistoryMessage {
+                    role: "assistant".into(),
+                    content: "reply1".into(),
+                },
+                HistoryMessage {
+                    role: "user".into(),
+                    content: "turn2".into(),
+                },
+            ],
+            shell_log_tail: None,
+            client_cwd: None,
+            tools: vec![],
+            llm_profile: None,
+            preset: None,
+            session_id: None,
+            conversation_id: None,
+            shell_exec_approval: None,
+            socket_path: "/tmp/s".into(),
+            log_tail_bytes: 1,
+        };
+        let messages = crate::replay_messages_from_payload(&payload);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content, "turn1");
+        assert_eq!(messages[2].content, "turn2");
+    }
+
+    #[test]
+    fn replay_messages_falls_back_to_user_message() {
+        let payload = HistoryPayload {
+            history_id: "id".into(),
+            command: "ask".into(),
+            user_message: "hello".into(),
+            request_messages: vec![],
+            shell_log_tail: None,
+            client_cwd: None,
+            tools: vec![],
+            llm_profile: None,
+            preset: None,
+            session_id: None,
+            conversation_id: None,
+            shell_exec_approval: None,
+            socket_path: "/tmp/s".into(),
+            log_tail_bytes: 1,
+        };
+        let messages = crate::replay_messages_from_payload(&payload);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "hello");
     }
 }

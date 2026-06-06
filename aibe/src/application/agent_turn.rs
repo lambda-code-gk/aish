@@ -74,7 +74,7 @@ impl AgentTurnService {
                 .finish_text_only(
                     id,
                     &conversation,
-                    events.as_ref().map(Arc::as_ref),
+                    events.clone(),
                     cancellation.as_ref().map(Arc::as_ref),
                 )
                 .await;
@@ -103,12 +103,12 @@ impl AgentTurnService {
         &self,
         id: String,
         conversation: &[ChatMessage],
-        events: Option<&dyn TurnEventSink>,
+        events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<&TurnCancellation>,
     ) -> ClientResponse {
         if let Some(cancel) = cancellation {
             if cancel.is_cancelled() {
-                if let Some(events) = events {
+                if let Some(events) = events.as_ref() {
                     events
                         .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
                         .await;
@@ -120,7 +120,7 @@ impl AgentTurnService {
                 };
             }
         }
-        if let Some(events) = events {
+        if let Some(events) = events.as_ref() {
             events
                 .progress(
                     &id,
@@ -129,23 +129,88 @@ impl AgentTurnService {
                 )
                 .await;
         }
+
         let assistant = if let Some(cancel) = cancellation {
-            tokio::select! {
-                res = self.llm.complete(conversation) => res,
-                _ = cancel.wait() => {
-                    if let Some(events) = events {
-                        events.progress(&id, ProgressPhase::Cancelling, Some("cancelled".into())).await;
+            if let Some(events) = events.as_ref() {
+                let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                let forwarder_events = Arc::clone(events);
+                let turn_id = id.clone();
+                let stream_forwarder = tokio::spawn(async move {
+                    while let Some(delta) = delta_rx.recv().await {
+                        forwarder_events.assistant_streaming(&turn_id, delta).await;
                     }
-                    return ClientResponse::Cancelled {
-                        id: id.clone(),
-                        turn_id: id,
-                        reason: Some("cancelled".into()),
-                    };
+                });
+                let mut on_delta = |delta: String| {
+                    let _ = delta_tx.send(delta);
+                };
+                let assistant = tokio::select! {
+                    res = self.llm.complete_streaming(conversation, &mut on_delta) => res,
+                    _ = cancel.wait() => {
+                        drop(delta_tx);
+                        stream_forwarder.abort();
+                        events
+                            .progress(
+                                &id,
+                                ProgressPhase::Cancelling,
+                                Some("cancelled".into()),
+                            )
+                            .await;
+                        return ClientResponse::Cancelled {
+                            id: id.clone(),
+                            turn_id: id,
+                            reason: Some("cancelled".into()),
+                        };
+                    }
+                };
+                drop(delta_tx);
+                if let Some(handle) = Some(stream_forwarder) {
+                    let _ = handle.await;
+                }
+                assistant
+            } else {
+                let mut ignore_delta = |_delta: String| {};
+                tokio::select! {
+                    res = self.llm.complete_streaming(conversation, &mut ignore_delta) => res,
+                    _ = cancel.wait() => {
+                        return ClientResponse::Cancelled {
+                            id: id.clone(),
+                            turn_id: id,
+                            reason: Some("cancelled".into()),
+                        };
+                    }
                 }
             }
+        } else if let Some(events) = events.as_ref() {
+            let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let forwarder_events = Arc::clone(events);
+            let turn_id = id.clone();
+            let stream_forwarder = tokio::spawn(async move {
+                while let Some(delta) = delta_rx.recv().await {
+                    forwarder_events.assistant_streaming(&turn_id, delta).await;
+                }
+            });
+            let mut on_delta = |delta: String| {
+                let _ = delta_tx.send(delta);
+            };
+            let assistant = self
+                .llm
+                .complete_streaming(conversation, &mut on_delta)
+                .await;
+            drop(delta_tx);
+            if let Some(handle) = Some(stream_forwarder) {
+                let _ = handle.await;
+            }
+            assistant
         } else {
-            self.llm.complete(conversation).await
+            let mut ignore_delta = |_delta: String| {};
+            self.llm
+                .complete_streaming(conversation, &mut ignore_delta)
+                .await
         };
+
+        if let Some(events) = events.as_ref() {
+            events.final_response(&id).await;
+        }
 
         match assistant {
             Ok(assistant) => ClientResponse::AgentTurnResult {
@@ -201,6 +266,7 @@ impl AgentTurnService {
                     &allowed_tools,
                     &tool_ctx,
                     &executed,
+                    events.clone(),
                     cancellation.as_ref(),
                 )
                 .await
@@ -210,8 +276,7 @@ impl AgentTurnService {
                     executed: round_executed,
                 }) => {
                     if let Some(events) = events.as_ref() {
-                        self.stream_assistant(events.as_ref(), &id, &assistant.content)
-                            .await;
+                        events.final_response(&id).await;
                     }
                     return ClientResponse::AgentTurnResult {
                         id,
@@ -262,17 +327,6 @@ impl AgentTurnService {
             ErrorCode::InternalError,
             "agent loop ended unexpectedly",
         )
-    }
-
-    async fn stream_assistant(&self, events: &dyn TurnEventSink, id: &str, content: &str) {
-        if content.is_empty() {
-            return;
-        }
-        let chunk_size = 80usize;
-        for chunk in content.as_bytes().chunks(chunk_size) {
-            let delta = String::from_utf8_lossy(chunk).into_owned();
-            events.assistant_streaming(id, delta).await;
-        }
     }
 }
 

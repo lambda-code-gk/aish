@@ -5,11 +5,18 @@ use serde::Serialize;
 use super::output_format::{append_env_line, append_tsv_row, OutputFormat};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FilterMetadata {
+    pub enabled: bool,
+    pub source: String,
+    pub masked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiagnosticsReport {
     pub command: String,
     pub config_socket_path: String,
     pub ask_default_profile: Option<String>,
-    pub ask_filter: Option<String>,
+    pub ask_filter: FilterMetadata,
     pub ask_tools: Vec<String>,
     pub socket_path: String,
     pub socket_alive: bool,
@@ -46,8 +53,26 @@ impl DiagnosticsReport {
         );
         append_tsv_row(
             &mut out,
-            "config.ask_filter",
-            self.ask_filter.as_deref().unwrap_or(""),
+            "config.ask_filter.enabled",
+            if self.ask_filter.enabled {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        append_tsv_row(
+            &mut out,
+            "config.ask_filter.source",
+            &self.ask_filter.source,
+        );
+        append_tsv_row(
+            &mut out,
+            "config.ask_filter.masked",
+            if self.ask_filter.masked {
+                "true"
+            } else {
+                "false"
+            },
         );
         append_tsv_row(&mut out, "config.ask_tools", &self.ask_tools.join(","));
         append_tsv_row(&mut out, "socket.path", &self.socket_path);
@@ -103,8 +128,22 @@ impl DiagnosticsReport {
         );
         append_env_line(
             &mut out,
-            "AI_ASK_FILTER",
-            self.ask_filter.as_deref().unwrap_or(""),
+            "AI_ASK_FILTER_ENABLED",
+            if self.ask_filter.enabled {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        append_env_line(&mut out, "AI_ASK_FILTER_SOURCE", &self.ask_filter.source);
+        append_env_line(
+            &mut out,
+            "AI_ASK_FILTER_MASKED",
+            if self.ask_filter.masked {
+                "true"
+            } else {
+                "false"
+            },
         );
         append_env_line(&mut out, "AI_ASK_TOOLS", &self.ask_tools.join(","));
         append_env_line(&mut out, "AI_SOCKET_PATH", &self.socket_path);
@@ -162,7 +201,7 @@ pub struct DryRunReport {
     pub message_masked: String,
     pub config_socket_path: String,
     pub ask_default_profile: Option<String>,
-    pub ask_filter: Option<String>,
+    pub ask_filter: FilterMetadata,
     pub ask_tools: Vec<String>,
     pub socket_path: String,
     pub aish_session_dir: Option<String>,
@@ -199,8 +238,26 @@ impl DryRunReport {
         );
         append_tsv_row(
             &mut out,
-            "config.ask_filter",
-            self.ask_filter.as_deref().unwrap_or(""),
+            "config.ask_filter.enabled",
+            if self.ask_filter.enabled {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        append_tsv_row(
+            &mut out,
+            "config.ask_filter.source",
+            &self.ask_filter.source,
+        );
+        append_tsv_row(
+            &mut out,
+            "config.ask_filter.masked",
+            if self.ask_filter.masked {
+                "true"
+            } else {
+                "false"
+            },
         );
         append_tsv_row(&mut out, "config.ask_tools", &self.ask_tools.join(","));
         append_tsv_row(&mut out, "socket.path", &self.socket_path);
@@ -258,8 +315,22 @@ impl DryRunReport {
         );
         append_env_line(
             &mut out,
-            "AI_ASK_FILTER",
-            self.ask_filter.as_deref().unwrap_or(""),
+            "AI_ASK_FILTER_ENABLED",
+            if self.ask_filter.enabled {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        append_env_line(&mut out, "AI_ASK_FILTER_SOURCE", &self.ask_filter.source);
+        append_env_line(
+            &mut out,
+            "AI_ASK_FILTER_MASKED",
+            if self.ask_filter.masked {
+                "true"
+            } else {
+                "false"
+            },
         );
         append_env_line(&mut out, "AI_ASK_TOOLS", &self.ask_tools.join(","));
         append_env_line(&mut out, "AI_SOCKET_PATH", &self.socket_path);
@@ -301,5 +372,49 @@ impl DryRunReport {
             &self.log_tail_bytes.to_string(),
         );
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dry_run_render_masks_filter_metadata_not_raw_filter() {
+        let report = DryRunReport {
+            command: "ask".into(),
+            message_source: "argv".into(),
+            message_length: 5,
+            message_masked: "<masked>".into(),
+            config_socket_path: "/tmp/aibe.sock".into(),
+            ask_default_profile: Some("fast".into()),
+            ask_filter: FilterMetadata {
+                enabled: true,
+                source: "config".into(),
+                masked: true,
+            },
+            ask_tools: vec!["@read-only".into()],
+            socket_path: "/tmp/aibe.sock".into(),
+            aish_session_dir: None,
+            implicit_session_id: None,
+            ai_ask_log: None,
+            shell_log_choice: "none".into(),
+            shell_log_path: None,
+            shell_log_error: None,
+            dry_run: true,
+            preset: None,
+            log_tail_bytes: 16_384,
+        };
+
+        let json = serde_json::to_value(&report).expect("json");
+        assert_eq!(json["ask_filter"]["enabled"], true);
+        assert_eq!(json["ask_filter"]["source"], "config");
+        assert_eq!(json["ask_filter"]["masked"], true);
+
+        let env = report.render(OutputFormat::Env);
+        assert!(env.contains("AI_ASK_FILTER_ENABLED='true'"));
+        assert!(env.contains("AI_ASK_FILTER_SOURCE='config'"));
+        assert!(env.contains("AI_ASK_FILTER_MASKED='true'"));
+        assert!(!env.contains("raw_filter"));
     }
 }

@@ -30,7 +30,7 @@ flowchart LR
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
 | **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
 | **aibe** | エージェントループ、ツール、プロバイダ呼び出し、Unix socket サーバ | LLM API へ（設定に従う） |
-| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
+| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う。`chat` はクライアント側 transcript を保持し、`AgentTurnResult` 成功時のみ user/assistant を追記する。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
 
 ## 依存ルール
 
@@ -56,6 +56,8 @@ aish          →  （aibe への path 依存禁止）
 | aibe-client | `aibe-protocol` | `aibe`, `aish`, `ai` |
 | aibe | `tokio`, HTTP クライアント、serde、プロバイダ SDK、`aibe-protocol`, `aibe-client` | `aish` |
 | ai | `aibe-protocol`, `aibe-client`, `serde` | `aibe`, `aish`, `reqwest` 等の LLM 直叩き |
+
+`ai` は LLM API を直接叩かず、`chat` も `ai` の transcript と local history を経由して `aibe` に渡す。`ai` の history payload は `conversation_id` を保持し、再実行時の再接続に使う。
 
 ## aibe デーモン
 
@@ -112,6 +114,8 @@ aish          →  （aibe への path 依存禁止）
 ```
 
 `artifacts`: 0024 / 0025 の非採用案で検討した拡張。0026 の外部コマンド経路では付与しない。HTTP ツールループでは `null` のままでよい。
+
+`assistant_streaming`: 任意のデルタ通知。aibe の LLM プロバイダが streaming を返せる場合はそのデルタをそのまま流し、非対応プロバイダは synthetic 1 回のデルタを返す。
 
 エラー時:
 
@@ -200,15 +204,17 @@ aish          →  （aibe への path 依存禁止）
   - `--session <id>` → 同上（`id` は `basename(AISH_SESSION_DIR)` と一致）
   - `--log PATH` / `--no-log` の優先順は `0019` 参照
   - `--log-tail` は bytes 指定で `aibe_protocol::SHELL_LOG_TAIL_MAX_BYTES` を超えない。`0` で tail 無効、既定は `~/.config/ai/config.toml` の `log_tail_bytes`、未設定時は 16 KiB
+  - `shell_exec_approval` の最終解決は CLI > preset > `AIBE_CONFIG`（`[tools.shell_exec].shell_exec_approval`）の順。`--yes-exec` は実効 mode が `ask` のときだけ有効で、`never` は越えない
 - **local history**:
   - 既定 root は `~/.local/share/ai/history/`
-  - `index.jsonl` は redacted な一覧・検索用メタデータのみを持つ
+  - `index.jsonl` は redacted な一覧・検索用メタデータのみを持つ。`conversation_id` と `shell_exec_approval` は index / payload の双方に保存し、chat session 単位の追跡に使う
   - `payloads/<history_id>.json` は replay 用 payload vault で、0600 相当の権限で保存する
 - **`ai ask` の output filter**（`0022`）:
   - 対象は `AgentTurnResult.assistant_message.content` のみ（`stdout`）。tools 起動行・warning・`--verbose-tools`・エラーは `stderr` のまま
   - 優先順: 非空 `AI_FILTER` > 非空 `[ask].filter` > なし（CLI フラグなし）
   - 実行: `/bin/sh -c` に stdin pipe。filter stdout は `write_all`（改行は filter 任せ）。filter stderr は透過
   - 空 assistant は filter 未起動・stdout 不出力。filter 非ゼロ終了でも `ai` は 0 終了（warning のみ）。spawn 失敗時は未加工本文をフォールバック
+  - `dry-run` / `status` / `doctor` は raw filter 文字列を出さず、`enabled` / `source` / `masked` のメタデータだけを出力する
   - 将来の対話モード等でも同 env/config を再利用する想定。`aish` からの export は今回なし
 
 ## 設定ファイル

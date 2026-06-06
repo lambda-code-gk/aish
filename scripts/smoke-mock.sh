@@ -142,4 +142,9 @@ timeout 30s "$AI_BIN" ask --dry-run --quiet "secret message" >"$STDOUT_FILE" 2>"
 grep -q 'secret message' "$STDOUT_FILE" && fail "dry-run must mask raw message"
 [[ ! -s "$STDERR_FILE" ]] || fail "dry-run must not connect to aibe (stderr should be empty with --quiet)"
 
+echo "smoke-mock: ai chat --dry-run..."
+timeout 30s "$AI_BIN" chat --dry-run --quiet --format json >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q '"command":"chat"' "$STDOUT_FILE" || fail "chat dry-run must report command chat"
+[[ ! -s "$STDERR_FILE" ]] || fail "chat dry-run must not connect to aibe"
+
 echo "smoke-mock: ok"

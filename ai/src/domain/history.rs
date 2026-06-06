@@ -15,6 +15,8 @@ pub struct HistoryIndexEntry {
     pub preset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_exec_approval: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -24,10 +26,18 @@ pub struct HistoryIndexEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryPayload {
     pub history_id: String,
     pub command: String,
     pub user_message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub request_messages: Vec<HistoryMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_log_tail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,6 +49,10 @@ pub struct HistoryPayload {
     pub preset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_exec_approval: Option<String>,
     pub socket_path: String,
     pub log_tail_bytes: usize,
 }
@@ -56,6 +70,7 @@ pub struct HistoryTurnInput {
     pub conversation_id: Option<String>,
     pub preset: Option<String>,
     pub profile: Option<String>,
+    pub shell_exec_approval: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -81,6 +96,7 @@ pub struct HistoryIndexView {
     pub conversation_id: Option<String>,
     pub preset: Option<String>,
     pub profile: Option<String>,
+    pub shell_exec_approval: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -127,6 +143,7 @@ impl From<&HistoryIndexEntry> for HistoryIndexView {
             conversation_id: value.conversation_id.clone(),
             preset: value.preset.clone(),
             profile: value.profile.clone(),
+            shell_exec_approval: value.shell_exec_approval.clone(),
             socket_path: value.socket_path.clone(),
             request_kind: value.request_kind.clone(),
             request_summary: value.request_summary.clone(),
@@ -155,6 +172,11 @@ impl HistoryIndexView {
         );
         append_tsv_row(&mut out, "preset", self.preset.as_deref().unwrap_or(""));
         append_tsv_row(&mut out, "profile", self.profile.as_deref().unwrap_or(""));
+        append_tsv_row(
+            &mut out,
+            "shell_exec_approval",
+            self.shell_exec_approval.as_deref().unwrap_or(""),
+        );
         append_tsv_row(&mut out, "socket_path", &self.socket_path);
         append_tsv_row(&mut out, "request_kind", &self.request_kind.to_string());
         append_tsv_row(&mut out, "request_summary", &self.request_summary.detail);
@@ -188,6 +210,11 @@ impl HistoryIndexView {
             &mut out,
             "AI_PROFILE",
             self.profile.as_deref().unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_SHELL_EXEC_APPROVAL",
+            self.shell_exec_approval.as_deref().unwrap_or(""),
         );
         append_env_line(&mut out, "AI_SOCKET_PATH", &self.socket_path);
         append_env_line(&mut out, "AI_REQUEST_KIND", &self.request_kind.to_string());
@@ -244,6 +271,7 @@ mod tests {
             conversation_id: None,
             preset: Some("fast".into()),
             profile: Some("fast".into()),
+            shell_exec_approval: Some("ask".into()),
             socket_path: "/tmp/sock".into(),
             request_kind: HistoryRecordKind::Ask,
             request_summary: HistorySummary::new("user_message_len=12 shell_log_tail_len=4"),
@@ -257,5 +285,33 @@ mod tests {
         assert!(tsv.contains("assistant_message_len=8"));
         let env = view.render_env();
         assert!(env.contains("AI_HISTORY_ID='id'"));
+
+        let payload = HistoryPayload {
+            history_id: "id".into(),
+            command: "ask".into(),
+            user_message: "hello".into(),
+            request_messages: vec![],
+            shell_log_tail: None,
+            client_cwd: None,
+            tools: vec![],
+            llm_profile: None,
+            preset: None,
+            session_id: Some("sess".into()),
+            conversation_id: Some("conv".into()),
+            shell_exec_approval: Some("ask".into()),
+            socket_path: "/tmp/sock".into(),
+            log_tail_bytes: 1,
+        };
+        assert_eq!(payload.conversation_id.as_deref(), Some("conv"));
+        assert!(payload.request_messages.is_empty());
+    }
+
+    #[test]
+    fn history_payload_deserializes_without_request_messages() {
+        let payload: HistoryPayload = serde_json::from_str(
+            r#"{"history_id":"id","command":"ask","user_message":"hi","tools":[],"socket_path":"/tmp/s","log_tail_bytes":1}"#,
+        )
+        .expect("deserialize");
+        assert!(payload.request_messages.is_empty());
     }
 }

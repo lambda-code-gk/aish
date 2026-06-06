@@ -65,6 +65,87 @@ impl OpenAiCompatibleLlm {
         serde_json::from_str(&text)
             .map_err(|e| LlmError::Provider(format!("invalid response JSON: {e}; body: {text}")))
     }
+
+    async fn chat_completion_streaming(
+        &self,
+        mut body: ChatRequest,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<ChatResponse, LlmError> {
+        body.stream = Some(true);
+        let response = self
+            .backend
+            .client
+            .post(self.chat_url())
+            .bearer_auth(&self.backend.api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LlmError::Provider(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response
+                .text()
+                .await
+                .map_err(|e| LlmError::Provider(e.to_string()))?;
+            return Err(LlmError::Provider(format!("HTTP {status}: {text}")));
+        }
+
+        let mut response = response;
+        let mut buffer = String::new();
+        let mut text = String::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| LlmError::Provider(e.to_string()))?
+        {
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(split) = buffer.find("\n\n") {
+                let event = buffer[..split].to_string();
+                buffer.drain(..split + 2);
+                for line in event.lines() {
+                    let Some(data) = line.strip_prefix("data:") else {
+                        continue;
+                    };
+                    let payload = data.trim();
+                    if payload == "[DONE]" {
+                        return Ok(ChatResponse {
+                            choices: vec![Choice {
+                                message: Some(ApiMessage {
+                                    role: "assistant".to_string(),
+                                    content: Some(text),
+                                    tool_call_id: None,
+                                    tool_calls: None,
+                                }),
+                            }],
+                        });
+                    }
+                    let chunk: ChatChunk = serde_json::from_str(payload).map_err(|e| {
+                        LlmError::Provider(format!("invalid stream JSON: {e}; body: {payload}"))
+                    })?;
+                    if let Some(choice) = chunk.choices.into_iter().next() {
+                        if let Some(delta) = choice.delta.content {
+                            if !delta.is_empty() {
+                                text.push_str(&delta);
+                                on_delta(delta);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ChatResponse {
+            choices: vec![Choice {
+                message: Some(ApiMessage {
+                    role: "assistant".to_string(),
+                    content: Some(text),
+                    tool_call_id: None,
+                    tool_calls: None,
+                }),
+            }],
+        })
+    }
 }
 
 fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
@@ -128,6 +209,7 @@ impl LlmProvider for OpenAiCompatibleLlm {
             tools: None,
             temperature: self.params.temperature,
             max_tokens: self.params.max_output_tokens,
+            stream: None,
         };
         let parsed = self.chat_completion(body).await?;
         let message = parsed
@@ -171,6 +253,7 @@ impl LlmProvider for OpenAiCompatibleLlm {
             },
             temperature: self.params.temperature,
             max_tokens: self.params.max_output_tokens,
+            stream: None,
         };
 
         let parsed = self.chat_completion(body).await?;
@@ -190,6 +273,34 @@ impl LlmProvider for OpenAiCompatibleLlm {
         let content = message.content.unwrap_or_default();
         Ok(LlmStepResult::with_tool_calls(content, tool_calls))
     }
+
+    async fn complete_streaming(
+        &self,
+        messages: &[ChatMessage],
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<ChatMessage, LlmError> {
+        let body = ChatRequest {
+            model: self.model.clone(),
+            messages: to_api_messages(messages),
+            tools: None,
+            temperature: self.params.temperature,
+            max_tokens: self.params.max_output_tokens,
+            stream: Some(true),
+        };
+        let parsed = self.chat_completion_streaming(body, on_delta).await?;
+        let message = parsed
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message)
+            .unwrap_or(ApiMessage {
+                role: "assistant".to_string(),
+                content: Some(String::new()),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        Ok(ChatMessage::assistant(message.content.unwrap_or_default()))
+    }
 }
 
 #[derive(Serialize)]
@@ -202,6 +313,8 @@ struct ChatRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,4 +362,20 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct Choice {
     message: Option<ApiMessage>,
+}
+
+#[derive(Deserialize)]
+struct ChatChunk {
+    choices: Vec<ChunkChoice>,
+}
+
+#[derive(Deserialize)]
+struct ChunkChoice {
+    delta: ChunkDelta,
+}
+
+#[derive(Deserialize)]
+struct ChunkDelta {
+    #[serde(default)]
+    content: Option<String>,
 }

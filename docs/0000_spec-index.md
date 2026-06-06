@@ -19,12 +19,11 @@
 |------|----------|------|------|
 | 0026 | [0026_external-commands-spec.md](spec/0026_external-commands-spec.md) | 設計確定 | 外部コマンド（CLI コーディングエージェント） |
 | 0027 | [0027_ai-ux-spec.md](spec/0027_ai-ux-spec.md) | 設計確定 | `ai` コマンド UX 改善 |
+| 0028 | [0028_ai-ux-gap-closure-spec.md](spec/0028_ai-ux-gap-closure-spec.md) | 設計確定 | `ai` UX の残ギャップ解消 |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
-| 番号 | ファイル | 状態 | 概要 |
-|------|----------|------|------|
-| 0027 | [0027_ai-ux-implementation-spec.md](done/0027_ai-ux-implementation-spec.md) | 完了 | `ai` コマンド UX 改善の実装指示書 |
+（なし）
 
 ## 実装済み指示書（docs/done/）
 
@@ -56,5 +55,7 @@
 | 0024 | [0024_cli-subagent-provider-spec.md](done/0024_cli-subagent-provider-spec.md) | 非採用 | CLI サブエージェント（first-class 統合案）— [0026](spec/0026_external-commands-spec.md) で代替 |
 | 0025 | [0025_cli-subagent-implementation-spec.md](done/0025_cli-subagent-implementation-spec.md) | 非採用 | CLI サブエージェント実装指示書 — [0026](spec/0026_external-commands-spec.md) で代替 |
 | 0026 | [0026_external-commands-implementation-spec.md](done/0026_external-commands-implementation-spec.md) | 実装済み | 外部コマンド（設計: [0026](spec/0026_external-commands-spec.md)） |
+| 0027 | [0027_ai-ux-implementation-spec.md](done/0027_ai-ux-implementation-spec.md) | 実装済み | `ai` コマンド UX 改善（設計: [0027](spec/0027_ai-ux-spec.md)） |
+| 0028 | [0028_ai-ux-gap-closure-implementation-spec.md](done/0028_ai-ux-gap-closure-implementation-spec.md) | 実装済み | `ai` UX 残ギャップ解消（設計: [0028](spec/0028_ai-ux-gap-closure-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

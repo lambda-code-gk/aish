@@ -49,6 +49,10 @@ impl StdoutPresenter {
         }
     }
 
+    pub fn is_quiet(&self) -> bool {
+        self.quiet
+    }
+
     fn emit_assistant_stdout(&self, content: &str) {
         if content.is_empty() {
             return;
