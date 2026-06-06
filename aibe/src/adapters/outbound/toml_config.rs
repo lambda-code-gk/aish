@@ -8,8 +8,9 @@ use serde::Deserialize;
 use toml::Value;
 
 use crate::ports::outbound::{
-    AppConfig, ConfigError, ConfigLoader, LlmBackend, LlmGenerationParams, LlmProfile,
-    LlmProfilesConfig, LlmProviderKind, ToolsConfig,
+    validate_external_commands, AppConfig, ConfigError, ConfigLoader, ExternalCommandConfig,
+    LlmBackend, LlmGenerationParams, LlmProfile, LlmProfilesConfig, LlmProviderKind, ToolsConfig,
+    DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
 };
 
 const DEFAULT_CONFIG_PATH: &str = ".config/aibe/config.toml";
@@ -63,10 +64,13 @@ impl ConfigLoader for TomlConfig {
 
         let llm = parse_llm_profiles(root.as_ref(), file_cfg.as_ref())?;
         let tools = parse_tools(file_cfg.as_ref())?;
+        let external_commands = parse_external_commands(file_cfg.as_ref());
+        validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
         Ok(AppConfig {
             socket_path,
             llm,
             tools,
+            external_commands,
         })
     }
 }
@@ -484,6 +488,23 @@ fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
     Ok(tools)
 }
 
+fn parse_external_commands(file: Option<&FileConfig>) -> Vec<ExternalCommandConfig> {
+    file.and_then(|f| f.external_commands.as_ref())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| ExternalCommandConfig {
+            name: e.name,
+            description: e.description.unwrap_or_default(),
+            command: e.command,
+            args: e.args.unwrap_or_default(),
+            timeout_secs: e
+                .timeout_secs
+                .unwrap_or(DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS),
+        })
+        .collect()
+}
+
 fn expand_home(path: String) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -496,7 +517,19 @@ fn expand_home(path: String) -> PathBuf {
 struct FileConfig {
     socket_path: Option<String>,
     default_profile: Option<String>,
+    #[serde(default)]
+    external_commands: Option<Vec<ExternalCommandSection>>,
     tools: Option<ToolsSection>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExternalCommandSection {
+    name: String,
+    description: Option<String>,
+    command: String,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+    timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -847,5 +880,59 @@ max_output_tokens = {}
         let cfg = TomlConfig::from_path(path).load().expect("load");
         let profile = cfg.llm.profiles.get("p").expect("profile");
         assert_eq!(profile.params.max_output_tokens, Some(u32::MAX));
+    }
+
+    #[test]
+    fn parses_external_commands_with_default_timeout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tools.shell_exec]
+allowed_commands = ["codex"]
+
+[[external_commands]]
+name = "codex"
+description = "Codex CLI"
+command = "codex"
+args = ["exec", "{prompt}"]
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert_eq!(cfg.external_commands.len(), 1);
+        assert_eq!(cfg.external_commands[0].name, "codex");
+        assert_eq!(
+            cfg.external_commands[0].timeout_secs,
+            DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn rejects_external_command_not_in_allowlist() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[tools.shell_exec]
+allowed_commands = ["echo"]
+
+[[external_commands]]
+name = "codex"
+command = "codex"
+"#,
+        )
+        .expect("write");
+
+        let err = TomlConfig::from_path(path).load().unwrap_err();
+        match err {
+            ConfigError::Invalid(msg) => {
+                assert!(msg.contains("allowed_commands"));
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
     }
 }

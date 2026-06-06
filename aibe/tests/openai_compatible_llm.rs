@@ -117,7 +117,7 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         cfg.termination_strategy,
     ));
-    let registry = build_registry(&cfg);
+    let registry = build_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
     let svc = AgentTurnService::new(
         llm,

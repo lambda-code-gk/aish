@@ -47,7 +47,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
     let profile_registry =
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, profile_registry, cfg)
+        server::run(socket_for_server, profile_registry, cfg, Vec::new())
             .await
             .expect("server");
     });

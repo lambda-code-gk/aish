@@ -24,9 +24,14 @@ async fn unknown_llm_profile_returns_invalid_request() {
     );
     let socket_for_server = socket_path.clone();
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, registry, ToolsConfig::default())
-            .await
-            .expect("server");
+        server::run(
+            socket_for_server,
+            registry,
+            ToolsConfig::default(),
+            Vec::new(),
+        )
+        .await
+        .expect("server");
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;

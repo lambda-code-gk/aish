@@ -106,9 +106,12 @@ aish          →  （aibe への path 依存禁止）
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "ok",
   "assistant_message": { "role": "assistant", "content": "..." },
-  "tool_calls": []
+  "tool_calls": [],
+  "artifacts": null
 }
 ```
+
+`artifacts`: 0024 / 0025 の非採用案で検討した拡張。0026 の外部コマンド経路では付与しない。HTTP ツールループでは `null` のままでよい。
 
 エラー時:
 
@@ -130,6 +133,21 @@ aish          →  （aibe への path 依存禁止）
 | `openai_compatible` | OpenAI 公式 API および OpenAI 互換（LM Studio、vLLM 等）。`base_url` 省略時の既定は `https://api.openai.com/v1` |
 | `gemini` | Google AI Studio `generateContent`（`v1beta`）— `adapters/outbound/gemini.rs` |
 | `mock` | テスト・開発 |
+| `codex_cli` | 0024 / 0025 の旧案（非採用）。first-class `LlmProvider` にはしない |
+| `claude_code_cli` | 0024 / 0025 の旧案（非採用）。first-class `LlmProvider` にはしない |
+
+**CLI サブエージェント（0024 / 0025, 非採用）**
+
+- 0024 / 0025 は歴史的な比較資料。`codex_cli` / `claude_code_cli` を first-class `LlmProvider` にする案は採用しない。
+- `artifacts` / `invoke_*` / `RequestContext.cli_resume` / `cli-thread.json` / `max_concurrent_cli` は 0024 / 0025 の設計要素であり、0026 の外部コマンド経路では使わない。
+- `docs/manual/cli-subagent-products.md` は CLI コマンドの挙動調査として残すが、aibe のプロトコル正本ではない。
+
+**外部コマンド（0026）**
+
+- `[[external_commands]]` は `shell_exec` のプリセットであり、`provider` ではない。
+- HTTP 親プロファイルが外部コマンドを使う場合も、実際の経路は `shell_exec` + `@exec` / literal 指定である。
+- `aibe` は `shell_exec` の allowlist、承認、timeout、監査だけを担い、CLI の thread / session は保存しない。
+- `invoke_*` や専用 runner は導入しない。
 
 - `provider = "openai"` は **未対応**（別名ではない）。公式 OpenAI も `openai_compatible` を使う
 - 選択とエンドポイントは **aibe 設定ファイル** の LLM 接続 + プロファイルで指定（`docs/done/0011_llm-profiles-spec.md`）

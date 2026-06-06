@@ -17,7 +17,7 @@ fn service() -> RequestService {
         Arc::new(MockLlm::new()),
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
-    let tool_registry = build_registry(&tools_config);
+    let tool_registry = build_registry(&tools_config, &[]);
     RequestService::new(
         profile_registry,
         tool_registry,

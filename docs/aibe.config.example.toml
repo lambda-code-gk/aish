@@ -5,6 +5,27 @@
 
 default_profile = "fast"
 
+# 外部コマンド（0026 設計: docs/spec/0026_external-commands-spec.md）:
+# Codex CLI / Claude Code CLI を shell_exec のプリセットとして登録する案。
+# - 0024 の cli_subagents は非採用
+# - first-class tool / LlmProvider / invoke_* / artifacts / 自動 resume は導入しない
+# - command は [tools.shell_exec].allowed_commands に含める
+# - 詳細な検証手順は docs/manual/external-commands-cli.md を追加する想定
+#
+# [[external_commands]]
+# name = "codex"
+# description = "Codex CLI を外部コマンドとして呼ぶ"
+# command = "codex"
+# args = ["exec", "--json", "-C", "{cwd}", "{prompt}"]
+# timeout_secs = 1800
+#
+# [[external_commands]]
+# name = "claude"
+# description = "Claude Code CLI を外部コマンドとして呼ぶ"
+# command = "claude"
+# args = ["-p", "{prompt}", "--output-format", "json"]
+# timeout_secs = 1800
+
 # --- LLM 接続定義（認証・エンドポイントのみ）---
 
 [llm.gemini-studio]
@@ -36,6 +57,11 @@ llm = "lmstudio"
 model = "local-model"
 temperature = 0.7
 
+# --- 外部コマンドの起動に使う既存の shell_exec 設定 ---
+#
+# 外部コマンドは @exec / literal shell_exec からのみ呼ぶ。
+# `allowed_commands` に `codex` / `claude` やラッパースクリプト名を追加する。
+
 # --- 後方互換: フラット [llm] のみ（暗黙 default / default）---
 # [llm]
 # provider = "openai_compatible"
@@ -51,6 +77,7 @@ max_tool_output_bytes = 32_768
 [tools.shell_exec]
 enabled = true
 allowed_commands = ["ls", "git", "cargo", "echo"]
+# 外部コマンドを使うなら、ここに `codex` / `claude` / ラッパースクリプト名を追加する
 # shell_exec_approval = "ask"   # never | ask | always（既定 ask）
 
 [tools.read_file]

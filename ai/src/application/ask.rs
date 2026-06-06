@@ -19,6 +19,7 @@ pub struct AskRunOptions {
     pub resolved_tools: ResolvedTools,
     pub verbose_tools: bool,
     pub llm_profile: Option<String>,
+    pub external_command_names: Vec<String>,
 }
 
 pub struct Ask<'a, C, P, L> {
@@ -44,6 +45,8 @@ where
     pub fn run(&self, user_message: String, options: AskRunOptions) -> Result<(), AskError> {
         self.presenter
             .show_tools_startup(&options.resolved_tools.startup);
+        self.presenter
+            .show_external_commands(&options.external_command_names);
 
         let shell_log_tail = match self.log {
             Some(l) => Some(l.tail_bytes(SHELL_LOG_TAIL_MAX_BYTES)?),

@@ -141,10 +141,15 @@ impl ExecutedToolCall {
         mut self,
         approval_mode: &str,
         outcome: ShellExecApprovalOutcome,
+        external_command: Option<&str>,
     ) -> Self {
         self.risk_class = Some(ToolRiskClass::DangerousShell);
         self.dry_run = Some(false);
-        self.approval_source = Some(format!("shell_exec_approval={approval_mode}"));
+        let mut approval_source = format!("shell_exec_approval={approval_mode}");
+        if let Some(name) = external_command {
+            approval_source.push_str(&format!(";external_command={name}"));
+        }
+        self.approval_source = Some(approval_source);
         match outcome {
             ShellExecApprovalOutcome::PolicyNever => {
                 self.approval_state = Some(ToolApprovalState::NotRequired);
@@ -216,7 +221,7 @@ mod tests {
             "approval_unavailable",
             "no gate",
         )
-        .with_shell_exec_audit("ask", ShellExecApprovalOutcome::ApprovalUnavailable);
+        .with_shell_exec_audit("ask", ShellExecApprovalOutcome::ApprovalUnavailable, None);
         assert_eq!(tc.approval_state, Some(ToolApprovalState::NotRequired));
         assert_eq!(tc.decision.as_deref(), Some("approval_unavailable"));
         assert_eq!(

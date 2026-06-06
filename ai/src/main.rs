@@ -8,7 +8,9 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use ai::adapters::outbound::toml_config::AiConfig;
-use ai::adapters::outbound::{AibeUnixClient, FileLogTail, StdoutPresenter};
+use ai::adapters::outbound::{
+    external_command_names, AibeUnixClient, FileLogTail, StdoutPresenter,
+};
 use ai::application::{ensure_aibe_if_needed, plan_ask_launch, Ask, AskRunOptions};
 use ai::clap_cli::{AiCli, AiCommand};
 use ai::domain::{
@@ -122,6 +124,7 @@ fn run_ask(
         resolved_tools: plan.resolved_tools,
         verbose_tools,
         llm_profile,
+        external_command_names: external_command_names(),
     };
 
     match log_choice {

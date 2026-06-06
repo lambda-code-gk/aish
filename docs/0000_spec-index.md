@@ -15,7 +15,9 @@
 
 ## 設計書（docs/spec/）
 
-（なし）
+| 番号 | ファイル | 状態 | 概要 |
+|------|----------|------|------|
+| 0026 | [0026_external-commands-spec.md](spec/0026_external-commands-spec.md) | 設計確定 | 外部コマンド（CLI コーディングエージェント） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -48,5 +50,8 @@
 | 0021 | [0021_tab-completion-spec.md](done/0021_tab-completion-spec.md) | 実装済み | CLI Tab 補完（`aish` / `ai` / `aibe`、bash / zsh、`clap` 移行） |
 | 0022 | [0022_ai-filter-spec.md](done/0022_ai-filter-spec.md) | 実装済み | `AI_FILTER` / `[ask].filter` による assistant 本文の output filter |
 | 0023 | [0023_shell-exec-approval-hardening-spec.md](done/0023_shell-exec-approval-hardening-spec.md) | 実装済み | `shell_exec` 承認 UI: 非対話 stdin fail-closed、表示 escape、`aibe-client` 往復テスト |
+| 0024 | [0024_cli-subagent-provider-spec.md](done/0024_cli-subagent-provider-spec.md) | 非採用 | CLI サブエージェント（first-class 統合案）— [0026](spec/0026_external-commands-spec.md) で代替 |
+| 0025 | [0025_cli-subagent-implementation-spec.md](done/0025_cli-subagent-implementation-spec.md) | 非採用 | CLI サブエージェント実装指示書 — [0026](spec/0026_external-commands-spec.md) で代替 |
+| 0026 | [0026_external-commands-implementation-spec.md](done/0026_external-commands-implementation-spec.md) | 実装済み | 外部コマンド（設計: [0026](spec/0026_external-commands-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

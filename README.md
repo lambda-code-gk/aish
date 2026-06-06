@@ -293,7 +293,7 @@ AI エージェント向けの開発規約: [AGENTS.md](AGENTS.md)
 | [docs/testing.md](docs/testing.md) | テスト方針 |
 | [docs/security.md](docs/security.md) | 秘密情報・ログ |
 | [docs/manual/](docs/manual/) | 手動検証手順 |
-| [docs/0000_spec-index.md](docs/0000_spec-index.md) | 機能仕様書一覧（実装済みは [docs/done/](docs/done/)） |
+| [docs/0000_spec-index.md](docs/0000_spec-index.md) | 設計書・指示書一覧（設計: [docs/spec/](docs/spec/)、実装済み: [docs/done/](docs/done/)） |
 
 ## Contributing
 

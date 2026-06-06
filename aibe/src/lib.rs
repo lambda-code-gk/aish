@@ -27,6 +27,7 @@ fn try_run() -> anyhow::Result<()> {
 
     let profile_registry = adapters::outbound::build_profile_registry(&config.llm)?;
     let tools_config = config.tools.clone();
+    let external_commands = config.external_commands.clone();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -34,5 +35,6 @@ fn try_run() -> anyhow::Result<()> {
         config.socket_path,
         profile_registry,
         tools_config,
+        external_commands,
     ))
 }

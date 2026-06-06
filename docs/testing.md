@@ -41,7 +41,7 @@ cargo test -p aibe-client -- --test-threads=1
 | **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
 | **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
-| **aibe** | server / agent / tools / 承認 | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs` |
+| **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |
 
 ## テスト種別
 
@@ -58,6 +58,7 @@ cargo test -p aibe-client -- --test-threads=1
 
 - **単体**: JSON メッセージの serialize/deserialize、設定パース、allowlist、`agent_turn` ループ（`ScriptedMockLlm`）。ツール失敗は tool result で継続（allowlist 外 `shell_exec`、パス制限外 `read_file`、モデル幻覚ツール、subprocess 非ゼロ終了、`shell_exec` タイムアウト）。`shell_exec` の subprocess 制御（並行 stdout/stderr drain、タイムアウト時 kill/reap）は `aibe/src/adapters/outbound/tools/shell_exec.rs` の単体テスト（`run_subprocess` + 大量出力の非誤 timeout + PID `ESRCH` 検証）が正本
 - **統合**: Unix socket で `ping` / `agent_turn`（ツールなし・`read_file` ループ）が完走
+- **外部コマンド（0026）**: `aibe/tests/external_commands.rs` で fixture `echo` の正常系・allowlist 拒否を固定。`approval_source` の `external_command=` 付与は `shell_exec.rs` 単体テストが正本。CLI coding agent は first-class tool にしない。
 - **E2E**: デーモン起動 → クライアント 1 リクエスト → 応答（ネットワーク不要な fixture 推奨）
 - **手動**: 実プロバイダ + 実キーでの 1 ターン（`openai_compatible` / Gemini — `docs/manual/aibe-openai-compatible.md` 等）
 

@@ -12,19 +12,22 @@ use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
-use crate::ports::outbound::{ProfileRegistry, ShellExecApprovalGate, ToolsConfig};
+use crate::ports::outbound::{
+    ExternalCommandConfig, ProfileRegistry, ShellExecApprovalGate, ToolsConfig,
+};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode};
 
 pub async fn run(
     socket_path: PathBuf,
     profile_registry: ProfileRegistry,
     tools_config: ToolsConfig,
+    external_commands: Vec<ExternalCommandConfig>,
 ) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
     let listener = bind_unix_listener(&socket_path)?;
     eprintln!("aibe: listening on {}", socket_path.display());
 
-    let tool_registry = build_registry(&tools_config);
+    let tool_registry = build_registry(&tools_config, &external_commands);
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         tools_config.termination_strategy,
     ));

@@ -21,11 +21,25 @@ pub const DEFAULT_MAX_GREP_MATCHES: usize = 5_000;
 /// `grep` が 1 ファイルあたり読むバイトの既定上限。
 pub const DEFAULT_MAX_GREP_FILE_BYTES: usize = 1_048_576;
 
+/// `[[external_commands]]` — `shell_exec` 用の起動テンプレート（first-class tool ではない）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalCommandConfig {
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub timeout_secs: u64,
+}
+
+/// 外部コマンドの `timeout_secs` 既定（30 分）。
+pub const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS: u64 = 1800;
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub socket_path: PathBuf,
     pub llm: LlmProfilesConfig,
     pub tools: ToolsConfig,
+    pub external_commands: Vec<ExternalCommandConfig>,
 }
 
 /// max-round 到達時の終端戦略（policy）。
@@ -302,6 +316,40 @@ mod tests {
         };
         assert_eq!(cfg.effective_max_rounds(), 3);
     }
+}
+
+/// `external_commands.command` が `shell_exec` allowlist に含まれることを検証する。
+pub fn validate_external_commands(
+    external_commands: &[ExternalCommandConfig],
+    allowed_commands: &[String],
+) -> Result<(), ConfigError> {
+    let mut seen_names = std::collections::HashSet::new();
+    for entry in external_commands {
+        if entry.name.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "[[external_commands]] name must not be empty".into(),
+            ));
+        }
+        if !seen_names.insert(entry.name.clone()) {
+            return Err(ConfigError::Invalid(format!(
+                "duplicate external_commands name: {}",
+                entry.name
+            )));
+        }
+        if entry.command.trim().is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "external_commands '{}' command must not be empty",
+                entry.name
+            )));
+        }
+        if !allowed_commands.iter().any(|c| c == &entry.command) {
+            return Err(ConfigError::Invalid(format!(
+                "external_commands '{}' command '{}' is not in tools.shell_exec.allowed_commands",
+                entry.name, entry.command
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 設定の読み込み。

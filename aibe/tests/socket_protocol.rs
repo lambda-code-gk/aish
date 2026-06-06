@@ -26,9 +26,14 @@ async fn ping_and_agent_turn_over_unix_socket() {
         TerminationCapability::summary_prompt_only(),
     );
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, profile_registry, ToolsConfig::default())
-            .await
-            .expect("server");
+        server::run(
+            socket_for_server,
+            profile_registry,
+            ToolsConfig::default(),
+            Vec::new(),
+        )
+        .await
+        .expect("server");
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;

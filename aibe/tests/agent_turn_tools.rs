@@ -40,7 +40,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
     let profile_registry =
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, profile_registry, cfg)
+        server::run(socket_for_server, profile_registry, cfg, Vec::new())
             .await
             .expect("server");
     });

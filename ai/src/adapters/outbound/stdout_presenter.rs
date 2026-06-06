@@ -73,6 +73,16 @@ impl Presenter for StdoutPresenter {
         eprintln!("{}", format_tools_startup(line));
     }
 
+    fn show_external_commands(&self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+        eprintln!(
+            "warning: ai: external commands registered: {}",
+            names.join(",")
+        );
+    }
+
     fn show_response(&self, response: &ClientResponse, verbose_tools: bool) {
         let out = render_response(response, verbose_tools);
         if let Some(s) = out.stdout.as_deref() {

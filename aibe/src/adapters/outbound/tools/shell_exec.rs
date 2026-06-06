@@ -13,7 +13,7 @@ use tokio::process::Command;
 
 use crate::domain::{ExecutedToolCall, ShellExecApprovalOutcome, ToolName, ToolResult};
 use crate::ports::outbound::{
-    CommandPolicy, ShellExecApprovalMode, ToolExecutionContext, ToolExecutor,
+    CommandPolicy, ExternalCommandConfig, ShellExecApprovalMode, ToolExecutionContext, ToolExecutor,
 };
 
 use super::subprocess::{run_subprocess, ShellRunOutcome};
@@ -22,14 +22,26 @@ use super::tool_output::limit_tool_output;
 pub struct ShellExecTool {
     policy: Arc<dyn CommandPolicy>,
     max_output_bytes: usize,
+    external_commands: Vec<ExternalCommandConfig>,
 }
 
 impl ShellExecTool {
-    pub fn new(policy: Arc<dyn CommandPolicy>, max_output_bytes: usize) -> Self {
+    pub fn new(
+        policy: Arc<dyn CommandPolicy>,
+        max_output_bytes: usize,
+        external_commands: Vec<ExternalCommandConfig>,
+    ) -> Self {
         Self {
             policy,
             max_output_bytes,
+            external_commands,
         }
+    }
+
+    fn match_external_command(&self, command: &str) -> Option<&ExternalCommandConfig> {
+        self.external_commands
+            .iter()
+            .find(|entry| entry.command == command)
     }
 }
 
@@ -133,9 +145,13 @@ impl ToolExecutor for ShellExecTool {
                 },
                 self.policy.shell_exec_approval_mode(),
                 ShellExecApprovalOutcome::NotApplicable,
+                None,
             );
         }
 
+        let external_name = self
+            .match_external_command(&parsed.command)
+            .map(|entry| entry.name.as_str());
         let approval_mode = self.policy.shell_exec_approval_mode();
         match approval_mode {
             ShellExecApprovalMode::Never => {
@@ -155,6 +171,7 @@ impl ToolExecutor for ShellExecTool {
                     },
                     approval_mode,
                     ShellExecApprovalOutcome::PolicyNever,
+                    external_name,
                 );
             }
             ShellExecApprovalMode::Ask => {
@@ -175,6 +192,7 @@ impl ToolExecutor for ShellExecTool {
                         },
                         approval_mode,
                         ShellExecApprovalOutcome::ApprovalUnavailable,
+                        external_name,
                     );
                 };
                 if !gate
@@ -197,15 +215,21 @@ impl ToolExecutor for ShellExecTool {
                         },
                         approval_mode,
                         ShellExecApprovalOutcome::UserDenied,
+                        external_name,
                     );
                 }
             }
             ShellExecApprovalMode::Always => {}
         }
 
+        let external_command = self.match_external_command(&parsed.command);
         let exec_outcome = exec_outcome_for_mode(approval_mode);
         let cmd = build_command(&parsed, ctx.base_dir());
-        let duration = Duration::from_millis(timeout_ms.max(1));
+        let effective_timeout_ms = external_command
+            .map(|entry| entry.timeout_secs.saturating_mul(1000))
+            .unwrap_or(timeout_ms)
+            .max(1);
+        let duration = Duration::from_millis(effective_timeout_ms);
 
         match run_subprocess(cmd, duration).await {
             ShellRunOutcome::Completed {
@@ -228,6 +252,7 @@ impl ToolExecutor for ShellExecTool {
                         },
                         approval_mode,
                         exec_outcome,
+                        external_name,
                     )
                 } else {
                     finish_shell_exec(
@@ -245,11 +270,12 @@ impl ToolExecutor for ShellExecTool {
                         },
                         approval_mode,
                         exec_outcome,
+                        external_name,
                     )
                 }
             }
             ShellRunOutcome::TimedOut { .. } => {
-                let msg = format!("command timed out after {timeout_ms}ms");
+                let msg = format!("command timed out after {effective_timeout_ms}ms");
                 finish_shell_exec(
                     ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
                     ToolResult {
@@ -259,6 +285,7 @@ impl ToolExecutor for ShellExecTool {
                     },
                     approval_mode,
                     exec_outcome,
+                    external_name,
                 )
             }
             ShellRunOutcome::Failed(msg) => finish_shell_exec(
@@ -276,6 +303,7 @@ impl ToolExecutor for ShellExecTool {
                 },
                 approval_mode,
                 exec_outcome,
+                external_name,
             ),
         }
     }
@@ -294,9 +322,10 @@ fn finish_shell_exec(
     result: ToolResult,
     approval_mode: ShellExecApprovalMode,
     outcome: ShellExecApprovalOutcome,
+    external_command: Option<&str>,
 ) -> (ExecutedToolCall, ToolResult) {
     (
-        record.with_shell_exec_audit(approval_mode.as_str(), outcome),
+        record.with_shell_exec_audit(approval_mode.as_str(), outcome, external_command),
         result,
     )
 }
@@ -335,7 +364,7 @@ mod tests {
             allowed_commands: vec!["cat".into()],
             approval: ShellExecApprovalMode::Always,
         }));
-        let tool = ShellExecTool::new(policy, 4096);
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx =
             ToolExecutionContext::new(ClientCwd::new(client_sub).expect("absolute client cwd"));
         let args = json!({ "command": "cat", "args": ["note.txt"] });
@@ -399,7 +428,7 @@ mod tests {
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Never,
         }));
-        let tool = ShellExecTool::new(policy, 4096);
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
             ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
         );
@@ -423,7 +452,7 @@ mod tests {
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Ask,
         }));
-        let tool = ShellExecTool::new(policy, 4096);
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
             ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
         );
@@ -462,7 +491,7 @@ mod tests {
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Ask,
         }));
-        let tool = ShellExecTool::new(policy, 4096);
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
             ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
         )
@@ -481,13 +510,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn external_command_sets_approval_source() {
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Always,
+        }));
+        let external_commands = vec![crate::ports::outbound::ExternalCommandConfig {
+            name: "fixture-echo".into(),
+            description: String::new(),
+            command: "echo".into(),
+            args: vec!["{prompt}".into()],
+            timeout_secs: 30,
+        }];
+        let tool = ShellExecTool::new(policy, 4096, external_commands);
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
+        );
+        let args = json!({ "command": "echo", "args": ["hi"] });
+
+        let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(
+            record.approval_source.as_deref(),
+            Some("shell_exec_approval=always;external_command=fixture-echo")
+        );
+    }
+
+    #[tokio::test]
     async fn execute_timeout_returns_error_result() {
         let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
             enabled: true,
             allowed_commands: vec!["sleep".into()],
             approval: ShellExecApprovalMode::Always,
         }));
-        let tool = ShellExecTool::new(policy, 4096);
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
             ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
         );

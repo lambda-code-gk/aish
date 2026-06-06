@@ -29,9 +29,14 @@ fn ai_ask_reaches_mock_aibe() {
                 Arc::new(MockLlm::new()),
                 TerminationCapability::summary_prompt_only(),
             );
-            server::run(socket_for_server, registry, ToolsConfig::default())
-                .await
-                .expect("server");
+            server::run(
+                socket_for_server,
+                registry,
+                ToolsConfig::default(),
+                Vec::new(),
+            )
+            .await
+            .expect("server");
         });
     });
 
@@ -51,6 +56,7 @@ fn ai_ask_reaches_mock_aibe() {
             resolved_tools: resolved,
             verbose_tools: false,
             llm_profile: None,
+            external_command_names: Vec::new(),
         },
     )
     .expect("ask");

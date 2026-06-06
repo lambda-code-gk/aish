@@ -30,7 +30,7 @@ fn agent_turn_service(
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         cfg.termination_strategy,
     ));
-    let registry = build_registry(&cfg);
+    let registry = build_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
     AgentTurnService::new(llm, executor, terminator, capability)
 }

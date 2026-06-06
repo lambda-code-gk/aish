@@ -21,14 +21,21 @@ pub use shell_exec::ShellExecTool;
 
 use std::sync::Arc;
 
-use crate::ports::outbound::{CommandPolicy, ToolRegistry, ToolsConfig};
+use crate::ports::outbound::{CommandPolicy, ExternalCommandConfig, ToolRegistry, ToolsConfig};
 
-pub fn build_registry(tools_cfg: &ToolsConfig) -> Arc<dyn ToolRegistry> {
+pub fn build_registry(
+    tools_cfg: &ToolsConfig,
+    external_commands: &[ExternalCommandConfig],
+) -> Arc<dyn ToolRegistry> {
     let max_output = tool_output::clamp_max_tool_output_bytes(tools_cfg.max_tool_output_bytes);
     let policy: Arc<dyn CommandPolicy> =
         Arc::new(ConfigAllowlistPolicy::new(tools_cfg.shell_exec.clone()));
     Arc::new(DefaultToolRegistry::new(
-        Arc::new(ShellExecTool::new(policy, max_output)),
+        Arc::new(ShellExecTool::new(
+            policy,
+            max_output,
+            external_commands.to_vec(),
+        )),
         Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
         Arc::new(ListDirTool::new(max_output, tools_cfg.explore.clone())),
         Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),

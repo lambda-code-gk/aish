@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use ai::adapters::outbound::{render_response, StdoutPresenter};
 use ai::application::{plan_ask_launch, Ask, AskRunOptions};
 use ai::domain::{resolve_tools, ConfigToolsTokens, ToolsResolveError};
-use ai::ports::outbound::{AgentClient, AgentError};
+use ai::ports::outbound::{AgentClient, AgentError, Presenter};
 use aibe_protocol::{
     AgentTurnStatus, ClientResponse, ExecutedToolCall, ProtocolMessageOut, ToolName,
     MAX_TOOL_OUTPUT_BYTES,
@@ -64,6 +64,7 @@ fn resolve_read_only_sends_safe_tools_to_aibe() {
             resolved_tools: resolved,
             verbose_tools: false,
             llm_profile: None,
+            external_command_names: Vec::new(),
         },
     )
     .expect("ask");
@@ -143,9 +144,16 @@ fn ask_with_filter_completes() {
             resolved_tools: resolved,
             verbose_tools: false,
             llm_profile: None,
+            external_command_names: Vec::new(),
         },
     )
     .expect("ask");
+}
+
+#[test]
+fn external_commands_warning_line() {
+    let presenter = StdoutPresenter::new(None);
+    presenter.show_external_commands(&["codex".into(), "claude".into()]);
 }
 
 #[test]

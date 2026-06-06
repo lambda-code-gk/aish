@@ -23,6 +23,7 @@ impl EnvConfig {
             socket_path,
             llm: LlmProfilesConfig::default_mock(),
             tools: ToolsConfig::default(),
+            external_commands: Vec::new(),
         })
     }
 }

@@ -11,6 +11,20 @@
 | ai が LLM を直叩き | キー分散・監査不能 | 依存チェック + コードレビュー |
 | aish がネットワーク | 想定外のデータ送信 | aish に HTTP クライアントを入れない |
 | デーモン socket | ローカル任意コード実行相当 | socket パス・パーミッション |
+| 外部コマンド（CLI coding agent 含む） | ユーザー権限で任意コマンド・ファイル変更 | 設定の `command` のみ起動、`cwd` は `context.cwd`、allowlist、承認、監査、自動 git なし |
+
+### CLI サブエージェント（0024 / 0025, 非採用）
+
+- API キーは aibe 設定に置かず、**ホストにインストール済みの Codex / Claude Code CLI** のログイン契約に委ねる、という考え方自体は 0024 / 0025 の旧案として残す。
+- ただし本番採用はしない。`artifacts` や thread 共有は AISH の正本ではない。
+- CLI を first-class provider / tool にしないため、`command --version` のような存在確認を aibe の起動要件にはしない。
+
+### 外部コマンド（0026）
+
+- `[[external_commands]]` は `shell_exec` のテンプレートであり、AISH のポリシー外の CLI を明示登録するためのもの。
+- `risk_class` は `DangerousShell` のまま扱う。`approval_state` は既存の `shell_exec_approval` に従う。
+- `approval_source` は少なくとも `shell_exec_approval=<mode>` を残し、必要ならプリセット名も追えるようにする。
+- AISH は CLI の内部 sandbox / login / tool catalog / thread を検証しない。ユーザー責任で管理する。
 
 ## 秘密情報
 
