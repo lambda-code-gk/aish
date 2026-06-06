@@ -119,8 +119,10 @@
 | `docs/manual/` | 手動検証チェックリスト |
 | `docs/codex-delegation.md` | Codex サブエージェント（権限・MCP 手順） |
 | `docs/codex-review.md` | オプション: 厚い diff パケット（`CODEX_USE_PACKET=1`） |
-| `docs/0000_spec-index.md` | 000x / 001x 仕様・指示書の一覧 |
-| `docs/done/` | 実装済みの番号付き指示書（0001–0011） |
+| `docs/0000_spec-index.md` | 000x / 001x 設計書・指示書の一覧 |
+| `docs/spec/` | **設計書**（Codex 作成。完了後も残す） |
+| `docs/tasks/` | **実装指示書**（進行中。コミット時に `done/` へ移動） |
+| `docs/done/` | 実装済みの番号付き指示書 |
 | `docs/todo/` | 未着手・検討中のメモ |
 | `.codex/config.toml` | Codex プロファイル（CLI/MCP は scripts 経由） |
 | `scripts/codex-fix-linux-sandbox.sh` | bwrap / Landlock 診断 |

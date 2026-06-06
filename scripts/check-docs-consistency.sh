@@ -70,10 +70,9 @@ else
   )
 fi
 
-# ルート直下に残った 00xx 指示書（done 移動漏れ）
+# docs/ ルート直下に残った 00xx（spec / tasks / done へ移動漏れ）
 while IFS= read -r -d '' f; do
-  rel="${f#"$ROOT/docs/"}"
-  fail "stale spec at docs root (move to docs/done/): ${f#"$ROOT/"}"
+  fail "stale spec at docs root (use docs/spec/, docs/tasks/, or docs/done/): ${f#"$ROOT/"}"
 done < <(find "$ROOT/docs" -maxdepth 1 -name '[0-9][0-9][0-9][0-9]_*-spec.md' -print0 2>/dev/null)
 
 # testing.md「0018 safe-tools-policy」表の .rs パスが実在する

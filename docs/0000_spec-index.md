@@ -1,5 +1,28 @@
 # 仕様・指示書インデックス（000x / 001x 系列）
 
+## ドキュメントの置き場所（2026-06 以降）
+
+| 種別 | 置き場所 | 作成者（既定） | 移動タイミング |
+|------|----------|----------------|----------------|
+| **設計書** | [spec/](spec/) | Codex | 設計確定後も **spec に残す** |
+| **実装指示書**（進行中） | [tasks/](tasks/) | Codex または Cursor | 実装完了 **コミット時**に [done/](done/) へ移動 |
+| **実装済み指示書** | [done/](done/) | — | 履歴保管 |
+| **検討メモ** | [todo/](todo/) | 任意 | 昇格（spec / tasks）または削除 |
+
+**番号**: 設計書（`spec/`）と実装指示書（`tasks/` / `done/`）は **同じ 00xx** を使う。ファイル名で区別する（設計: `00xx_<topic>-spec.md`、実装: `00xx_<topic>-implementation-spec.md`）。
+
+運用上の正本（要約）: [architecture.md](architecture.md)。手動検証: [manual/](manual/)。
+
+## 設計書（docs/spec/）
+
+（なし）
+
+## 実装指示書（docs/tasks/ — 進行中）
+
+（なし）
+
+## 実装済み指示書（docs/done/）
+
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
 | 0001 | [0001_aibe-tool-agent-loop-spec.md](done/0001_aibe-tool-agent-loop-spec.md) | 実装済み | aibe ツール付きエージェントループ |
@@ -25,9 +48,5 @@
 | 0021 | [0021_tab-completion-spec.md](done/0021_tab-completion-spec.md) | 実装済み | CLI Tab 補完（`aish` / `ai` / `aibe`、bash / zsh、`clap` 移行） |
 | 0022 | [0022_ai-filter-spec.md](done/0022_ai-filter-spec.md) | 実装済み | `AI_FILTER` / `[ask].filter` による assistant 本文の output filter |
 | 0023 | [0023_shell-exec-approval-hardening-spec.md](done/0023_shell-exec-approval-hardening-spec.md) | 実装済み | `shell_exec` 承認 UI: 非対話 stdin fail-closed、表示 escape、`aibe-client` 往復テスト |
-
-**進行中・未着手**の指示書は `docs/00xx_*-spec.md`（ルート直下）。検討メモは [todo/](todo/)。
-
-運用上の正本（要約）: [architecture.md](architecture.md)。実装済み一式: [done/](done/)。
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

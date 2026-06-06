@@ -59,14 +59,14 @@ echo 'hello from manual fixture' >"$MANUAL/sample.txt"
 
 | # | コマンド | 期待 |
 |---|----------|------|
-| A1 | `cargo run -q -p ai -- ask "x" --tools nope --no-start 2>&1` | 終了コード非 0。`unknown tool: nope` を含む。`tools enabled` は出ない |
-| A2 | `cargo run -q -p ai -- ask "x" --tools none,read_file --no-start 2>&1` | 非 0。`none cannot be combined` を含む |
-| A3 | `cargo run -q -p ai -- ask "x" --tools @nope --no-start 2>&1` | 非 0。`unknown tool category` を含む |
+| A1 | `cargo run -q -p ai -- ask --tools nope --no-start "x" 2>&1` | 終了コード非 0。`unknown tool: nope` を含む。`tools enabled` は出ない |
+| A2 | `cargo run -q -p ai -- ask --tools none,read_file --no-start "x" 2>&1` | 非 0。`none cannot be combined` を含む |
+| A3 | `cargo run -q -p ai -- ask --tools @nope --no-start "x" 2>&1` | 非 0。`unknown tool category` を含む |
 
 確認例:
 
 ```bash
-cargo run -q -p ai -- ask "x" --tools nope --no-start 2>&1 | tee "$MANUAL/a1.log"
+cargo run -q -p ai -- ask --tools nope --no-start "x" 2>&1 | tee "$MANUAL/a1.log"
 test $? -ne 0
 grep -q 'unknown tool: nope' "$MANUAL/a1.log"
 ```
@@ -94,7 +94,7 @@ cat >"$MANUAL/ai-empty.toml" <<'EOF'
 # [ask] 省略 → tools []
 EOF
 AI_CONFIG="$MANUAL/ai-empty.toml" \
-  cargo run -q -p ai -- ask "ping" --socket "$AIBE_SOCKET_PATH" --no-start 2>"$MANUAL/b1.err" \
+  cargo run -q -p ai -- ask --socket "$AIBE_SOCKET_PATH" --no-start "ping" 2>"$MANUAL/b1.err" \
   | tee "$MANUAL/b1.out"
 ```
 
@@ -106,9 +106,9 @@ AI_CONFIG="$MANUAL/ai-empty.toml" \
 ### B2. CLI `--tools @read-only`
 
 ```bash
-cargo run -q -p ai -- ask "hello tools" \
+cargo run -q -p ai -- ask \
   --socket "$AIBE_SOCKET_PATH" --no-start \
-  --tools @read-only 2>"$MANUAL/b2.err" | tee "$MANUAL/b2.out"
+  --tools @read-only "hello tools" 2>"$MANUAL/b2.err" | tee "$MANUAL/b2.out"
 ```
 
 期待:
@@ -119,9 +119,9 @@ cargo run -q -p ai -- ask "hello tools" \
 ### B3. `shell_exec` 警告行
 
 ```bash
-cargo run -q -p ai -- ask "x" \
+cargo run -q -p ai -- ask \
   --socket "$AIBE_SOCKET_PATH" --no-start \
-  --tools @exec 2>"$MANUAL/b3.err" | tee "$MANUAL/b3.out"
+  --tools @exec "x" 2>"$MANUAL/b3.err" | tee "$MANUAL/b3.out"
 ```
 
 期待:
@@ -144,9 +144,9 @@ aibe 設定で `[tools.shell_exec] shell_exec_approval = "ask"`（既定）か�
 pipe / リダイレクト stdin では承認できないこと:
 
 ```bash
-printf 'y\n' | cargo run -q -p ai -- ask "…" \
+printf 'y\n' | cargo run -q -p ai -- ask \
   --socket "$AIBE_SOCKET_PATH" --no-start \
-  --tools @exec 2>"$MANUAL/b3c.err" | tee "$MANUAL/b3c.out"
+  --tools @exec "…" 2>"$MANUAL/b3c.err" | tee "$MANUAL/b3c.out"
 ```
 
 期待:
@@ -161,9 +161,9 @@ printf 'y\n' | cargo run -q -p ai -- ask "…" \
 `AI_CONFIG` は `@read-only` のまま:
 
 ```bash
-cargo run -q -p ai -- ask "override" \
+cargo run -q -p ai -- ask \
   --socket "$AIBE_SOCKET_PATH" --no-start \
-  --tools none 2>"$MANUAL/b4.err" | tee "$MANUAL/b4.out"
+  --tools none "override" 2>"$MANUAL/b4.err" | tee "$MANUAL/b4.out"
 ```
 
 期待:
@@ -176,9 +176,9 @@ cargo run -q -p ai -- ask "override" \
 mock LLM はツールを呼ばないため、`tool_calls` 詳細行は **出ない** のが正常。契約確認は次のとおり:
 
 ```bash
-cargo run -q -p ai -- ask "verbose check" \
+cargo run -q -p ai -- ask \
   --socket "$AIBE_SOCKET_PATH" --no-start \
-  --tools @read-only --verbose-tools 2>"$MANUAL/b5.err" | tee "$MANUAL/b5.out"
+  --tools @read-only --verbose-tools "verbose check" 2>"$MANUAL/b5.err" | tee "$MANUAL/b5.out"
 ```
 
 期待:
@@ -199,9 +199,9 @@ cargo run -q -p ai -- ask "verbose check" \
 ```bash
 cd "$MANUAL"
 echo 'cwd fixture' >./cwd-test.txt
-cargo run -q -p ai -- ask "x" \
+cargo run -q -p ai -- ask \
   --socket "$AIBE_SOCKET_PATH" --no-start \
-  --tools @read-only 2>/dev/null
+  --tools @read-only "x" 2>/dev/null
 # 実 LLM で read_file させる場合は C のプロンプトで path を "cwd-test.txt" にする
 ```
 

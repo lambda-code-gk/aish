@@ -103,7 +103,7 @@ STDERR_FILE="$SMOKE_DIR/stderr"
 
 echo "smoke-mock: ai ask round-trip..."
 set +e
-timeout 180s "$AI_BIN" ask "ping" --socket "$AIBE_SOCKET_PATH" --no-start \
+timeout 180s "$AI_BIN" ask --socket "$AIBE_SOCKET_PATH" --no-start "ping" \
   >"$STDOUT_FILE" 2>"$STDERR_FILE"
 ask_status=$?
 set -e
