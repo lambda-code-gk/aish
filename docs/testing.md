@@ -32,7 +32,7 @@ cargo test -p aibe-client -- --test-threads=1
 
 `cargo test --workspace` はロジック・プロトコル・モック統合（例: `ai/tests/ask_integration.rs`、`aibe/tests/ai_ask_e2e.rs`）を広く網羅する。smoke は **CLI の `stdout` / `stderr` 契約** と設定ファイル参照・プロセス起動順を、テストでは拾いにくい経路で固定する。smoke は `cargo test` の代替ではない。
 
-Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`chat` の transcript は `ai` 側で成功 turn ごとに追記し、`history` payload の `request_messages` に保存する。`retry` / `rerun` は payload に transcript があればそれを再生する。`scripts/smoke-mock.sh` は `ai ask` の最短導通に加え `chat --dry-run` を含む。
+Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`chat` の transcript は `ai` 側で成功 turn ごとに追記し、`history` payload の `request_messages` に保存する。`retry` / `rerun` は payload に transcript があればそれを再生する。`--yes-exec` は [`ai/tests/yes_exec_integration.rs`](../ai/tests/yes_exec_integration.rs) で非 TTY 含め検証する。history GC は `history_max_entries`（既定 500、`0` で無効）で [`local_history.rs`](../ai/src/adapters/outbound/local_history.rs) が prune する。streaming の multi-delta forward は [`aibe/tests/agent_turn_streaming.rs`](../aibe/tests/agent_turn_streaming.rs) を参照する。
 
 ### 0017 以降のクレート別テスト配置
 
@@ -43,7 +43,8 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
 | **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
-| **ai** | local history / retry / rerun / preset / log-tail / chat transcript / exit codes | `application/history.rs`、`domain/log_tail.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
+| **ai** | local history / retry / rerun / preset / log-tail / chat transcript / exit codes / yes-exec / history GC | `application/history.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`tests/yes_exec_integration.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
+| **aibe** | assistant streaming forward | `tests/agent_turn_streaming.rs`、`adapters/outbound/scripted_mock_llm.rs` |
 | **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |
 
 ## テスト種別

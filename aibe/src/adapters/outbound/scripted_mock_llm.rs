@@ -47,3 +47,44 @@ impl LlmProvider for ScriptedMockLlm {
         self.pop_step()
     }
 }
+
+/// テスト用: `complete_streaming` が複数 delta を emit する LLM。
+pub struct DeltaStreamingMockLlm {
+    deltas: Vec<String>,
+    final_content: String,
+}
+
+impl DeltaStreamingMockLlm {
+    pub fn new(deltas: Vec<String>, final_content: impl Into<String>) -> Self {
+        Self {
+            deltas,
+            final_content: final_content.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for DeltaStreamingMockLlm {
+    async fn complete(&self, _messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
+        Ok(ChatMessage::assistant(self.final_content.clone()))
+    }
+
+    async fn complete_with_tools(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: &[ToolDefinition],
+    ) -> Result<LlmStepResult, LlmError> {
+        Ok(LlmStepResult::text_only(self.final_content.clone()))
+    }
+
+    async fn complete_streaming(
+        &self,
+        _messages: &[ChatMessage],
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<ChatMessage, LlmError> {
+        for delta in &self.deltas {
+            on_delta(delta.clone());
+        }
+        Ok(ChatMessage::assistant(self.final_content.clone()))
+    }
+}

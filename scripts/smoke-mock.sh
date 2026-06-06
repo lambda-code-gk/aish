@@ -7,6 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# cargo build の出力先と AIBE_BIN / AI_BIN の参照先を一致させる。
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+
 SMOKE_DIR=""
 AIBE_PID=""
 

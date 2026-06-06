@@ -14,5 +14,5 @@ pub use gemini::GeminiLlm;
 pub use llm_factory::{build_profile_registry, termination_capability_for_kind};
 pub use mock_llm::MockLlm;
 pub use openai_compatible::OpenAiCompatibleLlm;
-pub use scripted_mock_llm::ScriptedMockLlm;
+pub use scripted_mock_llm::{DeltaStreamingMockLlm, ScriptedMockLlm};
 pub use toml_config::TomlConfig;

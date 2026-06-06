@@ -2,6 +2,8 @@
 
 socket_path = "~/.local/share/aibe/run.sock"
 history_dir = "~/.local/share/ai/history"
+# ローカル history の最大件数。超過分は古い index / payload から削除。0 で GC 無効。
+history_max_entries = 500
 log_tail_bytes = 16384
 
 [ask]

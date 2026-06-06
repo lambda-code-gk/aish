@@ -9,6 +9,8 @@ use serde::Deserialize;
 
 use crate::domain::{tokens_from_config_value, AskToolsConfigRaw, ConfigToolsTokens};
 
+pub const DEFAULT_HISTORY_MAX_ENTRIES: usize = 500;
+
 #[derive(Debug, Clone)]
 pub struct AiConfig {
     pub socket_path: PathBuf,
@@ -16,6 +18,7 @@ pub struct AiConfig {
     pub ask_default_profile: Option<String>,
     pub ask_filter: Option<String>,
     pub history_dir: PathBuf,
+    pub history_max_entries: usize,
     pub log_tail_bytes: Option<usize>,
     pub presets: HashMap<String, AiPresetConfig>,
 }
@@ -42,6 +45,7 @@ impl AiConfig {
             ask_default_profile: None,
             ask_filter: None,
             history_dir: Self::default_history_dir(),
+            history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
             log_tail_bytes: None,
             presets: HashMap::new(),
         };
@@ -63,6 +67,9 @@ impl AiConfig {
                     }
                     if let Some(history_dir) = file.history_dir {
                         cfg.history_dir = expand_home(history_dir);
+                    }
+                    if let Some(max_entries) = file.history_max_entries {
+                        cfg.history_max_entries = max_entries;
                     }
                     cfg.log_tail_bytes = file.log_tail_bytes;
                     if let Some(presets) = file.presets {
@@ -107,6 +114,7 @@ struct FileConfig {
     socket_path: Option<String>,
     ask: Option<AskSection>,
     history_dir: Option<String>,
+    history_max_entries: Option<usize>,
     log_tail_bytes: Option<usize>,
     presets: Option<HashMap<String, PresetToml>>,
 }

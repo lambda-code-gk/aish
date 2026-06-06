@@ -20,4 +20,6 @@ pub trait HistoryStore {
     ) -> Result<(), HistoryStoreError>;
     fn list(&self) -> Result<Vec<HistoryIndexEntry>, HistoryStoreError>;
     fn load_payload(&self, history_id: &str) -> Result<HistoryPayload, HistoryStoreError>;
+    /// Keep the newest `max_entries` rows; delete older payloads. Returns removed count.
+    fn prune_to_max(&self, max_entries: usize) -> Result<usize, HistoryStoreError>;
 }

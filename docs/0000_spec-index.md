@@ -20,6 +20,7 @@
 | 0026 | [0026_external-commands-spec.md](spec/0026_external-commands-spec.md) | 設計確定 | 外部コマンド（CLI コーディングエージェント） |
 | 0027 | [0027_ai-ux-spec.md](spec/0027_ai-ux-spec.md) | 設計確定 | `ai` コマンド UX 改善 |
 | 0028 | [0028_ai-ux-gap-closure-spec.md](spec/0028_ai-ux-gap-closure-spec.md) | 設計確定 | `ai` UX の残ギャップ解消 |
+| 0029 | [0029_ai-ux-polish-spec.md](spec/0029_ai-ux-polish-spec.md) | 設計確定 | `--yes-exec` 検証・history GC・streaming mock テスト |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -57,5 +58,6 @@
 | 0026 | [0026_external-commands-implementation-spec.md](done/0026_external-commands-implementation-spec.md) | 実装済み | 外部コマンド（設計: [0026](spec/0026_external-commands-spec.md)） |
 | 0027 | [0027_ai-ux-implementation-spec.md](done/0027_ai-ux-implementation-spec.md) | 実装済み | `ai` コマンド UX 改善（設計: [0027](spec/0027_ai-ux-spec.md)） |
 | 0028 | [0028_ai-ux-gap-closure-implementation-spec.md](done/0028_ai-ux-gap-closure-implementation-spec.md) | 実装済み | `ai` UX 残ギャップ解消（設計: [0028](spec/0028_ai-ux-gap-closure-spec.md)） |
+| 0029 | [0029_ai-ux-polish-implementation-spec.md](done/0029_ai-ux-polish-implementation-spec.md) | 実装済み | `--yes-exec` 検証・history GC（設計: [0029](spec/0029_ai-ux-polish-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

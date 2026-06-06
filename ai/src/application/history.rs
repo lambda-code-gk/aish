@@ -88,6 +88,7 @@ pub fn record_turn<S: HistoryStore>(
     store: &S,
     input: &HistoryRecordInput,
     payload: &HistoryReplayInput,
+    history_max_entries: usize,
 ) -> Result<String, HistoryStoreError> {
     let history_id = payload.history_id.clone();
     let entry = HistoryIndexEntry {
@@ -123,6 +124,9 @@ pub fn record_turn<S: HistoryStore>(
         request_messages: payload.request_messages.clone(),
     };
     store.append(&entry, &payload)?;
+    if history_max_entries > 0 {
+        let _ = store.prune_to_max(history_max_entries)?;
+    }
     Ok(history_id)
 }
 
@@ -184,6 +188,28 @@ mod tests {
                 .cloned()
                 .ok_or_else(|| HistoryStoreError::NotFound(history_id.to_string()))
         }
+
+        fn prune_to_max(&self, max_entries: usize) -> Result<usize, HistoryStoreError> {
+            if max_entries == 0 {
+                return Ok(0);
+            }
+            let mut entries = self.entries.lock().expect("lock");
+            if entries.len() <= max_entries {
+                return Ok(0);
+            }
+            entries.sort_by(|a, b| {
+                b.created_at_ms
+                    .cmp(&a.created_at_ms)
+                    .then_with(|| b.history_id.cmp(&a.history_id))
+            });
+            let drop_count = entries.len() - max_entries;
+            let dropped: Vec<_> = entries.drain(max_entries..).collect();
+            let mut payloads = self.payloads.lock().expect("lock");
+            for entry in dropped {
+                payloads.remove(&entry.history_id);
+            }
+            Ok(drop_count)
+        }
     }
 
     #[test]
@@ -230,7 +256,7 @@ mod tests {
                 content: "hello".into(),
             }],
         };
-        record_turn(&store, &input, &payload).expect("record");
+        record_turn(&store, &input, &payload, 500).expect("record");
         let listed = list_history(
             &store,
             HistoryIndexFilter {

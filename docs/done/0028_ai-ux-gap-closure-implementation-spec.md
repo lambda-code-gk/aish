@@ -203,7 +203,7 @@ cargo test -p ai --tests
 
 - [x] `ai chat` で複数 turn の transcript が同じ `conversation_id` で history に残る
 - [x] `ai ask --dry-run` が raw filter / raw log tail / raw replay payload を出さない
-- [ ] `--yes-exec` が `shell_exec_approval=ask` のときだけ効く
+- [x] `--yes-exec` が `shell_exec_approval=ask` のときだけ効く
 - [ ] streaming 対応 provider では delta が逐次表示される
 - [x] streaming 非対応 provider でも 1 回の synthetic delta 後に final response が出る
 

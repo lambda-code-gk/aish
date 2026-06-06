@@ -102,6 +102,55 @@ impl HistoryStore for LocalHistoryStore {
             serde_json::from_str(raw.trim()).map_err(|e| HistoryStoreError::Read(e.to_string()))?;
         Ok(payload)
     }
+
+    fn prune_to_max(&self, max_entries: usize) -> Result<usize, HistoryStoreError> {
+        if max_entries == 0 {
+            return Ok(0);
+        }
+        let entries = self.list()?;
+        if entries.len() <= max_entries {
+            return Ok(0);
+        }
+        let drop_count = entries.len() - max_entries;
+        let to_drop = entries[max_entries..].to_vec();
+        let kept = entries[..max_entries].to_vec();
+        self.rewrite_index(&kept)?;
+        for entry in &to_drop {
+            let path = self.payload_path(&entry.history_id);
+            let _ = fs::remove_file(path);
+        }
+        Ok(drop_count)
+    }
+}
+
+impl LocalHistoryStore {
+    fn rewrite_index(&self, entries: &[HistoryIndexEntry]) -> Result<(), HistoryStoreError> {
+        self.ensure_layout()?;
+        let path = self.index_path();
+        let temp = self.root.join("index.jsonl.tmp");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp)
+            .map_err(|e| HistoryStoreError::Write(e.to_string()))?;
+        let mut ordered = entries.to_vec();
+        ordered.sort_by(|a, b| {
+            a.created_at_ms
+                .cmp(&b.created_at_ms)
+                .then_with(|| a.history_id.cmp(&b.history_id))
+        });
+        for entry in ordered {
+            let line = serde_json::to_string(&entry)
+                .map_err(|e| HistoryStoreError::Write(e.to_string()))?;
+            writeln!(file, "{line}").map_err(|e| HistoryStoreError::Write(e.to_string()))?;
+        }
+        drop(file);
+        set_permissions_0600(&temp).map_err(|e| HistoryStoreError::Write(e.to_string()))?;
+        fs::rename(&temp, &path).map_err(|e| HistoryStoreError::Write(e.to_string()))?;
+        set_permissions_0600(&path).map_err(|e| HistoryStoreError::Write(e.to_string()))?;
+        Ok(())
+    }
 }
 
 fn open_append_0600(path: &Path) -> std::io::Result<File> {
@@ -192,5 +241,53 @@ mod tests {
         assert_eq!(entries[0].history_id, "abc");
         let loaded = store.load_payload("abc").expect("payload");
         assert_eq!(loaded.user_message, "hello");
+    }
+
+    #[test]
+    fn prune_to_max_drops_oldest_payloads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = LocalHistoryStore::new(dir.path().to_path_buf());
+        for (idx, id) in ["a", "b", "c", "d"].into_iter().enumerate() {
+            let entry = HistoryIndexEntry {
+                history_id: id.into(),
+                created_at_ms: idx as u64,
+                command: "ask".into(),
+                session_id: None,
+                conversation_id: None,
+                preset: None,
+                profile: None,
+                shell_exec_approval: None,
+                socket_path: "/tmp/s".into(),
+                request_kind: crate::domain::HistoryRecordKind::Ask,
+                request_summary: crate::domain::HistorySummary::new("req"),
+                response_kind: crate::domain::HistoryRecordKind::Ask,
+                response_summary: crate::domain::HistorySummary::new("resp"),
+                status: crate::domain::HistoryRecordStatus::Ok,
+            };
+            let payload = HistoryPayload {
+                history_id: id.into(),
+                command: "ask".into(),
+                user_message: id.into(),
+                request_messages: vec![],
+                shell_log_tail: None,
+                client_cwd: None,
+                tools: vec![],
+                llm_profile: None,
+                preset: None,
+                session_id: None,
+                conversation_id: None,
+                shell_exec_approval: None,
+                socket_path: "/tmp/s".into(),
+                log_tail_bytes: 1,
+            };
+            store.append(&entry, &payload).expect("append");
+        }
+        let removed = store.prune_to_max(3).expect("prune");
+        assert_eq!(removed, 1);
+        let entries = store.list().expect("list");
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().any(|e| e.history_id == "d"));
+        assert!(store.load_payload("a").is_err());
+        assert!(store.load_payload("d").is_ok());
     }
 }

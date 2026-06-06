@@ -473,8 +473,7 @@ fn execute_turn(
         cancel_source,
         streamed,
     } = response;
-    let streamed =
-        streamed || settings.progress || settings.timeout_secs.is_some() || yes_exec_effective;
+    let streamed = streamed || settings.progress || settings.timeout_secs.is_some();
     let response_error = match &response {
         ClientResponse::Error { message, .. } => Some(message.clone()),
         ClientResponse::Cancelled { reason, .. } => Some(
@@ -549,7 +548,13 @@ fn execute_turn(
         request_messages,
     };
     let store = LocalHistoryStore::new(cfg.history_dir.clone());
-    record_turn(&store, &record_input, &replay_input).map_err(history_store_to_anyhow)?;
+    record_turn(
+        &store,
+        &record_input,
+        &replay_input,
+        cfg.history_max_entries,
+    )
+    .map_err(history_store_to_anyhow)?;
     presenter.show_response(&response, settings.verbose_tools, streamed);
 
     Ok(TurnExecutionOutcome {
