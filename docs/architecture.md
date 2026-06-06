@@ -168,9 +168,9 @@ aish          →  （aibe への path 依存禁止）
 
 - **CLI**（`clap` + `clap_complete`。各バイナリに `complete bash|zsh`）:
   - `aish exec [--format tsv|json|env] [--log PATH] -- <program> [args...]`（未指定時は `log_dir/session-<pid>.jsonl`）
-  - `aish shell [--format tsv|json|env]` — セッション dir 方式（`docs/done/0019_aish-session-log-integration-spec.md`）。bash / zsh 子シェルでは一時 rcfile で Tab 補完を有効化
+  - `aish shell [--format tsv|json|env]` — セッション dir 方式（`docs/done/0019_aish-session-log-integration-spec.md`）。bash / zsh 子シェルでは一時 rcfile で Tab 補完を有効化し、child shell へ `AI_ASK_LOG=session` を自動 export する
   - `aish session [--format tsv|json|env]` — 現在セッション（`AISH_SESSION_DIR` 必須）
-  - `ai ask [OPTIONS] <message>` — **オプションはメッセージより前**（`docs/done/0021_tab-completion-spec.md`）
+  - `ai <message>` — default ask。`ai ask [OPTIONS] <message>` も互換のため残す。`ai status` / `ai doctor` / `ai ping` は local 診断導線
   - `aibe [--foreground|-f]` — デーモン起動
   - 動的補完: `ai ask --profile`（`AIBE_CONFIG` の `[profiles.*]`）、`--session`（`AISH_CONFIG` の `log_dir` 内 session id）。詳細: [manual/tab-completion.md](manual/tab-completion.md)
 - **共通 `--format`**（情報表示系サブコマンド向け）:
@@ -196,9 +196,14 @@ aish          →  （aibe への path 依存禁止）
 - **掃除**: `aish shell` 起動時、`create_shell_session` **の後**に `max_sessions`（config、既定 50）超過分をディレクトリ名の辞書順で削除（新規セッションは残す）
 - **`ai ask` 連携**（`ai` は `aish` クレート非依存）:
   - 既定はログを載せない
-  - `AI_ASK_LOG=session` かつ `AISH_SESSION_DIR` → `current_log` を解決し、symlink 先が session dir 内の通常ファイルとして **open 可能**なことを検証してから tail
+  - `AI_ASK_LOG=session` は `aish shell` の child shell に自動 export され、`AISH_SESSION_DIR` と組み合わせて `current_log` を解決し、symlink 先が session dir 内の通常ファイルとして **open 可能**なことを検証してから tail
   - `--session <id>` → 同上（`id` は `basename(AISH_SESSION_DIR)` と一致）
   - `--log PATH` / `--no-log` の優先順は `0019` 参照
+  - `--log-tail` は bytes 指定で `aibe_protocol::SHELL_LOG_TAIL_MAX_BYTES` を超えない。`0` で tail 無効、既定は `~/.config/ai/config.toml` の `log_tail_bytes`、未設定時は 16 KiB
+- **local history**:
+  - 既定 root は `~/.local/share/ai/history/`
+  - `index.jsonl` は redacted な一覧・検索用メタデータのみを持つ
+  - `payloads/<history_id>.json` は replay 用 payload vault で、0600 相当の権限で保存する
 - **`ai ask` の output filter**（`0022`）:
   - 対象は `AgentTurnResult.assistant_message.content` のみ（`stdout`）。tools 起動行・warning・`--verbose-tools`・エラーは `stderr` のまま
   - 優先順: 非空 `AI_FILTER` > 非空 `[ask].filter` > なし（CLI フラグなし）
@@ -212,7 +217,7 @@ aish          →  （aibe への path 依存禁止）
 |------|----------|------|
 | aibe | `~/.config/aibe/config.toml` | LLM 接続 `[llm.<name>]`、プロファイル `[profiles.<name>]`、`default_profile`、socket、tools |
 | aish | `~/.config/aish/config.toml` | `log_dir`、`max_sessions`（既定 50）、シェル起動 |
-| ai | `~/.config/ai/config.toml` | aibe socket、`[ask].default_profile`、`[ask].tools`、`[ask].filter`（assistant 本文の output filter。`AI_FILTER` が非空なら上書き） |
+| ai | `~/.config/ai/config.toml` | aibe socket、`history_dir`、`log_tail_bytes`、`[ask].default_profile`、`[ask].tools`、`[ask].filter`（assistant 本文の output filter。`AI_FILTER` が非空なら上書き）、`[presets.*]` |
 
 - リポジトリに **実キーをコミットしない**
 - 例示用は `docs/` または `*.example.toml` のみ
@@ -254,7 +259,7 @@ aish          →  （aibe への path 依存禁止）
 |---------|------------------|----------------------|-------------------------|
 | **aibe** | `AgentTurn`, リクエストディスパッチ | `LlmProvider`, `ToolRoundTerminator`, `ToolExecutor`, `CommandPolicy`, `ConfigLoader` | Unix NDJSON リスナ、ツール（`read_file`, `list_dir`, `grep`, `git_diff`, `git_status`, `shell_exec`）、終端戦略（`terminator/`） |
 | **aish** | `ExecuteAndRecord` | `ShellExecutor`, `SessionLog` | CLI `aish exec` |
-| **ai** | `Ask` | `AgentClient`, `ShellLogSource`, `Presenter` | CLI `ai ask`。`[ask].tools` / `--tools` を展開して aibe の `tools` allowlist を構築。assistant 本文は `StdoutPresenter` + 任意の output filter（`AI_FILTER` / `[ask].filter`） |
+| **ai** | `Ask`, `history` | `AgentClient`, `ShellLogSource`, `HistoryStore`, `Presenter` | CLI `ai ask` / `ai retry` / `ai rerun`。`[ask].tools` / `--tools` / `[presets.*].tools` を展開して aibe の `tools` allowlist を構築。assistant 本文は `StdoutPresenter` + 任意の output filter（`AI_FILTER` / `[ask].filter` / preset） |
 
 `ai` は **`aibe-protocol` と `aibe-client` のみ**を path 依存し、`aibe` 本体・`aish` には依存しない（ログはファイルパスで読む）。wire 型の正本は `aibe-protocol` クレート。
 

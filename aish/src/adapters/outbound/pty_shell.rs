@@ -157,6 +157,16 @@ fn child_exec_shell(
         child_die(&e.to_string());
     }
 
+    let ask_log_key = CString::new("AI_ASK_LOG").expect("static key");
+    let ask_log_value = CString::new("session").expect("static value");
+    let rc = unsafe { libc::setenv(ask_log_key.as_ptr(), ask_log_value.as_ptr(), 1) };
+    if rc != 0 {
+        child_die(&format!(
+            "setenv(AI_ASK_LOG): {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
     let key = CString::new("AISH_SESSION_DIR").expect("static key");
     let rc = unsafe { libc::setenv(key.as_ptr(), session_dir.as_ptr(), 1) };
     if rc != 0 {

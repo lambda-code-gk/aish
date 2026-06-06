@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use aibe_client::{agent_turn as transport_agent_turn, ClientError};
+use aibe_client::{
+    agent_turn as transport_agent_turn, agent_turn_with_events, send_cancel_request,
+    AgentTurnProgressEvent, ClientError,
+};
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
@@ -46,6 +49,52 @@ impl AibeUnixClient {
             },
             llm_profile: request.llm_profile.clone(),
         }
+    }
+
+    pub fn agent_turn_request_stream(
+        &self,
+        request: ClientRequest,
+        on_progress: impl FnMut(AgentTurnProgressEvent),
+        on_stream: impl FnMut(String),
+        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> bool,
+    ) -> Result<ClientResponse, AgentError> {
+        agent_turn_with_events(
+            self.socket_path(),
+            request,
+            on_progress,
+            on_stream,
+            on_approval,
+        )
+        .map_err(map_client_error)
+    }
+
+    pub fn agent_turn_stream(
+        &self,
+        request: &AskRequest,
+        on_progress: impl FnMut(AgentTurnProgressEvent),
+        on_stream: impl FnMut(String),
+        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> bool,
+    ) -> Result<ClientResponse, AgentError> {
+        self.agent_turn_request_stream(
+            Self::to_client_request(request),
+            on_progress,
+            on_stream,
+            on_approval,
+        )
+    }
+
+    pub fn cancel_turn(&self, turn_id: &str) -> Result<(), AgentError> {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        let mut stream = UnixStream::connect(self.socket_path())
+            .map_err(|e| AgentError::Request(format!("connect to aibe: {e}")))?;
+        send_cancel_request(&mut stream, correlation_id(), turn_id.to_string())
+            .map_err(|e| AgentError::Request(format!("cancel turn: {e}")))?;
+        stream
+            .flush()
+            .map_err(|e| AgentError::Request(format!("cancel flush: {e}")))?;
+        Ok(())
     }
 }
 

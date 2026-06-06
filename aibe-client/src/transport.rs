@@ -2,9 +2,10 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::Duration;
 
-use aibe_protocol::{ClientRequest, ClientResponse};
+use aibe_protocol::{ClientRequest, ClientResponse, ProgressPhase};
 
 use crate::unix_connect::connect_unix_stream;
 
@@ -40,9 +41,27 @@ pub fn send_request(stream: &mut UnixStream, request: &ClientRequest) -> std::io
     Ok(())
 }
 
+pub fn send_cancel_request(
+    stream: &mut UnixStream,
+    id: impl Into<String>,
+    turn_id: impl Into<String>,
+) -> std::io::Result<()> {
+    let request = ClientRequest::CancelTurn {
+        id: id.into(),
+        turn_id: turn_id.into(),
+    };
+    send_request(stream, &request)
+}
+
 pub fn read_response_line(stream: &mut UnixStream) -> Result<ClientResponse, ClientError> {
     let mut reader = BufReader::new(stream);
     read_response_from_reader(&mut reader)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTurnProgressEvent {
+    pub phase: ProgressPhase,
+    pub message: Option<String>,
 }
 
 fn read_response_from_reader<R: BufRead>(reader: &mut R) -> Result<ClientResponse, ClientError> {
@@ -55,9 +74,11 @@ fn read_response_from_reader<R: BufRead>(reader: &mut R) -> Result<ClientRespons
 }
 
 /// 接続済み stream 上で `agent_turn` と承認往復を行う（テスト・カスタム接続向け）。
-pub fn agent_turn_on_stream(
+pub fn agent_turn_with_events_on_stream(
     stream: UnixStream,
     request: ClientRequest,
+    mut on_progress: impl FnMut(AgentTurnProgressEvent),
+    mut on_stream: impl FnMut(String),
     mut on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
 ) -> Result<ClientResponse, ClientError> {
     let mut writer = stream;
@@ -66,6 +87,12 @@ pub fn agent_turn_on_stream(
 
     loop {
         match read_response_from_reader(&mut reader)? {
+            ClientResponse::Progress { phase, message, .. } => {
+                on_progress(AgentTurnProgressEvent { phase, message });
+            }
+            ClientResponse::AssistantStreaming { delta, .. } => {
+                on_stream(delta);
+            }
             ClientResponse::ShellExecApprovalPrompt {
                 id,
                 turn_id,
@@ -91,9 +118,29 @@ pub fn agent_turn_on_stream(
                 )
                 .map_err(ClientError::Connect)?;
             }
+            cancelled @ ClientResponse::Cancelled { .. } => return Ok(cancelled),
             final_resp => return Ok(final_resp),
         }
     }
+}
+
+pub fn agent_turn_with_events(
+    socket_path: &Path,
+    request: ClientRequest,
+    on_progress: impl FnMut(AgentTurnProgressEvent),
+    on_stream: impl FnMut(String),
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+) -> Result<ClientResponse, ClientError> {
+    let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
+    agent_turn_with_events_on_stream(stream, request, on_progress, on_stream, on_approval)
+}
+
+pub fn agent_turn_on_stream(
+    stream: UnixStream,
+    request: ClientRequest,
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+) -> Result<ClientResponse, ClientError> {
+    agent_turn_with_events_on_stream(stream, request, |_| {}, |_| {}, on_approval)
 }
 
 /// `agent_turn` を送り、承認 prompt があれば `on_approval` で応答する。

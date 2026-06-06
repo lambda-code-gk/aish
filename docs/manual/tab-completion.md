@@ -23,7 +23,8 @@ source <(aibe complete bash)
 | A2 | `aish exec --format <Tab>` | `tsv`, `json`, `env` |
 | A3 | `ai ask --profile <Tab>` | `~/.config/aibe/config.toml` の `[profiles.*]` キー（設定がある場合） |
 | A4 | `ai ask --session <Tab>` | `log_dir` 配下の 12 桁 hex ディレクトリ名 |
-| A5 | `aibe --<Tab>` | `--foreground`, `--help` 等 |
+| A5 | `ai chat --<Tab>` | `--progress`, `--timeout`, `--yes-exec` 等 |
+| A6 | `aibe --<Tab>` | `--foreground`, `--help` 等 |
 
 ## B. 破壊的変更
 

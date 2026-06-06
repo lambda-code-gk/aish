@@ -8,9 +8,9 @@ use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, ChatMessage, ToolName};
 use crate::ports::outbound::{
     LlmProvider, ShellExecApprovalGate, TerminationCapability, ToolExecutionContext,
-    ToolRoundTerminator,
+    ToolRoundTerminator, TurnCancellation, TurnEventSink,
 };
-use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode};
+use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase};
 
 use crate::application::protocol_convert::protocol_message_out_from_chat;
 
@@ -44,6 +44,21 @@ impl AgentTurnService {
         context: AgentTurnContext,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
     ) -> ClientResponse {
+        self.run_with_events(id, messages, tools, context, approval_gate, None, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_with_events(
+        &self,
+        id: String,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolName>,
+        context: AgentTurnContext,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
+    ) -> ClientResponse {
         if messages.is_empty() {
             return ClientResponse::error(
                 id,
@@ -55,7 +70,14 @@ impl AgentTurnService {
         let conversation = inject_shell_log_tail(messages, &context);
 
         if tools.is_empty() {
-            return self.finish_text_only(id, &conversation).await;
+            return self
+                .finish_text_only(
+                    id,
+                    &conversation,
+                    events.as_ref().map(Arc::as_ref),
+                    cancellation.as_ref().map(Arc::as_ref),
+                )
+                .await;
         }
 
         if let Err(e) = context.validate_tools_enabled(&tools) {
@@ -73,11 +95,59 @@ impl AgentTurnService {
             tool_ctx = tool_ctx.with_approval_gate(gate);
         }
 
-        self.run_with_tools(id, conversation, tools, tool_ctx).await
+        self.run_with_tools(id, conversation, tools, tool_ctx, events, cancellation)
+            .await
     }
 
-    async fn finish_text_only(&self, id: String, conversation: &[ChatMessage]) -> ClientResponse {
-        match self.llm.complete(conversation).await {
+    async fn finish_text_only(
+        &self,
+        id: String,
+        conversation: &[ChatMessage],
+        events: Option<&dyn TurnEventSink>,
+        cancellation: Option<&TurnCancellation>,
+    ) -> ClientResponse {
+        if let Some(cancel) = cancellation {
+            if cancel.is_cancelled() {
+                if let Some(events) = events {
+                    events
+                        .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
+                        .await;
+                }
+                return ClientResponse::Cancelled {
+                    id: id.clone(),
+                    turn_id: id,
+                    reason: Some("cancelled".into()),
+                };
+            }
+        }
+        if let Some(events) = events {
+            events
+                .progress(
+                    &id,
+                    ProgressPhase::Thinking,
+                    Some("generating response".into()),
+                )
+                .await;
+        }
+        let assistant = if let Some(cancel) = cancellation {
+            tokio::select! {
+                res = self.llm.complete(conversation) => res,
+                _ = cancel.wait() => {
+                    if let Some(events) = events {
+                        events.progress(&id, ProgressPhase::Cancelling, Some("cancelled".into())).await;
+                    }
+                    return ClientResponse::Cancelled {
+                        id: id.clone(),
+                        turn_id: id,
+                        reason: Some("cancelled".into()),
+                    };
+                }
+            }
+        } else {
+            self.llm.complete(conversation).await
+        };
+
+        match assistant {
             Ok(assistant) => ClientResponse::AgentTurnResult {
                 id,
                 status: AgentTurnStatus::Ok,
@@ -94,20 +164,55 @@ impl AgentTurnService {
         mut conversation: Vec<ChatMessage>,
         allowed_tools: Vec<ToolName>,
         tool_ctx: ToolExecutionContext,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
         let mut executed = Vec::new();
         let max_rounds = self.executor.tools_config().effective_max_rounds();
 
         for round in 0..max_rounds {
+            if let Some(cancel) = cancellation.as_ref() {
+                if cancel.is_cancelled() {
+                    if let Some(events) = events.as_ref() {
+                        events
+                            .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
+                            .await;
+                    }
+                    return ClientResponse::Cancelled {
+                        id,
+                        turn_id: String::new(),
+                        reason: Some("cancelled".into()),
+                    };
+                }
+            }
+            if let Some(events) = events.as_ref() {
+                events
+                    .progress(
+                        &id,
+                        ProgressPhase::Thinking,
+                        Some("planning tool round".into()),
+                    )
+                    .await;
+            }
             match self
                 .executor
-                .run_one_round(&conversation, &allowed_tools, &tool_ctx, &executed)
+                .run_one_round(
+                    &conversation,
+                    &allowed_tools,
+                    &tool_ctx,
+                    &executed,
+                    cancellation.as_ref(),
+                )
                 .await
             {
                 Ok(RoundOutcome::Completed {
                     assistant,
                     executed: round_executed,
                 }) => {
+                    if let Some(events) = events.as_ref() {
+                        self.stream_assistant(events.as_ref(), &id, &assistant.content)
+                            .await;
+                    }
                     return ClientResponse::AgentTurnResult {
                         id,
                         status: AgentTurnStatus::Ok,
@@ -135,6 +240,19 @@ impl AgentTurnService {
                         .await;
                     }
                 }
+                Ok(RoundOutcome::Cancelled { executed }) => {
+                    if let Some(events) = events.as_ref() {
+                        events
+                            .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
+                            .await;
+                    }
+                    let _ = executed;
+                    return ClientResponse::Cancelled {
+                        id: id.clone(),
+                        turn_id: id,
+                        reason: Some("cancelled".into()),
+                    };
+                }
                 Err(e) => return client_response_for_llm_error(id, e),
             }
         }
@@ -144,6 +262,17 @@ impl AgentTurnService {
             ErrorCode::InternalError,
             "agent loop ended unexpectedly",
         )
+    }
+
+    async fn stream_assistant(&self, events: &dyn TurnEventSink, id: &str, content: &str) {
+        if content.is_empty() {
+            return;
+        }
+        let chunk_size = 80usize;
+        for chunk in content.as_bytes().chunks(chunk_size) {
+            let delta = String::from_utf8_lossy(chunk).into_owned();
+            events.assistant_streaming(id, delta).await;
+        }
     }
 }
 

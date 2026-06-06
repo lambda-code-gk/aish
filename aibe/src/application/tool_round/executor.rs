@@ -10,7 +10,7 @@ use crate::domain::{
     GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
 };
 use crate::ports::outbound::{
-    LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
+    LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig, TurnCancellation,
 };
 
 /// 1 ラウンドの結果。max-round 終端は `AgentTurnService` + terminator が担当。
@@ -22,6 +22,9 @@ pub enum RoundOutcome {
     },
     Continue {
         conversation: Vec<ChatMessage>,
+        executed: Vec<ExecutedToolCall>,
+    },
+    Cancelled {
         executed: Vec<ExecutedToolCall>,
     },
 }
@@ -72,12 +75,23 @@ impl ToolRoundExecutor {
         allowed_tools: &[ToolName],
         tool_ctx: &ToolExecutionContext,
         executed_so_far: &[ExecutedToolCall],
+        cancellation: Option<&Arc<TurnCancellation>>,
     ) -> Result<RoundOutcome, LlmError> {
         let tool_defs = definitions_for(allowed_tools);
-        let step = self
-            .llm
-            .complete_with_tools(conversation, &tool_defs)
-            .await?;
+        let step = if let Some(cancel) = cancellation {
+            tokio::select! {
+                res = self.llm.complete_with_tools(conversation, &tool_defs) => res?,
+                _ = cancel.wait() => {
+                    return Ok(RoundOutcome::Cancelled {
+                        executed: executed_so_far.to_vec(),
+                    });
+                }
+            }
+        } else {
+            self.llm
+                .complete_with_tools(conversation, &tool_defs)
+                .await?
+        };
 
         let mut executed = executed_so_far.to_vec();
 
@@ -108,14 +122,28 @@ impl ToolRoundExecutor {
                         format!("model requested disallowed tool: {}", tc.name),
                     )
                 } else if let Some(executor) = self.registry.get(&name) {
-                    executor
-                        .execute(
-                            &tc.id,
-                            &tc.arguments,
-                            self.tools_config.exec_timeout_ms,
-                            tool_ctx,
-                        )
-                        .await
+                    if let Some(cancel) = cancellation {
+                        tokio::select! {
+                            res = executor.execute(
+                                &tc.id,
+                                &tc.arguments,
+                                self.tools_config.exec_timeout_ms,
+                                tool_ctx,
+                            ) => res,
+                            _ = cancel.wait() => {
+                                return Ok(RoundOutcome::Cancelled { executed });
+                            }
+                        }
+                    } else {
+                        executor
+                            .execute(
+                                &tc.id,
+                                &tc.arguments,
+                                self.tools_config.exec_timeout_ms,
+                                tool_ctx,
+                            )
+                            .await
+                    }
                 } else {
                     rejected_tool_result(
                         tc,
@@ -265,6 +293,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
             )
             .await
             .expect("round");
@@ -278,6 +307,7 @@ mod tests {
                 assert!(executed.is_empty());
             }
             RoundOutcome::Continue { .. } => panic!("expected Completed"),
+            RoundOutcome::Cancelled { .. } => panic!("expected Completed"),
         }
     }
 
@@ -303,6 +333,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
             )
             .await
             .expect("round");
@@ -319,6 +350,7 @@ mod tests {
                 assert_eq!(executed[0].output.as_deref(), Some("file body"));
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
+            RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
         }
     }
 
@@ -340,6 +372,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
             )
             .await
             .expect("round");
@@ -357,6 +390,7 @@ mod tests {
                 assert_eq!(executed[0].error.as_deref(), Some("tool_not_allowed"));
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
+            RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
         }
     }
 
@@ -378,6 +412,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
             )
             .await
             .expect("round");
@@ -393,6 +428,7 @@ mod tests {
                 assert_eq!(executed[0].name, "dir_list");
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
+            RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
         }
     }
 
@@ -414,6 +450,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &[],
+                None,
             )
             .await
             .expect("round");
@@ -428,6 +465,7 @@ mod tests {
                 assert_eq!(executed[0].error.as_deref(), Some("tool_not_implemented"));
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
+            RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
         }
     }
 
@@ -467,6 +505,7 @@ mod tests {
                 &[ToolName::read_file()],
                 &tool_ctx(),
                 &prior,
+                None,
             )
             .await
             .expect("round");
@@ -486,6 +525,7 @@ mod tests {
                 assert_eq!(conversation[3].role, MessageRole::Tool);
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
+            RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
         }
     }
 }

@@ -9,6 +9,7 @@ use clap_complete::engine::CompletionCandidate;
 
 const DEFAULT_AIBE_CONFIG: &str = ".config/aibe/config.toml";
 const DEFAULT_AISH_CONFIG: &str = ".config/aish/config.toml";
+const DEFAULT_AI_CONFIG: &str = ".config/ai/config.toml";
 
 const TOOL_CATEGORIES: &[&str] = &["@read-only", "@exec", "@full", "none", "@none"];
 const TOOL_NAMES: &[&str] = &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS, SHELL_EXEC];
@@ -53,6 +54,13 @@ pub fn list_session_ids() -> Vec<String> {
 pub fn complete_profile(prefix: &OsStr) -> Vec<CompletionCandidate> {
     to_candidates(filter_prefix(
         list_profile_names(),
+        &prefix.to_string_lossy(),
+    ))
+}
+
+pub fn complete_preset(prefix: &OsStr) -> Vec<CompletionCandidate> {
+    to_candidates(filter_prefix(
+        list_preset_names(),
         &prefix.to_string_lossy(),
     ))
 }
@@ -120,6 +128,29 @@ fn resolve_aibe_config_path() -> PathBuf {
         return PathBuf::from(p);
     }
     home_config(DEFAULT_AIBE_CONFIG)
+}
+
+fn list_preset_names() -> Vec<String> {
+    let path = resolve_ai_config_path();
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = toml::from_str::<toml::Value>(&raw) else {
+        return Vec::new();
+    };
+    let Some(table) = value.get("presets").and_then(|v| v.as_table()) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = table.keys().cloned().collect();
+    names.sort();
+    names
+}
+
+fn resolve_ai_config_path() -> PathBuf {
+    if let Ok(p) = std::env::var("AI_CONFIG") {
+        return PathBuf::from(p);
+    }
+    home_config(DEFAULT_AI_CONFIG)
 }
 
 fn resolve_aish_log_dir() -> Option<PathBuf> {

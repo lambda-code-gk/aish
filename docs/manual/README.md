@@ -12,6 +12,7 @@
 | [gemini-provider.md](gemini-provider.md) | Gemini プロバイダ（Google AI Studio / `generateContent`） |
 | [llm-profiles.md](llm-profiles.md) | LLM 接続 + プロファイル（`--profile` / 2 段 config） |
 | [ai-ask-tools.md](ai-ask-tools.md) | `ai ask` の `--tools` / 表示契約（mock + 任意で実 LLM） |
+| [ai-ux.md](ai-ux.md) | `ai chat` / progress / timeout / `--yes-exec` の手動確認 |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
 | [tab-completion.md](tab-completion.md) | CLI Tab 補完（bash / zsh / PATH / cargo run / aish shell） |
 | [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |

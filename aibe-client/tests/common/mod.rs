@@ -1,4 +1,5 @@
 #![cfg(unix)]
+#![allow(dead_code)]
 
 //! mock `aibe` バイナリ起動（`aibe-client` は `aibe` クレートに依存しない）。
 
@@ -33,6 +34,7 @@ pub fn aibe_binary() -> PathBuf {
 }
 
 /// 一時設定で mock provider の `aibe -f` を起動し、socket が応答するまで待つ。
+#[allow(dead_code)]
 pub struct MockAibeDaemon {
     _dir: TempDir,
     child: Child,

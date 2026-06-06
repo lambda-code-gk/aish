@@ -13,7 +13,8 @@ use std::time::Duration;
 use aibe_protocol::{ClientRequest, ClientResponse};
 
 pub use transport::{
-    agent_turn, agent_turn_on_stream, read_response_line, send_request, ClientError,
+    agent_turn, agent_turn_on_stream, agent_turn_with_events, read_response_line,
+    send_cancel_request, send_request, AgentTurnProgressEvent, ClientError,
     ShellExecApprovalPrompt,
 };
 
@@ -40,6 +41,25 @@ pub fn ping_result(socket_path: &Path) -> std::io::Result<bool> {
         Ok(s) => s,
         Err(_) => return Ok(false),
     };
+    let _ = stream.set_read_timeout(Some(PING_IO_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(PING_IO_TIMEOUT));
+    let req = ClientRequest::Ping {
+        id: "health".to_string(),
+    };
+    send_request(&mut stream, &req)?;
+    let mut reader = BufReader::new(&mut stream);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let Ok(ClientResponse::Pong { .. }) = serde_json::from_str::<ClientResponse>(line.trim())
+    else {
+        return Ok(false);
+    };
+    Ok(true)
+}
+
+/// `ping` の詳細版。接続エラーはそのまま返し、`pong` 応答なら true。
+pub fn ping_detailed(socket_path: &Path) -> std::io::Result<bool> {
+    let mut stream = connect_unix_stream(socket_path, PING_IO_TIMEOUT)?;
     let _ = stream.set_read_timeout(Some(PING_IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(PING_IO_TIMEOUT));
     let req = ClientRequest::Ping {

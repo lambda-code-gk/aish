@@ -7,4 +7,5 @@ pub mod tool_defs;
 pub mod tool_round;
 pub mod tool_round_terminator;
 
+pub use crate::ports::outbound::{TurnCancellation, TurnEventSink};
 pub use request_service::RequestService;

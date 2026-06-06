@@ -1,6 +1,8 @@
 # コピー先: ~/.config/ai/config.toml
 
 socket_path = "~/.local/share/aibe/run.sock"
+history_dir = "~/.local/share/ai/history"
+log_tail_bytes = 16384
 
 [ask]
 # 文字列でも配列でもよい。CLI --tools があれば上書き（--tools none でこの回のみ []）。
@@ -8,3 +10,11 @@ socket_path = "~/.local/share/aibe/run.sock"
 tools = "@read-only"
 # assistant 本文を /bin/sh -c で加工（例: jq 整形）。非空 AI_FILTER があれば上書き。
 # filter = "jq ."
+
+[presets.fast]
+tools = "@read-only"
+profile = "fast"
+filter = "cat"
+log_tail_bytes = 4096
+quiet = true
+# shell_exec_approval = "never"

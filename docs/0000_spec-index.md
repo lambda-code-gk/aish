@@ -18,10 +18,13 @@
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
 | 0026 | [0026_external-commands-spec.md](spec/0026_external-commands-spec.md) | 設計確定 | 外部コマンド（CLI コーディングエージェント） |
+| 0027 | [0027_ai-ux-spec.md](spec/0027_ai-ux-spec.md) | 設計確定 | `ai` コマンド UX 改善 |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
-（なし）
+| 番号 | ファイル | 状態 | 概要 |
+|------|----------|------|------|
+| 0027 | [0027_ai-ux-implementation-spec.md](done/0027_ai-ux-implementation-spec.md) | 完了 | `ai` コマンド UX 改善の実装指示書 |
 
 ## 実装済み指示書（docs/done/）
 

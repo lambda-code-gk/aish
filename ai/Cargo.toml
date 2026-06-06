@@ -10,6 +10,7 @@ aibe-protocol = { path = "../aibe-protocol" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+ctrlc = "3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

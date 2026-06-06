@@ -10,7 +10,7 @@ pub use executed_tool::{
     ToolRiskClass,
 };
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
-pub use response::{AgentTurnStatus, ClientResponse, ErrorCode, ProtocolMessageOut};
+pub use response::{AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase, ProtocolMessageOut};
 pub use tool_name::{
     is_known_tool, parse_tool_names, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS, GREP,
     KNOWN_TOOLS, LIST_DIR, READ_FILE, SHELL_EXEC,

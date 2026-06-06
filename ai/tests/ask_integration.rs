@@ -65,6 +65,8 @@ fn resolve_read_only_sends_safe_tools_to_aibe() {
             verbose_tools: false,
             llm_profile: None,
             external_command_names: Vec::new(),
+            shell_log_tail_bytes: 0,
+            client_cwd: None,
         },
     )
     .expect("ask");
@@ -145,6 +147,8 @@ fn ask_with_filter_completes() {
             verbose_tools: false,
             llm_profile: None,
             external_command_names: Vec::new(),
+            shell_log_tail_bytes: 0,
+            client_cwd: None,
         },
     )
     .expect("ask");

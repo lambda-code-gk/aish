@@ -68,7 +68,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
     });
     write_line(&mut writer, &req.to_string()).await;
 
-    let prompt_line = read_line(&mut lines).await;
+    let prompt_line = read_until_shell_exec_prompt(&mut lines).await;
     let prompt: ClientResponse = serde_json::from_str(prompt_line.trim()).expect("prompt json");
     let ClientResponse::ShellExecApprovalPrompt {
         id,
@@ -93,7 +93,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
     });
     write_line(&mut writer, &denial.to_string()).await;
 
-    let result_line = read_line(&mut lines).await;
+    let result_line = read_until_agent_turn_result(&mut lines).await;
     assert!(result_line.contains(r#""type":"agent_turn_result""#));
     assert!(result_line.contains("user denied shell_exec"));
     assert!(result_line.contains(r#""decision":"rejected_by_user""#));
@@ -113,4 +113,28 @@ async fn read_line(
     lines: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
 ) -> String {
     lines.next_line().await.expect("read").expect("line")
+}
+
+async fn read_until_shell_exec_prompt(
+    lines: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+) -> String {
+    loop {
+        let line = read_line(lines).await;
+        let response: serde_json::Value = serde_json::from_str(&line).expect("json");
+        if response.get("type").and_then(|v| v.as_str()) == Some("shell_exec_approval_prompt") {
+            return line;
+        }
+    }
+}
+
+async fn read_until_agent_turn_result(
+    lines: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+) -> String {
+    loop {
+        let line = read_line(lines).await;
+        let response: serde_json::Value = serde_json::from_str(&line).expect("json");
+        if response.get("type").and_then(|v| v.as_str()) == Some("agent_turn_result") {
+            return line;
+        }
+    }
 }

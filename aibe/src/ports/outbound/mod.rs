@@ -7,6 +7,7 @@ mod tool_context;
 pub mod tool_registry;
 pub mod tool_round_terminator;
 pub mod tools;
+pub mod turn_events;
 
 pub use command_policy::CommandPolicy;
 pub use config::{
@@ -24,3 +25,4 @@ pub use tool_context::ToolExecutionContext;
 pub use tool_registry::ToolRegistry;
 pub use tool_round_terminator::{TerminationResult, TerminationStrategyUsed, ToolRoundTerminator};
 pub use tools::{ToolDefinition, ToolExecutor};
+pub use turn_events::{SharedTurnCancellation, TurnCancellation, TurnEventSink};

@@ -10,7 +10,7 @@
 | 変数 | 設定者 | 内容 |
 |------|--------|------|
 | **`AISH_SESSION_DIR`** | `aish shell`（子シェルへ **絶対パス** で export） | `<log_dir>/<12桁hex>/`。`ai` が使う唯一のセッション変数 |
-| **`AI_ASK_LOG=session`** | ユーザー（任意） | 上記 dir の `current_log` を tail して aibe に送る |
+| **`AI_ASK_LOG=session`** | `aish shell`（子シェルへ自動 export） | 上記 dir の `current_log` を tail して aibe に送る |
 
 **`--session <id>` のルール**
 
@@ -32,7 +32,7 @@ ai ask --session <12桁hex> "…"
 1. セッション親ディレクトリ: `~/.config/aish/config.toml` の `log_dir`（未設定時は `~/.local/share/aish/sessions`）
 2. `<log_dir>/<12桁hex>/log.jsonl` と `current_log` → `log.jsonl` が作成される
 3. `stderr` に `aish: session <id> (dir …)` が表示される
-4. 子シェルに **`AISH_SESSION_DIR`**（セッション dir の絶対パス）が export される（`AI_ASK_LOG` は export しない）
+4. 子シェルに **`AISH_SESSION_DIR`**（セッション dir の絶対パス）と **`AI_ASK_LOG=session`** が export される
 
 ## CLI 共通オプション（`aish`）
 
@@ -89,7 +89,6 @@ aish session --format env       # eval "$(aish session --format env)" 向け
 ### A: `aish shell` 内（推奨）
 
 ```bash
-export AI_ASK_LOG=session
 ai ask "hello の直前に何をしたか推測して"
 ```
 
@@ -102,6 +101,7 @@ ai ask --session <12桁hex> "…"
 （`<12桁hex>` は `basename "$AISH_SESSION_DIR"` と一致すること）
 
 - `stderr` に `ai: using shell log: …/current_log` が出ること
+- `AI_ASK_LOG=session` は `aish shell` の child shell で自動設定されること
 - `AI_ASK_LOG` 未設定かつ `--session` なしではログを載せないこと
 
 ### B: 別ペイン

@@ -7,6 +7,7 @@ use aibe_protocol::{
 };
 
 use crate::domain::ToolsStartupLine;
+use crate::domain::{append_env_line, append_tsv_row, OutputFormat};
 use crate::ports::outbound::Presenter;
 
 use super::output_filter::{
@@ -16,6 +17,8 @@ use super::output_filter::{
 #[derive(Debug, Clone, Default)]
 pub struct StdoutPresenter {
     output_filter: Option<String>,
+    output_format: Option<OutputFormat>,
+    quiet: bool,
 }
 
 /// `show_response` が書き込む内容（テスト・契約検証用）。
@@ -27,7 +30,23 @@ pub struct PresenterOutput {
 
 impl StdoutPresenter {
     pub fn new(output_filter: Option<String>) -> Self {
-        Self { output_filter }
+        Self {
+            output_filter,
+            output_format: None,
+            quiet: false,
+        }
+    }
+
+    pub fn with_options(
+        output_filter: Option<String>,
+        output_format: Option<OutputFormat>,
+        quiet: bool,
+    ) -> Self {
+        Self {
+            output_filter,
+            output_format,
+            quiet,
+        }
     }
 
     fn emit_assistant_stdout(&self, content: &str) {
@@ -70,10 +89,16 @@ impl StdoutPresenter {
 
 impl Presenter for StdoutPresenter {
     fn show_tools_startup(&self, line: &ToolsStartupLine) {
+        if self.quiet {
+            return;
+        }
         eprintln!("{}", format_tools_startup(line));
     }
 
     fn show_external_commands(&self, names: &[String]) {
+        if self.quiet {
+            return;
+        }
         if names.is_empty() {
             return;
         }
@@ -83,13 +108,48 @@ impl Presenter for StdoutPresenter {
         );
     }
 
-    fn show_response(&self, response: &ClientResponse, verbose_tools: bool) {
-        let out = render_response(response, verbose_tools);
-        if let Some(s) = out.stdout.as_deref() {
-            self.emit_assistant_stdout(s);
+    fn show_progress(&self, phase: &str, message: Option<&str>) {
+        if self.quiet {
+            return;
         }
-        for line in out.stderr {
-            eprintln!("{line}");
+        match message {
+            Some(message) => eprintln!("ai: progress: {phase}: {message}"),
+            None => eprintln!("ai: progress: {phase}"),
+        }
+    }
+
+    fn show_stream_chunk(&self, chunk: &str) {
+        if self.quiet {
+            return;
+        }
+        if !chunk.is_empty() {
+            print!("{chunk}");
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    fn show_response(&self, response: &ClientResponse, verbose_tools: bool, streamed: bool) {
+        let out = if let Some(format) = self.output_format {
+            render_response_structured(
+                response,
+                verbose_tools,
+                format,
+                self.output_filter.as_deref(),
+            )
+        } else {
+            render_response(response, verbose_tools)
+        };
+        if let Some(s) = out.stdout.as_deref() {
+            if self.output_format.is_some() {
+                println!("{s}");
+            } else if !streamed {
+                self.emit_assistant_stdout(s);
+            }
+        }
+        if !self.quiet {
+            for line in out.stderr {
+                eprintln!("{line}");
+            }
         }
     }
 
@@ -145,6 +205,329 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
             stdout: None,
             stderr: vec!["ai: internal error: unexpected shell_exec approval prompt".into()],
         },
+        ClientResponse::Cancelled { reason, .. } => PresenterOutput {
+            stdout: None,
+            stderr: vec![match reason {
+                Some(reason) => format!("ai: cancelled: {reason}"),
+                None => "ai: cancelled".to_string(),
+            }],
+        },
+        ClientResponse::Progress { .. } | ClientResponse::AssistantStreaming { .. } => {
+            PresenterOutput {
+                stdout: None,
+                stderr: Vec::new(),
+            }
+        }
+    }
+}
+
+pub fn render_response_structured(
+    response: &ClientResponse,
+    verbose_tools: bool,
+    format: OutputFormat,
+    output_filter: Option<&str>,
+) -> PresenterOutput {
+    let mut view = ResponseView::from_response(response, verbose_tools, output_filter);
+    let stdout = match format {
+        OutputFormat::Json => serde_json::to_string(&view).ok(),
+        OutputFormat::Tsv => Some(view.render_tsv()),
+        OutputFormat::Env => Some(view.render_env()),
+    };
+    let mut stderr = Vec::new();
+    if view.warn_max_tool_rounds {
+        stderr.push(
+            "warning: ai: max tool rounds reached; showing partial assistant reply".to_string(),
+        );
+    }
+    stderr.append(&mut view.filter_warnings);
+    stderr.append(&mut view.filter_stderr);
+    stderr.append(&mut view.tool_warnings);
+    PresenterOutput { stdout, stderr }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct ResponseView {
+    response_type: String,
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assistant_message: Option<aibe_protocol::ProtocolMessageOut>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<ExecutedToolCall>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alive: Option<bool>,
+    #[serde(skip)]
+    warn_max_tool_rounds: bool,
+    #[serde(skip)]
+    filter_warnings: Vec<String>,
+    #[serde(skip)]
+    filter_stderr: Vec<String>,
+    #[serde(skip)]
+    tool_warnings: Vec<String>,
+}
+
+impl ResponseView {
+    fn from_response(
+        response: &ClientResponse,
+        verbose_tools: bool,
+        output_filter: Option<&str>,
+    ) -> Self {
+        match response {
+            ClientResponse::AgentTurnResult {
+                id,
+                status,
+                assistant_message,
+                tool_calls,
+                ..
+            } => {
+                let mut assistant_message = assistant_message.clone();
+                let mut filter_warnings = Vec::new();
+                let mut filter_stderr = Vec::new();
+                if let Some(filter) = output_filter {
+                    match apply_output_filter(&assistant_message.content, filter) {
+                        FilterRunOutcome::Success { stdout, stderr } => {
+                            assistant_message.content =
+                                String::from_utf8_lossy(&stdout).into_owned();
+                            if !stderr.is_empty() {
+                                filter_stderr.push(String::from_utf8_lossy(&stderr).into_owned());
+                            }
+                        }
+                        FilterRunOutcome::NonZeroExit {
+                            status,
+                            stdout,
+                            stderr,
+                        } => {
+                            filter_warnings.push(format!(
+                                "warning: ai: filter exited with status {}",
+                                format_filter_exit_status(&status)
+                            ));
+                            assistant_message.content =
+                                String::from_utf8_lossy(&stdout).into_owned();
+                            if !stderr.is_empty() {
+                                filter_stderr.push(String::from_utf8_lossy(&stderr).into_owned());
+                            }
+                        }
+                        FilterRunOutcome::SpawnFailed { message, stderr } => {
+                            filter_warnings.push(format!("warning: ai: filter failed: {message}"));
+                            if !stderr.is_empty() {
+                                filter_stderr.push(String::from_utf8_lossy(&stderr).into_owned());
+                            }
+                        }
+                    }
+                }
+                let mut tool_warnings = Vec::new();
+                if verbose_tools {
+                    for tc in tool_calls {
+                        tool_warnings.push(format_tool_call_line(tc));
+                    }
+                }
+                Self {
+                    response_type: "agent_turn_result".to_string(),
+                    id: id.clone(),
+                    status: Some(match status {
+                        AgentTurnStatus::Ok => "ok".to_string(),
+                        AgentTurnStatus::MaxToolRounds => "max_tool_rounds".to_string(),
+                    }),
+                    assistant_message: Some(assistant_message),
+                    tool_calls: tool_calls.clone(),
+                    error_code: None,
+                    error_message: None,
+                    alive: None,
+                    warn_max_tool_rounds: *status == AgentTurnStatus::MaxToolRounds,
+                    filter_warnings,
+                    filter_stderr,
+                    tool_warnings,
+                }
+            }
+            ClientResponse::Pong { id } => Self {
+                response_type: "pong".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: Some(true),
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::Error { id, code, message } => Self {
+                response_type: "error".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: Some(format!("{code:?}")),
+                error_message: Some(message.clone()),
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::ShellExecApprovalPrompt { id, .. } => Self {
+                response_type: "shell_exec_approval_prompt".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::Cancelled { id, reason, .. } => Self {
+                response_type: "cancelled".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: reason.clone(),
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::Progress { id, phase, message } => Self {
+                response_type: "progress".to_string(),
+                id: id.clone(),
+                status: Some(format!("{phase:?}").to_lowercase()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: message.clone(),
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::AssistantStreaming { id, delta } => Self {
+                response_type: "assistant_streaming".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: Some(aibe_protocol::ProtocolMessageOut {
+                    role: "assistant".to_string(),
+                    content: delta.clone(),
+                }),
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+        }
+    }
+
+    fn render_tsv(&self) -> String {
+        let mut out = String::new();
+        append_tsv_row(&mut out, "response_type", &self.response_type);
+        append_tsv_row(&mut out, "id", &self.id);
+        append_tsv_row(&mut out, "status", self.status.as_deref().unwrap_or(""));
+        append_tsv_row(
+            &mut out,
+            "assistant_message.role",
+            self.assistant_message
+                .as_ref()
+                .map(|m| m.role.as_str())
+                .unwrap_or(""),
+        );
+        append_tsv_row(
+            &mut out,
+            "assistant_message.content",
+            self.assistant_message
+                .as_ref()
+                .map(|m| m.content.as_str())
+                .unwrap_or(""),
+        );
+        append_tsv_row(
+            &mut out,
+            "tool_calls.count",
+            &self.tool_calls.len().to_string(),
+        );
+        append_tsv_row(
+            &mut out,
+            "error.code",
+            self.error_code.as_deref().unwrap_or(""),
+        );
+        append_tsv_row(
+            &mut out,
+            "error.message",
+            self.error_message.as_deref().unwrap_or(""),
+        );
+        append_tsv_row(
+            &mut out,
+            "alive",
+            self.alive
+                .map(|v| if v { "true" } else { "false" })
+                .unwrap_or(""),
+        );
+        out
+    }
+
+    fn render_env(&self) -> String {
+        let mut out = String::new();
+        append_env_line(&mut out, "AI_RESPONSE_TYPE", &self.response_type);
+        append_env_line(&mut out, "AI_RESPONSE_ID", &self.id);
+        append_env_line(
+            &mut out,
+            "AI_RESPONSE_STATUS",
+            self.status.as_deref().unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_ASSISTANT_MESSAGE_ROLE",
+            self.assistant_message
+                .as_ref()
+                .map(|m| m.role.as_str())
+                .unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_ASSISTANT_MESSAGE_CONTENT",
+            self.assistant_message
+                .as_ref()
+                .map(|m| m.content.as_str())
+                .unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_TOOL_CALLS_COUNT",
+            &self.tool_calls.len().to_string(),
+        );
+        append_env_line(
+            &mut out,
+            "AI_ERROR_CODE",
+            self.error_code.as_deref().unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_ERROR_MESSAGE",
+            self.error_message.as_deref().unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_ALIVE",
+            self.alive
+                .map(|v| if v { "true" } else { "false" })
+                .unwrap_or(""),
+        );
+        out
     }
 }
 

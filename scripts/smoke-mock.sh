@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # mock aibe + ai ask の end-to-end 導通スモーク（実 API 不要）。
+# Phase C の chat / progress / cancel は統合テストと manual で確認する。
 # 仕様: docs/done/0014_ci-smoke-stabilization-spec.md
 set -euo pipefail
 
@@ -121,5 +122,24 @@ fi
 
 assert_nonempty_lines_exact stdout "$STDOUT_FILE" '[mock] received: ping'
 assert_nonempty_lines_exact stderr "$STDERR_FILE" 'ai: tools enabled: none'
+
+echo "smoke-mock: ai default ask round-trip..."
+timeout 180s "$AI_BIN" --socket "$AIBE_SOCKET_PATH" --no-start --quiet "ping" \
+  >"$STDOUT_FILE" 2>"$STDERR_FILE"
+assert_nonempty_lines_exact stdout "$STDOUT_FILE" '[mock] received: ping'
+[[ ! -s "$STDERR_FILE" ]] || fail "default ask --quiet must suppress stderr diagnostics"
+
+echo "smoke-mock: ai ping..."
+timeout 30s "$AI_BIN" ping --socket "$AIBE_SOCKET_PATH" --format json >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q '"socket_alive":true' "$STDOUT_FILE" || fail "ai ping --format json must report socket_alive"
+
+echo "smoke-mock: ai status..."
+timeout 30s "$AI_BIN" status --socket "$AIBE_SOCKET_PATH" --format json >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q '"socket_path"' "$STDOUT_FILE" || fail "ai status --format json must include socket_path"
+
+echo "smoke-mock: ai ask --dry-run..."
+timeout 30s "$AI_BIN" ask --dry-run --quiet "secret message" >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q 'secret message' "$STDOUT_FILE" && fail "dry-run must mask raw message"
+[[ ! -s "$STDERR_FILE" ]] || fail "dry-run must not connect to aibe (stderr should be empty with --quiet)"
 
 echo "smoke-mock: ok"

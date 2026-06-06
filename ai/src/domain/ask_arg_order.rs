@@ -2,7 +2,25 @@
 
 use thiserror::Error;
 
-const VALUE_OPTIONS: &[&str] = &["--log", "--session", "--socket", "--tools", "--profile"];
+const VALUE_OPTIONS: &[&str] = &[
+    "--log",
+    "--log-tail",
+    "--preset",
+    "--session",
+    "--socket",
+    "--tools",
+    "--profile",
+    "--file",
+    "--format",
+    "--limit",
+];
+const FLAG_OPTIONS: &[&str] = &[
+    "--quiet",
+    "--dry-run",
+    "--no-log",
+    "--no-start",
+    "--verbose-tools",
+];
 
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("options must appear before message")]
@@ -28,8 +46,19 @@ fn first_message_arg_index(args: &[String]) -> Option<usize> {
         if arg == "--" {
             return Some(i + 1);
         }
-        if let Some(name) = arg.strip_prefix("--") {
-            if name == "no-log" || name == "no-start" || name == "verbose-tools" {
+        if arg == "-" {
+            return Some(i);
+        }
+        if arg == "-f" {
+            i += 2;
+            continue;
+        }
+        if arg == "-q" {
+            i += 1;
+            continue;
+        }
+        if arg.strip_prefix("--").is_some() {
+            if FLAG_OPTIONS.contains(&arg) {
                 i += 1;
                 continue;
             }

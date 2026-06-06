@@ -19,6 +19,11 @@ pub enum ClientRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         llm_profile: Option<String>,
     },
+    /// 進行中の turn を取り消す。
+    CancelTurn {
+        id: String,
+        turn_id: String,
+    },
     /// `shell_exec` 実行前承認の応答（同一 socket 接続上）。
     ShellExecApproval {
         id: String,
@@ -97,5 +102,19 @@ mod tests {
             }
             _ => panic!("expected agent_turn"),
         }
+    }
+
+    #[test]
+    fn cancel_turn_roundtrip() {
+        let req = ClientRequest::CancelTurn {
+            id: "c1".into(),
+            turn_id: "t1".into(),
+        };
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""type":"cancel_turn""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            matches!(back, ClientRequest::CancelTurn { id, turn_id } if id == "c1" && turn_id == "t1")
+        );
     }
 }

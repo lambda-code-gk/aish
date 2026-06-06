@@ -11,6 +11,16 @@ pub enum ClientResponse {
     Pong {
         id: String,
     },
+    Progress {
+        id: String,
+        phase: ProgressPhase,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    AssistantStreaming {
+        id: String,
+        delta: String,
+    },
     AgentTurnResult {
         id: String,
         status: AgentTurnStatus,
@@ -25,6 +35,12 @@ pub enum ClientResponse {
         command: String,
         args: Vec<String>,
     },
+    Cancelled {
+        id: String,
+        turn_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     Error {
         id: String,
         code: ErrorCode,
@@ -38,6 +54,16 @@ pub enum ClientResponse {
 pub enum AgentTurnStatus {
     Ok,
     MaxToolRounds,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressPhase {
+    Thinking,
+    ToolCall,
+    WaitingApproval,
+    Finalizing,
+    Cancelling,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +126,35 @@ mod tests {
     }
 
     #[test]
+    fn client_response_progress_roundtrip() {
+        let resp = ClientResponse::Progress {
+            id: "turn".into(),
+            phase: ProgressPhase::Thinking,
+            message: Some("working".into()),
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(json.contains(r#""type":"progress""#));
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            matches!(back, ClientResponse::Progress { id, phase, message } if id == "turn" && phase == ProgressPhase::Thinking && message.as_deref() == Some("working"))
+        );
+    }
+
+    #[test]
+    fn client_response_streaming_roundtrip() {
+        let resp = ClientResponse::AssistantStreaming {
+            id: "turn".into(),
+            delta: "hello".into(),
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(json.contains(r#""type":"assistant_streaming""#));
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            matches!(back, ClientResponse::AssistantStreaming { id, delta } if id == "turn" && delta == "hello")
+        );
+    }
+
+    #[test]
     fn client_response_agent_turn_result_roundtrip() {
         let resp = ClientResponse::AgentTurnResult {
             id: "t1".into(),
@@ -150,5 +205,20 @@ mod tests {
             }
             _ => panic!("expected error"),
         }
+    }
+
+    #[test]
+    fn client_response_cancelled_roundtrip() {
+        let resp = ClientResponse::Cancelled {
+            id: "c1".into(),
+            turn_id: "t1".into(),
+            reason: Some("user requested".into()),
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(json.contains(r#""type":"cancelled""#));
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            matches!(back, ClientResponse::Cancelled { id, turn_id, reason } if id == "c1" && turn_id == "t1" && reason.as_deref() == Some("user requested"))
+        );
     }
 }

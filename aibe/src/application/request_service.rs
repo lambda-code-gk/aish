@@ -6,9 +6,12 @@ use crate::application::agent_turn::AgentTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::outbound::{
-    ProfileRegistry, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig,
+    ProfileRegistry, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation,
+    TurnEventSink,
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
+use std::collections::HashMap;
+use tokio::sync::Mutex;
 
 use crate::application::protocol_convert::ProtocolMessageConversionError;
 
@@ -17,6 +20,7 @@ pub struct RequestService {
     tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
     tools_config: ToolsConfig,
     terminator: Arc<dyn ToolRoundTerminator>,
+    active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
 }
 
 impl RequestService {
@@ -26,11 +30,28 @@ impl RequestService {
         tools_config: ToolsConfig,
         terminator: Arc<dyn ToolRoundTerminator>,
     ) -> Self {
+        Self::new_with_turns(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+    }
+
+    pub fn new_with_turns(
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+    ) -> Self {
         Self {
             profile_registry,
             tool_registry,
             tools_config,
             terminator,
+            active_turns,
         }
     }
 
@@ -39,8 +60,36 @@ impl RequestService {
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
     ) -> ClientResponse {
+        self.handle_with_events(request, approval_gate, None, None)
+            .await
+    }
+
+    pub async fn handle_with_events(
+        &self,
+        request: ClientRequest,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
+    ) -> ClientResponse {
         match request {
             ClientRequest::Ping { id } => ClientResponse::Pong { id },
+            ClientRequest::CancelTurn { id, turn_id } => {
+                let guard = self.active_turns.lock().await;
+                if let Some(cancel) = guard.get(&turn_id) {
+                    cancel.cancel();
+                    ClientResponse::Cancelled {
+                        id,
+                        turn_id,
+                        reason: Some("cancel requested".into()),
+                    }
+                } else {
+                    ClientResponse::Cancelled {
+                        id,
+                        turn_id,
+                        reason: Some("turn not active".into()),
+                    }
+                }
+            }
             ClientRequest::ShellExecApproval { .. } => ClientResponse::error(
                 String::new(),
                 ErrorCode::InvalidRequest,
@@ -101,10 +150,27 @@ impl RequestService {
                     Arc::clone(&self.terminator),
                     termination_capability,
                 );
-
-                agent_turn
-                    .run(id, messages, tools, ctx, approval_gate)
-                    .await
+                let turn_id = id.clone();
+                if let Some(cancel) = cancellation.clone() {
+                    let mut guard = self.active_turns.lock().await;
+                    guard.insert(turn_id.clone(), cancel);
+                }
+                let response = agent_turn
+                    .run_with_events(
+                        id,
+                        messages,
+                        tools,
+                        ctx,
+                        approval_gate,
+                        events,
+                        cancellation.clone(),
+                    )
+                    .await;
+                if cancellation.is_some() {
+                    let mut guard = self.active_turns.lock().await;
+                    let _ = guard.remove(&turn_id);
+                }
+                response
             }
         }
     }

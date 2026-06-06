@@ -32,6 +32,8 @@ cargo test -p aibe-client -- --test-threads=1
 
 `cargo test --workspace` はロジック・プロトコル・モック統合（例: `ai/tests/ask_integration.rs`、`aibe/tests/ai_ask_e2e.rs`）を広く網羅する。smoke は **CLI の `stdout` / `stderr` 契約** と設定ファイル参照・プロセス起動順を、テストでは拾いにくい経路で固定する。smoke は `cargo test` の代替ではない。
 
+Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`scripts/smoke-mock.sh` は引き続き `ai ask` の最短導通を担う。
+
 ### 0017 以降のクレート別テスト配置
 
 | クレート | 単体 | 統合 / E2E |
@@ -41,6 +43,7 @@ cargo test -p aibe-client -- --test-threads=1
 | **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
 | **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
+| **ai** | local history / retry / rerun / preset / log-tail | `application/history.rs`、`domain/log_tail.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs` |
 | **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |
 
 ## テスト種別

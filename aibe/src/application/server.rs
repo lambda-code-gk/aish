@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
@@ -13,9 +14,11 @@ use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::application::request_service::RequestService;
 use crate::ports::outbound::{
-    ExternalCommandConfig, ProfileRegistry, ShellExecApprovalGate, ToolsConfig,
+    ExternalCommandConfig, ProfileRegistry, ShellExecApprovalGate, ToolsConfig, TurnCancellation,
+    TurnEventSink,
 };
-use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode};
+use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
+use std::collections::HashMap;
 
 pub async fn run(
     socket_path: PathBuf,
@@ -31,11 +34,13 @@ pub async fn run(
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         tools_config.termination_strategy,
     ));
-    let handler = Arc::new(RequestService::new(
+    let active_turns = Arc::new(Mutex::new(HashMap::new()));
+    let handler = Arc::new(RequestService::new_with_turns(
         profile_registry,
         tool_registry,
         tools_config,
         terminator,
+        Arc::clone(&active_turns),
     ));
 
     loop {
@@ -91,19 +96,29 @@ async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> a
 
         let response = match serde_json::from_str::<ClientRequest>(line) {
             Ok(req) => {
-                let gate = match &req {
-                    ClientRequest::AgentTurn { id, .. } => {
-                        let gate: Arc<dyn ShellExecApprovalGate> =
-                            Arc::new(ConnectionApprovalGate::new(
-                                id.clone(),
-                                Arc::clone(&writer),
-                                Arc::clone(&lines),
-                            ));
-                        Some(gate)
-                    }
-                    _ => None,
-                };
-                handler.handle(req, gate).await
+                let mut cancellation: Option<Arc<TurnCancellation>> = None;
+                let mut gate: Option<Arc<dyn ShellExecApprovalGate>> = None;
+                let mut events: Option<Arc<dyn TurnEventSink>> = None;
+                if let ClientRequest::AgentTurn { id, .. } = &req {
+                    let cancel = Arc::new(TurnCancellation::new());
+                    let sink: Arc<dyn TurnEventSink> = Arc::new(ConnectionEventSink {
+                        writer: Arc::clone(&writer),
+                    });
+                    let approval_gate: Arc<dyn ShellExecApprovalGate> =
+                        Arc::new(ConnectionApprovalGate::new(
+                            id.clone(),
+                            Arc::clone(&writer),
+                            Arc::clone(&lines),
+                            Some(Arc::clone(&sink)),
+                            Some(Arc::clone(&cancel)),
+                        ));
+                    cancellation = Some(cancel);
+                    gate = Some(approval_gate);
+                    events = Some(sink);
+                }
+                handler
+                    .handle_with_events(req, gate, events, cancellation)
+                    .await
             }
             Err(e) => ClientResponse::error(
                 String::new(),
@@ -116,6 +131,32 @@ async fn serve_connection(stream: UnixStream, handler: Arc<RequestService>) -> a
     }
 
     Ok(())
+}
+
+struct ConnectionEventSink {
+    writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+}
+
+#[async_trait]
+impl TurnEventSink for ConnectionEventSink {
+    async fn progress(&self, id: &str, phase: ProgressPhase, message: Option<String>) {
+        let response = ClientResponse::Progress {
+            id: id.to_string(),
+            phase,
+            message,
+        };
+        let _ = write_response_line(&self.writer, &response).await;
+    }
+
+    async fn assistant_streaming(&self, id: &str, delta: String) {
+        let response = ClientResponse::AssistantStreaming {
+            id: id.to_string(),
+            delta,
+        };
+        let _ = write_response_line(&self.writer, &response).await;
+    }
+
+    async fn final_response(&self, _id: &str) {}
 }
 
 async fn write_response_line(

@@ -1,6 +1,7 @@
 //! 質問 → aibe → 表示ユースケース。
 
 use aibe_protocol::{ClientResponse, SHELL_LOG_TAIL_MAX_BYTES};
+use std::path::PathBuf;
 
 use crate::domain::{AskInput, AskRequestError, ResolvedTools};
 use crate::ports::outbound::{AgentClient, AgentError, LogReadError, Presenter, ShellLogSource};
@@ -20,6 +21,15 @@ pub struct AskRunOptions {
     pub verbose_tools: bool,
     pub llm_profile: Option<String>,
     pub external_command_names: Vec<String>,
+    pub shell_log_tail_bytes: usize,
+    pub client_cwd: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AskOutcome {
+    pub response: ClientResponse,
+    pub response_error: Option<String>,
+    pub shell_log_tail_bytes: usize,
 }
 
 pub struct Ask<'a, C, P, L> {
@@ -42,21 +52,27 @@ where
         }
     }
 
-    pub fn run(&self, user_message: String, options: AskRunOptions) -> Result<(), AskError> {
+    pub fn run(
+        &self,
+        user_message: String,
+        options: AskRunOptions,
+    ) -> Result<AskOutcome, AskError> {
         self.presenter
             .show_tools_startup(&options.resolved_tools.startup);
         self.presenter
             .show_external_commands(&options.external_command_names);
 
         let shell_log_tail = match self.log {
-            Some(l) => Some(l.tail_bytes(SHELL_LOG_TAIL_MAX_BYTES)?),
+            Some(l) => {
+                Some(l.tail_bytes(options.shell_log_tail_bytes.min(SHELL_LOG_TAIL_MAX_BYTES))?)
+            }
             None => None,
         };
 
         let input = AskInput {
             user_message,
             shell_log_tail,
-            client_cwd: std::env::current_dir().ok(),
+            client_cwd: options.client_cwd.or_else(|| std::env::current_dir().ok()),
             tools: options.resolved_tools.allowlist.into_names(),
             llm_profile: options.llm_profile,
         };
@@ -67,15 +83,24 @@ where
                 if let ClientResponse::Error { code, message, .. } = &response {
                     let code =
                         serde_json::to_string(code).unwrap_or_else(|_| "\"unknown\"".to_string());
-                    return Err(AgentError::Response {
+                    let err = AgentError::Response {
                         code,
                         message: message.clone(),
-                    }
-                    .into());
+                    };
+                    self.presenter.show_error(&err.to_string());
+                    return Ok(AskOutcome {
+                        response,
+                        response_error: Some(err.to_string()),
+                        shell_log_tail_bytes: options.shell_log_tail_bytes,
+                    });
                 }
                 self.presenter
-                    .show_response(&response, options.verbose_tools);
-                Ok(())
+                    .show_response(&response, options.verbose_tools, false);
+                Ok(AskOutcome {
+                    response,
+                    response_error: None,
+                    shell_log_tail_bytes: options.shell_log_tail_bytes,
+                })
             }
             Err(e) => {
                 self.presenter.show_error(&e.to_string());

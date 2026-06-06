@@ -80,6 +80,12 @@
 - `cwd` はツール有効時に `ai` のカレントディレクトリ（絶対パス）を送り、`read_file` / `shell_exec` の相対パス解決に使う。**未送信・相対パスは aibe が `invalid_request` で拒否する**（aibe プロセス cwd へのフォールバックはしない）
 - ユーザーが明示しない限り、全セッション履歴を一度に送らない設計を推奨
 
+### ai local history
+
+- `ai history` の `index.jsonl` には raw message / raw shell log tail / 秘密情報を載せない
+- replay 用 payload vault は `payloads/<history_id>.json` に分離し、0600 相当の権限で保存する
+- `history_id` から復元できない情報は index に置かず、再送に必要な最小限だけを vault に閉じ込める
+
 ### safe tools / dangerous tools
 
 設計の上位正本: [architecture.md](architecture.md)。検証の所在: [testing.md](testing.md) の「0018 safe-tools-policy」。
@@ -109,6 +115,12 @@
 - filter の stdout はターミナルにそのまま出る。機密を含む応答を加工する場合も、シェル履歴・ログへの露出に注意する。
 - filter stderr はユーザー stderr に透過する。filter がハングすると `ai ask` も終了しない（タイムアウトなし）。
 - `aish` は filter を export しない。`aish shell` 内で使う場合はユーザーが明示的に `export AI_FILTER=...` する。
+
+### ai local history
+
+- `index.jsonl` は redacted メタデータのみを置く。raw message、raw shell log tail、秘密情報を入れない
+- `payloads/<history_id>.json` は replay 用 payload vault。`0600` 相当で保存し、他ユーザーから読めない前提を維持する
+- `retry` / `rerun` の実行時に payload の生値を stderr に再掲しない
 
 ## 権限・プロセス
 

@@ -2,15 +2,17 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncWriteExt, BufReader, Lines};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
+use tokio::time::timeout;
 
 use aibe_protocol::{ClientRequest, ClientResponse};
 
-use crate::ports::outbound::ShellExecApprovalGate;
+use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
 
 static PROMPT_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -18,6 +20,8 @@ pub struct ConnectionApprovalGate {
     turn_id: String,
     writer: Arc<Mutex<OwnedWriteHalf>>,
     lines: Arc<Mutex<Lines<BufReader<OwnedReadHalf>>>>,
+    events: Option<Arc<dyn TurnEventSink>>,
+    cancellation: Option<Arc<TurnCancellation>>,
 }
 
 impl ConnectionApprovalGate {
@@ -25,11 +29,15 @@ impl ConnectionApprovalGate {
         turn_id: String,
         writer: Arc<Mutex<OwnedWriteHalf>>,
         lines: Arc<Mutex<Lines<BufReader<OwnedReadHalf>>>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
     ) -> Self {
         Self {
             turn_id,
             writer,
             lines,
+            events,
+            cancellation,
         }
     }
 }
@@ -51,30 +59,47 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
             command: command.to_string(),
             args: args.to_vec(),
         };
+        if let Some(events) = &self.events {
+            events
+                .progress(
+                    &self.turn_id,
+                    aibe_protocol::ProgressPhase::WaitingApproval,
+                    Some(format!("shell_exec: {command}")),
+                )
+                .await;
+        }
         if write_response(&self.writer, &prompt).await.is_err() {
             return false;
         }
 
-        let line = {
-            let mut lines = self.lines.lock().await;
-            match lines.next_line().await {
-                Ok(Some(l)) => l,
-                _ => return false,
+        loop {
+            if let Some(cancel) = &self.cancellation {
+                if cancel.is_cancelled() {
+                    return false;
+                }
             }
-        };
+            let line = {
+                let mut lines = self.lines.lock().await;
+                match timeout(Duration::from_millis(100), lines.next_line()).await {
+                    Ok(Ok(Some(l))) => l,
+                    Ok(Ok(None)) => return false,
+                    Ok(Err(_)) => return false,
+                    Err(_) => continue,
+                }
+            };
+            let Ok(ClientRequest::ShellExecApproval {
+                id,
+                turn_id,
+                tool_call_id: tc_id,
+                approved,
+                ..
+            }) = serde_json::from_str::<ClientRequest>(line.trim())
+            else {
+                return false;
+            };
 
-        let Ok(ClientRequest::ShellExecApproval {
-            id,
-            turn_id,
-            tool_call_id: tc_id,
-            approved,
-            ..
-        }) = serde_json::from_str::<ClientRequest>(line.trim())
-        else {
-            return false;
-        };
-
-        id == prompt_id && turn_id == self.turn_id && tc_id == tool_call_id && approved
+            return id == prompt_id && turn_id == self.turn_id && tc_id == tool_call_id && approved;
+        }
     }
 }
 

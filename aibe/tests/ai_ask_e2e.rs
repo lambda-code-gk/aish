@@ -57,6 +57,8 @@ fn ai_ask_reaches_mock_aibe() {
             verbose_tools: false,
             llm_profile: None,
             external_command_names: Vec::new(),
+            shell_log_tail_bytes: 0,
+            client_cwd: None,
         },
     )
     .expect("ask");
