@@ -39,11 +39,11 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | クレート | 単体 | 統合 / E2E |
 |----------|------|------------|
 | **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
-| **aibe-client** | socket 往復の契約固定（`agent_turn` 承認 prompt → approval → final、TTY 非依存） | `transport.rs`、`tests/agent_turn_approval.rs`、`client_ping.rs`、`ensure_running_*.rs` |
+| **aibe-client** | socket 往復の契約固定（`route_turn` / `agent_turn` 承認 prompt → approval → final、TTY 非依存） | `transport.rs`、`tests/agent_turn_approval.rs`、`tests/route_turn.rs`、`client_ping.rs`、`ensure_running_*.rs` |
 | **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
 | **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
-| **ai** | local history / retry / rerun / preset / log-tail / chat transcript / exit codes / yes-exec / history GC | `application/history.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`tests/yes_exec_integration.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
+| **ai** | local history / retry / rerun / preset / log-tail / chat transcript / smart entry / exit codes / yes-exec / history GC | `application/history.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`tests/yes_exec_integration.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
 | **aibe** | assistant streaming forward | `tests/agent_turn_streaming.rs`、`adapters/outbound/scripted_mock_llm.rs` |
 | **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |
 
@@ -75,9 +75,9 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 ### ai
 
 - **単体**: 設定読み込み、ログ tail 抽出、history メタデータ、exit code 変換
-- **統合**: モック aibe サーバへ接続して表示
-- **E2E**: モック aibe + フィクスチャログで 1 セッション
-- **手動**: `ai` → 実 aibe → 表示（キーはユーザー環境のみ）。ツール allowlist は `docs/manual/ai-ask-tools.md`
+- **統合**: モック aibe サーバへ接続して表示、non-TTY で `route_turn` を飛ばすこと、`--new` / `AI_SESSION_ID` の request 反映
+- **E2E**: モック aibe + フィクスチャログで 1 セッション、`route_turn` / conversation store の往復
+- **手動**: `ai` → 実 aibe → 表示（キーはユーザー環境のみ）。`route_turn` / `--new` / non-TTY fallback は [`docs/manual/ai-smart-entry.md`](manual/ai-smart-entry.md)、ツール allowlist は [`docs/manual/ai-ask-tools.md`](manual/ai-ask-tools.md)
 
 ### 0018 safe-tools-policy の検証観点
 
@@ -111,6 +111,9 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **unit** | `ai/src/adapters/outbound/stdout_presenter.rs` | 空 assistant の stdout 不出力、stderr 非対象 |
 | **unit** | `ai/src/adapters/outbound/toml_config.rs` | `[ask].filter` の読み込み |
 | **integration** | `ai/tests/ask_integration.rs` | filter 付き `Ask` が完走すること |
+| **integration** | `ai/tests/phase_a_cli.rs` | non-TTY で `route_turn` を飛ばし、`AI_SESSION_ID` を request に載せること |
+| **integration** | `aibe/tests/route_turn.rs` | route plan の redaction と conversation store の分離 |
+| **integration** | `aibe-client/tests/route_turn.rs` | `route_turn` の socket 往復 |
 | **manual** | [manual/ai-ask-tools.md](manual/ai-ask-tools.md) | `AI_FILTER` / config filter の stdout 変換、stderr 非対象、失敗時 warning |
 
 ## モック・フィクスチャ

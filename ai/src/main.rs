@@ -33,7 +33,11 @@ use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalPrompt};
-use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
+use aibe_protocol::{
+    is_known_tool, ClientRequest, ClientResponse, ProtocolMessage, RequestContext, RouteKind,
+    RoutePlan, RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession, GIT_DIFF,
+    GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+};
 
 fn main() -> ExitCode {
     if AiCli::try_complete_env() {
@@ -129,6 +133,7 @@ struct ResolvedTurnSettings {
     log_tail_bytes: usize,
     socket_path: PathBuf,
     session_id: Option<String>,
+    ai_session_id: String,
     shell_log_choice: ShellLogChoice,
     output_filter: Option<String>,
     output_filter_meta: FilterMetadata,
@@ -159,19 +164,42 @@ struct TurnExecutionOutcome {
 fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let message = resolve_ask_message(args.file.clone(), args.message)?;
-    let settings = resolve_turn_settings(&cfg, &args.turn)?;
+    let base_settings = resolve_turn_settings(&cfg, &args.turn)?;
     if args.turn.dry_run {
         let report = build_dry_run_report(
             "ask",
             &message.source,
             message.content.len(),
             &cfg,
-            &settings,
+            &base_settings,
         );
-        let format = settings.output_format.unwrap_or(OutputFormat::Tsv);
+        let format = base_settings.output_format.unwrap_or(OutputFormat::Tsv);
         write_stdout(report.render(format))?;
         return Ok(ExitCode::SUCCESS);
     }
+    let smart = if std::io::stdin().is_terminal() {
+        run_smart_route(
+            &base_settings.socket_path,
+            &message.content,
+            &base_settings,
+            &args.turn,
+        )
+    } else {
+        SmartRouteOutcome::disabled()
+    };
+    let mut effective_turn = args.turn.clone();
+    if let Some(ref plan) = smart.route_plan {
+        effective_turn = apply_route_plan_advisory(effective_turn, plan, &cfg, base_settings.quiet);
+    }
+    if smart.route_fallback {
+        effective_turn.tools = Some("none".to_string());
+    }
+    let settings = resolve_turn_settings(&cfg, &effective_turn)?;
+    let conversation_id = smart.conversation_id;
+    let route_plan_json = smart
+        .route_plan
+        .as_ref()
+        .and_then(|p| serde_json::to_string(p).ok());
     let response = execute_turn(
         &cfg,
         "ask",
@@ -183,7 +211,8 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             role: "user".to_string(),
             content: message.content,
         }],
-        None,
+        conversation_id,
+        route_plan_json,
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -231,6 +260,7 @@ fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
             None,
             messages,
             Some(conversation_id.clone()),
+            None,
         )?;
         let exit_code = exit_code_for_response(&outcome.response, outcome.cancel_source);
         match &outcome.response {
@@ -276,6 +306,7 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         None,
         messages,
         payload.conversation_id.clone(),
+        payload.route_plan.clone(),
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -325,6 +356,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         payload.client_cwd.map(PathBuf::from),
         messages,
         payload.conversation_id.clone(),
+        payload.route_plan.clone(),
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -377,6 +409,7 @@ fn execute_turn(
     client_cwd_override: Option<PathBuf>,
     messages: Vec<ProtocolMessage>,
     conversation_id: Option<String>,
+    route_plan_json: Option<String>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
     let shell_log_tail_text = if let Some(text) = shell_log_override {
@@ -432,6 +465,8 @@ fn execute_turn(
             .or_else(|| std::env::current_dir().ok()),
         tools: plan.resolved_tools.allowlist.clone().into_names(),
         llm_profile: settings.llm_profile.clone(),
+        ai_session_id: Some(settings.ai_session_id.clone()),
+        conversation_id: conversation_id.clone(),
     };
     let request = ask_input.into_request()?;
     let turn_id = next_history_id();
@@ -506,14 +541,17 @@ fn execute_turn(
     } else {
         HistoryRecordStatus::Ok
     };
+    let route_plan_redacted = route_plan_json;
     let history_id = next_history_id();
     let record_input = HistoryRecordInput {
         command: command.to_string(),
         session_id: settings.session_id.clone(),
         conversation_id: conversation_id.clone(),
+        ai_session_id: Some(settings.ai_session_id.clone()),
         preset: settings.preset_name.clone(),
         profile: settings.llm_profile.clone(),
         shell_exec_approval: settings.shell_exec_approval.clone(),
+        route_plan: route_plan_redacted.clone(),
         socket_path: settings.socket_path.display().to_string(),
         request_kind: match command {
             "retry" => HistoryRecordKind::Retry,
@@ -542,7 +580,9 @@ fn execute_turn(
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
         conversation_id,
+        ai_session_id: Some(settings.ai_session_id.clone()),
         shell_exec_approval: settings.shell_exec_approval.clone(),
+        route_plan: route_plan_redacted,
         socket_path: settings.socket_path.display().to_string(),
         log_tail_bytes: settings.log_tail_bytes,
         request_messages,
@@ -650,10 +690,12 @@ fn run_agent_turn_core(
                 }
             },
             |chunk| {
-                if !presenter_thread.is_quiet() {
-                    streamed_thread.store(true, Ordering::SeqCst);
+                if !chunk.is_empty() {
+                    if !presenter_thread.is_quiet() {
+                        streamed_thread.store(true, Ordering::SeqCst);
+                    }
+                    presenter_thread.show_stream_chunk(&chunk);
                 }
-                presenter_thread.show_stream_chunk(&chunk);
             },
             |prompt: ShellExecApprovalPrompt| {
                 if let Some(Ok(cache)) = yes_exec_cache.as_ref() {
@@ -722,6 +764,7 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
     match request {
         ClientRequest::AgentTurn { id, .. }
         | ClientRequest::Ping { id }
+        | ClientRequest::RouteTurn { id, .. }
         | ClientRequest::ShellExecApproval { id, .. }
         | ClientRequest::CancelTurn { id, .. } => Ok(id.clone()),
     }
@@ -736,6 +779,8 @@ fn request_from_messages(
     let context = RequestContext {
         shell_log_tail,
         cwd: request.client_cwd.map(|p| p.display().to_string()),
+        ai_session_id: request.ai_session_id,
+        conversation_id: request.conversation_id,
     };
     Ok(ClientRequest::AgentTurn {
         id: turn_id,
@@ -772,6 +817,7 @@ fn exit_code_for_response(
         ClientResponse::Pong { .. }
         | ClientResponse::Progress { .. }
         | ClientResponse::AssistantStreaming { .. }
+        | ClientResponse::RouteTurnResult { .. }
         | ClientResponse::ShellExecApprovalPrompt { .. } => ExitCode::SUCCESS,
     }
 }
@@ -812,6 +858,220 @@ fn exit_code_for_anyhow(err: &anyhow::Error) -> ExitCode {
 
 fn next_conversation_id() -> String {
     format!("conv-{}", next_history_id())
+}
+
+#[derive(Debug, Clone)]
+struct SmartRouteOutcome {
+    conversation_id: Option<String>,
+    route_plan: Option<RoutePlan>,
+    route_fallback: bool,
+}
+
+impl SmartRouteOutcome {
+    fn disabled() -> Self {
+        Self {
+            conversation_id: None,
+            route_plan: None,
+            route_fallback: false,
+        }
+    }
+}
+
+fn run_smart_route(
+    socket_path: &Path,
+    query: &str,
+    settings: &ResolvedTurnSettings,
+    turn: &TurnOptions,
+) -> SmartRouteOutcome {
+    let request = build_route_turn_request(query, settings, turn);
+    let client = AibeUnixClient::new(socket_path);
+    let plan = match try_route_turn(&client, request.clone()) {
+        Ok(plan) => Some(plan),
+        Err(first) => match try_route_turn(&client, request) {
+            Ok(plan) => Some(plan),
+            Err(second) => {
+                if !settings.quiet {
+                    eprintln!("ai: route_turn failed; falling back to text-only one-shot");
+                    eprintln!("ai: route_turn error: {second}");
+                    if first != second {
+                        eprintln!("ai: route_turn first attempt: {first}");
+                    }
+                }
+                None
+            }
+        },
+    };
+    if let Some(ref plan) = plan {
+        maybe_log_route_escalation(settings.quiet, plan);
+        SmartRouteOutcome {
+            conversation_id: Some(plan.conversation_id.clone()),
+            route_plan: Some(plan.clone()),
+            route_fallback: false,
+        }
+    } else {
+        SmartRouteOutcome {
+            conversation_id: None,
+            route_plan: None,
+            route_fallback: true,
+        }
+    }
+}
+
+fn try_route_turn(client: &AibeUnixClient, request: ClientRequest) -> Result<RoutePlan, String> {
+    match client.route_turn(request) {
+        Ok(ClientResponse::RouteTurnResult { plan, .. }) => Ok(plan),
+        Ok(other) => Err(format!("unexpected response: {other:?}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn build_route_turn_request(
+    query: &str,
+    settings: &ResolvedTurnSettings,
+    turn: &TurnOptions,
+) -> ClientRequest {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "/".to_string());
+    ClientRequest::RouteTurn {
+        id: next_history_id(),
+        query: query.to_string(),
+        cwd,
+        session: RouteTurnSession {
+            ai_session_id: settings.ai_session_id.clone(),
+            aish_session_dir: std::env::var("AISH_SESSION_DIR").ok(),
+            tty: true,
+        },
+        conversation: RouteTurnConversation {
+            conversation_id: None,
+            recent_summary: None,
+            new_conversation: turn.new,
+        },
+        cli_overrides: RouteTurnCliOverrides {
+            preset: turn.preset.clone(),
+            tools: turn.tools.as_ref().map(|s| {
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            }),
+            log_tail_bytes: turn.log_tail.map(|n| n as u64),
+            yes_exec: turn.yes_exec,
+        },
+    }
+}
+
+fn apply_route_plan_advisory(
+    mut turn: TurnOptions,
+    plan: &RoutePlan,
+    cfg: &AiConfig,
+    quiet: bool,
+) -> TurnOptions {
+    if turn.preset.is_none() {
+        if let Some(name) = plan.recommended_preset.as_deref().filter(|s| !s.is_empty()) {
+            if cfg.presets.contains_key(name) {
+                turn.preset = Some(name.to_string());
+            } else if !quiet {
+                eprintln!("ai: smart entry: ignored unknown preset: {name}");
+            }
+        }
+    }
+    if turn.tools.is_none() {
+        match sanitize_recommended_tools(plan.recommended_tools.as_deref()) {
+            Some(tools) => turn.tools = Some(tools.join(",")),
+            None if plan
+                .recommended_tools
+                .as_ref()
+                .is_some_and(|t| !t.is_empty())
+                && !quiet =>
+            {
+                eprintln!("ai: smart entry: ignored unknown suggested tools");
+            }
+            None => {}
+        }
+    }
+    if turn.log_tail.is_none() {
+        if let Some(bytes) = plan.log_tail_bytes {
+            turn.log_tail = Some(bytes as usize);
+        }
+    }
+    turn
+}
+
+fn sanitize_recommended_tools(raw: Option<&[String]>) -> Option<Vec<String>> {
+    let raw = raw.filter(|tools| !tools.is_empty())?;
+    let mut out = Vec::new();
+    for name in raw {
+        let mapped = map_route_tool_alias(name);
+        if is_known_tool(&mapped) && !out.iter().any(|existing| existing == &mapped) {
+            out.push(mapped);
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn map_route_tool_alias(raw: &str) -> String {
+    let norm = raw.trim().to_ascii_lowercase().replace('-', "_");
+    match norm.as_str() {
+        "view_file" | "viewfile" | "read" | "cat" | "cat_file" => READ_FILE.to_string(),
+        "list_files" | "listdir" | "ls" | "dir" => LIST_DIR.to_string(),
+        "search" | "find" | "rg" => GREP.to_string(),
+        "git" | "status" => GIT_STATUS.to_string(),
+        "diff" => GIT_DIFF.to_string(),
+        "shell" | "exec" | "run" => SHELL_EXEC.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn maybe_log_route_escalation(quiet: bool, plan: &RoutePlan) {
+    if quiet {
+        return;
+    }
+    if plan.new_conversation {
+        eprintln!(
+            "ai: smart entry: new conversation ({})",
+            plan.conversation_id
+        );
+    } else if matches!(plan.route_kind, RouteKind::Continue | RouteKind::Chat) {
+        eprintln!(
+            "ai: smart entry: continuing conversation ({})",
+            plan.conversation_id
+        );
+    }
+    if plan.log_tail_escalation {
+        eprintln!("ai: smart entry: log tail escalation suggested");
+    }
+    if plan.require_shell_approval {
+        eprintln!("ai: smart entry: shell approval may be required");
+    }
+    if let Some(tools) = sanitize_recommended_tools(plan.recommended_tools.as_deref()) {
+        eprintln!("ai: smart entry: tools suggested: {}", tools.join(","));
+    }
+}
+
+fn resolve_ai_session_id() -> String {
+    use std::sync::OnceLock;
+
+    static SESSION_ID: OnceLock<String> = OnceLock::new();
+    SESSION_ID
+        .get_or_init(|| {
+            if let Ok(id) = std::env::var("AI_SESSION_ID") {
+                if !id.is_empty() {
+                    return id;
+                }
+            }
+            format!(
+                "ai-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            )
+        })
+        .clone()
 }
 
 fn build_dry_run_report(
@@ -944,6 +1204,7 @@ fn resolve_turn_settings(
         log_tail_bytes,
         socket_path,
         session_id: resolve_turn_session_id(turn.session.as_deref())?,
+        ai_session_id: resolve_ai_session_id(),
         shell_log_choice,
         output_filter,
         output_filter_meta,
@@ -1297,10 +1558,14 @@ fn history_store_to_anyhow(e: ai::ports::outbound::HistoryStoreError) -> anyhow:
 #[cfg(test)]
 mod cli_tests {
     use clap::CommandFactory;
+    use std::path::PathBuf;
 
-    use ai::clap_cli::AiCli;
+    use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
+    use ai::clap_cli::{AiCli, TurnOptions};
+    use ai::domain::{ConfigToolsTokens, FilterMetadata, ShellLogChoice};
     use ai::domain::{HistoryMessage, HistoryPayload};
-    use aibe_protocol::{ClientResponse, ErrorCode};
+    use aibe_client::default_socket_path;
+    use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RouteKind, RoutePlan};
 
     #[test]
     fn ask_rejects_options_after_message() {
@@ -1393,8 +1658,10 @@ mod cli_tests {
             llm_profile: None,
             preset: None,
             session_id: None,
+            ai_session_id: None,
             conversation_id: None,
             shell_exec_approval: None,
+            route_plan: None,
             socket_path: "/tmp/s".into(),
             log_tail_bytes: 1,
         };
@@ -1417,13 +1684,106 @@ mod cli_tests {
             llm_profile: None,
             preset: None,
             session_id: None,
+            ai_session_id: None,
             conversation_id: None,
             shell_exec_approval: None,
+            route_plan: None,
             socket_path: "/tmp/s".into(),
             log_tail_bytes: 1,
         };
         let messages = crate::replay_messages_from_payload(&payload);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "hello");
+    }
+
+    #[test]
+    fn build_route_turn_request_sets_new_conversation_and_session_id() {
+        let settings = crate::ResolvedTurnSettings {
+            quiet: false,
+            output_format: None,
+            preset_name: Some("fast".into()),
+            log_tail_bytes: 64,
+            socket_path: PathBuf::from("/tmp/aibe.sock"),
+            session_id: None,
+            ai_session_id: "session-123".into(),
+            shell_log_choice: ShellLogChoice::None,
+            output_filter: None,
+            output_filter_meta: FilterMetadata {
+                enabled: false,
+                source: "none".into(),
+                masked: false,
+            },
+            llm_profile: None,
+            ask_tools: ConfigToolsTokens::default(),
+            tools_cli: None,
+            no_start: false,
+            verbose_tools: false,
+            progress: false,
+            timeout_secs: None,
+            yes_exec: true,
+            shell_exec_approval: None,
+        };
+        let turn = crate::TurnOptions {
+            new: true,
+            preset: Some("fast".into()),
+            tools: Some("read_file,shell_exec".into()),
+            log_tail: Some(128),
+            yes_exec: true,
+            ..Default::default()
+        };
+
+        let request = crate::build_route_turn_request("hello", &settings, &turn);
+        let ClientRequest::RouteTurn {
+            query,
+            session,
+            conversation,
+            cli_overrides,
+            ..
+        } = request
+        else {
+            panic!("expected route_turn");
+        };
+        assert_eq!(query, "hello");
+        assert_eq!(session.ai_session_id, "session-123");
+        assert!(session.tty);
+        assert!(conversation.new_conversation);
+        assert_eq!(cli_overrides.preset.as_deref(), Some("fast"));
+        assert_eq!(cli_overrides.log_tail_bytes, Some(128));
+        assert!(cli_overrides.yes_exec);
+        assert_eq!(
+            cli_overrides.tools.as_ref().map(Vec::as_slice),
+            Some(&["read_file".to_string(), "shell_exec".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn apply_route_plan_ignores_unknown_preset_and_maps_tools() {
+        use std::collections::HashMap;
+
+        let cfg = AiConfig {
+            socket_path: default_socket_path(),
+            ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
+            ask_filter: None,
+            history_dir: PathBuf::from("/tmp/ai-history-test"),
+            history_max_entries: 500,
+            log_tail_bytes: None,
+            presets: HashMap::from([("fast".into(), AiPresetConfig::default())]),
+        };
+        let plan = RoutePlan {
+            conversation_id: "conv-1".into(),
+            new_conversation: false,
+            route_kind: RouteKind::ToolAssisted,
+            recommended_preset: Some("files".into()),
+            recommended_tools: Some(vec!["view_file".into()]),
+            log_tail_bytes: None,
+            require_shell_approval: false,
+            log_tail_escalation: false,
+            route_reason: "read readme".into(),
+            confidence: None,
+        };
+        let turn = crate::apply_route_plan_advisory(TurnOptions::default(), &plan, &cfg, true);
+        assert!(turn.preset.is_none());
+        assert_eq!(turn.tools.as_deref(), Some("read_file"));
     }
 }

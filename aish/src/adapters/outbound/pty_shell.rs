@@ -176,6 +176,24 @@ fn child_exec_shell(
         ));
     }
 
+    if let Some(session_id) = session_dir
+        .as_c_str()
+        .to_str()
+        .ok()
+        .and_then(|s| std::path::Path::new(s).file_name())
+        .and_then(|n| n.to_str())
+    {
+        let ai_session_key = CString::new("AI_SESSION_ID").expect("static key");
+        let ai_session_value = CString::new(session_id).expect("session id");
+        let rc = unsafe { libc::setenv(ai_session_key.as_ptr(), ai_session_value.as_ptr(), 1) };
+        if rc != 0 {
+            child_die(&format!(
+                "setenv(AI_SESSION_ID): {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+
     if let Some(layout) = rc_layout {
         if let Some(zdot) = layout.zdotdir.as_ref() {
             let zdot_c = path_to_cstring(zdot);
@@ -463,6 +481,7 @@ fn relay_master_fd<L: SessionLog>(
 
     loop {
         if let Some(status) = wait_nonblocking(child)? {
+            drain_master_output(&mut master_file, &mut stdout, pty, &mut line_buf, &mut buf)?;
             flush_line(pty, &mut line_buf)?;
             return Ok(status);
         }
@@ -473,20 +492,7 @@ fn relay_master_fd<L: SessionLog>(
                 return wait_blocking(child);
             }
             Ok(n) => {
-                let chunk = &buf[..n];
-                stdout
-                    .write_all(chunk)
-                    .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
-                stdout
-                    .flush()
-                    .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
-                for ch in String::from_utf8_lossy(chunk).chars() {
-                    if ch == '\n' || ch == '\r' {
-                        flush_line(pty, &mut line_buf)?;
-                    } else {
-                        line_buf.push(ch);
-                    }
-                }
+                relay_master_chunk(&buf[..n], &mut stdout, pty, &mut line_buf)?;
             }
             Err(e) => {
                 flush_line(pty, &mut line_buf)?;
@@ -497,6 +503,46 @@ fn relay_master_fd<L: SessionLog>(
             }
         }
     }
+}
+
+fn relay_master_chunk<L: SessionLog>(
+    chunk: &[u8],
+    stdout: &mut std::io::StdoutLock<'_>,
+    pty: &mut PtyShell<'_, L>,
+    line_buf: &mut String,
+) -> Result<(), InteractiveShellError> {
+    stdout
+        .write_all(chunk)
+        .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+    stdout
+        .flush()
+        .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+    for ch in String::from_utf8_lossy(chunk).chars() {
+        if ch == '\n' || ch == '\r' {
+            flush_line(pty, line_buf)?;
+        } else {
+            line_buf.push(ch);
+        }
+    }
+    Ok(())
+}
+
+fn drain_master_output<L: SessionLog>(
+    master_file: &mut std::fs::File,
+    stdout: &mut std::io::StdoutLock<'_>,
+    pty: &mut PtyShell<'_, L>,
+    line_buf: &mut String,
+    buf: &mut [u8],
+) -> Result<(), InteractiveShellError> {
+    loop {
+        match master_file.read(buf) {
+            Ok(0) => break,
+            Ok(n) => relay_master_chunk(&buf[..n], stdout, pty, line_buf)?,
+            Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
+            Err(e) => return Err(InteractiveShellError::Failed(e.to_string())),
+        }
+    }
+    Ok(())
 }
 
 fn wait_nonblocking(child: libc::pid_t) -> Result<Option<i32>, InteractiveShellError> {

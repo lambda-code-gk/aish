@@ -8,7 +8,7 @@ fn shell_exports_ai_ask_log_and_aish_session_dir_to_child_shell() {
     let script = home.path().join("probe-shell.sh");
     fs::write(
         &script,
-        "#!/bin/sh\nprintf 'AI_ASK_LOG=%s\\n' \"$AI_ASK_LOG\"\nprintf 'AISH_SESSION_DIR=%s\\n' \"$AISH_SESSION_DIR\"\nexit 0\n",
+        "#!/bin/sh\nprintf 'AI_ASK_LOG=%s\\n' \"$AI_ASK_LOG\"\nprintf 'AISH_SESSION_DIR=%s\\n' \"$AISH_SESSION_DIR\"\nprintf 'AI_SESSION_ID=%s\\n' \"$AI_SESSION_ID\"\nexit 0\n",
     )
     .expect("write script");
     let mut perms = fs::metadata(&script).expect("meta").permissions();
@@ -30,4 +30,5 @@ fn shell_exports_ai_ask_log_and_aish_session_dir_to_child_shell() {
     let stdout = String::from_utf8(out.stdout).expect("utf8");
     assert!(stdout.contains("AI_ASK_LOG=session"));
     assert!(stdout.contains("AISH_SESSION_DIR="));
+    assert!(stdout.contains("AI_SESSION_ID="));
 }

@@ -9,6 +9,14 @@ pub enum ClientRequest {
     Ping {
         id: String,
     },
+    RouteTurn {
+        id: String,
+        query: String,
+        cwd: String,
+        session: RouteTurnSession,
+        conversation: RouteTurnConversation,
+        cli_overrides: RouteTurnCliOverrides,
+    },
     AgentTurn {
         id: String,
         messages: Vec<ProtocolMessage>,
@@ -48,6 +56,39 @@ pub struct RequestContext {
     /// クライアントのカレントディレクトリ（絶対パス）。ツール有効時は必須。
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RouteTurnSession {
+    pub ai_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aish_session_dir: Option<String>,
+    pub tty: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RouteTurnConversation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_summary: Option<String>,
+    pub new_conversation: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RouteTurnCliOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_tail_bytes: Option<u64>,
+    #[serde(default)]
+    pub yes_exec: bool,
 }
 
 #[cfg(test)]
@@ -101,6 +142,51 @@ mod tests {
                 assert_eq!(context.cwd.as_deref(), Some("/tmp/proj"));
             }
             _ => panic!("expected agent_turn"),
+        }
+    }
+
+    #[test]
+    fn route_turn_roundtrip() {
+        let req = ClientRequest::RouteTurn {
+            id: "r1".into(),
+            query: "hello".into(),
+            cwd: "/tmp/proj".into(),
+            session: RouteTurnSession {
+                ai_session_id: "session-1".into(),
+                aish_session_dir: Some("/tmp/aish".into()),
+                tty: true,
+            },
+            conversation: RouteTurnConversation {
+                conversation_id: Some("conv-1".into()),
+                recent_summary: Some("latest".into()),
+                new_conversation: false,
+            },
+            cli_overrides: RouteTurnCliOverrides {
+                preset: Some("fast".into()),
+                tools: Some(vec!["read_file".into()]),
+                log_tail_bytes: Some(128),
+                yes_exec: true,
+            },
+        };
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::RouteTurn {
+                id,
+                query,
+                cwd,
+                session,
+                conversation,
+                cli_overrides,
+            } => {
+                assert_eq!(id, "r1");
+                assert_eq!(query, "hello");
+                assert_eq!(cwd, "/tmp/proj");
+                assert_eq!(session.ai_session_id, "session-1");
+                assert_eq!(conversation.conversation_id.as_deref(), Some("conv-1"));
+                assert_eq!(cli_overrides.tools.as_ref().map(Vec::len), Some(1));
+            }
+            _ => panic!("expected route_turn"),
         }
     }
 

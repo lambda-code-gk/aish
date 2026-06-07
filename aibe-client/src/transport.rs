@@ -53,9 +53,34 @@ pub fn send_cancel_request(
     send_request(stream, &request)
 }
 
+pub fn send_route_turn_request(
+    stream: &mut UnixStream,
+    request: &ClientRequest,
+) -> std::io::Result<()> {
+    send_request(stream, request)
+}
+
 pub fn read_response_line(stream: &mut UnixStream) -> Result<ClientResponse, ClientError> {
     let mut reader = BufReader::new(stream);
     read_response_from_reader(&mut reader)
+}
+
+pub fn route_turn_on_stream(
+    stream: UnixStream,
+    request: ClientRequest,
+) -> Result<ClientResponse, ClientError> {
+    let mut writer = stream;
+    let mut reader = BufReader::new(writer.try_clone().map_err(ClientError::Connect)?);
+    send_route_turn_request(&mut writer, &request).map_err(ClientError::Connect)?;
+    read_response_from_reader(&mut reader)
+}
+
+pub fn route_turn(
+    socket_path: &Path,
+    request: ClientRequest,
+) -> Result<ClientResponse, ClientError> {
+    let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
+    route_turn_on_stream(stream, request)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

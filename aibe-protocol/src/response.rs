@@ -11,6 +11,11 @@ pub enum ClientResponse {
     Pong {
         id: String,
     },
+    RouteTurnResult {
+        id: String,
+        status: RouteTurnStatus,
+        plan: RoutePlan,
+    },
     Progress {
         id: String,
         phase: ProgressPhase,
@@ -58,6 +63,12 @@ pub enum AgentTurnStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RouteTurnStatus {
+    Ok,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProgressPhase {
     Thinking,
     ToolCall,
@@ -70,6 +81,40 @@ pub enum ProgressPhase {
 pub struct ProtocolMessageOut {
     pub role: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteKind {
+    OneShot,
+    Chat,
+    Continue,
+    ToolAssisted,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutePlan {
+    pub conversation_id: String,
+    pub new_conversation: bool,
+    pub route_kind: RouteKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_preset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_tools: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_tail_bytes: Option<u64>,
+    pub require_shell_approval: bool,
+    pub log_tail_escalation: bool,
+    pub route_reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteTurnResult {
+    pub id: String,
+    pub status: RouteTurnStatus,
+    pub plan: RoutePlan,
 }
 
 impl ClientResponse {
@@ -123,6 +168,38 @@ mod tests {
         assert!(json.contains(r#""type":"pong""#));
         let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
         assert!(matches!(back, ClientResponse::Pong { id } if id == "p1"));
+    }
+
+    #[test]
+    fn route_turn_result_roundtrip() {
+        let resp = ClientResponse::RouteTurnResult {
+            id: "route-1".into(),
+            status: RouteTurnStatus::Ok,
+            plan: RoutePlan {
+                conversation_id: "conv-1".into(),
+                new_conversation: false,
+                route_kind: RouteKind::Chat,
+                recommended_preset: Some("fast".into()),
+                recommended_tools: Some(vec!["read_file".into()]),
+                log_tail_bytes: Some(128),
+                require_shell_approval: true,
+                log_tail_escalation: false,
+                route_reason: "continue".into(),
+                confidence: Some(0.8),
+            },
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(json.contains(r#""type":"route_turn_result""#));
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientResponse::RouteTurnResult { id, status, plan } => {
+                assert_eq!(id, "route-1");
+                assert_eq!(status, RouteTurnStatus::Ok);
+                assert_eq!(plan.conversation_id, "conv-1");
+                assert_eq!(plan.route_kind, RouteKind::Chat);
+            }
+            _ => panic!("expected route_turn_result"),
+        }
     }
 
     #[test]

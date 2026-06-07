@@ -29,6 +29,8 @@ async fn unknown_llm_profile_returns_invalid_request() {
             registry,
             ToolsConfig::default(),
             Vec::new(),
+            "default".to_string(),
+            dir.path().join("conversations"),
         )
         .await
         .expect("server");

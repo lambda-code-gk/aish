@@ -21,6 +21,7 @@
 | 0027 | [0027_ai-ux-spec.md](spec/0027_ai-ux-spec.md) | 設計確定 | `ai` コマンド UX 改善 |
 | 0028 | [0028_ai-ux-gap-closure-spec.md](spec/0028_ai-ux-gap-closure-spec.md) | 設計確定 | `ai` UX の残ギャップ解消 |
 | 0029 | [0029_ai-ux-polish-spec.md](spec/0029_ai-ux-polish-spec.md) | 設計確定 | `--yes-exec` 検証・history GC・streaming mock テスト |
+| 0030 | [0030_ai-smart-entry-spec.md](spec/0030_ai-smart-entry-spec.md) | 設計確定 | `ai` スマート入口（`route_turn` / `AI_SESSION_ID` / aibe transcript 保持） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -59,5 +60,6 @@
 | 0027 | [0027_ai-ux-implementation-spec.md](done/0027_ai-ux-implementation-spec.md) | 実装済み | `ai` コマンド UX 改善（設計: [0027](spec/0027_ai-ux-spec.md)） |
 | 0028 | [0028_ai-ux-gap-closure-implementation-spec.md](done/0028_ai-ux-gap-closure-implementation-spec.md) | 実装済み | `ai` UX 残ギャップ解消（設計: [0028](spec/0028_ai-ux-gap-closure-spec.md)） |
 | 0029 | [0029_ai-ux-polish-implementation-spec.md](done/0029_ai-ux-polish-implementation-spec.md) | 実装済み | `--yes-exec` 検証・history GC（設計: [0029](spec/0029_ai-ux-polish-spec.md)） |
+| 0030 | [0030_ai-smart-entry-implementation-spec.md](done/0030_ai-smart-entry-implementation-spec.md) | 実装済み | `ai` スマート入口（設計: [0030](spec/0030_ai-smart-entry-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

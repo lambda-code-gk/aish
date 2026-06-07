@@ -79,12 +79,20 @@
 - 渡すのは **必要最小限** のログ tail（上限は `aibe::ShellLogTail::MAX_BYTES`。ai はこの定数のみ参照しリテラル直書きしない）
 - `cwd` はツール有効時に `ai` のカレントディレクトリ（絶対パス）を送り、`read_file` / `shell_exec` の相対パス解決に使う。**未送信・相対パスは aibe が `invalid_request` で拒否する**（aibe プロセス cwd へのフォールバックはしない）
 - ユーザーが明示しない限り、全セッション履歴を一度に送らない設計を推奨
+- `AI_SESSION_ID` は権限キーではなく会話共有キーとして扱う。`aish` が export するか、`aish` 外では `ai` が生成する。
+- `route_turn` の `route_reason` は path を mask し、短く redaction した上で stderr / history / store に残す。raw のパスや shell コマンドをそのまま保存しない。
 
 ### ai local history
 
 - `ai history` の `index.jsonl` には raw message / raw shell log tail / 秘密情報を載せない
 - replay 用 payload vault は `payloads/<history_id>.json` に分離し、0600 相当の権限で保存する
 - `history_id` から復元できない情報は index に置かず、再送に必要な最小限だけを vault に閉じ込める
+
+### aibe conversation store
+
+- `AI_SESSION_ID` ごとに `~/.local/share/aibe/conversations/<session_id>/` を分離する
+- `index.jsonl` は redacted metadata のみで、full transcript は `conversations/<conversation_id>.json` に閉じる
+- store 配下は 0700 / 0600 相当で作成し、他ユーザーから読めない前提を維持する
 
 ### safe tools / dangerous tools
 

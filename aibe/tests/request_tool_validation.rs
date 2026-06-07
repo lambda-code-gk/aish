@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::MockLlm;
+use aibe::adapters::outbound::{ConversationStore, MockLlm};
 use aibe::application::RequestService;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
@@ -23,6 +23,10 @@ fn service() -> RequestService {
         tool_registry,
         tools_config,
         Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        "default".to_string(),
+        Arc::new(ConversationStore::new(
+            std::env::temp_dir().join("aibe-test-conversations"),
+        )),
     )
 }
 

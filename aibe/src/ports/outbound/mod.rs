@@ -1,5 +1,6 @@
 pub mod command_policy;
 pub mod config;
+pub mod conversation_store;
 pub mod llm;
 pub mod shell_exec_approval;
 pub mod termination_capability;
@@ -11,12 +12,16 @@ pub mod turn_events;
 
 pub use command_policy::CommandPolicy;
 pub use config::{
-    validate_external_commands, AppConfig, ConfigError, ConfigLoader, ExploreLimitsConfig,
-    ExternalCommandConfig, LlmBackend, LlmGenerationParams, LlmProfile, LlmProfilesConfig,
-    LlmProviderKind, ProfileRegistry, ReadFileConfig, ShellExecApprovalMode, ShellExecConfig,
-    TerminationStrategy, ToolsConfig, DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
-    DEFAULT_MAX_GREP_FILES_SCANNED, DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_MATCHES,
-    DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
+    default_conversation_store_root, validate_external_commands, AppConfig, ConfigError,
+    ConfigLoader, ExploreLimitsConfig, ExternalCommandConfig, LlmBackend, LlmGenerationParams,
+    LlmProfile, LlmProfilesConfig, LlmProviderKind, ProfileRegistry, ReadFileConfig, RouterConfig,
+    ShellExecApprovalMode, ShellExecConfig, TerminationStrategy, ToolsConfig,
+    DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS, DEFAULT_MAX_GREP_FILES_SCANNED,
+    DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_MATCHES, DEFAULT_MAX_LIST_ENTRIES,
+    DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
+};
+pub use conversation_store::{
+    ConversationIndexEntry, ConversationSnapshot, ConversationStore, ConversationStoreError,
 };
 pub use llm::{LlmError, LlmProvider};
 pub use shell_exec_approval::ShellExecApprovalGate;

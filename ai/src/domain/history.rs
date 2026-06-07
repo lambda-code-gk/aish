@@ -10,6 +10,8 @@ pub struct HistoryIndexEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
@@ -17,6 +19,8 @@ pub struct HistoryIndexEntry {
     pub profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_exec_approval: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_plan: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -50,9 +54,13 @@ pub struct HistoryPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_exec_approval: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_plan: Option<String>,
     pub socket_path: String,
     pub log_tail_bytes: usize,
 }
@@ -67,10 +75,12 @@ pub struct HistoryTurnInput {
     pub command: String,
     pub user_message: String,
     pub session_id: Option<String>,
+    pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
     pub preset: Option<String>,
     pub profile: Option<String>,
     pub shell_exec_approval: Option<String>,
+    pub route_plan: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -93,10 +103,12 @@ pub struct HistoryIndexView {
     pub created_at_ms: u64,
     pub command: String,
     pub session_id: Option<String>,
+    pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
     pub preset: Option<String>,
     pub profile: Option<String>,
     pub shell_exec_approval: Option<String>,
+    pub route_plan: Option<String>,
     pub socket_path: String,
     pub request_kind: HistoryRecordKind,
     pub request_summary: HistorySummary,
@@ -140,10 +152,12 @@ impl From<&HistoryIndexEntry> for HistoryIndexView {
             created_at_ms: value.created_at_ms,
             command: value.command.clone(),
             session_id: value.session_id.clone(),
+            ai_session_id: value.ai_session_id.clone(),
             conversation_id: value.conversation_id.clone(),
             preset: value.preset.clone(),
             profile: value.profile.clone(),
             shell_exec_approval: value.shell_exec_approval.clone(),
+            route_plan: value.route_plan.clone(),
             socket_path: value.socket_path.clone(),
             request_kind: value.request_kind.clone(),
             request_summary: value.request_summary.clone(),
@@ -170,12 +184,22 @@ impl HistoryIndexView {
             "conversation_id",
             self.conversation_id.as_deref().unwrap_or(""),
         );
+        append_tsv_row(
+            &mut out,
+            "ai_session_id",
+            self.ai_session_id.as_deref().unwrap_or(""),
+        );
         append_tsv_row(&mut out, "preset", self.preset.as_deref().unwrap_or(""));
         append_tsv_row(&mut out, "profile", self.profile.as_deref().unwrap_or(""));
         append_tsv_row(
             &mut out,
             "shell_exec_approval",
             self.shell_exec_approval.as_deref().unwrap_or(""),
+        );
+        append_tsv_row(
+            &mut out,
+            "route_plan",
+            self.route_plan.as_deref().unwrap_or(""),
         );
         append_tsv_row(&mut out, "socket_path", &self.socket_path);
         append_tsv_row(&mut out, "request_kind", &self.request_kind.to_string());
@@ -205,6 +229,11 @@ impl HistoryIndexView {
             "AI_CONVERSATION_ID",
             self.conversation_id.as_deref().unwrap_or(""),
         );
+        append_env_line(
+            &mut out,
+            "AI_AI_SESSION_ID",
+            self.ai_session_id.as_deref().unwrap_or(""),
+        );
         append_env_line(&mut out, "AI_PRESET", self.preset.as_deref().unwrap_or(""));
         append_env_line(
             &mut out,
@@ -215,6 +244,11 @@ impl HistoryIndexView {
             &mut out,
             "AI_SHELL_EXEC_APPROVAL",
             self.shell_exec_approval.as_deref().unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_ROUTE_PLAN",
+            self.route_plan.as_deref().unwrap_or(""),
         );
         append_env_line(&mut out, "AI_SOCKET_PATH", &self.socket_path);
         append_env_line(&mut out, "AI_REQUEST_KIND", &self.request_kind.to_string());
@@ -268,10 +302,12 @@ mod tests {
             created_at_ms: 1,
             command: "ask".into(),
             session_id: Some("sess".into()),
+            ai_session_id: Some("ai-sess".into()),
             conversation_id: None,
             preset: Some("fast".into()),
             profile: Some("fast".into()),
             shell_exec_approval: Some("ask".into()),
+            route_plan: Some("route".into()),
             socket_path: "/tmp/sock".into(),
             request_kind: HistoryRecordKind::Ask,
             request_summary: HistorySummary::new("user_message_len=12 shell_log_tail_len=4"),
@@ -297,8 +333,10 @@ mod tests {
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
+            ai_session_id: Some("ai-sess".into()),
             conversation_id: Some("conv".into()),
             shell_exec_approval: Some("ask".into()),
+            route_plan: Some("route".into()),
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 1,
         };

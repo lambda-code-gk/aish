@@ -15,6 +15,8 @@ pub struct AskInput {
     /// 展開・検証済みツール名。
     pub tools: Vec<ToolName>,
     pub llm_profile: Option<String>,
+    pub ai_session_id: Option<String>,
+    pub conversation_id: Option<String>,
 }
 
 /// aibe へ送る `agent_turn` 用ペイロード。
@@ -26,6 +28,8 @@ pub struct AskRequest {
     pub client_cwd: Option<PathBuf>,
     pub tools: Vec<ToolName>,
     pub llm_profile: Option<String>,
+    pub ai_session_id: Option<String>,
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -44,6 +48,8 @@ impl AskInput {
                 client_cwd: self.client_cwd,
                 tools: self.tools,
                 llm_profile: self.llm_profile,
+                ai_session_id: self.ai_session_id,
+                conversation_id: self.conversation_id,
             });
         }
 
@@ -58,6 +64,8 @@ impl AskInput {
             client_cwd: Some(client_cwd),
             tools: self.tools,
             llm_profile: self.llm_profile,
+            ai_session_id: self.ai_session_id,
+            conversation_id: self.conversation_id,
         })
     }
 }
@@ -74,6 +82,8 @@ mod tests {
             client_cwd: None,
             tools: vec![],
             llm_profile: None,
+            ai_session_id: None,
+            conversation_id: None,
         };
         assert!(input.into_request().is_ok());
     }
@@ -86,6 +96,8 @@ mod tests {
             client_cwd: None,
             tools: vec![ToolName::read_file()],
             llm_profile: None,
+            ai_session_id: None,
+            conversation_id: None,
         };
         assert_eq!(
             input.into_request().unwrap_err(),
@@ -101,6 +113,8 @@ mod tests {
             client_cwd: Some("/tmp".into()),
             tools: vec![ToolName::read_file(), ToolName::shell_exec()],
             llm_profile: None,
+            ai_session_id: None,
+            conversation_id: None,
         };
         let req = input.into_request().expect("request");
         assert_eq!(

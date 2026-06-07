@@ -79,6 +79,8 @@ pub struct TurnOptions {
     )]
     pub profile: Option<String>,
     #[arg(long)]
+    pub new: bool,
+    #[arg(long)]
     pub verbose_tools: bool,
     #[arg(long)]
     pub progress: bool,

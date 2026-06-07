@@ -150,6 +150,9 @@ impl Presenter for StdoutPresenter {
                 self.emit_assistant_stdout(s);
             }
         }
+        if streamed && self.output_format.is_none() && !self.quiet {
+            ensure_stdout_newline();
+        }
         if !self.quiet {
             for line in out.stderr {
                 eprintln!("{line}");
@@ -160,6 +163,11 @@ impl Presenter for StdoutPresenter {
     fn show_error(&self, message: &str) {
         eprintln!("ai: {message}");
     }
+}
+
+fn ensure_stdout_newline() {
+    let _ = std::io::stdout().write_all(b"\n");
+    let _ = std::io::stdout().flush();
 }
 
 pub fn format_tools_startup(line: &ToolsStartupLine) -> String {
@@ -222,6 +230,10 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
                 stderr: Vec::new(),
             }
         }
+        ClientResponse::RouteTurnResult { .. } => PresenterOutput {
+            stdout: None,
+            stderr: Vec::new(),
+        },
     }
 }
 
@@ -426,6 +438,20 @@ impl ResponseView {
                     role: "assistant".to_string(),
                     content: delta.clone(),
                 }),
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::RouteTurnResult { id, .. } => Self {
+                response_type: "route_turn_result".to_string(),
+                id: id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
                 tool_calls: Vec::new(),
                 error_code: None,
                 error_message: None,

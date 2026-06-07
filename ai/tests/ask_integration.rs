@@ -67,6 +67,8 @@ fn resolve_read_only_sends_safe_tools_to_aibe() {
             external_command_names: Vec::new(),
             shell_log_tail_bytes: 0,
             client_cwd: None,
+            ai_session_id: None,
+            conversation_id: None,
         },
     )
     .expect("ask");
@@ -149,6 +151,8 @@ fn ask_with_filter_completes() {
             external_command_names: Vec::new(),
             shell_log_tail_bytes: 0,
             client_cwd: None,
+            ai_session_id: None,
+            conversation_id: None,
         },
     )
     .expect("ask");

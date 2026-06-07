@@ -37,9 +37,16 @@ pub const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS: u64 = 1800;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub socket_path: PathBuf,
+    pub conversation_store_root: PathBuf,
+    pub router: RouterConfig,
     pub llm: LlmProfilesConfig,
     pub tools: ToolsConfig,
     pub external_commands: Vec<ExternalCommandConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RouterConfig {
+    pub profile: String,
 }
 
 /// max-round 到達時の終端戦略（policy）。
@@ -169,6 +176,21 @@ impl Default for ToolsConfig {
     }
 }
 
+impl Default for RouterConfig {
+    fn default() -> Self {
+        Self {
+            profile: "default".to_string(),
+        }
+    }
+}
+
+pub fn default_conversation_store_root() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home)
+        .join(".local/share/aibe")
+        .join("conversations")
+}
+
 impl Default for ExploreLimitsConfig {
     fn default() -> Self {
         Self {
@@ -244,6 +266,7 @@ impl LlmProfilesConfig {
 }
 
 /// 起動時 eager 構築。リクエスト時は参照のみ。
+#[derive(Clone)]
 pub struct ProfileRegistry {
     pub providers: HashMap<String, Arc<dyn LlmProvider>>,
     pub capabilities: HashMap<String, TerminationCapability>,

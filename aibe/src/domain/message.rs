@@ -61,6 +61,15 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::System,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::User,

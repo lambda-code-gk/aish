@@ -121,7 +121,7 @@ impl GeminiLlm {
             .await
             .map_err(|e| LlmError::Provider(e.to_string()))?
         {
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            buffer.push_str(&String::from_utf8_lossy(&chunk).replace('\r', ""));
             while let Some(split) = buffer.find("\n\n") {
                 let event = buffer[..split].to_string();
                 buffer.drain(..split + 2);

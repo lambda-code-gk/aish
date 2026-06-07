@@ -3,13 +3,14 @@
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
+use crate::application::route_turn::RouteTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::outbound::{
-    ProfileRegistry, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation,
-    TurnEventSink,
+    ConversationStore, ProfileRegistry, RouterConfig, ShellExecApprovalGate, ToolRoundTerminator,
+    ToolsConfig, TurnCancellation, TurnEventSink,
 };
-use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RequestContext};
+use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
@@ -21,6 +22,8 @@ pub struct RequestService {
     tools_config: ToolsConfig,
     terminator: Arc<dyn ToolRoundTerminator>,
     active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+    router_profile: String,
+    conversation_store: Arc<dyn ConversationStore>,
 }
 
 impl RequestService {
@@ -29,6 +32,8 @@ impl RequestService {
         tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
         tools_config: ToolsConfig,
         terminator: Arc<dyn ToolRoundTerminator>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
     ) -> Self {
         Self::new_with_turns(
             profile_registry,
@@ -36,6 +41,8 @@ impl RequestService {
             tools_config,
             terminator,
             Arc::new(Mutex::new(HashMap::new())),
+            router_profile,
+            conversation_store,
         )
     }
 
@@ -45,6 +52,8 @@ impl RequestService {
         tools_config: ToolsConfig,
         terminator: Arc<dyn ToolRoundTerminator>,
         active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
     ) -> Self {
         Self {
             profile_registry,
@@ -52,6 +61,8 @@ impl RequestService {
             tools_config,
             terminator,
             active_turns,
+            router_profile,
+            conversation_store,
         }
     }
 
@@ -73,6 +84,25 @@ impl RequestService {
     ) -> ClientResponse {
         match request {
             ClientRequest::Ping { id } => ClientResponse::Pong { id },
+            ClientRequest::RouteTurn {
+                id,
+                query,
+                cwd,
+                session,
+                conversation,
+                cli_overrides,
+            } => {
+                let route_service = RouteTurnService::new(
+                    self.profile_registry.clone(),
+                    RouterConfig {
+                        profile: self.router_profile.clone(),
+                    },
+                    self.conversation_store.clone(),
+                );
+                route_service
+                    .run(id, query, cwd, session, conversation, cli_overrides)
+                    .await
+            }
             ClientRequest::CancelTurn { id, turn_id } => {
                 let guard = self.active_turns.lock().await;
                 if let Some(cancel) = guard.get(&turn_id) {
@@ -127,6 +157,9 @@ impl RequestService {
                     }
                 }
 
+                let _request_messages = messages.clone();
+                let conversation_id = context.conversation_id.clone();
+                let ai_session_id = context.ai_session_id.clone();
                 let tools = match parse_tool_names(tools) {
                     Ok(names) => names,
                     Err(e) => {
@@ -155,10 +188,29 @@ impl RequestService {
                     let mut guard = self.active_turns.lock().await;
                     guard.insert(turn_id.clone(), cancel);
                 }
+                let mut run_messages = messages.clone();
+                if let (Some(session_id), Some(conv_id)) = (&ai_session_id, &conversation_id) {
+                    if let Ok(Some(snapshot)) =
+                        self.conversation_store.load_snapshot(session_id, conv_id)
+                    {
+                        if !snapshot.messages.is_empty() {
+                            let stored: Result<Vec<ChatMessage>, _> = snapshot
+                                .messages
+                                .into_iter()
+                                .map(ChatMessage::try_from)
+                                .collect();
+                            if let Ok(stored) = stored {
+                                run_messages = stored;
+                                run_messages.extend(messages);
+                            }
+                        }
+                    }
+                }
+
                 let response = agent_turn
                     .run_with_events(
                         id,
-                        messages,
+                        run_messages.clone(),
                         tools,
                         ctx,
                         approval_gate,
@@ -166,6 +218,30 @@ impl RequestService {
                         cancellation.clone(),
                     )
                     .await;
+                if let (Some(conversation_id), Some(ai_session_id)) =
+                    (conversation_id, ai_session_id)
+                {
+                    if let ClientResponse::AgentTurnResult {
+                        assistant_message, ..
+                    } = &response
+                    {
+                        let wire_messages: Vec<ProtocolMessage> = run_messages
+                            .iter()
+                            .map(|m| ProtocolMessage {
+                                role: m.role.to_string(),
+                                content: m.content.clone(),
+                            })
+                            .collect();
+                        let _ = self.conversation_store.record_turn(
+                            &ai_session_id,
+                            &conversation_id,
+                            current_time_ms(),
+                            &wire_messages,
+                            assistant_message,
+                            None,
+                        );
+                    }
+                }
                 if cancellation.is_some() {
                     let mut guard = self.active_turns.lock().await;
                     let _ = guard.remove(&turn_id);
@@ -174,6 +250,13 @@ impl RequestService {
             }
         }
     }
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientCwdError> {

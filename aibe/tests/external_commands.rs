@@ -54,9 +54,16 @@ async fn external_command_runs_via_shell_exec() {
     let profile_registry =
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, profile_registry, cfg, external_commands)
-            .await
-            .expect("server");
+        server::run(
+            socket_for_server,
+            profile_registry,
+            cfg,
+            external_commands,
+            "default".to_string(),
+            dir.path().join("conversations"),
+        )
+        .await
+        .expect("server");
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -145,9 +152,16 @@ async fn external_command_not_in_allowlist_is_denied() {
     let profile_registry =
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
     let server = tokio::spawn(async move {
-        server::run(socket_for_server, profile_registry, cfg, Vec::new())
-            .await
-            .expect("server");
+        server::run(
+            socket_for_server,
+            profile_registry,
+            cfg,
+            Vec::new(),
+            "default".to_string(),
+            dir.path().join("conversations"),
+        )
+        .await
+        .expect("server");
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;

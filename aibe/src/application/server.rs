@@ -12,10 +12,11 @@ use tokio::sync::Mutex;
 use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
+use crate::adapters::outbound::ConversationStore as FilesystemConversationStore;
 use crate::application::request_service::RequestService;
 use crate::ports::outbound::{
-    ExternalCommandConfig, ProfileRegistry, ShellExecApprovalGate, ToolsConfig, TurnCancellation,
-    TurnEventSink,
+    ConversationStore, ExternalCommandConfig, ProfileRegistry, ShellExecApprovalGate, ToolsConfig,
+    TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
 use std::collections::HashMap;
@@ -25,6 +26,8 @@ pub async fn run(
     profile_registry: ProfileRegistry,
     tools_config: ToolsConfig,
     external_commands: Vec<ExternalCommandConfig>,
+    router_profile: String,
+    conversation_store_root: PathBuf,
 ) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
     let listener = bind_unix_listener(&socket_path)?;
@@ -35,12 +38,16 @@ pub async fn run(
         tools_config.termination_strategy,
     ));
     let active_turns = Arc::new(Mutex::new(HashMap::new()));
+    let conversation_store: Arc<dyn ConversationStore> =
+        Arc::new(FilesystemConversationStore::new(conversation_store_root));
     let handler = Arc::new(RequestService::new_with_turns(
         profile_registry,
         tool_registry,
         tools_config,
         terminator,
         Arc::clone(&active_turns),
+        router_profile,
+        conversation_store,
     ));
 
     loop {

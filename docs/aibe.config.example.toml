@@ -28,6 +28,10 @@ default_profile = "fast"
 
 # --- LLM 接続定義（認証・エンドポイントのみ）---
 
+[router]
+# smart entry の route_turn で使う軽量分類用 profile
+profile = "fast"
+
 [llm.gemini-studio]
 provider = "gemini"
 api_key = "YOUR_API_KEY"
@@ -89,3 +93,6 @@ max_list_entries = 10_000
 max_grep_files_scanned = 5_000
 max_grep_matches = 5_000
 max_grep_file_bytes = 1_048_576
+
+# conversation store の既定は `~/.local/share/aibe/conversations`
+# conversation_store_root = "~/.local/share/aibe/conversations"

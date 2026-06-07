@@ -1,3 +1,4 @@
+mod conversation_store;
 mod env_config;
 mod gemini;
 mod llm_backend;
@@ -9,6 +10,10 @@ pub mod terminator;
 mod toml_config;
 pub mod tools;
 
+pub use crate::ports::outbound::{
+    ConversationIndexEntry, ConversationSnapshot, ConversationStoreError,
+};
+pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;
 pub use gemini::GeminiLlm;
 pub use llm_factory::{build_profile_registry, termination_capability_for_kind};

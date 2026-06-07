@@ -5,6 +5,7 @@ history_dir = "~/.local/share/ai/history"
 # ローカル history の最大件数。超過分は古い index / payload から削除。0 で GC 無効。
 history_max_entries = 500
 log_tail_bytes = 16384
+# AI_SESSION_ID は smart entry が起動時に環境変数から解決する。ここには設定しない。
 
 [ask]
 # 文字列でも配列でもよい。CLI --tools があれば上書き（--tools none でこの回のみ []）。

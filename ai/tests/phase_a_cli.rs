@@ -241,3 +241,50 @@ fn dry_run_masks_message_and_skips_aibe() {
     assert_eq!(json["message_masked"], "<masked>");
     assert_eq!(json["message_source"], "argv");
 }
+
+#[test]
+fn non_tty_ask_skips_route_turn_and_injects_ai_session_id() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::AgentTurn {
+            messages, context, ..
+        } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].content, "hello");
+            let session_id = context.ai_session_id.expect("ai_session_id");
+            assert!(!session_id.is_empty());
+            assert!(context.conversation_id.is_none());
+            ClientResponse::AgentTurnResult {
+                id: "turn-1".to_string(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".to_string(),
+                    content: "assistant says hi".to_string(),
+                },
+                tool_calls: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .args(["--quiet", "--no-start", "hello"])
+        .output()
+        .expect("run ai");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).expect("stdout");
+    assert!(stdout.contains("assistant says hi"));
+}

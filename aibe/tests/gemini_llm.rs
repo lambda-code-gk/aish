@@ -366,3 +366,28 @@ async fn system_messages_become_system_instruction() {
         .collect();
     assert!(!roles.contains(&"system"));
 }
+
+#[tokio::test]
+async fn complete_streaming_parses_crlf_sse() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\r\n\r\n",
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]}}]}\r\n\r\n",
+    );
+    Mock::given(method("POST"))
+        .and(path_regex(
+            r"/v1beta/models/test-model:streamGenerateContent",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string(sse_body))
+        .mount(&server)
+        .await;
+
+    let llm = gemini_llm(&server);
+    let mut deltas = Vec::new();
+    let out = llm
+        .complete_streaming(&[ChatMessage::user("hi")], &mut |delta| deltas.push(delta))
+        .await
+        .expect("complete_streaming");
+    assert_eq!(out.content, "hello world");
+    assert_eq!(deltas.join(""), "hello world");
+}

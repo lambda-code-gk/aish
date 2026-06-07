@@ -8,8 +8,9 @@ use serde::Deserialize;
 use toml::Value;
 
 use crate::ports::outbound::{
-    validate_external_commands, AppConfig, ConfigError, ConfigLoader, ExternalCommandConfig,
-    LlmBackend, LlmGenerationParams, LlmProfile, LlmProfilesConfig, LlmProviderKind, ToolsConfig,
+    default_conversation_store_root, validate_external_commands, AppConfig, ConfigError,
+    ConfigLoader, ExternalCommandConfig, LlmBackend, LlmGenerationParams, LlmProfile,
+    LlmProfilesConfig, LlmProviderKind, RouterConfig, ToolsConfig,
     DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
 };
 
@@ -68,10 +69,26 @@ impl ConfigLoader for TomlConfig {
         validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
         Ok(AppConfig {
             socket_path,
+            conversation_store_root: default_conversation_store_root(),
+            router: parse_router(file_cfg.as_ref()),
             llm,
             tools,
             external_commands,
         })
+    }
+}
+
+fn parse_router(file: Option<&FileConfig>) -> RouterConfig {
+    let fallback = file
+        .and_then(|c| c.default_profile.clone())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "default".to_string());
+    RouterConfig {
+        profile: file
+            .and_then(|c| c.router.as_ref())
+            .and_then(|router| router.profile.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(fallback),
     }
 }
 
@@ -517,9 +534,15 @@ fn expand_home(path: String) -> PathBuf {
 struct FileConfig {
     socket_path: Option<String>,
     default_profile: Option<String>,
+    router: Option<RouterSection>,
     #[serde(default)]
     external_commands: Option<Vec<ExternalCommandSection>>,
     tools: Option<ToolsSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RouterSection {
+    profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -567,6 +590,41 @@ struct ReadFileSection {
 mod tests {
     use super::*;
     use crate::ports::outbound::TerminationStrategy;
+
+    #[test]
+    fn router_profile_falls_back_to_default_profile() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_profile = "fast"
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert_eq!(cfg.router.profile, "fast");
+    }
+
+    #[test]
+    fn router_section_overrides_default_profile() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_profile = "fast"
+
+[router]
+profile = "slow"
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert_eq!(cfg.router.profile, "slow");
+    }
 
     #[test]
     fn parses_termination_strategy() {

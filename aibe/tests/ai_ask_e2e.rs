@@ -34,6 +34,8 @@ fn ai_ask_reaches_mock_aibe() {
                 registry,
                 ToolsConfig::default(),
                 Vec::new(),
+                "default".to_string(),
+                dir.path().join("conversations"),
             )
             .await
             .expect("server");
@@ -59,6 +61,8 @@ fn ai_ask_reaches_mock_aibe() {
             external_command_names: Vec::new(),
             shell_log_tail_bytes: 0,
             client_cwd: None,
+            ai_session_id: None,
+            conversation_id: None,
         },
     )
     .expect("ask");

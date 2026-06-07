@@ -39,6 +39,7 @@ impl SessionInfo {
         let mut out = String::new();
         append_env_line(&mut out, "AISH_SESSION_DIR", &self.session_dir);
         append_env_line(&mut out, "AISH_SESSION_ID", &self.session_id);
+        append_env_line(&mut out, "AI_SESSION_ID", &self.session_id);
         append_env_line(&mut out, "AISH_LOG_FILE", &self.log_file);
         append_env_line(&mut out, "AISH_CURRENT_LOG", &self.current_log);
         out

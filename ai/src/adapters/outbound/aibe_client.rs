@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use aibe_client::{
-    agent_turn as transport_agent_turn, agent_turn_with_events, send_cancel_request,
-    AgentTurnProgressEvent, ClientError,
+    agent_turn as transport_agent_turn, agent_turn_with_events, route_turn as transport_route_turn,
+    send_cancel_request, AgentTurnProgressEvent, ClientError,
 };
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
@@ -46,6 +46,8 @@ impl AibeUnixClient {
                     .client_cwd
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned()),
+                ai_session_id: request.ai_session_id.clone(),
+                conversation_id: request.conversation_id.clone(),
             },
             llm_profile: request.llm_profile.clone(),
         }
@@ -66,6 +68,10 @@ impl AibeUnixClient {
             on_approval,
         )
         .map_err(map_client_error)
+    }
+
+    pub fn route_turn(&self, request: ClientRequest) -> Result<ClientResponse, AgentError> {
+        transport_route_turn(self.socket_path(), request).map_err(map_client_error)
     }
 
     pub fn agent_turn_stream(

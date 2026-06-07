@@ -31,6 +31,8 @@ async fn ping_and_agent_turn_over_unix_socket() {
             profile_registry,
             ToolsConfig::default(),
             Vec::new(),
+            "default".to_string(),
+            dir.path().join("conversations"),
         )
         .await
         .expect("server");

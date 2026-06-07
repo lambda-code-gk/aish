@@ -28,9 +28,9 @@ flowchart LR
 |----------------|------|--------------|
 | **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
-| **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
-| **aibe** | エージェントループ、ツール、プロバイダ呼び出し、Unix socket サーバ | LLM API へ（設定に従う） |
-| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログをコンテキストに使う。`chat` はクライアント側 transcript を保持し、`AgentTurnResult` 成功時のみ user/assistant を追記する。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
+| **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `route_turn` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
+| **aibe** | `route_turn`、会話継続、ツール、プロバイダ呼び出し、conversation store、Unix socket サーバ | LLM API へ（設定に従う） |
+| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。`AI_SESSION_ID` を解決して `route_turn` を要求し、aish ログをコンテキストに使う。`chat` はクライアント側 transcript を保持し、`AgentTurnResult` 成功時のみ user/assistant を追記する。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
 
 ## 依存ルール
 
@@ -57,7 +57,7 @@ aish          →  （aibe への path 依存禁止）
 | aibe | `tokio`, HTTP クライアント、serde、プロバイダ SDK、`aibe-protocol`, `aibe-client` | `aish` |
 | ai | `aibe-protocol`, `aibe-client`, `serde` | `aibe`, `aish`, `reqwest` 等の LLM 直叩き |
 
-`ai` は LLM API を直接叩かず、`chat` も `ai` の transcript と local history を経由して `aibe` に渡す。`ai` の history payload は `conversation_id` を保持し、再実行時の再接続に使う。
+`ai` は LLM API を直接叩かず、`chat` も `ai` の transcript と local history を経由して `aibe` に渡す。`ai` の history payload は `conversation_id` と `ai_session_id` を保持し、再実行時の再接続に使う。
 
 ## aibe デーモン
 
@@ -116,6 +116,23 @@ aish          →  （aibe への path 依存禁止）
 `artifacts`: 0024 / 0025 の非採用案で検討した拡張。0026 の外部コマンド経路では付与しない。HTTP ツールループでは `null` のままでよい。
 
 `assistant_streaming`: 任意のデルタ通知。aibe の LLM プロバイダが streaming を返せる場合はそのデルタをそのまま流し、非対応プロバイダは synthetic 1 回のデルタを返す。
+
+### smart entry と `route_turn`
+
+`ai` は tty の `ask` 入口で `route_turn` を 1 回実行し、失敗時のみ 1 回だけ再試行する。non-TTY では `route_turn` を飛ばし、従来の 1 shot ask に倒す。
+
+`route_turn` の request には次を含める。
+
+- `session.ai_session_id`: `aish` 由来の共有キー、または `ai` が生成した一意 ID
+- `session.aish_session_dir`: `aish shell` 由来の session dir
+- `conversation.conversation_id`: 既存会話の継続 ID
+- `conversation.recent_summary`: aibe 側が保持する直近 1 turn の要約
+- `conversation.new_conversation`: `--new` の強制新規フラグ
+- `cli_overrides`: `--preset` / `--tools` / `--log-tail` / `--yes-exec`
+
+`route_turn` の応答 `RoutePlan` は advisory であり、`ai` の CLI 明示値があれば上書きされる。`route_reason` は stderr / history に残す前に redaction する。
+
+`aibe` は `AI_SESSION_ID` ごとに conversation store を切り、`index.jsonl` には redacted metadata、`conversations/<conversation_id>.json` には full transcript と summary を保存する。
 
 エラー時:
 

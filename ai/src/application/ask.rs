@@ -23,6 +23,8 @@ pub struct AskRunOptions {
     pub external_command_names: Vec<String>,
     pub shell_log_tail_bytes: usize,
     pub client_cwd: Option<PathBuf>,
+    pub ai_session_id: Option<String>,
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,8 @@ where
             client_cwd: options.client_cwd.or_else(|| std::env::current_dir().ok()),
             tools: options.resolved_tools.allowlist.into_names(),
             llm_profile: options.llm_profile,
+            ai_session_id: options.ai_session_id,
+            conversation_id: options.conversation_id,
         };
         let request = input.into_request()?;
 

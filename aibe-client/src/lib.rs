@@ -13,8 +13,8 @@ use std::time::Duration;
 use aibe_protocol::{ClientRequest, ClientResponse};
 
 pub use transport::{
-    agent_turn, agent_turn_on_stream, agent_turn_with_events, read_response_line,
-    send_cancel_request, send_request, AgentTurnProgressEvent, ClientError,
+    agent_turn, agent_turn_on_stream, agent_turn_with_events, read_response_line, route_turn,
+    route_turn_on_stream, send_cancel_request, send_request, AgentTurnProgressEvent, ClientError,
     ShellExecApprovalPrompt,
 };
 
