@@ -1,0 +1,121 @@
+# Hexagonal effect boundary rules — 正本: docs/spec/0031_hexagonal-effect-boundary-spec.md
+
+[[rules]]
+id = "application.no-unix-socket"
+severity = "fail"
+paths = ["*/src/application/*.rs", "*/src/application/**/*.rs"]
+regex = "\\b(tokio::net::(UnixListener|UnixStream)|UnixListener|UnixStream)\\b"
+message = "application layer must not own Unix socket I/O"
+suggestion = "Move socket accept/read/write loop to adapters/inbound/unix_socket_server.rs"
+
+[[rules]]
+id = "application.no-filesystem-io"
+severity = "fail"
+paths = ["*/src/application/*.rs", "*/src/application/**/*.rs"]
+regex = "\\b(std::fs::|File::open|File::create|OpenOptions::|canonicalize\\(|metadata\\(|set_permissions\\(|remove_file\\(|create_dir_all\\()"
+message = "application layer must not perform filesystem I/O directly"
+suggestion = "Move filesystem access behind an outbound port or into an adapter"
+
+[[rules]]
+id = "application.no-env"
+severity = "fail"
+paths = ["*/src/application/*.rs", "*/src/application/**/*.rs"]
+regex = "\\bstd::env::"
+message = "application layer must not read environment variables or process cwd"
+suggestion = "Resolve env/cwd in composition root (main.rs) and pass values into use cases"
+
+[[rules]]
+id = "application.no-process"
+severity = "fail"
+paths = ["*/src/application/*.rs", "*/src/application/**/*.rs"]
+regex = "\\b(std::process::|tokio::process::|Command::new)"
+message = "application layer must not spawn external processes directly"
+suggestion = "Use a ProcessRunner/ShellExecutor port and implement it in adapters"
+
+[[rules]]
+id = "application.no-libc"
+severity = "fail"
+paths = ["*/src/application/*.rs", "*/src/application/**/*.rs"]
+regex = "\\blibc::"
+message = "application layer must not call libc directly"
+suggestion = "Move OS-specific calls to adapters"
+
+[[rules]]
+id = "application.no-http"
+severity = "fail"
+paths = ["*/src/application/*.rs", "*/src/application/**/*.rs"]
+regex = "\\b(reqwest|hyper|ureq|isahc|surf)::"
+message = "application layer must not perform HTTP directly"
+suggestion = "Use an outbound port such as LlmProvider"
+
+[[rules]]
+id = "domain.no-filesystem"
+severity = "fail"
+paths = ["*/src/domain/*.rs", "*/src/domain/**/*.rs"]
+regex = "\\b(std::fs::|File::open|File::create|OpenOptions::|canonicalize\\(|metadata\\()"
+message = "domain layer must not perform filesystem I/O"
+suggestion = "Keep only pure policy/value logic in domain; move I/O to adapters"
+
+[[rules]]
+id = "domain.no-env"
+severity = "fail"
+paths = ["*/src/domain/*.rs", "*/src/domain/**/*.rs"]
+regex = "\\bstd::env::"
+message = "domain layer must not read environment variables"
+suggestion = "Read env in adapter/composition root and pass values into domain functions"
+
+[[rules]]
+id = "domain.no-process"
+severity = "fail"
+paths = ["*/src/domain/*.rs", "*/src/domain/**/*.rs"]
+regex = "\\b(std::process::|tokio::process::|Command::new)"
+message = "domain layer must not spawn processes"
+suggestion = "Move process execution to adapters"
+
+[[rules]]
+id = "domain.no-async-runtime"
+severity = "fail"
+paths = ["*/src/domain/*.rs", "*/src/domain/**/*.rs"]
+regex = "\\b(tokio::|async_trait)"
+message = "domain layer must not depend on async runtime or adapter traits"
+suggestion = "Keep domain synchronous and pure where possible"
+
+[[rules]]
+id = "domain.no-http"
+severity = "fail"
+paths = ["*/src/domain/*.rs", "*/src/domain/**/*.rs"]
+regex = "\\b(reqwest|hyper)::"
+message = "domain layer must not perform HTTP directly"
+suggestion = "Keep HTTP client details in adapters"
+
+[[rules]]
+id = "ports.no-process"
+severity = "fail"
+paths = ["*/src/ports/*.rs", "*/src/ports/**/*.rs"]
+regex = "\\b(std::process::|tokio::process::|Command::new)"
+message = "ports should define contracts, not spawn processes"
+suggestion = "Move implementation to adapters"
+
+[[rules]]
+id = "ports.no-http"
+severity = "fail"
+paths = ["*/src/ports/*.rs", "*/src/ports/**/*.rs"]
+regex = "\\b(reqwest|hyper|ureq|isahc|surf)::"
+message = "ports should not perform HTTP"
+suggestion = "Keep HTTP client details in adapters"
+
+[[rules]]
+id = "ports.no-filesystem"
+severity = "warn"
+paths = ["*/src/ports/*.rs", "*/src/ports/**/*.rs"]
+regex = "\\b(std::fs::|File::open|File::create|OpenOptions::|canonicalize\\(|metadata\\(|set_permissions\\()"
+message = "ports should not perform filesystem I/O"
+suggestion = "Keep filesystem access in adapters and pass resolved values into ports"
+
+[[rules]]
+id = "ports.no-env"
+severity = "warn"
+paths = ["*/src/ports/*.rs", "*/src/ports/**/*.rs"]
+regex = "\\bstd::env::"
+message = "ports should not read environment variables"
+suggestion = "Read env in adapter/composition root and inject the resolved values"

@@ -62,6 +62,17 @@
 
 （内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh`）
 
+### Hexagonal effect boundary ルール追加
+
+新しい副作用境界ルールを追加するとき:
+
+1. `scripts/check-hexagonal.sh` は触らない（checker に不足がある場合のみ `check-hexagonal-effects.py` を拡張）
+2. `scripts/hexagonal-rules.toml` に `[[rules]]` を追加（既存違反があるなら最初は `severity = "warn"`）
+3. 一時例外は `scripts/hexagonal-allowlist.toml` に `rule` / `path` / `line` / `reason` / `remove_by` を記載
+4. `docs/architecture.md` の effect boundary 節を必要に応じて更新
+
+詳細: `docs/spec/0031_hexagonal-effect-boundary-spec.md`
+
 ## 報告義務（必須）
 
 返信の末尾に、該当があれば次の見出しで列挙する。

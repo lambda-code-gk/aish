@@ -272,11 +272,27 @@ aish          →  （aibe への path 依存禁止）
 
 | クレート | ファイル |
 |---------|----------|
-| aibe | `application/server.rs` のみ |
+| aibe | `application/server.rs` のみ（socket I/O は `adapters/inbound/unix_socket_server.rs`） |
 | aish | （なし — `main.rs` / `lib.rs` で配線） |
 | ai | （なし — `main.rs` で配線） |
 
 ユースケースの単体テストで adapters が必要なときは `tests/*.rs` に置く（`src/application` 内の `#[cfg(test)]` で adapters を `use` しない）。
+
+### effect boundary（副作用 API）
+
+`scripts/check-hexagonal.sh` は **レイヤー依存** に加え、`scripts/check-hexagonal-effects.py` で副作用 API の混入を検査する（2 層）。
+
+| 項目 | 正本 |
+|------|------|
+| ルール | `scripts/hexagonal-rules.toml` |
+| 一時例外 | `scripts/hexagonal-allowlist.toml`（`rule` + `path` + `line` + `remove_by`） |
+| checker | `scripts/check-hexagonal-effects.py` |
+
+`application` / `domain` / `ports` に `std::fs`、`std::env`、`tokio::net`、`libc`、HTTP クライアント等が直接あってはならない（adapter または composition root へ）。severity は `warn`（報告のみ）または `fail`（CI 失敗）。新規ルールは TOML に追記し、checker 本体は極力触らない。
+
+**aibe composition root**（adapters 組み立て可）: `application/server.rs` のみ。Unix socket I/O は `adapters/inbound/unix_socket_server.rs`。
+
+ルール追加手順の詳細: [0031_hexagonal-effect-boundary-spec.md](spec/0031_hexagonal-effect-boundary-spec.md)「AI 向け運用ルール」。
 
 | クレート | 主なユースケース | Outbound ports（例） | Inbound adapters（例） |
 |---------|------------------|----------------------|-------------------------|

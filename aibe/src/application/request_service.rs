@@ -1,11 +1,13 @@
 //! リクエスト種別のディスパッチ。
 
+use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
 use crate::application::route_turn::RouteTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
+use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     ConversationStore, ProfileRegistry, RouterConfig, ShellExecApprovalGate, ToolRoundTerminator,
     ToolsConfig, TurnCancellation, TurnEventSink,
@@ -263,5 +265,18 @@ fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientC
     match context.cwd.as_deref() {
         Some(raw) => ClientCwd::parse(raw).map(|_| ()),
         None => Err(ClientCwdError::Missing),
+    }
+}
+
+#[async_trait]
+impl ClientRequestHandler for RequestService {
+    async fn handle_with_events(
+        &self,
+        request: ClientRequest,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
+    ) -> ClientResponse {
+        RequestService::handle_with_events(self, request, approval_gate, events, cancellation).await
     }
 }

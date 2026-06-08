@@ -1,33 +1,11 @@
-//! `ai ask` のシェルログパス解決（0019）。
+//! `ai ask` のシェルログパス解決（0019）。filesystem I/O は adapter 側。
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-pub const AI_ASK_LOG_SESSION: &str = "session";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShellLogChoice {
-    None,
-    Path(PathBuf),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ShellLogResolveError {
-    #[error("AI_ASK_LOG must be \"session\" when set (got \"{0}\")")]
-    InvalidAiAskLog(String),
-    #[error("AI_ASK_LOG=session requires AISH_SESSION_DIR to be set and readable")]
-    SessionDirRequired,
-    #[error("--session requires AISH_SESSION_DIR to be set")]
-    SessionDirRequiredForFlag,
-    #[error("invalid session id: {0}")]
-    InvalidSessionId(String),
-    #[error("--session {id} does not match AISH_SESSION_DIR ({dir})")]
-    SessionIdMismatch { id: String, dir: String },
-    #[error("session log not found: {0}")]
-    NotFound(String),
-    #[error("session log unreadable: {0}: {1}")]
-    Unreadable(String, String),
-}
+use crate::domain::{
+    validate_session_id, ShellLogChoice, ShellLogResolveError, AI_ASK_LOG_SESSION,
+};
 
 /// 優先: `--no-log` → `--log` → `--session` → `AI_ASK_LOG=session`。
 pub fn resolve_shell_log_for_ask(
@@ -58,7 +36,6 @@ pub fn resolve_shell_log_for_ask(
     }
 }
 
-/// `AISH_SESSION_DIR/current_log`（`--session <id>` は dir 名と id の一致を要求）。
 fn resolve_session_current_log(
     id: &str,
     session_dir: Option<&Path>,
@@ -84,20 +61,6 @@ fn resolve_session_current_log(
     Ok(log)
 }
 
-fn validate_session_id(id: &str) -> Result<(), ShellLogResolveError> {
-    if id.len() != 12 {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    if !id
-        .bytes()
-        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(ShellLogResolveError::InvalidSessionId(id.to_string()));
-    }
-    Ok(())
-}
-
-/// `session_dir/current_log` を解決し、symlink 先が session 内の通常ファイルとして開けることを検証する。
 fn open_session_current_log(
     session_dir: &Path,
     link_name: &str,

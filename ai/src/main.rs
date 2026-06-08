@@ -14,8 +14,9 @@ use clap::Parser;
 
 use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{
-    external_command_names, load_shell_exec_approval, read_chat_line, AibeUnixClient,
-    ChatReadLineResult, FileLogTail, LocalHistoryStore, StdoutPresenter, YesExecCache,
+    external_command_names, load_shell_exec_approval, read_chat_line, resolve_shell_log_for_ask,
+    AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore, StdoutPresenter,
+    YesExecCache,
 };
 use ai::application::{
     build_response_summary, build_summary, ensure_aibe_if_needed, list_history, next_history_id,
@@ -23,11 +24,10 @@ use ai::application::{
 };
 use ai::clap_cli::{AiCli, AiCommand, HistoryStatusArg, OutputFormatArg, TurnOptions};
 use ai::domain::{
-    resolve_log_tail_bytes, resolve_output_filter, resolve_shell_log_for_ask,
-    validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens,
-    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
-    LogTailResolveError, OutputFormat, OutputFormatError, ShellLogChoice, ShellLogResolveError,
-    ToolsResolveError,
+    resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter, validate_ask_arg_order,
+    AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens, HistoryIndexFilter,
+    HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError,
+    OutputFormat, OutputFormatError, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
@@ -1254,12 +1254,8 @@ fn resolve_llm_profile_with_preset(
     if let Some(p) = preset.filter(|s| !s.is_empty()) {
         return Some(p.to_string());
     }
-    if let Ok(env) = std::env::var("AI_LLM_PROFILE") {
-        if !env.is_empty() {
-            return Some(env);
-        }
-    }
-    config_default.filter(|s| !s.is_empty()).map(str::to_string)
+    let env_profile = std::env::var("AI_LLM_PROFILE").ok();
+    resolve_llm_profile(None, env_profile.as_deref(), config_default)
 }
 
 fn run_diagnostic_command(

@@ -98,6 +98,20 @@ check_crate aish
 check_crate ai
 
 if [[ "$failures" -gt 0 ]]; then
+  echo "HEXAGONAL: $failures layer dependency check(s) failed" >&2
+  echo "HEXAGONAL: see docs/architecture.md (Hexagonal)" >&2
+  exit 1
+fi
+
+note "layer dependency checks passed; running effect boundary rules..."
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$ROOT/scripts/check-hexagonal-effects.py"
+else
+  fail "python3 is required for hexagonal effect boundary checks"
+fi
+
+if [[ "$failures" -gt 0 ]]; then
   echo "HEXAGONAL: $failures check(s) failed" >&2
   echo "HEXAGONAL: see docs/architecture.md (Hexagonal)" >&2
   exit 1

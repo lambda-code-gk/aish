@@ -17,6 +17,7 @@ cargo build -p aibe   # aibe-client 統合テストが spawn するバイナリ
 cargo test --workspace --exclude aibe-client
 cargo test -p aibe-client -- --test-threads=1
 ./scripts/check-architecture.sh   # クレート境界 + subprocess 方針 + check-hexagonal.sh
+python3 scripts/check-hexagonal-effects.py   # effect boundary（verify 経由でも実行）
 ./scripts/check-docs-consistency.sh   # README / 仕様索引 / testing.md 表の実在パス
 ```
 
@@ -42,7 +43,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **aibe-client** | socket 往復の契約固定（`route_turn` / `agent_turn` 承認 prompt → approval → final、TTY 非依存） | `transport.rs`、`tests/agent_turn_approval.rs`、`tests/route_turn.rs`、`client_ping.rs`、`ensure_running_*.rs` |
 | **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
-| **ai** | `--session` hex 検証・presenter / allowlist / output filter | `shell_log_resolve.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
+| **ai** | `--session` hex 検証・presenter / allowlist / output filter | `adapters/outbound/shell_log_resolver.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
 | **ai** | local history / retry / rerun / preset / log-tail / chat transcript / smart entry / exit codes / yes-exec / history GC | `application/history.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`tests/yes_exec_integration.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
 | **aibe** | assistant streaming forward | `tests/agent_turn_streaming.rs`、`adapters/outbound/scripted_mock_llm.rs` |
 | **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |

@@ -74,7 +74,7 @@ where
         let input = AskInput {
             user_message,
             shell_log_tail,
-            client_cwd: options.client_cwd.or_else(|| std::env::current_dir().ok()),
+            client_cwd: options.client_cwd,
             tools: options.resolved_tools.allowlist.into_names(),
             llm_profile: options.llm_profile,
             ai_session_id: options.ai_session_id,
