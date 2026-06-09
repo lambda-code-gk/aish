@@ -51,7 +51,8 @@ impl AibeUnixClient {
                 conversation_id: request.conversation_id.clone(),
                 ..Default::default()
             }
-            .with_console_system_instruction(detect_terminal_size())
+            // `AskRequest` 経路は CLI の `--format` を持たないため常に console 指示を許可する。
+            .with_console_system_instruction(detect_terminal_size(), None)
             .into_wire(),
             llm_profile: request.llm_profile.clone(),
         }

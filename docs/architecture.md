@@ -100,7 +100,7 @@ aish          →  （aibe への path 依存禁止）
 | `llm_profile` | 任意。使用する LLM プロファイル名（`docs/done/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
-| `context.system_instruction` | 任意。この turn のみ LLM に前置する system 本文。クライアント（`ai`）が組み立て、aibe は解釈せず注入する。`ai` は TTY 時に端末サイズから console 向け文言を生成して送る。非 TTY では送らない。長すぎる場合は `aibe_protocol::SYSTEM_INSTRUCTION_MAX_BYTES` で切り詰める |
+| `context.system_instruction` | 任意。この turn のみ LLM に前置する system 本文。クライアント（`ai`）が組み立て、aibe は解釈せず注入する。`ai` は TTY 時に端末サイズから console 向け文言を生成して送る。非 TTY では送らない。`--format`（tsv / json / env の機械可読出力）指定時も、端末幅に合わせた整形指示が後段処理を歪めるため送らない。長すぎる場合は `aibe_protocol::SYSTEM_INSTRUCTION_MAX_BYTES` で切り詰める |
 
 ### レスポンス（aibe → クライアント）
 

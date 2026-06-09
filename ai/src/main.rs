@@ -477,6 +477,7 @@ fn execute_turn(
         request,
         messages,
         shell_log_tail_text.clone(),
+        settings.output_format,
     )?;
 
     let yes_exec_effective =
@@ -776,6 +777,7 @@ fn request_from_messages(
     request: ai::domain::AskRequest,
     messages: Vec<ProtocolMessage>,
     shell_log_tail: Option<String>,
+    output_format: Option<OutputFormat>,
 ) -> anyhow::Result<ClientRequest> {
     let context = RequestContextInput {
         shell_log_tail,
@@ -784,7 +786,7 @@ fn request_from_messages(
         conversation_id: request.conversation_id,
         ..Default::default()
     }
-    .with_console_system_instruction(detect_terminal_size())
+    .with_console_system_instruction(detect_terminal_size(), output_format)
     .into_wire();
     Ok(ClientRequest::AgentTurn {
         id: turn_id,
