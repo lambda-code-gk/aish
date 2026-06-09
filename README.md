@@ -89,7 +89,7 @@ aish          →  aibe へ依存しない（シェル + ログのみ）
 |----------------|-------------|----------|
 | **aish** | なし | `exec` / `shell` でコマンド実行、JSONL ログ追記 |
 | **aibe** | LLM API（設定に従う） | デーモン、stdio 風 NDJSON プロトコル、ツール実行 |
-| **ai** | aibe のみ | `ai ask`、プロファイル選択、ツールカテゴリ指定 |
+| **ai** | aibe のみ | smart entry（`ai "…"`）、`ai ask` / `ai chat`、プロファイル・ツール指定 |
 
 ## Requirements
 
@@ -115,17 +115,27 @@ cp docs/aibe.config.example.toml ~/.config/aibe/config.toml
 # YOUR_API_KEY を実キーに置き換える（git に載せない）
 ```
 
-### 3. エージェントに質問
+### 3. 作業シェルで質問する（推奨導線）
 
-`ai ask` は必要なら aibe を自動起動します。
+`aish shell` で作業ログを記録しながら、子シェル内で `ai "…"` を使います。必要なら aibe を自動起動します。
+
+```bash
+cargo run -p aish -- shell
+
+# 子シェル内
+ai "hello"
+cargo test
+ai "直前の失敗を見て、原因と次の一手を短く"
+```
+
+`ai "…"` は smart entry（`route_turn` 経由）です。詳細: [docs/manual/ai-smart-entry.md](docs/manual/ai-smart-entry.md)。
+
+### 4. 従来 CLI（任意）
+
+明示サブコマンドも利用できます。
 
 ```bash
 cargo run -p ai -- ask "hello"
-```
-
-プロファイルを指定する例:
-
-```bash
 cargo run -p ai -- ask "hello" --profile fast
 ```
 
@@ -146,7 +156,7 @@ cargo run -p aibe -- --foreground
 - 例: [docs/aibe.config.example.toml](docs/aibe.config.example.toml)
 - プロファイル詳細: [docs/manual/llm-profiles.md](docs/manual/llm-profiles.md)
 
-**2 段設定**: 接続（認証・エンドポイント）と利用プリセット（モデル・温度など）を分離します。`ai ask --profile <name>` でプリセットを選択します。
+**2 段設定**: 接続（認証・エンドポイント）と利用プリセット（モデル・温度など）を分離します。`ai ask --profile <name>` または smart entry 経由でプリセットを選択します。
 
 ## Usage
 
@@ -169,8 +179,11 @@ cargo run -p ai
 
 ### Ask the agent (`ai`)
 
+日常の入口は **`ai "…"`**（smart entry）です。明示サブコマンド `ai ask` も利用できます。
+
 ```text
-ai ask [OPTIONS] <message>
+ai "message"                    # smart entry（推奨）
+ai ask [OPTIONS] <message>      # 従来 CLI
                  [--log PATH] [--session ID] [--no-log]
                  [--socket PATH] [--no-start]
                  [--tools LIST] [--profile NAME] [--verbose-tools]
@@ -181,14 +194,15 @@ ai ask [OPTIONS] <message>
 - `--log` — 指定 JSONL をコンテキストに含める（`--session` より優先）
 - `--session ID` — `AISH_SESSION_DIR/current_log` 経由でログを読む（下記「環境変数」参照）
 - `--no-log` — ログを載せない（最優先）
-- `AI_ASK_LOG=session` — 上と同じく `AISH_SESSION_DIR` からログを読む（ユーザーが export。`aish` は設定しない）
+- `AI_ASK_LOG=session` — 上と同じく `AISH_SESSION_DIR` からログを読む（`aish shell` 内では自動 export。外で同じ挙動にしたい場合のみ手動 export）
 
-#### 環境変数（`ai ask` のシェルログ）
+#### 環境変数（`ai` のシェルログ）
 
 | 変数 | 誰が設定 | 意味 |
 |------|----------|------|
 | **`AISH_SESSION_DIR`** | `aish shell` が子シェルへ export（**絶対パス**） | セッション dir（`<log_dir>/<12桁hex>/`）。`ai` が参照する唯一のセッション環境変数 |
-| **`AI_ASK_LOG=session`** | ユーザー（任意） | 設定時のみ、`AISH_SESSION_DIR/current_log` を tail して送る |
+| **`AI_ASK_LOG=session`** | `aish shell` が子シェルへ自動 export | `AISH_SESSION_DIR/current_log` を tail して送る。`aish shell` 外で同じ挙動にしたい場合のみ手動 export |
+| **`AI_SESSION_ID`** | `aish shell` が子シェルへ export（smart entry 用） | aibe の conversation store 共有単位 |
 
 - **`--session ID`**: `ID` は **`basename "$AISH_SESSION_DIR"` と一致** すること（例: `002f15d02b54`）
 - 別ペインでは `export AISH_SESSION_DIR=/abs/path/to/sessions/<12桁hex>` してから `--session` または `AI_ASK_LOG=session` を使う
@@ -219,7 +233,9 @@ cargo run -p aish -- session --format env   # eval 向け
 `aish shell` 内でログ付き質問する例:
 
 ```bash
-export AI_ASK_LOG=session   # 任意（ユーザー設定）
+# AI_ASK_LOG=session は aish shell が自動 export する
+ai "直前のエラーを要約して"
+# または明示サブコマンド
 ai ask "直前のエラーを要約して"
 ```
 

@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use crate::ports::outbound::{
-    default_conversation_store_root, AppConfig, ConfigError, ConfigLoader, LlmProfilesConfig,
-    RouterConfig, ToolsConfig,
+    default_conversation_store_root_with_home, AppConfig, ConfigError, ConfigLoader,
+    LlmProfilesConfig, RouterConfig, ToolsConfig,
 };
 use aibe_client::default_socket_path;
 
@@ -17,12 +17,13 @@ impl EnvConfig {
     }
 
     fn load_from_env() -> Result<AppConfig, ConfigError> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let socket_path = std::env::var("AIBE_SOCKET_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| default_socket_path());
         Ok(AppConfig {
             socket_path,
-            conversation_store_root: default_conversation_store_root(),
+            conversation_store_root: default_conversation_store_root_with_home(&home),
             router: RouterConfig::default(),
             llm: LlmProfilesConfig::default_mock(),
             tools: ToolsConfig::default(),

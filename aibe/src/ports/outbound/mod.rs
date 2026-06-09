@@ -12,7 +12,7 @@ pub mod turn_events;
 
 pub use command_policy::CommandPolicy;
 pub use config::{
-    default_conversation_store_root, validate_external_commands, AppConfig, ConfigError,
+    default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,
     ConfigLoader, ExploreLimitsConfig, ExternalCommandConfig, LlmBackend, LlmGenerationParams,
     LlmProfile, LlmProfilesConfig, LlmProviderKind, ProfileRegistry, ReadFileConfig, RouterConfig,
     ShellExecApprovalMode, ShellExecConfig, TerminationStrategy, ToolsConfig,

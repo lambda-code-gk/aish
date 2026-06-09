@@ -114,7 +114,7 @@ suggestion = "Keep filesystem access in adapters and pass resolved values into p
 
 [[rules]]
 id = "ports.no-env"
-severity = "warn"
+severity = "fail"
 paths = ["*/src/ports/*.rs", "*/src/ports/**/*.rs"]
 regex = "\\bstd::env::"
 message = "ports should not read environment variables"

@@ -1,7 +1,7 @@
 //! サーバ設定 outbound port。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -184,9 +184,8 @@ impl Default for RouterConfig {
     }
 }
 
-pub fn default_conversation_store_root() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
+pub fn default_conversation_store_root_with_home(home: impl AsRef<Path>) -> PathBuf {
+    home.as_ref()
         .join(".local/share/aibe")
         .join("conversations")
 }

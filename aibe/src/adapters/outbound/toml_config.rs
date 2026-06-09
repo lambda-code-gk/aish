@@ -8,7 +8,7 @@ use serde::Deserialize;
 use toml::Value;
 
 use crate::ports::outbound::{
-    default_conversation_store_root, validate_external_commands, AppConfig, ConfigError,
+    default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,
     ConfigLoader, ExternalCommandConfig, LlmBackend, LlmGenerationParams, LlmProfile,
     LlmProfilesConfig, LlmProviderKind, RouterConfig, ToolsConfig,
     DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
@@ -67,9 +67,10 @@ impl ConfigLoader for TomlConfig {
         let tools = parse_tools(file_cfg.as_ref())?;
         let external_commands = parse_external_commands(file_cfg.as_ref());
         validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         Ok(AppConfig {
             socket_path,
-            conversation_store_root: default_conversation_store_root(),
+            conversation_store_root: default_conversation_store_root_with_home(&home),
             router: parse_router(file_cfg.as_ref()),
             llm,
             tools,
