@@ -26,7 +26,7 @@ flowchart LR
 
 | コンポーネント | 役割 | ネットワーク |
 |----------------|------|--------------|
-| **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
+| **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。`openpty` 後に親 stdin の winsize を PTY master へ `TIOCSWINSZ` で同期し、セッション中の `SIGWINCH` も `signalfd` 経由で同様に伝播。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
 | **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `route_turn` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
 | **aibe** | `route_turn`、会話継続、ツール、プロバイダ呼び出し、conversation store、Unix socket サーバ | LLM API へ（設定に従う） |
@@ -85,7 +85,8 @@ aish          →  （aibe への path 依存禁止）
   "llm_profile": "fast",
   "context": {
     "shell_log_tail": "...",
-    "cwd": "/abs/path/to/ai/cwd"
+    "cwd": "/abs/path/to/ai/cwd",
+    "system_instruction": "..."
   }
 }
 ```
@@ -99,6 +100,7 @@ aish          →  （aibe への path 依存禁止）
 | `llm_profile` | 任意。使用する LLM プロファイル名（`docs/done/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
+| `context.system_instruction` | 任意。この turn のみ LLM に前置する system 本文。クライアント（`ai`）が組み立て、aibe は解釈せず注入する。`ai` は TTY 時に端末サイズから console 向け文言を生成して送る。非 TTY では送らない。長すぎる場合は `aibe_protocol::SYSTEM_INSTRUCTION_MAX_BYTES` で切り詰める |
 
 ### レスポンス（aibe → クライアント）
 

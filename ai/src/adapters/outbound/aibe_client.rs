@@ -8,9 +8,10 @@ use aibe_client::{
 };
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
-use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage, RequestContext};
+use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage};
 
-use crate::domain::AskRequest;
+use super::terminal_size::detect_terminal_size;
+use crate::domain::{AskRequest, RequestContextInput};
 use crate::ports::outbound::{AgentClient, AgentError};
 
 pub struct AibeUnixClient {
@@ -40,7 +41,7 @@ impl AibeUnixClient {
                 .iter()
                 .map(|t| t.as_str().to_string())
                 .collect(),
-            context: RequestContext {
+            context: RequestContextInput {
                 shell_log_tail: request.shell_log_tail.clone(),
                 cwd: request
                     .client_cwd
@@ -48,7 +49,10 @@ impl AibeUnixClient {
                     .map(|p| p.to_string_lossy().into_owned()),
                 ai_session_id: request.ai_session_id.clone(),
                 conversation_id: request.conversation_id.clone(),
-            },
+                ..Default::default()
+            }
+            .with_console_system_instruction(detect_terminal_size())
+            .into_wire(),
             llm_profile: request.llm_profile.clone(),
         }
     }

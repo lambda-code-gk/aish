@@ -15,6 +15,8 @@ pub enum ContextError {
 pub struct AgentTurnContext {
     pub client_cwd: Option<ClientCwd>,
     pub shell_log_tail: Option<ShellLogTail>,
+    /// クライアントがこの turn 用に渡した system 本文（注入のみ。aibe は解釈しない）。
+    pub system_instruction: Option<String>,
 }
 
 impl AgentTurnContext {
@@ -22,6 +24,7 @@ impl AgentTurnContext {
         Self {
             client_cwd: Some(client_cwd),
             shell_log_tail: tail,
+            system_instruction: None,
         }
     }
 
@@ -29,6 +32,7 @@ impl AgentTurnContext {
         Self {
             client_cwd: None,
             shell_log_tail: tail,
+            system_instruction: None,
         }
     }
 

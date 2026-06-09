@@ -9,6 +9,7 @@ mod output_filter;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
 mod stdout_presenter;
+mod terminal_size;
 pub mod toml_config;
 mod yes_exec_cache;
 
@@ -26,4 +27,5 @@ pub use output_filter::{apply_output_filter, format_filter_exit_status, FilterRu
 pub use shell_exec_approval_ui::prompt_shell_exec_approval;
 pub use shell_log_resolver::resolve_shell_log_for_ask;
 pub use stdout_presenter::{render_response, StdoutPresenter};
+pub use terminal_size::detect_terminal_size;
 pub use yes_exec_cache::YesExecCache;

@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 use crate::adapters::outbound::ShellRcLayout;
@@ -44,6 +45,7 @@ impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
             .map_err(|_| InteractiveShellError::Failed("AISH_SESSION_DIR contains NUL".into()))?;
 
         let (master, slave) = open_pty_pair()?;
+        sync_pty_winsize_from_stdin(master)?;
         let rc_layout = crate::adapters::outbound::prepare_interactive_rc(shell)
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
 
@@ -245,6 +247,109 @@ fn child_die(msg: &str) -> ! {
     unsafe {
         libc::write(libc::STDERR_FILENO, line.as_ptr().cast(), line.len());
         libc::_exit(1);
+    }
+}
+
+/// 親の実端末（stdin）の winsize を PTY master へコピーする。
+///
+/// `openpty` 直後は子シェル側の `stty size` が `0 0` になりうるため、fork 前に同期する。
+fn sync_pty_winsize_from_stdin(master: RawFd) -> Result<(), InteractiveShellError> {
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::ioctl(libc::STDIN_FILENO, libc::TIOCGWINSZ, &mut ws) };
+    if rc != 0 || ws.ws_col == 0 || ws.ws_row == 0 {
+        return Ok(());
+    }
+    let rc = unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &ws) };
+    if rc != 0 {
+        return Err(InteractiveShellError::Failed(format!(
+            "TIOCSWINSZ on pty master: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// `SIGWINCH` を `signalfd` で受け、親 TTY の winsize を PTY へ伝播する。
+struct WinchMonitor {
+    fd: RawFd,
+    previous_mask: libc::sigset_t,
+}
+
+impl WinchMonitor {
+    fn install() -> Result<Self, InteractiveShellError> {
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+            return Err(InteractiveShellError::Failed("stdin is not a tty".into()));
+        }
+
+        let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+        let mut previous_mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+        if unsafe { libc::sigemptyset(&mut mask) } != 0
+            || unsafe { libc::sigaddset(&mut mask, libc::SIGWINCH) } != 0
+        {
+            return Err(InteractiveShellError::Failed(format!(
+                "sigset for SIGWINCH: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        if unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &mask, &mut previous_mask) } != 0 {
+            return Err(InteractiveShellError::Failed(format!(
+                "pthread_sigmask(SIG_BLOCK, SIGWINCH): {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+
+        let fd = unsafe { libc::signalfd(-1, &mask, libc::SFD_CLOEXEC) };
+        if fd < 0 {
+            let err = std::io::Error::last_os_error();
+            let _ = unsafe {
+                libc::pthread_sigmask(libc::SIG_SETMASK, &previous_mask, std::ptr::null_mut())
+            };
+            return Err(InteractiveShellError::Failed(format!(
+                "signalfd(SIGWINCH): {err}"
+            )));
+        }
+
+        Ok(Self { fd, previous_mask })
+    }
+
+    fn fd(&self) -> RawFd {
+        self.fd
+    }
+
+    fn drain_and_sync(&self, master: RawFd) -> Result<(), InteractiveShellError> {
+        let mut info: libc::signalfd_siginfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::signalfd_siginfo>();
+        loop {
+            let n = unsafe {
+                libc::read(
+                    self.fd,
+                    (&mut info as *mut libc::signalfd_siginfo).cast(),
+                    size,
+                )
+            };
+            if n < 0 {
+                if os_error_is_eintr() {
+                    continue;
+                }
+                return Err(InteractiveShellError::Failed(format!(
+                    "read(signalfd): {}",
+                    std::io::Error::last_os_error()
+                )));
+            }
+            if n == 0 {
+                break;
+            }
+        }
+        sync_pty_winsize_from_stdin(master)
+    }
+}
+
+impl Drop for WinchMonitor {
+    fn drop(&mut self) {
+        close_raw_fd(self.fd);
+        let _ = unsafe {
+            libc::pthread_sigmask(libc::SIG_SETMASK, &self.previous_mask, std::ptr::null_mut())
+        };
     }
 }
 
@@ -474,6 +579,7 @@ fn relay_master_fd<L: SessionLog>(
     child: libc::pid_t,
     pty: &mut PtyShell<'_, L>,
 ) -> Result<i32, InteractiveShellError> {
+    let winch = WinchMonitor::install().ok();
     let mut master_file = unsafe { std::fs::File::from_raw_fd(master) };
     let mut stdout = std::io::stdout().lock();
     let mut buf = [0u8; 4096];
@@ -484,6 +590,43 @@ fn relay_master_fd<L: SessionLog>(
             drain_master_output(&mut master_file, &mut stdout, pty, &mut line_buf, &mut buf)?;
             flush_line(pty, &mut line_buf)?;
             return Ok(status);
+        }
+
+        let master_raw = master_file.as_raw_fd();
+        let mut poll_fds = vec![libc::pollfd {
+            fd: master_raw,
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        if let Some(ref monitor) = winch {
+            poll_fds.push(libc::pollfd {
+                fd: monitor.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+
+        let rc = unsafe { libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, -1) };
+        if rc < 0 {
+            if os_error_is_eintr() {
+                continue;
+            }
+            return Err(InteractiveShellError::Failed(format!(
+                "poll(pty master): {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+
+        if poll_fds.len() > 1
+            && poll_fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+        {
+            if let Some(ref monitor) = winch {
+                monitor.drain_and_sync(master_raw)?;
+            }
+        }
+
+        if poll_fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) == 0 {
+            continue;
         }
 
         match master_file.read(&mut buf) {
@@ -596,6 +739,21 @@ mod tests {
         let mut fds = [-1i32; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         (fds[0], fds[1])
+    }
+
+    #[test]
+    fn winch_monitor_skips_install_when_stdin_not_tty() {
+        assert!(WinchMonitor::install().is_err());
+    }
+
+    #[test]
+    fn sync_pty_winsize_from_stdin_is_noop_when_stdin_has_no_size() {
+        let (master, slave) = open_pty_pair().expect("openpty");
+        unsafe {
+            libc::close(slave);
+        }
+        sync_pty_winsize_from_stdin(master).expect("sync should not fail");
+        close_raw_fd(master);
     }
 
     #[test]

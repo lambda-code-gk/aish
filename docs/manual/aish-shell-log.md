@@ -33,6 +33,8 @@ ai ask --session <12桁hex> "…"
 2. `<log_dir>/<12桁hex>/log.jsonl` と `current_log` → `log.jsonl` が作成される
 3. `stderr` に `aish: session <id> (dir …)` が表示される
 4. 子シェルに **`AISH_SESSION_DIR`**（セッション dir の絶対パス）と **`AI_ASK_LOG=session`** が export される
+5. 子シェル内で `stty size` が親ターミナルと同じ行・列になること（`0 0` ではないこと）
+6. `aish shell` 実行中に外側ターミナルをリサイズし、子シェル内の `stty size` が追従すること
 
 ## CLI 共通オプション（`aish`）
 

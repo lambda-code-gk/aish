@@ -23,5 +23,8 @@ pub use tool_name::{
 /// `RequestContext.shell_log_tail` の truncate 上限（バイト）。
 pub const SHELL_LOG_TAIL_MAX_BYTES: usize = 16 * 1024;
 
+/// `RequestContext.system_instruction` の truncate 上限（バイト）。
+pub const SYSTEM_INSTRUCTION_MAX_BYTES: usize = 8 * 1024;
+
 /// `tool_calls` / クライアント表示 truncate の共有上限（バイト）。
 pub const MAX_TOOL_OUTPUT_BYTES: usize = 32_768;

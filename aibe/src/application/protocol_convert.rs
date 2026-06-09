@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-use aibe_protocol::{ProtocolMessage, ProtocolMessageOut, RequestContext};
+use aibe_protocol::{
+    ProtocolMessage, ProtocolMessageOut, RequestContext, SYSTEM_INSTRUCTION_MAX_BYTES,
+};
 
 use crate::domain::{AgentTurnContext, ChatMessage, ClientCwd, MessageRole, ShellLogTail};
 
@@ -52,10 +54,25 @@ impl TryFrom<RequestContext> for AgentTurnContext {
             .shell_log_tail
             .as_deref()
             .and_then(ShellLogTail::from_wire_opt);
+        let system_instruction = normalize_system_instruction(ctx.system_instruction);
         Ok(AgentTurnContext {
             client_cwd,
             shell_log_tail,
+            system_instruction,
         })
+    }
+}
+
+fn normalize_system_instruction(raw: Option<String>) -> Option<String> {
+    let trimmed = raw?.trim().to_string();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.len() > SYSTEM_INSTRUCTION_MAX_BYTES {
+        let end = trimmed.floor_char_boundary(SYSTEM_INSTRUCTION_MAX_BYTES);
+        Some(trimmed[..end].to_string())
+    } else {
+        Some(trimmed)
     }
 }
 
@@ -89,6 +106,39 @@ mod tests {
         assert_eq!(
             domain.client_cwd.expect("cwd").as_path(),
             std::path::Path::new("/tmp/proj")
+        );
+    }
+
+    #[test]
+    fn try_from_system_instruction_trims_and_keeps() {
+        let ctx = RequestContext {
+            system_instruction: Some("  be brief  ".into()),
+            ..Default::default()
+        };
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
+        assert_eq!(domain.system_instruction.as_deref(), Some("be brief"));
+    }
+
+    #[test]
+    fn try_from_blank_system_instruction_becomes_none() {
+        let ctx = RequestContext {
+            system_instruction: Some("  \n\t  ".into()),
+            ..Default::default()
+        };
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
+        assert!(domain.system_instruction.is_none());
+    }
+
+    #[test]
+    fn try_from_long_system_instruction_truncates() {
+        let ctx = RequestContext {
+            system_instruction: Some("x".repeat(SYSTEM_INSTRUCTION_MAX_BYTES + 1)),
+            ..Default::default()
+        };
+        let domain = AgentTurnContext::try_from(ctx).expect("wire DTO conversion");
+        assert_eq!(
+            domain.system_instruction.as_ref().map(String::len),
+            Some(SYSTEM_INSTRUCTION_MAX_BYTES)
         );
     }
 

@@ -67,7 +67,7 @@ impl AgentTurnService {
             );
         }
 
-        let conversation = inject_shell_log_tail(messages, &context);
+        let conversation = prepare_turn_messages(messages, &context);
 
         if tools.is_empty() {
             return self
@@ -330,14 +330,19 @@ impl AgentTurnService {
     }
 }
 
-/// `[shell log tail]` 前置（aibe application 内の唯一の注入箇所）。
-fn inject_shell_log_tail(
+/// turn 用メッセージの前置（aibe application 内の注入箇所）。
+fn prepare_turn_messages(
     mut messages: Vec<ChatMessage>,
     context: &AgentTurnContext,
 ) -> Vec<ChatMessage> {
+    let mut insert_at = 0;
+    if let Some(ref instruction) = context.system_instruction {
+        messages.insert(insert_at, ChatMessage::system(instruction.clone()));
+        insert_at += 1;
+    }
     if let Some(ref tail) = context.shell_log_tail {
         messages.insert(
-            0,
+            insert_at,
             ChatMessage::user(format!("[shell log tail]\n{}", tail.as_str())),
         );
     }
@@ -350,21 +355,45 @@ mod tests {
     use crate::domain::{ClientCwd, ShellLogTail};
 
     #[test]
-    fn inject_shell_log_tail_skips_empty_normalized_tail() {
+    fn prepare_turn_messages_skips_empty_normalized_tail() {
         let ctx = AgentTurnContext::for_text_only(None);
-        let msgs = inject_shell_log_tail(vec![ChatMessage::user("hi")], &ctx);
+        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hi");
     }
 
     #[test]
-    fn inject_shell_log_tail_prepends_when_present() {
+    fn prepare_turn_messages_prepends_shell_log_tail() {
         let tail = ShellLogTail::from_wire_opt("log line").expect("tail");
         let ctx = AgentTurnContext::for_text_only(Some(tail));
-        let msgs = inject_shell_log_tail(vec![ChatMessage::user("hi")], &ctx);
+        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx);
         assert_eq!(msgs.len(), 2);
         assert!(msgs[0].content.starts_with("[shell log tail]\n"));
         assert!(msgs[0].content.contains("log line"));
+        assert_eq!(msgs[1].content, "hi");
+    }
+
+    #[test]
+    fn prepare_turn_messages_prepends_client_system_instruction() {
+        let mut ctx = AgentTurnContext::for_text_only(None);
+        ctx.system_instruction = Some("be brief".into());
+        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, crate::domain::MessageRole::System);
+        assert_eq!(msgs[0].content, "be brief");
+        assert_eq!(msgs[1].content, "hi");
+    }
+
+    #[test]
+    fn prepare_turn_messages_orders_system_before_shell_log_tail() {
+        let tail = ShellLogTail::from_wire_opt("log line").expect("tail");
+        let mut ctx = AgentTurnContext::for_text_only(Some(tail));
+        ctx.system_instruction = Some("be brief".into());
+        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, crate::domain::MessageRole::System);
+        assert!(msgs[1].content.starts_with("[shell log tail]\n"));
+        assert_eq!(msgs[2].content, "hi");
     }
 
     #[test]

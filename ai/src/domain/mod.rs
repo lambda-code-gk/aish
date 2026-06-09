@@ -1,12 +1,16 @@
 mod ask;
 mod ask_arg_order;
+mod console_context;
 mod history;
 mod llm_profile;
 mod log_tail;
 mod output_filter;
 mod output_format;
 mod reports;
+mod request_context;
 mod shell_log;
+mod terminal_display;
+mod terminal_size;
 mod tools;
 
 pub use ask::{AskInput, AskRequest, AskRequestError};
@@ -22,9 +26,11 @@ pub use output_format::{
     append_env_line, append_tsv_row, shell_single_quote, OutputFormat, OutputFormatError,
 };
 pub use reports::{DiagnosticsReport, DryRunReport, FilterMetadata};
+pub use request_context::RequestContextInput;
 pub use shell_log::{
     validate_session_id, ShellLogChoice, ShellLogResolveError, AI_ASK_LOG_SESSION,
 };
+pub use terminal_size::TerminalSize;
 pub use tools::{
     resolve_tools, tokens_from_config_value, AskToolsConfigRaw, ConfigToolsTokens, ResolvedTools,
     ToolAllowlist, ToolsResolveError, ToolsStartupLine,

@@ -14,9 +14,9 @@ use clap::Parser;
 
 use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{
-    external_command_names, load_shell_exec_approval, read_chat_line, resolve_shell_log_for_ask,
-    AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore, StdoutPresenter,
-    YesExecCache,
+    detect_terminal_size, external_command_names, load_shell_exec_approval, read_chat_line,
+    resolve_shell_log_for_ask, AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore,
+    StdoutPresenter, YesExecCache,
 };
 use ai::application::{
     build_response_summary, build_summary, ensure_aibe_if_needed, list_history, next_history_id,
@@ -27,16 +27,17 @@ use ai::domain::{
     resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter, validate_ask_arg_order,
     AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens, HistoryIndexFilter,
     HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError,
-    OutputFormat, OutputFormatError, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
+    OutputFormat, OutputFormatError, RequestContextInput, ShellLogChoice, ShellLogResolveError,
+    ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalPrompt};
 use aibe_protocol::{
-    is_known_tool, ClientRequest, ClientResponse, ProtocolMessage, RequestContext, RouteKind,
-    RoutePlan, RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession, GIT_DIFF,
-    GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+    is_known_tool, ClientRequest, ClientResponse, ProtocolMessage, RouteKind, RoutePlan,
+    RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession, GIT_DIFF, GIT_STATUS, GREP,
+    LIST_DIR, READ_FILE, SHELL_EXEC,
 };
 
 fn main() -> ExitCode {
@@ -776,12 +777,15 @@ fn request_from_messages(
     messages: Vec<ProtocolMessage>,
     shell_log_tail: Option<String>,
 ) -> anyhow::Result<ClientRequest> {
-    let context = RequestContext {
+    let context = RequestContextInput {
         shell_log_tail,
         cwd: request.client_cwd.map(|p| p.display().to_string()),
         ai_session_id: request.ai_session_id,
         conversation_id: request.conversation_id,
-    };
+        ..Default::default()
+    }
+    .with_console_system_instruction(detect_terminal_size())
+    .into_wire();
     Ok(ClientRequest::AgentTurn {
         id: turn_id,
         messages,

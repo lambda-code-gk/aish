@@ -60,6 +60,9 @@ pub struct RequestContext {
     pub ai_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// この turn のみ LLM に前置する system 本文。クライアントが組み立て、aibe は注入のみ行う。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -126,6 +129,20 @@ mod tests {
                 assert!(context.shell_log_tail.is_none());
                 assert!(context.cwd.is_none());
                 assert!(llm_profile.is_none());
+            }
+            _ => panic!("expected agent_turn"),
+        }
+    }
+
+    #[test]
+    fn agent_turn_deserializes_context_system_instruction() {
+        let req: ClientRequest = serde_json::from_str(
+            r#"{"type":"agent_turn","id":"1","messages":[{"role":"user","content":"hi"}],"context":{"system_instruction":"be brief"}}"#,
+        )
+        .expect("parse");
+        match req {
+            ClientRequest::AgentTurn { context, .. } => {
+                assert_eq!(context.system_instruction.as_deref(), Some("be brief"));
             }
             _ => panic!("expected agent_turn"),
         }
