@@ -487,7 +487,7 @@ fn execute_turn(
 
     let yes_exec_effective =
         settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
-    presenter.begin_turn_progress();
+    let _progress_guard = presenter.progress_guard();
     let response = if settings.timeout_secs.is_some() || settings.progress || yes_exec_effective {
         run_agent_turn_async(
             plan.socket_path.clone(),
@@ -510,7 +510,6 @@ fn execute_turn(
             settings.progress,
         )?
     };
-    presenter.end_turn_progress();
 
     let TurnExecutionOutcome {
         response,
@@ -1259,7 +1258,7 @@ fn resolve_turn_settings(
         stderr_tty,
     );
     let quiet = turn.quiet || preset.and_then(|p| p.quiet).unwrap_or(false);
-    let progress_spinner = progress && !quiet && stderr_tty && output_format.is_none();
+    let progress_spinner = progress && !quiet && stderr_tty;
     Ok(ResolvedTurnSettings {
         quiet,
         output_format,
@@ -1852,6 +1851,39 @@ mod cli_tests {
         assert!(resolve_progress(None, None, None, true));
         assert!(!resolve_progress(None, None, None, false));
         assert!(!resolve_progress(Some(false), None, None, true));
+    }
+
+    #[test]
+    fn resolve_turn_settings_progress_spinner_not_blocked_by_format() {
+        use std::collections::HashMap;
+        use std::io::IsTerminal;
+
+        use crate::{resolve_turn_settings, OutputFormat};
+        use ai::clap_cli::OutputFormatArg;
+
+        let cfg = AiConfig {
+            socket_path: default_socket_path(),
+            ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
+            ask_filter: None,
+            ask_console_hints: None,
+            ask_progress: None,
+            history_dir: PathBuf::from("/tmp/ai-history-test"),
+            history_max_entries: 500,
+            log_tail_bytes: None,
+            presets: HashMap::new(),
+        };
+        let turn = TurnOptions {
+            format: Some(OutputFormatArg::Json),
+            progress: true,
+            ..Default::default()
+        };
+        let settings = resolve_turn_settings(&cfg, &turn).expect("resolve");
+        assert_eq!(settings.output_format, Some(OutputFormat::Json));
+        assert!(settings.progress);
+        if std::io::stderr().is_terminal() {
+            assert!(settings.progress_spinner);
+        }
     }
 
     #[test]

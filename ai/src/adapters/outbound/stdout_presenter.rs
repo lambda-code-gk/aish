@@ -15,6 +15,17 @@ use super::output_filter::{
 };
 use super::stderr_spinner::StderrSpinner;
 
+/// turn 終了時に spinner を必ず停止する。
+pub struct ProgressGuard<'a> {
+    presenter: &'a StdoutPresenter,
+}
+
+impl Drop for ProgressGuard<'_> {
+    fn drop(&mut self) {
+        self.presenter.end_turn_progress();
+    }
+}
+
 #[derive(Default)]
 pub struct StdoutPresenter {
     output_filter: Option<String>,
@@ -65,6 +76,17 @@ impl StdoutPresenter {
 
     pub fn end_turn_progress(&self) {
         self.spinner.stop();
+    }
+
+    /// turn スコープの spinner を RAII で停止する。
+    pub fn progress_guard(&self) -> ProgressGuard<'_> {
+        self.begin_turn_progress();
+        ProgressGuard { presenter: self }
+    }
+
+    /// assistant streaming を stdout に出してよいか（structured output 時は false）。
+    pub(crate) fn assistant_stream_stdout_enabled(&self) -> bool {
+        !self.quiet && self.output_format.is_none()
     }
 
     fn stop_spinner_for_output(&self) {
@@ -157,7 +179,7 @@ impl Presenter for StdoutPresenter {
     }
 
     fn show_stream_chunk(&self, chunk: &str) {
-        if self.quiet {
+        if !self.assistant_stream_stdout_enabled() {
             return;
         }
         if !chunk.is_empty() {
@@ -773,6 +795,30 @@ mod tests {
         ));
         assert!(line.contains("[truncated]"));
         assert!(line.len() < huge_len + 80);
+    }
+
+    #[test]
+    fn assistant_stream_stdout_disabled_for_structured_output() {
+        for format in [OutputFormat::Json, OutputFormat::Tsv, OutputFormat::Env] {
+            let presenter = StdoutPresenter::with_options(None, Some(format), false, false);
+            assert!(!presenter.assistant_stream_stdout_enabled());
+        }
+    }
+
+    #[test]
+    fn assistant_stream_stdout_respects_quiet() {
+        let presenter = StdoutPresenter::with_options(None, None, true, false);
+        assert!(!presenter.assistant_stream_stdout_enabled());
+        let presenter = StdoutPresenter::with_options(None, None, false, false);
+        assert!(presenter.assistant_stream_stdout_enabled());
+    }
+
+    #[test]
+    fn progress_guard_stops_spinner_without_panic() {
+        let presenter = StdoutPresenter::with_options(None, None, false, true);
+        {
+            let _guard = presenter.progress_guard();
+        }
     }
 
     #[test]

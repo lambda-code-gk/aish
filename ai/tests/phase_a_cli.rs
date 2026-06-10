@@ -46,6 +46,43 @@ impl MockSocketServer {
     }
 
     fn spawn(responder: impl Fn(ClientRequest) -> ClientResponse + Send + 'static) -> Self {
+        Self::spawn_multi(move |req| vec![responder(req)])
+    }
+
+    fn ask_with_streaming(
+        expected_message: &'static str,
+        stream_chunks: &'static [&'static str],
+        final_content: &'static str,
+    ) -> Self {
+        Self::spawn_multi(move |req| match req {
+            ClientRequest::AgentTurn { id, messages, .. } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].content, expected_message);
+                let mut responses = stream_chunks
+                    .iter()
+                    .map(|chunk| ClientResponse::AssistantStreaming {
+                        id: id.clone(),
+                        delta: (*chunk).to_string(),
+                    })
+                    .collect::<Vec<_>>();
+                responses.push(ClientResponse::AgentTurnResult {
+                    id,
+                    status: AgentTurnStatus::Ok,
+                    assistant_message: ProtocolMessageOut {
+                        role: "assistant".to_string(),
+                        content: final_content.to_string(),
+                    },
+                    tool_calls: vec![],
+                });
+                responses
+            }
+            other => panic!("unexpected request: {other:?}"),
+        })
+    }
+
+    fn spawn_multi(
+        responder: impl Fn(ClientRequest) -> Vec<ClientResponse> + Send + 'static,
+    ) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
@@ -57,9 +94,11 @@ impl MockSocketServer {
             let mut line = String::new();
             reader.read_line(&mut line).expect("read request");
             let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse request");
-            let response = responder(req);
-            let payload = serde_json::to_string(&response).expect("serialize response");
-            writeln!(writer, "{payload}").expect("write response");
+            for response in responder(req) {
+                let payload = serde_json::to_string(&response).expect("serialize response");
+                writeln!(writer, "{payload}").expect("write response");
+                writer.flush().expect("flush response");
+            }
         });
 
         Self {
@@ -102,6 +141,67 @@ fn setup_session_dir(root: &tempfile::TempDir) -> std::path::PathBuf {
     fs::write(session.join("log.jsonl"), "{}\n").expect("log");
     symlink("log.jsonl", session.join("current_log")).expect("symlink");
     session
+}
+
+#[test]
+fn structured_format_ignores_stream_chunks_on_stdout() {
+    let home = tempfile::tempdir().expect("home");
+
+    let server_json =
+        MockSocketServer::ask_with_streaming("hello", &["partial ", "stream "], "final answer");
+    let cfg_json = write_ai_config(&server_json.socket_path, &home);
+    let out_json = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg_json)
+        .env("HOME", home.path())
+        .args(["--format", "json", "--no-start", "--no-progress", "hello"])
+        .output()
+        .expect("run ai json");
+    assert!(
+        out_json.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out_json.stderr)
+    );
+    let json: Value = serde_json::from_slice(&out_json.stdout).expect("json");
+    assert_eq!(json["response_type"], "agent_turn_result");
+    assert_eq!(json["assistant_message"]["content"], "final answer");
+
+    let server_tsv =
+        MockSocketServer::ask_with_streaming("hello", &["partial ", "stream "], "final answer");
+    let cfg_tsv = write_ai_config(&server_tsv.socket_path, &home);
+    let out_tsv = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg_tsv)
+        .env("HOME", home.path())
+        .args(["--format", "tsv", "--no-start", "--no-progress", "hello"])
+        .output()
+        .expect("run ai tsv");
+    assert!(
+        out_tsv.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out_tsv.stderr)
+    );
+    let tsv = String::from_utf8_lossy(&out_tsv.stdout);
+    assert!(tsv.contains("response_type\tagent_turn_result"));
+    assert!(tsv.contains("assistant_message.content\tfinal answer"));
+    assert!(!tsv.contains("partial "));
+
+    let server_env =
+        MockSocketServer::ask_with_streaming("hello", &["partial ", "stream "], "final answer");
+    let cfg_env = write_ai_config(&server_env.socket_path, &home);
+    let out_env = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg_env)
+        .env("HOME", home.path())
+        .args(["--format", "env", "--no-start", "--no-progress", "hello"])
+        .output()
+        .expect("run ai env");
+    assert!(
+        out_env.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out_env.stderr)
+    );
+    let env_out = String::from_utf8_lossy(&out_env.stdout);
+    assert!(env_out.contains("AI_RESPONSE_TYPE='agent_turn_result'"));
+    assert!(env_out.contains("AI_ASSISTANT_MESSAGE_CONTENT='final answer'"));
+    assert!(!env_out.contains("partial "));
 }
 
 #[test]

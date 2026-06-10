@@ -19,6 +19,47 @@ struct MultiSocketServer {
 }
 
 impl MultiSocketServer {
+    fn spawn_streaming_turns(
+        count: usize,
+        responder: impl Fn(&ClientRequest, usize) -> Vec<ClientResponse> + Send + Sync + 'static,
+    ) -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket_path = dir.path().join("aibe.sock");
+        let _ = fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("bind");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let requests_thread = Arc::clone(&requests);
+        let responder = Arc::new(responder);
+        let turn = Arc::new(AtomicUsize::new(0));
+        let handle = thread::spawn(move || {
+            let mut handled = 0usize;
+            while handled < count {
+                let (stream, _) = listener.accept().expect("accept");
+                let mut writer = stream.try_clone().expect("clone");
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read request");
+                let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse request");
+                let req_json = serde_json::to_value(&req).expect("to value");
+                requests_thread.lock().expect("lock").push(req_json);
+                let n = turn.fetch_add(1, Ordering::SeqCst);
+                for response in responder(&req, n) {
+                    let payload = serde_json::to_string(&response).expect("serialize response");
+                    writeln!(writer, "{payload}").expect("write response");
+                    writer.flush().expect("flush response");
+                }
+                handled += 1;
+            }
+        });
+
+        Self {
+            socket_path,
+            _dir: dir,
+            requests,
+            handle: Some(handle),
+        }
+    }
+
     fn spawn(
         count: usize,
         responder: impl Fn(&ClientRequest, usize) -> ClientResponse + Send + Sync + 'static,
@@ -93,6 +134,89 @@ default_profile = "fast"
     .expect("write config");
     config_path
 }
+#[test]
+fn retry_structured_format_ignores_stream_chunks() {
+    let server = MultiSocketServer::spawn_streaming_turns(2, |req, turn| {
+        let ClientRequest::AgentTurn { id, .. } = req else {
+            panic!("unexpected request: {req:?}");
+        };
+        if turn == 0 {
+            return vec![ClientResponse::AgentTurnResult {
+                id: id.clone(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".to_string(),
+                    content: "seed reply".to_string(),
+                },
+                tool_calls: vec![],
+            }];
+        }
+        vec![
+            ClientResponse::AssistantStreaming {
+                id: id.clone(),
+                delta: "partial ".to_string(),
+            },
+            ClientResponse::AssistantStreaming {
+                id: id.clone(),
+                delta: "stream".to_string(),
+            },
+            ClientResponse::AgentTurnResult {
+                id: id.clone(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".to_string(),
+                    content: "retry final".to_string(),
+                },
+                tool_calls: vec![],
+            },
+        ]
+    });
+
+    let home = tempfile::tempdir().expect("home");
+    let history_dir = home.path().join("history");
+    fs::create_dir_all(&history_dir).expect("history dir");
+    let cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
+
+    let seed = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .args(["--quiet", "--no-start", "hello"])
+        .output()
+        .expect("seed ask");
+    assert!(seed.status.success());
+
+    let history = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .args(["history", "--quiet", "--format", "json"])
+        .output()
+        .expect("history");
+    let entries: Vec<Value> = serde_json::from_slice(&history.stdout).expect("history json");
+    let history_id = entries[0]["history_id"].as_str().expect("history_id");
+
+    let retry = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .args([
+            "retry",
+            "--quiet",
+            "--format",
+            "json",
+            "--no-start",
+            history_id,
+        ])
+        .output()
+        .expect("retry");
+    assert!(
+        retry.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    let json: Value = serde_json::from_slice(&retry.stdout).expect("retry json");
+    assert_eq!(json["response_type"], "agent_turn_result");
+    assert_eq!(json["assistant_message"]["content"], "retry final");
+}
+
 #[test]
 fn chat_dry_run_skips_aibe() {
     let home = tempfile::tempdir().expect("home");
