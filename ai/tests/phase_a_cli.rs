@@ -288,3 +288,104 @@ fn non_tty_ask_skips_route_turn_and_injects_ai_session_id() {
     let stdout = String::from_utf8(out.stdout).expect("stdout");
     assert!(stdout.contains("assistant says hi"));
 }
+
+#[test]
+fn dry_run_reports_console_hint_resolution() {
+    let home = tempfile::tempdir().expect("home");
+    let cfg_path = home.path().join("ai.toml");
+    fs::write(&cfg_path, "socket_path = \"/tmp/does-not-exist.sock\"\n").expect("write config");
+
+    for disable_flag in ["--no-console-hint", "-N"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+            .env("AI_CONFIG", &cfg_path)
+            .env("HOME", home.path())
+            .args([disable_flag, "--dry-run", "--format", "json", "hello"])
+            .output()
+            .expect("run ai dry-run");
+
+        assert!(out.status.success(), "flag {disable_flag}");
+        let json: Value = serde_json::from_slice(&out.stdout).expect("json");
+        assert_eq!(json["console_hint"]["requested"], false);
+        assert_eq!(json["console_hint"]["source"], "cli");
+        assert_eq!(json["console_hint"]["effective"], false);
+    }
+}
+
+#[test]
+fn console_hint_short_option_maps_to_enable() {
+    let home = tempfile::tempdir().expect("home");
+    let cfg_path = home.path().join("ai.toml");
+    fs::write(&cfg_path, "socket_path = \"/tmp/does-not-exist.sock\"\n").expect("write config");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg_path)
+        .env("HOME", home.path())
+        .args(["-H", "--dry-run", "--format", "json", "hello"])
+        .output()
+        .expect("run ai dry-run");
+
+    assert!(out.status.success());
+    let json: Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(json["console_hint"]["requested"], true);
+    assert_eq!(json["console_hint"]["source"], "cli");
+    assert_eq!(json["console_hint"]["effective"], false);
+    // 非 TTY のテスト環境では tty 抑止が format より優先される。
+    assert_eq!(json["console_hint"]["suppressed_by"], "tty");
+}
+
+#[test]
+fn config_console_hints_false_applies_without_cli_flag() {
+    let home = tempfile::tempdir().expect("home");
+    let cfg_path = home.path().join("ai.toml");
+    fs::write(
+        &cfg_path,
+        r#"
+socket_path = "/tmp/does-not-exist.sock"
+[ask]
+console_hints = false
+"#,
+    )
+    .expect("write config");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg_path)
+        .env("HOME", home.path())
+        .args(["--dry-run", "--format", "json", "hello"])
+        .output()
+        .expect("run ai dry-run");
+
+    assert!(out.status.success());
+    let json: Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(json["console_hint"]["requested"], false);
+    assert_eq!(json["console_hint"]["source"], "config");
+}
+
+#[test]
+fn no_console_hint_skips_system_instruction_on_agent_turn() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::AgentTurn { context, .. } => {
+            assert!(context.system_instruction.is_none());
+            ClientResponse::AgentTurnResult {
+                id: "turn-1".to_string(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".to_string(),
+                    content: "ok".to_string(),
+                },
+                tool_calls: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .args(["--quiet", "--no-start", "--no-console-hint", "hello"])
+        .output()
+        .expect("run ai");
+
+    assert!(out.status.success());
+}

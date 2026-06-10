@@ -2,6 +2,10 @@
 
 use serde::Serialize;
 
+use super::console_hint::{
+    console_hint_output_format_label, console_hint_source_label, console_hint_suppressed_by_label,
+    ConsoleHintReport,
+};
 use super::output_format::{append_env_line, append_tsv_row, OutputFormat};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -213,6 +217,7 @@ pub struct DryRunReport {
     pub dry_run: bool,
     pub preset: Option<String>,
     pub log_tail_bytes: usize,
+    pub console_hint: ConsoleHintReport,
 }
 
 impl DryRunReport {
@@ -294,6 +299,7 @@ impl DryRunReport {
         );
         append_tsv_row(&mut out, "preset", self.preset.as_deref().unwrap_or(""));
         append_tsv_row(&mut out, "log_tail_bytes", &self.log_tail_bytes.to_string());
+        append_console_hint_tsv(&mut out, &self.console_hint);
         out
     }
 
@@ -371,13 +377,81 @@ impl DryRunReport {
             "AI_LOG_TAIL_BYTES",
             &self.log_tail_bytes.to_string(),
         );
+        append_console_hint_env(&mut out, &self.console_hint);
         out
     }
+}
+
+fn append_console_hint_tsv(out: &mut String, hint: &ConsoleHintReport) {
+    append_tsv_row(
+        out,
+        "console_hint.requested",
+        if hint.requested { "true" } else { "false" },
+    );
+    append_tsv_row(
+        out,
+        "console_hint.source",
+        console_hint_source_label(hint.source),
+    );
+    append_tsv_row(
+        out,
+        "console_hint.tty",
+        if hint.tty { "true" } else { "false" },
+    );
+    append_tsv_row(
+        out,
+        "console_hint.output_format",
+        console_hint_output_format_label(hint.output_format),
+    );
+    append_tsv_row(
+        out,
+        "console_hint.effective",
+        if hint.effective { "true" } else { "false" },
+    );
+    append_tsv_row(
+        out,
+        "console_hint.suppressed_by",
+        console_hint_suppressed_by_label(hint.suppressed_by),
+    );
+}
+
+fn append_console_hint_env(out: &mut String, hint: &ConsoleHintReport) {
+    append_env_line(
+        out,
+        "AI_CONSOLE_HINT_REQUESTED",
+        if hint.requested { "true" } else { "false" },
+    );
+    append_env_line(
+        out,
+        "AI_CONSOLE_HINT_SOURCE",
+        console_hint_source_label(hint.source),
+    );
+    append_env_line(
+        out,
+        "AI_CONSOLE_HINT_TTY",
+        if hint.tty { "true" } else { "false" },
+    );
+    append_env_line(
+        out,
+        "AI_CONSOLE_HINT_OUTPUT_FORMAT",
+        console_hint_output_format_label(hint.output_format),
+    );
+    append_env_line(
+        out,
+        "AI_CONSOLE_HINT_EFFECTIVE",
+        if hint.effective { "true" } else { "false" },
+    );
+    append_env_line(
+        out,
+        "AI_CONSOLE_HINT_SUPPRESSED_BY",
+        console_hint_suppressed_by_label(hint.suppressed_by),
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::resolve_console_hints;
 
     #[test]
     fn dry_run_render_masks_filter_metadata_not_raw_filter() {
@@ -404,6 +478,7 @@ mod tests {
             dry_run: true,
             preset: None,
             log_tail_bytes: 16_384,
+            console_hint: resolve_console_hints(None, None, None, false, None),
         };
 
         let json = serde_json::to_value(&report).expect("json");
@@ -416,5 +491,9 @@ mod tests {
         assert!(env.contains("AI_ASK_FILTER_SOURCE='config'"));
         assert!(env.contains("AI_ASK_FILTER_MASKED='true'"));
         assert!(!env.contains("raw_filter"));
+        assert_eq!(json["console_hint"]["requested"], true);
+        assert_eq!(json["console_hint"]["suppressed_by"], "tty");
+        assert!(env.contains("AI_CONSOLE_HINT_REQUESTED='true'"));
+        assert!(env.contains("AI_CONSOLE_HINT_SUPPRESSED_BY='tty'"));
     }
 }

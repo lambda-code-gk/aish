@@ -17,6 +17,7 @@ pub struct AiConfig {
     pub ask_tools: ConfigToolsTokens,
     pub ask_default_profile: Option<String>,
     pub ask_filter: Option<String>,
+    pub ask_console_hints: Option<bool>,
     pub history_dir: PathBuf,
     pub history_max_entries: usize,
     pub log_tail_bytes: Option<usize>,
@@ -31,6 +32,7 @@ pub struct AiPresetConfig {
     pub log_tail_bytes: Option<usize>,
     pub quiet: Option<bool>,
     pub shell_exec_approval: Option<String>,
+    pub console_hints: Option<bool>,
 }
 
 const DEFAULT_CONFIG: &str = ".config/ai/config.toml";
@@ -44,6 +46,7 @@ impl AiConfig {
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,
+            ask_console_hints: None,
             history_dir: Self::default_history_dir(),
             history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
             log_tail_bytes: None,
@@ -64,6 +67,7 @@ impl AiConfig {
                         }
                         cfg.ask_default_profile = ask.default_profile;
                         cfg.ask_filter = ask.filter.filter(|s| !s.is_empty());
+                        cfg.ask_console_hints = ask.console_hints;
                     }
                     if let Some(history_dir) = file.history_dir {
                         cfg.history_dir = expand_home(history_dir);
@@ -124,6 +128,7 @@ struct AskSection {
     tools: Option<AskToolsToml>,
     default_profile: Option<String>,
     filter: Option<String>,
+    console_hints: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +139,7 @@ struct PresetToml {
     log_tail_bytes: Option<usize>,
     quiet: Option<bool>,
     shell_exec_approval: Option<String>,
+    console_hints: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +161,7 @@ impl From<PresetToml> for AiPresetConfig {
             log_tail_bytes: value.log_tail_bytes,
             quiet: value.quiet,
             shell_exec_approval: value.shell_exec_approval.filter(|s| !s.is_empty()),
+            console_hints: value.console_hints,
         }
     }
 }
@@ -323,6 +330,37 @@ shell_exec_approval = "never"
             .expect("tools")
             .0
             .contains(&"@read-only".into()));
+    }
+
+    #[test]
+    fn load_console_hints_from_ask_and_preset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&path).expect("create");
+        writeln!(
+            f,
+            r#"
+[ask]
+console_hints = false
+[presets.script]
+console_hints = true
+"#
+        )
+        .expect("write");
+
+        unsafe {
+            std::env::set_var("AI_CONFIG", &path);
+        }
+        let cfg = AiConfig::load();
+        unsafe {
+            std::env::remove_var("AI_CONFIG");
+        }
+
+        assert_eq!(cfg.ask_console_hints, Some(false));
+        assert_eq!(
+            cfg.presets.get("script").and_then(|p| p.console_hints),
+            Some(true)
+        );
     }
 
     #[test]

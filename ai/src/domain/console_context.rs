@@ -1,22 +1,19 @@
 //! 対話コンソール向けの `RequestContext` 補助。
 
-use super::output_format::OutputFormat;
 use super::request_context::RequestContextInput;
 use super::terminal_size::TerminalSize;
 
 impl RequestContextInput {
-    /// TTY サイズから console 用 system インストラクションを付与する。
-    ///
-    /// `--format` で機械可読出力が指定された turn（`output_format` が `Some`）では、
-    /// 端末幅に合わせた整形指示が出力の後段処理を歪めるため付与しない。
+    /// 解決済み policy が有効なとき、TTY サイズから console 用 system インストラクションを付与する。
     pub fn with_console_system_instruction(
         mut self,
         terminal_size: Option<TerminalSize>,
-        output_format: Option<OutputFormat>,
+        console_hints_effective: bool,
     ) -> Self {
-        self.system_instruction = match output_format {
-            Some(_) => None,
-            None => terminal_size.map(|size| size.console_system_instruction()),
+        self.system_instruction = if console_hints_effective {
+            terminal_size.map(|size| size.console_system_instruction())
+        } else {
+            None
         };
         self
     }
@@ -34,9 +31,9 @@ mod tests {
     }
 
     #[test]
-    fn attaches_instruction_on_tty_without_format() {
+    fn attaches_instruction_when_effective() {
         let ctx = RequestContextInput::default()
-            .with_console_system_instruction(Some(size()), None)
+            .with_console_system_instruction(Some(size()), true)
             .into_wire();
         assert!(ctx
             .system_instruction
@@ -45,19 +42,17 @@ mod tests {
     }
 
     #[test]
-    fn skips_instruction_when_format_is_specified() {
-        for format in [OutputFormat::Tsv, OutputFormat::Json, OutputFormat::Env] {
-            let ctx = RequestContextInput::default()
-                .with_console_system_instruction(Some(size()), Some(format))
-                .into_wire();
-            assert!(ctx.system_instruction.is_none(), "format {format:?}");
-        }
+    fn skips_instruction_when_not_effective() {
+        let ctx = RequestContextInput::default()
+            .with_console_system_instruction(Some(size()), false)
+            .into_wire();
+        assert!(ctx.system_instruction.is_none());
     }
 
     #[test]
     fn skips_instruction_without_terminal_size() {
         let ctx = RequestContextInput::default()
-            .with_console_system_instruction(None, None)
+            .with_console_system_instruction(None, true)
             .into_wire();
         assert!(ctx.system_instruction.is_none());
     }

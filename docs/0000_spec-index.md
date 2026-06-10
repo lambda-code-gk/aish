@@ -23,6 +23,7 @@
 | 0029 | [0029_ai-ux-polish-spec.md](spec/0029_ai-ux-polish-spec.md) | 設計確定 | `--yes-exec` 検証・history GC・streaming mock テスト |
 | 0030 | [0030_ai-smart-entry-spec.md](spec/0030_ai-smart-entry-spec.md) | 設計確定 | `ai` スマート入口（`route_turn` / `AI_SESSION_ID` / aibe transcript 保持） |
 | 0031 | [0031_hexagonal-effect-boundary-spec.md](spec/0031_hexagonal-effect-boundary-spec.md) | 設計確定 | Hexagonal effect boundary 検査（副作用 API 混入のルールファイル駆動チェック） |
+| 0032 | [0032_ai-console-hint-toggle-spec.md](spec/0032_ai-console-hint-toggle-spec.md) | 設計確定 | `ai` コンソールヒント切り替え |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -63,5 +64,6 @@
 | 0029 | [0029_ai-ux-polish-implementation-spec.md](done/0029_ai-ux-polish-implementation-spec.md) | 実装済み | `--yes-exec` 検証・history GC（設計: [0029](spec/0029_ai-ux-polish-spec.md)） |
 | 0030 | [0030_ai-smart-entry-implementation-spec.md](done/0030_ai-smart-entry-implementation-spec.md) | 実装済み | `ai` スマート入口（設計: [0030](spec/0030_ai-smart-entry-spec.md)） |
 | 0031 | [0031_hexagonal-effect-boundary-implementation-spec.md](done/0031_hexagonal-effect-boundary-implementation-spec.md) | 実装済み | Hexagonal effect boundary 検査（設計: [0031](spec/0031_hexagonal-effect-boundary-spec.md)） |
+| 0032 | [0032_ai-console-hint-toggle-implementation-spec.md](done/0032_ai-console-hint-toggle-implementation-spec.md) | 実装済み | `ai` コンソールヒント切り替え（設計: [0032](spec/0032_ai-console-hint-toggle-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

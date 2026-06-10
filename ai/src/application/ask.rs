@@ -3,7 +3,7 @@
 use aibe_protocol::{ClientResponse, SHELL_LOG_TAIL_MAX_BYTES};
 use std::path::PathBuf;
 
-use crate::domain::{AskInput, AskRequestError, ResolvedTools};
+use crate::domain::{AskInput, AskRequestError, RequestContextInput, ResolvedTools};
 use crate::ports::outbound::{AgentClient, AgentError, LogReadError, Presenter, ShellLogSource};
 
 #[derive(Debug, thiserror::Error)]
@@ -25,6 +25,7 @@ pub struct AskRunOptions {
     pub client_cwd: Option<PathBuf>,
     pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
+    pub request_context: RequestContextInput,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +81,8 @@ where
             ai_session_id: options.ai_session_id,
             conversation_id: options.conversation_id,
         };
-        let request = input.into_request()?;
+        let mut request = input.into_request()?;
+        request.request_context = options.request_context;
 
         match self.client.agent_turn(&request) {
             Ok(response) => {

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use ai::adapters::outbound::{render_response, StdoutPresenter};
 use ai::application::{plan_ask_launch, Ask, AskRunOptions};
-use ai::domain::{resolve_tools, ConfigToolsTokens, ToolsResolveError};
+use ai::domain::{resolve_tools, ConfigToolsTokens, RequestContextInput, ToolsResolveError};
 use ai::ports::outbound::{AgentClient, AgentError, Presenter};
 use aibe_protocol::{
     AgentTurnStatus, ClientResponse, ExecutedToolCall, ProtocolMessageOut, ToolName,
@@ -14,17 +14,23 @@ use serde_json::json;
 
 struct RecordingClient {
     last_tools: Arc<Mutex<Vec<String>>>,
+    last_system_instruction: Arc<Mutex<Option<String>>>,
 }
 
 impl RecordingClient {
     fn new() -> Self {
         Self {
             last_tools: Arc::new(Mutex::new(vec![])),
+            last_system_instruction: Arc::new(Mutex::new(None)),
         }
     }
 
     fn take_tools(&self) -> Vec<String> {
         self.last_tools.lock().expect("lock").clone()
+    }
+
+    fn take_system_instruction(&self) -> Option<String> {
+        self.last_system_instruction.lock().expect("lock").clone()
     }
 }
 
@@ -35,6 +41,8 @@ impl AgentClient for RecordingClient {
             .iter()
             .map(|t| t.as_str().to_string())
             .collect();
+        *self.last_system_instruction.lock().expect("lock") =
+            request.request_context.system_instruction.clone();
         Ok(ClientResponse::AgentTurnResult {
             id: "test-id".into(),
             status: AgentTurnStatus::Ok,
@@ -69,6 +77,7 @@ fn resolve_read_only_sends_safe_tools_to_aibe() {
             client_cwd: Some("/tmp".into()),
             ai_session_id: None,
             conversation_id: None,
+            request_context: RequestContextInput::default(),
         },
     )
     .expect("ask");
@@ -153,6 +162,7 @@ fn ask_with_filter_completes() {
             client_cwd: Some("/tmp".into()),
             ai_session_id: None,
             conversation_id: None,
+            request_context: RequestContextInput::default(),
         },
     )
     .expect("ask");
@@ -162,6 +172,39 @@ fn ask_with_filter_completes() {
 fn external_commands_warning_line() {
     let presenter = StdoutPresenter::new(None);
     presenter.show_external_commands(&["codex".into(), "claude".into()]);
+}
+
+#[test]
+fn ask_passes_pre_resolved_request_context() {
+    let client = RecordingClient::new();
+    let presenter = StdoutPresenter::new(None);
+    let ask = Ask::new(
+        &client,
+        &presenter,
+        None::<&ai::adapters::outbound::FileLogTail>,
+    );
+    let resolved = resolve_tools(None, &ConfigToolsTokens::default()).expect("resolve");
+    let mut ctx = RequestContextInput::default();
+    ctx.system_instruction = Some("console hint body".into());
+    ask.run(
+        "ctx".to_string(),
+        AskRunOptions {
+            resolved_tools: resolved,
+            verbose_tools: false,
+            llm_profile: None,
+            external_command_names: Vec::new(),
+            shell_log_tail_bytes: 0,
+            client_cwd: Some("/tmp".into()),
+            ai_session_id: None,
+            conversation_id: None,
+            request_context: ctx,
+        },
+    )
+    .expect("ask");
+    assert_eq!(
+        client.take_system_instruction().as_deref(),
+        Some("console hint body")
+    );
 }
 
 #[test]

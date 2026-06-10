@@ -24,11 +24,11 @@ use ai::application::{
 };
 use ai::clap_cli::{AiCli, AiCommand, HistoryStatusArg, OutputFormatArg, TurnOptions};
 use ai::domain::{
-    resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter, validate_ask_arg_order,
-    AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens, HistoryIndexFilter,
-    HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError,
-    OutputFormat, OutputFormatError, RequestContextInput, ShellLogChoice, ShellLogResolveError,
-    ToolsResolveError,
+    resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
+    validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens,
+    ConsoleHintReport, HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind,
+    HistoryRecordStatus, LogTailResolveError, OutputFormat, OutputFormatError, RequestContextInput,
+    ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
@@ -147,6 +147,7 @@ struct ResolvedTurnSettings {
     timeout_secs: Option<u64>,
     yes_exec: bool,
     shell_exec_approval: Option<String>,
+    console_hint: ConsoleHintReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,16 +470,17 @@ fn execute_turn(
         ai_session_id: Some(settings.ai_session_id.clone()),
         conversation_id: conversation_id.clone(),
     };
-    let request = ask_input.into_request()?;
+    let mut request = ask_input.into_request()?;
+    request.request_context = build_request_context(
+        shell_log_tail_text.clone(),
+        request.client_cwd.as_deref(),
+        settings.ai_session_id.clone(),
+        conversation_id.clone(),
+        &settings.console_hint,
+    );
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
-    let client_request = request_from_messages(
-        turn_id.clone(),
-        request,
-        messages,
-        shell_log_tail_text.clone(),
-        settings.output_format,
-    )?;
+    let client_request = request_from_messages(turn_id.clone(), request, messages)?;
 
     let yes_exec_effective =
         settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
@@ -772,22 +774,44 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
     }
 }
 
+fn cli_console_hint_explicit(turn: &TurnOptions) -> Option<bool> {
+    if turn.no_console_hint {
+        Some(false)
+    } else if turn.console_hint {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn build_request_context(
+    shell_log_tail: Option<String>,
+    client_cwd: Option<&Path>,
+    ai_session_id: String,
+    conversation_id: Option<String>,
+    console_hint: &ConsoleHintReport,
+) -> RequestContextInput {
+    let terminal_size = if console_hint.effective {
+        detect_terminal_size()
+    } else {
+        None
+    };
+    RequestContextInput {
+        shell_log_tail,
+        cwd: client_cwd.map(|p| p.display().to_string()),
+        ai_session_id: Some(ai_session_id),
+        conversation_id,
+        ..Default::default()
+    }
+    .with_console_system_instruction(terminal_size, console_hint.effective)
+}
+
 fn request_from_messages(
     turn_id: String,
     request: ai::domain::AskRequest,
     messages: Vec<ProtocolMessage>,
-    shell_log_tail: Option<String>,
-    output_format: Option<OutputFormat>,
 ) -> anyhow::Result<ClientRequest> {
-    let context = RequestContextInput {
-        shell_log_tail,
-        cwd: request.client_cwd.map(|p| p.display().to_string()),
-        ai_session_id: request.ai_session_id,
-        conversation_id: request.conversation_id,
-        ..Default::default()
-    }
-    .with_console_system_instruction(detect_terminal_size(), output_format)
-    .into_wire();
+    let context = request.request_context.into_wire();
     Ok(ClientRequest::AgentTurn {
         id: turn_id,
         messages,
@@ -1106,6 +1130,7 @@ fn build_dry_run_report(
         dry_run: true,
         preset: settings.preset_name.clone(),
         log_tail_bytes: settings.log_tail_bytes,
+        console_hint: settings.console_hint.clone(),
     }
 }
 
@@ -1203,9 +1228,17 @@ fn resolve_turn_settings(
         .and_then(|p| p.shell_exec_approval.clone())
         .filter(|s| !s.is_empty())
         .or(aibe_shell_exec.mode.clone());
+    let output_format = turn.format.map(Into::into);
+    let console_hint = resolve_console_hints(
+        cli_console_hint_explicit(turn),
+        preset.and_then(|p| p.console_hints),
+        cfg.ask_console_hints,
+        detect_terminal_size().is_some(),
+        output_format,
+    );
     Ok(ResolvedTurnSettings {
         quiet: turn.quiet || preset.and_then(|p| p.quiet).unwrap_or(false),
-        output_format: turn.format.map(Into::into),
+        output_format,
         preset_name: turn.preset.clone(),
         log_tail_bytes,
         socket_path,
@@ -1225,6 +1258,7 @@ fn resolve_turn_settings(
         timeout_secs: turn.timeout,
         yes_exec: turn.yes_exec,
         shell_exec_approval,
+        console_hint,
     })
 }
 
@@ -1564,7 +1598,7 @@ mod cli_tests {
 
     use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
     use ai::clap_cli::{AiCli, TurnOptions};
-    use ai::domain::{ConfigToolsTokens, FilterMetadata, ShellLogChoice};
+    use ai::domain::{resolve_console_hints, ConfigToolsTokens, FilterMetadata, ShellLogChoice};
     use ai::domain::{HistoryMessage, HistoryPayload};
     use aibe_client::default_socket_path;
     use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RouteKind, RoutePlan};
@@ -1724,6 +1758,7 @@ mod cli_tests {
             timeout_secs: None,
             yes_exec: true,
             shell_exec_approval: None,
+            console_hint: resolve_console_hints(None, None, None, true, None),
         };
         let turn = crate::TurnOptions {
             new: true,
@@ -1759,6 +1794,37 @@ mod cli_tests {
     }
 
     #[test]
+    fn turn_options_parse_console_hint_flags() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        #[command(name = "test")]
+        struct Cli {
+            #[command(flatten)]
+            turn: TurnOptions,
+        }
+
+        let cli = Cli::try_parse_from(["test", "--console-hint"]).expect("parse");
+        let turn = cli.turn;
+        assert!(turn.console_hint);
+        assert!(!turn.no_console_hint);
+
+        let turn = Cli::try_parse_from(["test", "-H"]).expect("parse").turn;
+        assert!(turn.console_hint);
+
+        let turn = Cli::try_parse_from(["test", "--no-console-hint"])
+            .expect("parse")
+            .turn;
+        assert!(turn.no_console_hint);
+
+        let turn = Cli::try_parse_from(["test", "-N"]).expect("parse").turn;
+        assert!(turn.no_console_hint);
+
+        assert!(Cli::try_parse_from(["test", "-H", "--no-console-hint"]).is_err());
+        assert!(Cli::try_parse_from(["test", "-H", "-N"]).is_err());
+    }
+
+    #[test]
     fn apply_route_plan_ignores_unknown_preset_and_maps_tools() {
         use std::collections::HashMap;
 
@@ -1767,6 +1833,7 @@ mod cli_tests {
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,
+            ask_console_hints: None,
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,

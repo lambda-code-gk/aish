@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use aibe_protocol::ToolName;
 use thiserror::Error;
 
+use super::RequestContextInput;
+
 /// CLI / ユースケースが収集する入力（cwd は取得時点では未検証）。
 #[derive(Debug, Clone)]
 pub struct AskInput {
@@ -30,6 +32,8 @@ pub struct AskRequest {
     pub llm_profile: Option<String>,
     pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
+    /// turn 解決済みの `RequestContext`（`aibe_client` は serialize のみ行う）。
+    pub request_context: RequestContextInput,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -50,6 +54,7 @@ impl AskInput {
                 llm_profile: self.llm_profile,
                 ai_session_id: self.ai_session_id,
                 conversation_id: self.conversation_id,
+                request_context: RequestContextInput::default(),
             });
         }
 
@@ -66,6 +71,7 @@ impl AskInput {
             llm_profile: self.llm_profile,
             ai_session_id: self.ai_session_id,
             conversation_id: self.conversation_id,
+            request_context: RequestContextInput::default(),
         })
     }
 }

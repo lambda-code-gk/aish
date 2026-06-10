@@ -88,6 +88,12 @@ pub struct TurnOptions {
     pub timeout: Option<u64>,
     #[arg(long)]
     pub yes_exec: bool,
+    /// TTY 向け console hint（端末サイズに応じた system instruction）を有効にする
+    #[arg(long, short = 'H', conflicts_with = "no_console_hint")]
+    pub console_hint: bool,
+    /// console hint を無効にする
+    #[arg(long, short = 'N', conflicts_with = "console_hint")]
+    pub no_console_hint: bool,
 }
 
 #[derive(Parser)]

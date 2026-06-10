@@ -1,6 +1,7 @@
 mod ask;
 mod ask_arg_order;
 mod console_context;
+mod console_hint;
 mod history;
 mod llm_profile;
 mod log_tail;
@@ -15,6 +16,10 @@ mod tools;
 
 pub use ask::{AskInput, AskRequest, AskRequestError};
 pub use ask_arg_order::{validate_ask_arg_order, AskArgOrderError};
+pub use console_hint::{
+    resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,
+    ConsoleHintSuppressedBy,
+};
 pub use history::{
     HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryMessage, HistoryPayload,
     HistoryRecordKind, HistoryRecordStatus, HistoryReplayRequest, HistorySummary, HistoryTurnInput,

@@ -10,8 +10,7 @@ use aibe_client::{
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage};
 
-use super::terminal_size::detect_terminal_size;
-use crate::domain::{AskRequest, RequestContextInput};
+use crate::domain::AskRequest;
 use crate::ports::outbound::{AgentClient, AgentError};
 
 pub struct AibeUnixClient {
@@ -41,19 +40,17 @@ impl AibeUnixClient {
                 .iter()
                 .map(|t| t.as_str().to_string())
                 .collect(),
-            context: RequestContextInput {
-                shell_log_tail: request.shell_log_tail.clone(),
-                cwd: request
+            context: {
+                let mut ctx = request.request_context.clone();
+                ctx.shell_log_tail = request.shell_log_tail.clone();
+                ctx.cwd = request
                     .client_cwd
                     .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned()),
-                ai_session_id: request.ai_session_id.clone(),
-                conversation_id: request.conversation_id.clone(),
-                ..Default::default()
-            }
-            // `AskRequest` 経路は CLI の `--format` を持たないため常に console 指示を許可する。
-            .with_console_system_instruction(detect_terminal_size(), None)
-            .into_wire(),
+                    .map(|p| p.to_string_lossy().into_owned());
+                ctx.ai_session_id = request.ai_session_id.clone();
+                ctx.conversation_id = request.conversation_id.clone();
+                ctx.into_wire()
+            },
             llm_profile: request.llm_profile.clone(),
         }
     }
@@ -123,6 +120,37 @@ fn map_client_error(e: ClientError) -> AgentError {
         ClientError::Serialize(msg)
         | ClientError::Deserialize(msg)
         | ClientError::Unexpected(msg) => AgentError::Request(msg),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::RequestContextInput;
+    use aibe_protocol::{ClientRequest, ToolName};
+
+    #[test]
+    fn to_client_request_preserves_pre_resolved_context() {
+        let request = AskRequest {
+            user_message: "hi".into(),
+            shell_log_tail: Some("tail".into()),
+            client_cwd: Some("/tmp".into()),
+            tools: vec![ToolName::read_file()],
+            llm_profile: None,
+            ai_session_id: Some("sess".into()),
+            conversation_id: Some("conv".into()),
+            request_context: RequestContextInput {
+                system_instruction: Some("be brief".into()),
+                ..Default::default()
+            },
+        };
+        let ClientRequest::AgentTurn { context, .. } = AibeUnixClient::to_client_request(&request)
+        else {
+            panic!("expected agent_turn");
+        };
+        assert_eq!(context.system_instruction.as_deref(), Some("be brief"));
+        assert_eq!(context.shell_log_tail.as_deref(), Some("tail"));
+        assert_eq!(context.cwd.as_deref(), Some("/tmp"));
     }
 }
 

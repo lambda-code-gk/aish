@@ -63,6 +63,7 @@ fn ai_ask_reaches_mock_aibe() {
             client_cwd: None,
             ai_session_id: None,
             conversation_id: None,
+            request_context: ai::domain::RequestContextInput::default(),
         },
     )
     .expect("ask");
