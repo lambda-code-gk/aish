@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::engine::ArgValueCompleter;
 use clap_complete::{generate, shells::Bash, shells::Zsh, CompleteEnv};
 
@@ -199,7 +199,7 @@ impl AiCli {
     }
 
     pub fn run_complete(shell: CompleteShell) -> io::Result<()> {
-        let mut cmd = Self::command();
+        let mut cmd = command_for_shell_completion();
         match shell {
             CompleteShell::Bash => generate(Bash, &mut cmd, "ai", &mut io::stdout()),
             CompleteShell::Zsh => generate(Zsh, &mut cmd, "ai", &mut io::stdout()),
@@ -208,12 +208,48 @@ impl AiCli {
     }
 
     pub fn try_complete_env() -> bool {
-        CompleteEnv::with_factory(Self::command)
-            .try_complete(std::env::args_os(), None)
+        CompleteEnv::with_factory(command_for_shell_completion)
+            .try_complete(
+                normalize_args_for_shell_completion(std::env::args_os()),
+                None,
+            )
             .unwrap_or(false)
     }
 }
 
+/// implicit `ask` 向けに、ルートでも `ask` と同じフラグを補完できるよう Command を拡張する。
+fn command_for_shell_completion() -> Command {
+    let cmd = AiCli::command();
+    let Some(ask_opts) = cmd
+        .find_subcommand("ask")
+        .map(|ask| ask.get_opts().cloned().collect::<Vec<_>>())
+    else {
+        return cmd;
+    };
+    ask_opts.into_iter().fold(cmd, |cmd, arg| cmd.arg(arg))
+}
+
+fn is_known_cli_head(word: &str) -> bool {
+    matches!(
+        word,
+        "ask"
+            | "chat"
+            | "retry"
+            | "rerun"
+            | "history"
+            | "status"
+            | "doctor"
+            | "ping"
+            | "complete"
+            | "help"
+            | "-h"
+            | "--help"
+            | "-V"
+            | "--version"
+    )
+}
+
+/// 実行時の implicit `ask` 挿入。`ai hello` や bare `ai` を `ai ask` へ正規化する。
 fn normalize_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
     let mut args: Vec<OsString> = args.into_iter().collect();
     if args.len() <= 1 {
@@ -222,24 +258,116 @@ fn normalize_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
     }
 
     let first = args[1].to_string_lossy();
-    if first == "ask"
-        || first == "chat"
-        || first == "retry"
-        || first == "rerun"
-        || first == "history"
-        || first == "status"
-        || first == "doctor"
-        || first == "ping"
-        || first == "complete"
-        || first == "help"
-        || first == "-h"
-        || first == "--help"
-        || first == "-V"
-        || first == "--version"
-    {
+    if is_known_cli_head(&first) {
         return args;
     }
 
     args.insert(1, OsString::from("ask"));
     args
+}
+
+/// シェル補完用。サブコマンド候補は壊さず、`ai --flag` だけ implicit `ask` へ寄せる。
+fn normalize_args_for_shell_completion(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = args.into_iter().collect();
+    if args.len() <= 1 {
+        return args;
+    }
+
+    let first = args[1].to_string_lossy();
+    if is_known_cli_head(&first) || !first.starts_with('-') {
+        return args;
+    }
+
+    args.insert(1, OsString::from("ask"));
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn os_vec(parts: &[&str]) -> Vec<OsString> {
+        parts.iter().map(|s| OsString::from(*s)).collect()
+    }
+
+    #[test]
+    fn normalize_args_inserts_implicit_ask_for_message() {
+        let out = normalize_args(os_vec(&["ai", "hello"]));
+        assert_eq!(out, os_vec(&["ai", "ask", "hello"]));
+    }
+
+    #[test]
+    fn normalize_args_inserts_implicit_ask_for_bare_invocation() {
+        let out = normalize_args(os_vec(&["ai"]));
+        assert_eq!(out, os_vec(&["ai", "ask"]));
+    }
+
+    #[test]
+    fn shell_completion_normalizes_bare_long_options_to_ask() {
+        let out = normalize_args_for_shell_completion(os_vec(&["ai", "--preset"]));
+        assert_eq!(out, os_vec(&["ai", "ask", "--preset"]));
+    }
+
+    #[test]
+    fn shell_completion_normalizes_bare_short_options_to_ask() {
+        let out = normalize_args_for_shell_completion(os_vec(&["ai", "-q"]));
+        assert_eq!(out, os_vec(&["ai", "ask", "-q"]));
+    }
+
+    #[test]
+    fn shell_completion_keeps_top_level_help_and_version() {
+        assert_eq!(
+            normalize_args_for_shell_completion(os_vec(&["ai", "--help"])),
+            os_vec(&["ai", "--help"])
+        );
+        assert_eq!(
+            normalize_args_for_shell_completion(os_vec(&["ai", "-V"])),
+            os_vec(&["ai", "-V"])
+        );
+    }
+
+    #[test]
+    fn shell_completion_keeps_subcommand_prefixes() {
+        assert_eq!(
+            normalize_args_for_shell_completion(os_vec(&["ai", "hist"])),
+            os_vec(&["ai", "hist"])
+        );
+        assert_eq!(
+            normalize_args_for_shell_completion(os_vec(&["ai", "history", "--limit"])),
+            os_vec(&["ai", "history", "--limit"])
+        );
+    }
+
+    #[test]
+    fn shell_completion_keeps_bare_command_for_subcommand_listing() {
+        assert_eq!(
+            normalize_args_for_shell_completion(os_vec(&["ai"])),
+            os_vec(&["ai"])
+        );
+    }
+
+    #[test]
+    fn command_for_shell_completion_includes_implicit_ask_flags() {
+        let cmd = command_for_shell_completion();
+        assert!(
+            cmd.get_opts().any(|arg| arg.get_long() == Some("preset")),
+            "expected ask flags on root command for shell completion"
+        );
+    }
+
+    #[test]
+    fn zsh_completion_script_lists_implicit_ask_flags_at_root() {
+        use clap_complete::{generate, shells::Zsh};
+
+        let mut cmd = command_for_shell_completion();
+        let mut buf = Vec::new();
+        generate(Zsh, &mut cmd, "ai", &mut buf);
+        let script = String::from_utf8(buf).expect("utf8");
+        let root_section = script.split("case $state in").next().expect("root section");
+        assert!(
+            root_section.contains("--preset"),
+            "zsh root completion should include implicit ask flags: {root_section}"
+        );
+    }
 }
