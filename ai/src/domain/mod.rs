@@ -7,6 +7,7 @@ mod llm_profile;
 mod log_tail;
 mod output_filter;
 mod output_format;
+mod progress;
 mod reports;
 mod request_context;
 mod shell_log;
@@ -30,6 +31,7 @@ pub use output_filter::resolve_output_filter;
 pub use output_format::{
     append_env_line, append_tsv_row, shell_single_quote, OutputFormat, OutputFormatError,
 };
+pub use progress::{format_progress_label, resolve_progress};
 pub use reports::{DiagnosticsReport, DryRunReport, FilterMetadata};
 pub use request_context::RequestContextInput;
 pub use shell_log::{

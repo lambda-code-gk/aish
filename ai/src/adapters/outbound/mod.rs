@@ -8,6 +8,7 @@ mod local_history;
 mod output_filter;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
+mod stderr_spinner;
 mod stdout_presenter;
 mod terminal_size;
 pub mod toml_config;

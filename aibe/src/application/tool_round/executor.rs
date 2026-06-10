@@ -160,6 +160,15 @@ impl ToolRoundExecutor {
         next_conversation.push(step.assistant.clone());
 
         for tc in &step.tool_calls {
+            if let Some(events) = events.as_ref() {
+                events
+                    .progress(
+                        tool_ctx.turn_id(),
+                        aibe_protocol::ProgressPhase::ToolCall,
+                        Some(tc.name.clone()),
+                    )
+                    .await;
+            }
             let (record, result) = if !is_known_tool(&tc.name) {
                 rejected_tool_result(
                     tc,

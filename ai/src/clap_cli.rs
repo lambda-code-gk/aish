@@ -82,8 +82,12 @@ pub struct TurnOptions {
     pub new: bool,
     #[arg(long)]
     pub verbose_tools: bool,
-    #[arg(long)]
+    /// 進行表示（TTY では既定 ON）。非 TTY では `--progress` で明示有効化。
+    #[arg(long, conflicts_with = "no_progress")]
     pub progress: bool,
+    /// 進行表示を無効にする
+    #[arg(long, conflicts_with = "progress")]
+    pub no_progress: bool,
     #[arg(long)]
     pub timeout: Option<u64>,
     #[arg(long)]

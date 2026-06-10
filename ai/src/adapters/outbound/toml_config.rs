@@ -18,6 +18,7 @@ pub struct AiConfig {
     pub ask_default_profile: Option<String>,
     pub ask_filter: Option<String>,
     pub ask_console_hints: Option<bool>,
+    pub ask_progress: Option<bool>,
     pub history_dir: PathBuf,
     pub history_max_entries: usize,
     pub log_tail_bytes: Option<usize>,
@@ -33,6 +34,7 @@ pub struct AiPresetConfig {
     pub quiet: Option<bool>,
     pub shell_exec_approval: Option<String>,
     pub console_hints: Option<bool>,
+    pub progress: Option<bool>,
 }
 
 const DEFAULT_CONFIG: &str = ".config/ai/config.toml";
@@ -47,6 +49,7 @@ impl AiConfig {
             ask_default_profile: None,
             ask_filter: None,
             ask_console_hints: None,
+            ask_progress: None,
             history_dir: Self::default_history_dir(),
             history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
             log_tail_bytes: None,
@@ -68,6 +71,7 @@ impl AiConfig {
                         cfg.ask_default_profile = ask.default_profile;
                         cfg.ask_filter = ask.filter.filter(|s| !s.is_empty());
                         cfg.ask_console_hints = ask.console_hints;
+                        cfg.ask_progress = ask.progress;
                     }
                     if let Some(history_dir) = file.history_dir {
                         cfg.history_dir = expand_home(history_dir);
@@ -129,6 +133,7 @@ struct AskSection {
     default_profile: Option<String>,
     filter: Option<String>,
     console_hints: Option<bool>,
+    progress: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +145,7 @@ struct PresetToml {
     quiet: Option<bool>,
     shell_exec_approval: Option<String>,
     console_hints: Option<bool>,
+    progress: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +168,7 @@ impl From<PresetToml> for AiPresetConfig {
             quiet: value.quiet,
             shell_exec_approval: value.shell_exec_approval.filter(|s| !s.is_empty()),
             console_hints: value.console_hints,
+            progress: value.progress,
         }
     }
 }

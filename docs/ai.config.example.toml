@@ -14,6 +14,8 @@ tools = "@read-only"
 # TTY 向け console hint（端末サイズに応じた system instruction）。省略時 true。
 # CLI: --console-hint / -H で有効、--no-console-hint / -N で無効。
 # console_hints = false
+# 進行表示（TTY stderr では省略時 true）。CLI: --progress / --no-progress。
+# progress = false
 # assistant 本文を /bin/sh -c で加工（例: jq 整形）。非空 AI_FILTER があれば上書き。
 # filter = "jq ."
 

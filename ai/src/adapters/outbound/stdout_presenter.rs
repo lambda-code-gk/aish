@@ -7,18 +7,21 @@ use aibe_protocol::{
 };
 
 use crate::domain::ToolsStartupLine;
-use crate::domain::{append_env_line, append_tsv_row, OutputFormat};
+use crate::domain::{append_env_line, append_tsv_row, format_progress_label, OutputFormat};
 use crate::ports::outbound::Presenter;
 
 use super::output_filter::{
     apply_output_filter, format_filter_exit_status, write_filter_streams, FilterRunOutcome,
 };
+use super::stderr_spinner::StderrSpinner;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct StdoutPresenter {
     output_filter: Option<String>,
     output_format: Option<OutputFormat>,
     quiet: bool,
+    progress_spinner: bool,
+    spinner: StderrSpinner,
 }
 
 /// `show_response` が書き込む内容（テスト・契約検証用）。
@@ -30,27 +33,44 @@ pub struct PresenterOutput {
 
 impl StdoutPresenter {
     pub fn new(output_filter: Option<String>) -> Self {
-        Self {
-            output_filter,
-            output_format: None,
-            quiet: false,
-        }
+        Self::with_options(output_filter, None, false, false)
     }
 
     pub fn with_options(
         output_filter: Option<String>,
         output_format: Option<OutputFormat>,
         quiet: bool,
+        progress_spinner: bool,
     ) -> Self {
         Self {
             output_filter,
             output_format,
             quiet,
+            progress_spinner,
+            spinner: StderrSpinner::default(),
         }
     }
 
     pub fn is_quiet(&self) -> bool {
         self.quiet
+    }
+
+    /// turn 開始時に呼ぶ。最初の progress event までの無音区間を埋める。
+    pub fn begin_turn_progress(&self) {
+        if self.quiet || !self.progress_spinner {
+            return;
+        }
+        self.spinner.start("working…");
+    }
+
+    pub fn end_turn_progress(&self) {
+        self.spinner.stop();
+    }
+
+    fn stop_spinner_for_output(&self) {
+        if self.spinner.is_running() {
+            self.spinner.stop();
+        }
     }
 
     fn emit_assistant_stdout(&self, content: &str) {
@@ -116,6 +136,20 @@ impl Presenter for StdoutPresenter {
         if self.quiet {
             return;
         }
+        let label = format_progress_label(phase, message);
+        if phase == "waiting_approval" {
+            self.stop_spinner_for_output();
+            eprintln!("ai: {label}");
+            return;
+        }
+        if self.progress_spinner {
+            if self.spinner.is_running() {
+                self.spinner.set_label(label);
+            } else {
+                self.spinner.start(label);
+            }
+            return;
+        }
         match message {
             Some(message) => eprintln!("ai: progress: {phase}: {message}"),
             None => eprintln!("ai: progress: {phase}"),
@@ -127,12 +161,14 @@ impl Presenter for StdoutPresenter {
             return;
         }
         if !chunk.is_empty() {
+            self.stop_spinner_for_output();
             print!("{chunk}");
             let _ = std::io::stdout().flush();
         }
     }
 
     fn show_response(&self, response: &ClientResponse, verbose_tools: bool, streamed: bool) {
+        self.stop_spinner_for_output();
         let out = if let Some(format) = self.output_format {
             render_response_structured(
                 response,
@@ -161,6 +197,7 @@ impl Presenter for StdoutPresenter {
     }
 
     fn show_error(&self, message: &str) {
+        self.stop_spinner_for_output();
         eprintln!("ai: {message}");
     }
 }

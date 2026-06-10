@@ -25,10 +25,10 @@ use ai::application::{
 use ai::clap_cli::{AiCli, AiCommand, HistoryStatusArg, OutputFormatArg, TurnOptions};
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
-    validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError, ConfigToolsTokens,
-    ConsoleHintReport, HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind,
-    HistoryRecordStatus, LogTailResolveError, OutputFormat, OutputFormatError, RequestContextInput,
-    ShellLogChoice, ShellLogResolveError, ToolsResolveError,
+    resolve_progress, validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError,
+    ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter, HistoryMessage, HistoryPayload,
+    HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat, OutputFormatError,
+    RequestContextInput, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
@@ -144,6 +144,7 @@ struct ResolvedTurnSettings {
     no_start: bool,
     verbose_tools: bool,
     progress: bool,
+    progress_spinner: bool,
     timeout_secs: Option<u64>,
     yes_exec: bool,
     shell_exec_approval: Option<String>,
@@ -444,10 +445,12 @@ fn execute_turn(
         ensure_running(path).map_err(|e| anyhow::anyhow!(e))
     })?;
 
+    let progress_spinner = settings.progress_spinner;
     let presenter = Arc::new(StdoutPresenter::with_options(
         settings.output_filter.clone(),
         settings.output_format,
         settings.quiet,
+        progress_spinner,
     ));
     presenter.show_tools_startup(&plan.resolved_tools.startup);
     presenter.show_external_commands(&external_command_names());
@@ -484,6 +487,7 @@ fn execute_turn(
 
     let yes_exec_effective =
         settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
+    presenter.begin_turn_progress();
     let response = if settings.timeout_secs.is_some() || settings.progress || yes_exec_effective {
         run_agent_turn_async(
             plan.socket_path.clone(),
@@ -506,6 +510,7 @@ fn execute_turn(
             settings.progress,
         )?
     };
+    presenter.end_turn_progress();
 
     let TurnExecutionOutcome {
         response,
@@ -778,6 +783,16 @@ fn cli_console_hint_explicit(turn: &TurnOptions) -> Option<bool> {
     if turn.no_console_hint {
         Some(false)
     } else if turn.console_hint {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn cli_progress_explicit(turn: &TurnOptions) -> Option<bool> {
+    if turn.no_progress {
+        Some(false)
+    } else if turn.progress {
         Some(true)
     } else {
         None
@@ -1236,8 +1251,17 @@ fn resolve_turn_settings(
         detect_terminal_size().is_some(),
         output_format,
     );
+    let stderr_tty = std::io::stderr().is_terminal();
+    let progress = resolve_progress(
+        cli_progress_explicit(turn),
+        preset.and_then(|p| p.progress),
+        cfg.ask_progress,
+        stderr_tty,
+    );
+    let quiet = turn.quiet || preset.and_then(|p| p.quiet).unwrap_or(false);
+    let progress_spinner = progress && !quiet && stderr_tty && output_format.is_none();
     Ok(ResolvedTurnSettings {
-        quiet: turn.quiet || preset.and_then(|p| p.quiet).unwrap_or(false),
+        quiet,
         output_format,
         preset_name: turn.preset.clone(),
         log_tail_bytes,
@@ -1254,7 +1278,8 @@ fn resolve_turn_settings(
         tools_cli: turn.tools.clone(),
         no_start: turn.no_start,
         verbose_tools: turn.verbose_tools,
-        progress: turn.progress,
+        progress,
+        progress_spinner,
         timeout_secs: turn.timeout,
         yes_exec: turn.yes_exec,
         shell_exec_approval,
@@ -1598,7 +1623,9 @@ mod cli_tests {
 
     use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
     use ai::clap_cli::{AiCli, TurnOptions};
-    use ai::domain::{resolve_console_hints, ConfigToolsTokens, FilterMetadata, ShellLogChoice};
+    use ai::domain::{
+        resolve_console_hints, resolve_progress, ConfigToolsTokens, FilterMetadata, ShellLogChoice,
+    };
     use ai::domain::{HistoryMessage, HistoryPayload};
     use aibe_client::default_socket_path;
     use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RouteKind, RoutePlan};
@@ -1755,6 +1782,7 @@ mod cli_tests {
             no_start: false,
             verbose_tools: false,
             progress: false,
+            progress_spinner: false,
             timeout_secs: None,
             yes_exec: true,
             shell_exec_approval: None,
@@ -1791,6 +1819,39 @@ mod cli_tests {
             cli_overrides.tools.as_ref().map(Vec::as_slice),
             Some(&["read_file".to_string(), "shell_exec".to_string()][..])
         );
+    }
+
+    #[test]
+    fn turn_options_parse_progress_flags() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        #[command(name = "test")]
+        struct Cli {
+            #[command(flatten)]
+            turn: TurnOptions,
+        }
+
+        let turn = Cli::try_parse_from(["test", "--progress"])
+            .expect("parse")
+            .turn;
+        assert!(turn.progress);
+        assert!(!turn.no_progress);
+
+        let turn = Cli::try_parse_from(["test", "--no-progress"])
+            .expect("parse")
+            .turn;
+        assert!(turn.no_progress);
+        assert!(!turn.progress);
+
+        assert!(Cli::try_parse_from(["test", "--progress", "--no-progress"]).is_err());
+    }
+
+    #[test]
+    fn resolve_progress_tty_default() {
+        assert!(resolve_progress(None, None, None, true));
+        assert!(!resolve_progress(None, None, None, false));
+        assert!(!resolve_progress(Some(false), None, None, true));
     }
 
     #[test]
@@ -1834,6 +1895,7 @@ mod cli_tests {
             ask_default_profile: None,
             ask_filter: None,
             ask_console_hints: None,
+            ask_progress: None,
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
