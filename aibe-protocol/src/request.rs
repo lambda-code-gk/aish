@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::memory::{MemoryApplyRequestBody, MemoryQueryRequestBody};
+
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -39,6 +41,10 @@ pub enum ClientRequest {
         tool_call_id: String,
         approved: bool,
     },
+    /// contextual memory の書き込み。
+    MemoryApply(MemoryApplyRequestBody),
+    /// contextual memory の読み取り。
+    MemoryQuery(MemoryQueryRequestBody),
 }
 
 /// プロトコル上のメッセージ（serde 用）。
@@ -219,5 +225,115 @@ mod tests {
         assert!(
             matches!(back, ClientRequest::CancelTurn { id, turn_id } if id == "c1" && turn_id == "t1")
         );
+    }
+
+    #[test]
+    fn memory_apply_roundtrip() {
+        use crate::memory::{
+            MemoryApplyRequestBody, MemoryContext, MemoryInjectPolicyDto, MemoryOperationDto,
+            MemoryScopeDto, MemoryStatusDto,
+        };
+
+        let req = ClientRequest::MemoryApply(MemoryApplyRequestBody {
+            id: "m1".into(),
+            session_id: "sess-1".into(),
+            context: MemoryContext {
+                cwd: "/tmp/proj".into(),
+            },
+            operation: MemoryOperationDto::Add {
+                kind: "goal".into(),
+                scope: MemoryScopeDto::Project,
+                inject: MemoryInjectPolicyDto::Pinned,
+                status: MemoryStatusDto::Active,
+                text: "ship it".into(),
+                make_active: true,
+            },
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""type":"memory_apply""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::MemoryApply(body) => {
+                assert_eq!(body.id, "m1");
+                assert_eq!(body.session_id, "sess-1");
+                assert_eq!(body.context.cwd, "/tmp/proj");
+                assert!(matches!(
+                    body.operation,
+                    MemoryOperationDto::Add { kind, text, .. } if kind == "goal" && text == "ship it"
+                ));
+            }
+            _ => panic!("expected memory_apply"),
+        }
+    }
+
+    #[test]
+    fn memory_query_roundtrip() {
+        use crate::memory::{
+            MemoryContext, MemoryQueryDto, MemoryQueryRequestBody, MemoryScopeDto, MemoryStatusDto,
+        };
+
+        let req = ClientRequest::MemoryQuery(MemoryQueryRequestBody {
+            id: "q1".into(),
+            session_id: "sess-1".into(),
+            context: MemoryContext {
+                cwd: "/tmp/proj".into(),
+            },
+            query: MemoryQueryDto {
+                kind: Some("idea".into()),
+                scope: Some(MemoryScopeDto::Project),
+                status: Some(MemoryStatusDto::Open),
+                active_only: false,
+                include_archived: false,
+                limit: Some(10),
+                include_prompt_block: false,
+                user_query: None,
+            },
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""type":"memory_query""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::MemoryQuery(body) => {
+                assert_eq!(body.id, "q1");
+                assert_eq!(body.session_id, "sess-1");
+                assert_eq!(body.context.cwd, "/tmp/proj");
+                assert_eq!(body.query.kind.as_deref(), Some("idea"));
+                assert_eq!(body.query.limit, Some(10));
+            }
+            _ => panic!("expected memory_query"),
+        }
+    }
+
+    #[test]
+    fn memory_apply_rejects_unknown_top_level_fields() {
+        let json = r#"{
+            "type": "memory_apply",
+            "id": "m1",
+            "session_id": "sess",
+            "context": { "cwd": "/tmp" },
+            "operation": {
+                "op": "add",
+                "kind": "goal",
+                "scope": "project",
+                "inject": "pinned",
+                "status": "active",
+                "text": "x",
+                "make_active": true
+            },
+            "project_key": "/tmp"
+        }"#;
+        assert!(serde_json::from_str::<ClientRequest>(json).is_err());
+    }
+
+    #[test]
+    fn memory_query_rejects_unknown_context_fields() {
+        let json = r#"{
+            "type": "memory_query",
+            "id": "q1",
+            "session_id": "sess",
+            "context": { "cwd": "/tmp", "project_key": "/tmp" },
+            "query": {}
+        }"#;
+        assert!(serde_json::from_str::<ClientRequest>(json).is_err());
     }
 }

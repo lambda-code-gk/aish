@@ -83,6 +83,25 @@ pub fn route_turn(
     route_turn_on_stream(stream, request)
 }
 
+/// `memory_apply` / `memory_query` など単発応答 RPC。
+pub fn memory_request(
+    socket_path: &Path,
+    request: ClientRequest,
+) -> Result<ClientResponse, ClientError> {
+    let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
+    memory_request_on_stream(stream, request)
+}
+
+pub fn memory_request_on_stream(
+    stream: UnixStream,
+    request: ClientRequest,
+) -> Result<ClientResponse, ClientError> {
+    let mut writer = stream;
+    let mut reader = BufReader::new(writer.try_clone().map_err(ClientError::Connect)?);
+    send_request(&mut writer, &request).map_err(ClientError::Connect)?;
+    read_response_from_reader(&mut reader)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTurnProgressEvent {
     pub phase: ProgressPhase,

@@ -1,3 +1,4 @@
+mod contextual_memory_store;
 mod conversation_store;
 mod env_config;
 mod gemini;
@@ -13,6 +14,7 @@ pub mod tools;
 pub use crate::ports::outbound::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStoreError,
 };
+pub use contextual_memory_store::{EmptyContextualMemoryStore, FilesystemContextualMemoryStore};
 pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;
 pub use gemini::GeminiLlm;

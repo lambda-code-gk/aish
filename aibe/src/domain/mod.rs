@@ -2,6 +2,7 @@
 
 mod agent_turn_context;
 mod client_cwd;
+mod contextual_memory;
 mod llm_step;
 mod message;
 mod shell_log_tail;
@@ -10,6 +11,12 @@ mod tool_execution_summary;
 
 pub use agent_turn_context::{AgentTurnContext, ContextError};
 pub use client_cwd::{ClientCwd, ClientCwdError};
+pub use contextual_memory::{
+    format_memory_block, is_standard_kind, query_matches_idea_on_demand,
+    resolve_entries_for_prompt, validate_kind, validate_standard_kind_operation, validate_text,
+    MemoryBlock, MemoryEntry, MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
+    ProjectKey, ProjectKeyError, STANDARD_KIND_GOAL, STANDARD_KIND_IDEA, STANDARD_KIND_NOW,
+};
 pub use llm_step::LlmStepResult;
 pub use message::{ChatMessage, MessageRole, UnknownMessageRole};
 pub use shell_log_tail::ShellLogTail;

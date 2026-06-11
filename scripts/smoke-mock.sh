@@ -65,6 +65,7 @@ SMOKE_DIR="$(mktemp -d)"
 export AIBE_CONFIG="$SMOKE_DIR/aibe.toml"
 export AIBE_SOCKET_PATH="$SMOKE_DIR/aibe.sock"
 export AI_CONFIG="$SMOKE_DIR/ai.toml"
+export AI_SESSION_ID="smoke-memory"
 
 cat >"$AIBE_CONFIG" <<'EOF'
 [llm]
@@ -86,6 +87,8 @@ AI_BIN="$ROOT/target/debug/ai"
 [[ -x "$AI_BIN" ]] || fail "missing $AI_BIN"
 
 echo "smoke-mock: starting mock aibe (foreground)..."
+# memory store の正本を一時 HOME 配下に隔離する（rustup 解決後に差し替え）。
+export HOME="$SMOKE_DIR"
 "$AIBE_BIN" -f &
 AIBE_PID=$!
 
@@ -149,5 +152,14 @@ echo "smoke-mock: ai chat --dry-run..."
 timeout 30s "$AI_BIN" chat --dry-run --quiet --format json >"$STDOUT_FILE" 2>"$STDERR_FILE"
 grep -q '"command":"chat"' "$STDOUT_FILE" || fail "chat dry-run must report command chat"
 [[ ! -s "$STDERR_FILE" ]] || fail "chat dry-run must not connect to aibe"
+
+echo "smoke-mock: contextual memory goal set + mem show..."
+timeout 30s "$AI_BIN" goal set --socket "$AIBE_SOCKET_PATH" --no-start "smoke goal" \
+  >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q 'goal set: smoke goal' "$STDOUT_FILE" || fail "goal set must confirm saved text"
+timeout 30s "$AI_BIN" mem show --socket "$AIBE_SOCKET_PATH" --no-start \
+  >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q '\[aibe contextual memory\]' "$STDOUT_FILE" || fail "mem show must include prompt block header"
+grep -q 'smoke goal' "$STDOUT_FILE" || fail "mem show must include saved goal text"
 
 echo "smoke-mock: ok"

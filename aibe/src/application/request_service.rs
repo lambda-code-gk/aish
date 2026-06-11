@@ -4,13 +4,14 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
+use crate::application::memory_service::MemoryService;
 use crate::application::route_turn::RouteTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    ConversationStore, ProfileRegistry, RouterConfig, ShellExecApprovalGate, ToolRoundTerminator,
-    ToolsConfig, TurnCancellation, TurnEventSink,
+    ContextualMemoryStore, ConversationStore, ProfileRegistry, RouterConfig, ShellExecApprovalGate,
+    ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 use std::collections::HashMap;
@@ -26,6 +27,7 @@ pub struct RequestService {
     active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
     router_profile: String,
     conversation_store: Arc<dyn ConversationStore>,
+    memory_store: Arc<dyn ContextualMemoryStore>,
 }
 
 impl RequestService {
@@ -36,6 +38,7 @@ impl RequestService {
         terminator: Arc<dyn ToolRoundTerminator>,
         router_profile: String,
         conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
     ) -> Self {
         Self::new_with_turns(
             profile_registry,
@@ -45,9 +48,11 @@ impl RequestService {
             Arc::new(Mutex::new(HashMap::new())),
             router_profile,
             conversation_store,
+            memory_store,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_turns(
         profile_registry: ProfileRegistry,
         tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
@@ -56,6 +61,7 @@ impl RequestService {
         active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
         router_profile: String,
         conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
     ) -> Self {
         Self {
             profile_registry,
@@ -65,6 +71,7 @@ impl RequestService {
             active_turns,
             router_profile,
             conversation_store,
+            memory_store,
         }
     }
 
@@ -127,6 +134,14 @@ impl RequestService {
                 ErrorCode::InvalidRequest,
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
+            ClientRequest::MemoryApply(body) => {
+                let service = MemoryService::new(Arc::clone(&self.memory_store));
+                service.apply(body.id, body.session_id, &body.context.cwd, body.operation)
+            }
+            ClientRequest::MemoryQuery(body) => {
+                let service = MemoryService::new(Arc::clone(&self.memory_store));
+                service.query(body.id, body.session_id, &body.context.cwd, body.query)
+            }
             ClientRequest::AgentTurn {
                 id,
                 messages,
@@ -184,6 +199,7 @@ impl RequestService {
                     executor,
                     Arc::clone(&self.terminator),
                     termination_capability,
+                    Arc::clone(&self.memory_store),
                 );
                 let turn_id = id.clone();
                 if let Some(cancel) = cancellation.clone() {

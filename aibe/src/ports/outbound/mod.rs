@@ -1,5 +1,6 @@
 pub mod command_policy;
 pub mod config;
+pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod llm;
 pub mod shell_exec_approval;
@@ -20,6 +21,7 @@ pub use config::{
     DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_MATCHES, DEFAULT_MAX_LIST_ENTRIES,
     DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
 };
+pub use contextual_memory_store::{ContextualMemoryStore, ContextualMemoryStoreError};
 pub use conversation_store::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStore, ConversationStoreError,
 };

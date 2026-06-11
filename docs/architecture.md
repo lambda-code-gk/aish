@@ -29,8 +29,8 @@ flowchart LR
 | **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。`openpty` 後に親 stdin の winsize を PTY master へ `TIOCSWINSZ` で同期し、セッション中の `SIGWINCH` も `signalfd` 経由で同様に伝播。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
 | **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `route_turn` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
-| **aibe** | `route_turn`、会話継続、ツール、プロバイダ呼び出し、conversation store、Unix socket サーバ | LLM API へ（設定に従う） |
-| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。`AI_SESSION_ID` を解決して `route_turn` を要求し、aish ログをコンテキストに使う。`chat` はクライアント側 transcript を保持し、`AgentTurnResult` 成功時のみ user/assistant を追記する。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
+| **aibe** | `route_turn`、会話継続、ツール、プロバイダ呼び出し、conversation store、**contextual memory store**、Unix socket サーバ | LLM API へ（設定に従う） |
+| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。`AI_SESSION_ID` を解決して `route_turn` を要求し、aish ログをコンテキストに使う。`goal` / `now` / `idea` / `mem` は `MemoryApply` / `MemoryQuery` の薄い CLI。**memory の正本は持たない**。`chat` はクライアント側 transcript を保持し、`AgentTurnResult` 成功時のみ user/assistant を追記する。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
 
 ## 依存ルール
 
@@ -136,6 +136,60 @@ aish          →  （aibe への path 依存禁止）
 `route_turn` の応答 `RoutePlan` は advisory であり、`ai` の CLI 明示値があれば上書きされる。`route_reason` は stderr / history に残す前に redaction する。
 
 `aibe` は `AI_SESSION_ID` ごとに conversation store を切り、`index.jsonl` には redacted metadata、`conversations/<conversation_id>.json` には full transcript と summary を保存する。
+
+### contextual memory（0034）
+
+- **正本**: `aibe` の session 配下 JSONL（`conversations/<AI_SESSION_ID>/memory/events.jsonl`）。`ai` / `aish` は保存しない。
+- **RPC**: `memory_apply`（write）、`memory_query`（read）。`cwd` から `project_key` をサーバが導出する。
+- **注入**: `route_turn` は memory を見ない。`agent_turn` のみ `resolve_for_prompt` で user-maintained context block を synthetic user message として前置する（system instruction ではない）。
+- **標準 kind**: `goal`（project, pinned）、`now`（session, pinned）、`idea`（project, on-demand）。詳細は [spec/0034_aibe-contextual-memory-spec.md](spec/0034_aibe-contextual-memory-spec.md)。
+
+リクエスト例（`memory_apply`）:
+
+```json
+{
+  "type": "memory_apply",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "AI_SESSION_ID",
+  "context": { "cwd": "/abs/path/to/project" },
+  "operation": {
+    "op": "add",
+    "kind": "goal",
+    "scope": "project",
+    "inject": "pinned",
+    "status": "active",
+    "text": "ship contextual memory",
+    "make_active": true
+  }
+}
+```
+
+リクエスト例（`memory_query`。`include_prompt_block` で `ai mem show` 相当の block を取得）:
+
+```json
+{
+  "type": "memory_query",
+  "id": "550e8400-e29b-41d4-a716-446655440001",
+  "session_id": "AI_SESSION_ID",
+  "context": { "cwd": "/abs/path/to/project" },
+  "query": {
+    "include_prompt_block": true,
+    "user_query": ""
+  }
+}
+```
+
+応答例（`memory_query_result`）:
+
+```json
+{
+  "type": "memory_query_result",
+  "id": "550e8400-e29b-41d4-a716-446655440001",
+  "status": "ok",
+  "entries": [],
+  "prompt_block": "[aibe contextual memory]\n..."
+}
+```
 
 エラー時:
 

@@ -1,6 +1,7 @@
 //! aibe ↔ クライアント間の wire 契約（NDJSON / serde）。
 
 mod executed_tool;
+mod memory;
 mod request;
 mod response;
 mod tool_name;
@@ -8,6 +9,12 @@ mod tool_name;
 pub use executed_tool::{
     ExecutedToolCall, ExecutedToolStatus, ShellExecApprovalOutcome, ToolApprovalState,
     ToolRiskClass,
+};
+pub use memory::{
+    MemoryApplyRequestBody, MemoryApplyStatus, MemoryContext, MemoryEntryDto,
+    MemoryInjectPolicyDto, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
+    MemoryQueryStatus, MemoryScopeDto, MemoryStatusDto, MEMORY_PROMPT_BUDGET_BYTES,
+    MEMORY_TEXT_MAX_BYTES,
 };
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
 pub use request::{RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession};

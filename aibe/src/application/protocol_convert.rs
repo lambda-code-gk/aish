@@ -59,6 +59,7 @@ impl TryFrom<RequestContext> for AgentTurnContext {
             client_cwd,
             shell_log_tail,
             system_instruction,
+            ai_session_id: ctx.ai_session_id,
         })
     }
 }

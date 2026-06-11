@@ -17,6 +17,7 @@ pub struct AgentTurnContext {
     pub shell_log_tail: Option<ShellLogTail>,
     /// クライアントがこの turn 用に渡した system 本文（注入のみ。aibe は解釈しない）。
     pub system_instruction: Option<String>,
+    pub ai_session_id: Option<String>,
 }
 
 impl AgentTurnContext {
@@ -25,6 +26,7 @@ impl AgentTurnContext {
             client_cwd: Some(client_cwd),
             shell_log_tail: tail,
             system_instruction: None,
+            ai_session_id: None,
         }
     }
 
@@ -33,6 +35,7 @@ impl AgentTurnContext {
             client_cwd: None,
             shell_log_tail: tail,
             system_instruction: None,
+            ai_session_id: None,
         }
     }
 

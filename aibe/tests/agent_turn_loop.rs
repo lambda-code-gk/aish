@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::ScriptedMockLlm;
+use aibe::adapters::outbound::{EmptyContextualMemoryStore, ScriptedMockLlm};
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{
@@ -32,7 +32,13 @@ fn agent_turn_service(
     ));
     let registry = build_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
-    AgentTurnService::new(llm, executor, terminator, capability)
+    AgentTurnService::new(
+        llm,
+        executor,
+        terminator,
+        capability,
+        Arc::new(EmptyContextualMemoryStore),
+    )
 }
 
 fn default_agent_turn_service(llm: Arc<dyn LlmProvider>, cfg: ToolsConfig) -> AgentTurnService {

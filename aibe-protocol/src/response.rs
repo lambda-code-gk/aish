@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::executed_tool::ExecutedToolCall;
+use crate::memory::{MemoryApplyStatus, MemoryEntryDto, MemoryQueryStatus};
 
 /// NDJSON 1 行のレスポンス。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +46,18 @@ pub enum ClientResponse {
         turn_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+    },
+    MemoryApplyResult {
+        id: String,
+        status: MemoryApplyStatus,
+        entries: Vec<MemoryEntryDto>,
+    },
+    MemoryQueryResult {
+        id: String,
+        status: MemoryQueryStatus,
+        entries: Vec<MemoryEntryDto>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_block: Option<String>,
     },
     Error {
         id: String,

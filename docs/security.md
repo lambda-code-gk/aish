@@ -95,6 +95,13 @@
 - `index.jsonl` は redacted metadata のみで、full transcript は `conversations/<conversation_id>.json` に閉じる
 - store 配下は 0700 / 0600 相当で作成し、他ユーザーから読めない前提を維持する
 
+### contextual memory（0034）
+
+- memory はユーザーが明示保存した**背景文脈**であり、system instruction や shell コマンドとして扱わない
+- `aibe` が `AgentTurn` 時にのみ注入する。`ai` は wire 経由で apply/query するだけで、ローカル正本を持たない
+- API キー・トークンなど機密を memory に保存しない運用とする（自動 secret 検出は MVP 外）
+- `--dry-run` 等で memory 全文を不用意に露出しない（`ai` memory コマンドは意図的な表示のみ）
+
 ### safe tools / dangerous tools
 
 設計の上位正本: [architecture.md](architecture.md)。検証の所在: [testing.md](testing.md) の「0018 safe-tools-policy」。

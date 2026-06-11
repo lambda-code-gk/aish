@@ -187,6 +187,119 @@ pub enum AiCommand {
         #[arg(value_enum)]
         shell: CompleteShell,
     },
+    /// Manage project goal (contextual memory)
+    Goal {
+        #[command(subcommand)]
+        command: GoalCommand,
+    },
+    /// Manage current focus (contextual memory)
+    Now {
+        #[command(subcommand)]
+        command: NowCommand,
+    },
+    /// Capture ideas (contextual memory, on-demand injection)
+    Idea {
+        #[command(subcommand)]
+        command: IdeaCommand,
+    },
+    /// Generic contextual memory operations
+    Mem {
+        #[command(subcommand)]
+        command: MemCommand,
+    },
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MemoryCliOptions {
+    #[arg(long, value_hint = clap::ValueHint::FilePath)]
+    pub socket: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
+    pub format: OutputFormatArg,
+    #[arg(long)]
+    pub no_start: bool,
+}
+
+#[derive(Subcommand)]
+pub enum GoalCommand {
+    Set {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Show {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Clear {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum NowCommand {
+    Set {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Show {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Clear {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IdeaCommand {
+    Add {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    List {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Clear {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MemCommand {
+    Add {
+        kind: String,
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    List {
+        #[arg(long)]
+        kind: Option<String>,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Show {
+        /// on-demand idea 解決を含めた prompt block プレビュー用のユーザー query
+        #[arg(long)]
+        query: Option<String>,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
+    Clear {
+        kind: String,
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
 }
 
 impl AiCli {
@@ -241,6 +354,10 @@ fn is_known_cli_head(word: &str) -> bool {
             | "doctor"
             | "ping"
             | "complete"
+            | "goal"
+            | "now"
+            | "idea"
+            | "mem"
             | "help"
             | "-h"
             | "--help"

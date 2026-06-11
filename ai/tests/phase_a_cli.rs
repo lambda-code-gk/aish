@@ -7,7 +7,10 @@ use std::os::unix::net::UnixListener;
 use std::process::Command;
 use std::thread::{self, JoinHandle};
 
-use aibe_protocol::{AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut};
+use aibe_protocol::{
+    AgentTurnStatus, ClientRequest, ClientResponse, MemoryApplyStatus, MemoryOperationDto,
+    MemoryQueryStatus, MemoryScopeDto, ProtocolMessageOut,
+};
 use serde_json::Value;
 
 struct MockSocketServer {
@@ -488,4 +491,86 @@ fn no_console_hint_skips_system_instruction_on_agent_turn() {
         .expect("run ai");
 
     assert!(out.status.success());
+}
+
+#[test]
+fn goal_set_sends_memory_apply() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryApply(body) => {
+            assert!(!body.session_id.is_empty());
+            assert!(!body.context.cwd.is_empty());
+            let operation = body.operation;
+            assert!(matches!(
+                operation,
+                MemoryOperationDto::Add {
+                    kind,
+                    scope: MemoryScopeDto::Project,
+                    make_active: true,
+                    ..
+                } if kind == "goal"
+            ));
+            ClientResponse::MemoryApplyResult {
+                id: "m1".to_string(),
+                status: MemoryApplyStatus::Ok,
+                entries: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["goal", "set", "--no-start", "ship memory"])
+        .output()
+        .expect("run ai goal set");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("goal set: ship memory"));
+}
+
+#[test]
+fn mem_show_requests_prompt_block() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryQuery(body) => {
+            assert!(body.query.include_prompt_block);
+            assert!(body.query.user_query.is_none());
+            ClientResponse::MemoryQueryResult {
+                id: "q1".to_string(),
+                status: MemoryQueryStatus::Ok,
+                entries: vec![],
+                prompt_block: Some(
+                    "[aibe contextual memory]\n[goal]\nship\n[/aibe contextual memory]".into(),
+                ),
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["mem", "show", "--no-start"])
+        .output()
+        .expect("run ai mem show");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[aibe contextual memory]"));
+    assert!(stdout.contains("ship"));
 }

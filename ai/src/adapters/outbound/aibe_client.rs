@@ -3,15 +3,19 @@
 use std::path::Path;
 
 use aibe_client::{
-    agent_turn as transport_agent_turn, agent_turn_with_events, route_turn as transport_route_turn,
+    agent_turn as transport_agent_turn, agent_turn_with_events,
+    memory_request as transport_memory_request, route_turn as transport_route_turn,
     send_cancel_request, AgentTurnProgressEvent, ClientError,
 };
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
-use aibe_protocol::{ClientRequest, ClientResponse, ProtocolMessage};
+use aibe_protocol::{
+    ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryOperationDto, MemoryQueryDto,
+    MemoryQueryRequestBody, ProtocolMessage,
+};
 
 use crate::domain::AskRequest;
-use crate::ports::outbound::{AgentClient, AgentError};
+use crate::ports::outbound::{AgentClient, AgentError, MemoryClient};
 
 pub struct AibeUnixClient {
     socket_path: std::path::PathBuf,
@@ -76,6 +80,28 @@ impl AibeUnixClient {
         transport_route_turn(self.socket_path(), request).map_err(map_client_error)
     }
 
+    pub fn memory_apply(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        operation: MemoryOperationDto,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_apply_request(session_id, cwd, operation))
+    }
+
+    pub fn memory_query(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        query: MemoryQueryDto,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_query_request(session_id, cwd, query))
+    }
+
+    fn send_memory_request(&self, request: ClientRequest) -> Result<ClientResponse, AgentError> {
+        transport_memory_request(self.socket_path(), request).map_err(map_client_error)
+    }
+
     pub fn agent_turn_stream(
         &self,
         request: &AskRequest,
@@ -112,6 +138,52 @@ impl AgentClient for AibeUnixClient {
         transport_agent_turn(self.socket_path(), wire, prompt_shell_exec_approval)
             .map_err(map_client_error)
     }
+}
+
+impl MemoryClient for AibeUnixClient {
+    fn memory_apply(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        operation: MemoryOperationDto,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_apply_request(session_id, cwd, operation))
+    }
+
+    fn memory_query(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        query: MemoryQueryDto,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_query_request(session_id, cwd, query))
+    }
+}
+
+fn memory_apply_request(
+    session_id: &str,
+    cwd: &str,
+    operation: MemoryOperationDto,
+) -> ClientRequest {
+    ClientRequest::MemoryApply(MemoryApplyRequestBody {
+        id: correlation_id(),
+        session_id: session_id.to_string(),
+        context: aibe_protocol::MemoryContext {
+            cwd: cwd.to_string(),
+        },
+        operation,
+    })
+}
+
+fn memory_query_request(session_id: &str, cwd: &str, query: MemoryQueryDto) -> ClientRequest {
+    ClientRequest::MemoryQuery(MemoryQueryRequestBody {
+        id: correlation_id(),
+        session_id: session_id.to_string(),
+        context: aibe_protocol::MemoryContext {
+            cwd: cwd.to_string(),
+        },
+        query,
+    })
 }
 
 fn map_client_error(e: ClientError) -> AgentError {

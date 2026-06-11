@@ -25,6 +25,7 @@
 | 0031 | [0031_hexagonal-effect-boundary-spec.md](spec/0031_hexagonal-effect-boundary-spec.md) | 設計確定 | Hexagonal effect boundary 検査（副作用 API 混入のルールファイル駆動チェック） |
 | 0032 | [0032_ai-console-hint-toggle-spec.md](spec/0032_ai-console-hint-toggle-spec.md) | 設計確定 | `ai` コンソールヒント切り替え |
 | 0033 | [0033_ai-structured-output-stream-fix-spec.md](spec/0033_ai-structured-output-stream-fix-spec.md) | 設計確定 | `ai` structured output と streaming の衝突解消 |
+| 0034 | [0034_aibe-contextual-memory-spec.md](spec/0034_aibe-contextual-memory-spec.md) | 設計確定 | AIBE Contextual Memory MVP（`goal` / `now` / `idea`） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -67,5 +68,6 @@
 | 0031 | [0031_hexagonal-effect-boundary-implementation-spec.md](done/0031_hexagonal-effect-boundary-implementation-spec.md) | 実装済み | Hexagonal effect boundary 検査（設計: [0031](spec/0031_hexagonal-effect-boundary-spec.md)） |
 | 0032 | [0032_ai-console-hint-toggle-implementation-spec.md](done/0032_ai-console-hint-toggle-implementation-spec.md) | 実装済み | `ai` コンソールヒント切り替え（設計: [0032](spec/0032_ai-console-hint-toggle-spec.md)） |
 | 0033 | [0033_ai-structured-output-stream-fix-implementation-spec.md](done/0033_ai-structured-output-stream-fix-implementation-spec.md) | 実装済み | `ai` structured output と streaming の衝突解消（設計: [0033](spec/0033_ai-structured-output-stream-fix-spec.md)） |
+| 0034 | [0034_aibe-contextual-memory-implementation-spec.md](done/0034_aibe-contextual-memory-implementation-spec.md) | 実装済み | AIBE Contextual Memory MVP（設計: [0034](spec/0034_aibe-contextual-memory-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

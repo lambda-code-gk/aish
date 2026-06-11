@@ -1,6 +1,7 @@
 mod ask;
 mod ask_launch;
 mod history;
+pub mod memory_cli;
 mod turn_cancel;
 
 pub use ask::{Ask, AskError, AskOutcome, AskRunOptions};

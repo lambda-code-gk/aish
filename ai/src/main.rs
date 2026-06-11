@@ -18,11 +18,16 @@ use ai::adapters::outbound::{
     resolve_shell_log_for_ask, AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore,
     StdoutPresenter, YesExecCache,
 };
+use ai::application::memory_cli::MemoryCliContext;
 use ai::application::{
-    build_response_summary, build_summary, ensure_aibe_if_needed, list_history, next_history_id,
-    plan_ask_launch, record_turn, HistoryRecordInput, HistoryReplayInput, TurnCancelGuard,
+    build_response_summary, build_summary, ensure_aibe_if_needed, list_history, memory_cli,
+    next_history_id, plan_ask_launch, record_turn, HistoryRecordInput, HistoryReplayInput,
+    TurnCancelGuard,
 };
-use ai::clap_cli::{AiCli, AiCommand, HistoryStatusArg, OutputFormatArg, TurnOptions};
+use ai::clap_cli::{
+    AiCli, AiCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand, MemoryCliOptions,
+    NowCommand, OutputFormatArg, TurnOptions,
+};
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
     resolve_progress, validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError,
@@ -32,6 +37,7 @@ use ai::domain::{
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
+use ai::ports::outbound::{AgentError, MemoryClient};
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalPrompt};
 use aibe_protocol::{
@@ -106,6 +112,10 @@ fn run() -> anyhow::Result<ExitCode> {
             format,
             socket,
         } => run_ping_command(quiet, format.into(), socket),
+        AiCommand::Goal { command } => run_goal(command),
+        AiCommand::Now { command } => run_now(command),
+        AiCommand::Idea { command } => run_idea(command),
+        AiCommand::Mem { command } => run_mem(command),
     }
 }
 
@@ -775,6 +785,8 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         | ClientRequest::RouteTurn { id, .. }
         | ClientRequest::ShellExecApproval { id, .. }
         | ClientRequest::CancelTurn { id, .. } => Ok(id.clone()),
+        ClientRequest::MemoryApply(body) => Ok(body.id.clone()),
+        ClientRequest::MemoryQuery(body) => Ok(body.id.clone()),
     }
 }
 
@@ -862,7 +874,9 @@ fn exit_code_for_response(
         | ClientResponse::Progress { .. }
         | ClientResponse::AssistantStreaming { .. }
         | ClientResponse::RouteTurnResult { .. }
-        | ClientResponse::ShellExecApprovalPrompt { .. } => ExitCode::SUCCESS,
+        | ClientResponse::ShellExecApprovalPrompt { .. }
+        | ClientResponse::MemoryApplyResult { .. }
+        | ClientResponse::MemoryQueryResult { .. } => ExitCode::SUCCESS,
     }
 }
 
@@ -1320,6 +1334,87 @@ fn resolve_llm_profile_with_preset(
     }
     let env_profile = std::env::var("AI_LLM_PROFILE").ok();
     resolve_llm_profile(None, env_profile.as_deref(), config_default)
+}
+
+fn join_words(parts: Vec<String>) -> String {
+    parts.join(" ")
+}
+
+fn prepare_memory_context(options: &MemoryCliOptions) -> anyhow::Result<MemoryCliContext> {
+    let cfg = AiConfig::load();
+    let socket_path = options.socket.clone().unwrap_or(cfg.socket_path);
+    if !options.no_start {
+        ensure_running(&socket_path).map_err(|e| anyhow::anyhow!(e))?;
+    }
+    let cwd = std::env::current_dir()?;
+    Ok(MemoryCliContext {
+        socket_path,
+        session_id: resolve_ai_session_id(),
+        cwd,
+        format: options.format.into(),
+    })
+}
+
+fn run_memory_command(
+    options: MemoryCliOptions,
+    action: impl FnOnce(&dyn MemoryClient, &MemoryCliContext) -> Result<String, AgentError>,
+) -> anyhow::Result<ExitCode> {
+    let ctx = prepare_memory_context(&options)?;
+    let client = AibeUnixClient::new(&ctx.socket_path);
+    let out = action(&client, &ctx).map_err(|e| anyhow::anyhow!(e))?;
+    println!("{out}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_goal(command: GoalCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        GoalCommand::Set { text, options } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_goal_set(client, ctx, &join_words(text))
+        }),
+        GoalCommand::Show { options } => run_memory_command(options, memory_cli::run_goal_show),
+        GoalCommand::Clear { options } => run_memory_command(options, memory_cli::run_goal_clear),
+    }
+}
+
+fn run_now(command: NowCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        NowCommand::Set { text, options } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_now_set(client, ctx, &join_words(text))
+        }),
+        NowCommand::Show { options } => run_memory_command(options, memory_cli::run_now_show),
+        NowCommand::Clear { options } => run_memory_command(options, memory_cli::run_now_clear),
+    }
+}
+
+fn run_idea(command: IdeaCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        IdeaCommand::Add { text, options } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_idea_add(client, ctx, &join_words(text))
+        }),
+        IdeaCommand::List { options } => run_memory_command(options, memory_cli::run_idea_list),
+        IdeaCommand::Clear { options } => run_memory_command(options, memory_cli::run_idea_clear),
+    }
+}
+
+fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        MemCommand::Add {
+            kind,
+            text,
+            options,
+        } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_mem_add(client, ctx, &kind, &join_words(text))
+        }),
+        MemCommand::List { kind, options } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_mem_list(client, ctx, kind.as_deref())
+        }),
+        MemCommand::Show { query, options } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_mem_show(client, ctx, query.as_deref())
+        }),
+        MemCommand::Clear { kind, options } => run_memory_command(options, |client, ctx| {
+            memory_cli::run_mem_clear(client, ctx, &kind)
+        }),
+    }
 }
 
 fn run_diagnostic_command(
