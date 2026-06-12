@@ -10,8 +10,8 @@ use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    ContextualMemoryStore, ConversationStore, ProfileRegistry, RouterConfig, ShellExecApprovalGate,
-    ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
+    ContextualMemoryStore, ConversationStore, MemorySpaceResolver, ProfileRegistry, RouterConfig,
+    ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 use std::collections::HashMap;
@@ -28,9 +28,11 @@ pub struct RequestService {
     router_profile: String,
     conversation_store: Arc<dyn ConversationStore>,
     memory_store: Arc<dyn ContextualMemoryStore>,
+    memory_space_resolver: Arc<dyn MemorySpaceResolver>,
 }
 
 impl RequestService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         profile_registry: ProfileRegistry,
         tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
@@ -39,6 +41,7 @@ impl RequestService {
         router_profile: String,
         conversation_store: Arc<dyn ConversationStore>,
         memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     ) -> Self {
         Self::new_with_turns(
             profile_registry,
@@ -49,6 +52,7 @@ impl RequestService {
             router_profile,
             conversation_store,
             memory_store,
+            memory_space_resolver,
         )
     }
 
@@ -62,6 +66,7 @@ impl RequestService {
         router_profile: String,
         conversation_store: Arc<dyn ConversationStore>,
         memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     ) -> Self {
         Self {
             profile_registry,
@@ -72,6 +77,7 @@ impl RequestService {
             router_profile,
             conversation_store,
             memory_store,
+            memory_space_resolver,
         }
     }
 
@@ -135,12 +141,18 @@ impl RequestService {
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
             ClientRequest::MemoryApply(body) => {
-                let service = MemoryService::new(Arc::clone(&self.memory_store));
-                service.apply(body.id, body.session_id, &body.context.cwd, body.operation)
+                let service = MemoryService::new(
+                    Arc::clone(&self.memory_store),
+                    Arc::clone(&self.memory_space_resolver),
+                );
+                service.apply(body.id, body.session_id, &body.context, body.operation)
             }
             ClientRequest::MemoryQuery(body) => {
-                let service = MemoryService::new(Arc::clone(&self.memory_store));
-                service.query(body.id, body.session_id, &body.context.cwd, body.query)
+                let service = MemoryService::new(
+                    Arc::clone(&self.memory_store),
+                    Arc::clone(&self.memory_space_resolver),
+                );
+                service.query(body.id, body.session_id, &body.context, body.query)
             }
             ClientRequest::AgentTurn {
                 id,
@@ -200,6 +212,7 @@ impl RequestService {
                     Arc::clone(&self.terminator),
                     termination_capability,
                     Arc::clone(&self.memory_store),
+                    Arc::clone(&self.memory_space_resolver),
                 );
                 let turn_id = id.clone();
                 if let Some(cancel) = cancellation.clone() {

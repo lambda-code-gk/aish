@@ -101,6 +101,22 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 - **0023**: `ai` は `shell_exec_approval_ui` の unit で TTY/escape を固定。`aibe-client/tests/agent_turn_approval.rs` で transport 往復を固定。pipe への `printf y` は [manual/ai-ask-tools.md](manual/ai-ask-tools.md) B3c で手動確認。
 - **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる。
 
+### 0035 memory identity split の検証観点
+
+設計: [spec/0035_aibe-memory-identity-split-spec.md](spec/0035_aibe-memory-identity-split-spec.md)。
+
+| 種別 | ファイル | 担保する観点 |
+|------|----------|--------------|
+| **unit** | `aibe-protocol/src/memory_space.rs` | `project_<hash>` / `legacy_session_*` の安定生成と path-safe 検証（`.` / `..` 拒否含む） |
+| **unit** | `aibe/src/domain/memory_space.rs` | 解決順・`now` stale 判定 |
+| **unit** | `aibe/src/application/agent_turn.rs`（`#[cfg(test)]`） | turn 注入が explicit `memory_space_id` に従うこと、cwd 無し turn でも注入されること |
+| **integration** | `aibe/tests/contextual_memory.rs` | `sess_001`+`ctx_a` で set → `sess_002`+`ctx_a` で同じ goal、`sess_003`+`ctx_b` で分離、stale `now`、`memory_space_id` 未指定 request が落ちないこと |
+| **integration** | `aibe/src/adapters/outbound/contextual_memory_store.rs`（`#[cfg(test)]`） | memory space 共有・分離、legacy data の lazy copy / read-through（元 store を壊さない） |
+| **integration** | `ai/tests/phase_a_cli.rs` | memory RPC と agent_turn の両方に `memory_space_id` が載ること |
+| **integration** | `ai/tests/context_cli.rs` | `ai context current/use/new`、env 優先、path-unsafe 名と壊れた config の拒否 |
+| **unit** | `ai/src/application/memory_space.rs` | `AIBE_CONTEXT_ID` > config > project > legacy の優先順 |
+| **manual** | [manual/contextual-memory.md](manual/contextual-memory.md) | `ai context` と sess/context マトリクス |
+
 ### 0022 output filter の検証観点
 
 正式指示書: [0022_ai-filter-spec.md](done/0022_ai-filter-spec.md)。

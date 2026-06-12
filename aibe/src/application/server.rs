@@ -11,6 +11,7 @@ use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
     ConversationStore as FilesystemConversationStore, FilesystemContextualMemoryStore,
+    FilesystemMemorySpaceResolver,
 };
 use crate::application::request_service::RequestService;
 use crate::ports::inbound::ClientRequestHandler;
@@ -37,6 +38,8 @@ pub async fn run(
     let memory_store: Arc<dyn crate::ports::outbound::ContextualMemoryStore> = Arc::new(
         FilesystemContextualMemoryStore::with_conversation_root(conversation_store_root),
     );
+    let memory_space_resolver: Arc<dyn crate::ports::outbound::MemorySpaceResolver> =
+        Arc::new(FilesystemMemorySpaceResolver);
     let handler: Arc<dyn ClientRequestHandler> = Arc::new(RequestService::new_with_turns(
         profile_registry,
         tool_registry,
@@ -46,6 +49,7 @@ pub async fn run(
         router_profile,
         conversation_store,
         memory_store,
+        memory_space_resolver,
     ));
 
     unix_socket_server::run(socket_path, handler).await

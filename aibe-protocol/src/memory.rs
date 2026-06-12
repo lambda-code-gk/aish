@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// memory RPC 用コンテキスト（`cwd` のみ。`project_key` はサーバ導出）。
+/// memory RPC 用コンテキスト。`project_key` はサーバ導出。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryContext {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_space_id: Option<String>,
 }
 
 /// `ClientRequest::MemoryApply` の payload。
@@ -58,7 +60,9 @@ pub enum MemoryStatusDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoryEntryDto {
     pub id: String,
-    pub session_id: String,
+    pub memory_space_id: String,
+    pub created_session_id: String,
+    pub last_session_id: String,
     pub kind: String,
     pub scope: MemoryScopeDto,
     pub inject: MemoryInjectPolicyDto,
@@ -145,7 +149,7 @@ mod tests {
             "type": "memory_apply",
             "id": "m1",
             "session_id": "sess-1",
-            "context": { "cwd": "/tmp/proj" },
+            "context": { "cwd": "/tmp/proj", "memory_space_id": "ctx_a" },
             "operation": {
                 "op": "add",
                 "kind": "goal",
@@ -180,7 +184,9 @@ mod tests {
     fn memory_entry_dto_roundtrip() {
         let entry = MemoryEntryDto {
             id: "mem_01".into(),
-            session_id: "s-1".into(),
+            memory_space_id: "ctx_a".into(),
+            created_session_id: "s-1".into(),
+            last_session_id: "s-1".into(),
             kind: "goal".into(),
             scope: MemoryScopeDto::Project,
             inject: MemoryInjectPolicyDto::Pinned,

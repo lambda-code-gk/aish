@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::{EmptyContextualMemoryStore, OpenAiCompatibleLlm};
+use aibe::adapters::outbound::{
+    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, OpenAiCompatibleLlm,
+};
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, ToolName};
@@ -125,6 +127,7 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
         terminator,
         TerminationCapability::summary_prompt_only(),
         Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
     );
     let res = svc
         .run(

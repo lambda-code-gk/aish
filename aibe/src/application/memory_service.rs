@@ -1,44 +1,53 @@
 //! contextual memory RPC ハンドラ。
 
 use std::path::Path;
-use std::sync::Arc;
 
 use aibe_protocol::{
-    ClientResponse, ErrorCode, MemoryApplyStatus, MemoryOperationDto, MemoryQueryDto,
-    MemoryQueryStatus,
+    ClientResponse, ErrorCode, MemoryApplyStatus, MemoryContext, MemoryOperationDto,
+    MemoryQueryDto, MemoryQueryStatus,
 };
 
 use crate::domain::MemoryValidationError;
-use crate::ports::outbound::{ContextualMemoryStore, ContextualMemoryStoreError};
+use crate::ports::outbound::{
+    ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
+};
 
 pub struct MemoryService {
-    store: Arc<dyn ContextualMemoryStore>,
+    store: std::sync::Arc<dyn ContextualMemoryStore>,
+    resolver: std::sync::Arc<dyn MemorySpaceResolver>,
 }
 
 impl MemoryService {
-    pub fn new(store: Arc<dyn ContextualMemoryStore>) -> Self {
-        Self { store }
+    pub fn new(
+        store: std::sync::Arc<dyn ContextualMemoryStore>,
+        resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+    ) -> Self {
+        Self { store, resolver }
     }
 
     pub fn apply(
         &self,
         id: String,
         session_id: String,
-        cwd: &str,
+        context: &MemoryContext,
         operation: MemoryOperationDto,
     ) -> ClientResponse {
         if session_id.is_empty() {
             return invalid(id, "session_id must not be empty");
         }
-        if cwd.is_empty() {
+        if context.cwd.is_empty() {
             return invalid(id, "cwd must not be empty");
         }
-        let cwd_path = Path::new(cwd);
-        let now_ms = current_time_ms();
-        match self
-            .store
-            .apply(&session_id, Some(cwd_path), &operation, now_ms)
+        let cwd_path = Path::new(&context.cwd);
+        let store_ctx = match self
+            .resolver
+            .resolve_store_context(&session_id, context, cwd_path)
         {
+            Ok(ctx) => ctx,
+            Err(e) => return map_store_error(id, e),
+        };
+        let now_ms = current_time_ms();
+        match self.store.apply(&store_ctx, &operation, now_ms) {
             Ok(entries) => ClientResponse::MemoryApplyResult {
                 id,
                 status: MemoryApplyStatus::Ok,
@@ -52,24 +61,30 @@ impl MemoryService {
         &self,
         id: String,
         session_id: String,
-        cwd: &str,
+        context: &MemoryContext,
         query: MemoryQueryDto,
     ) -> ClientResponse {
         if session_id.is_empty() {
             return invalid(id, "session_id must not be empty");
         }
-        if cwd.is_empty() {
+        if context.cwd.is_empty() {
             return invalid(id, "cwd must not be empty");
         }
-        let cwd_path = Path::new(cwd);
-        match self.store.query(&session_id, Some(cwd_path), &query) {
+        let cwd_path = Path::new(&context.cwd);
+        let store_ctx = match self
+            .resolver
+            .resolve_store_context(&session_id, context, cwd_path)
+        {
+            Ok(ctx) => ctx,
+            Err(e) => return map_store_error(id, e),
+        };
+        match self.store.query(&store_ctx, &query) {
             Ok(entries) => {
                 let prompt_block = if query.include_prompt_block {
                     let user_query = query.user_query.as_deref().unwrap_or("");
                     self.store
                         .resolve_for_prompt(
-                            &session_id,
-                            Some(cwd_path),
+                            &store_ctx,
                             user_query,
                             aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES,
                         )

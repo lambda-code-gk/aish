@@ -207,6 +207,11 @@ pub enum AiCommand {
         #[command(subcommand)]
         command: MemCommand,
     },
+    /// Manage contextual memory space (identity split)
+    Context {
+        #[command(subcommand)]
+        command: ContextCommand,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
@@ -302,6 +307,16 @@ pub enum MemCommand {
     },
 }
 
+#[derive(Subcommand)]
+pub enum ContextCommand {
+    /// Show current memory space resolution
+    Current,
+    /// Set current context name (saved to config; `AIBE_CONTEXT_ID` overrides)
+    Use { name: String },
+    /// Create and switch to a new context name
+    New { name: String },
+}
+
 impl AiCli {
     pub fn parse_with_default_ask() -> Result<Self, clap::Error> {
         Self::try_parse_from(normalize_args(std::env::args_os()))
@@ -358,6 +373,7 @@ fn is_known_cli_head(word: &str) -> bool {
             | "now"
             | "idea"
             | "mem"
+            | "context"
             | "help"
             | "-h"
             | "--help"

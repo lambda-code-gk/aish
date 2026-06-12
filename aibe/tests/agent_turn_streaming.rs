@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
     terminator::ToolRoundTerminatorOrchestrator, DeltaStreamingMockLlm, EmptyContextualMemoryStore,
+    FilesystemMemorySpaceResolver,
 };
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
@@ -45,6 +46,7 @@ async fn text_only_turn_forwards_multiple_streaming_deltas() {
         terminator,
         TerminationCapability::summary_prompt_only(),
         Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
     );
     let sink = Arc::new(RecordingSink {
         deltas: Mutex::new(Vec::new()),

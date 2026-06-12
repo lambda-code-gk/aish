@@ -10,8 +10,8 @@ use aibe_client::{
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use aibe_protocol::{
-    ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryOperationDto, MemoryQueryDto,
-    MemoryQueryRequestBody, ProtocolMessage,
+    ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext, MemoryOperationDto,
+    MemoryQueryDto, MemoryQueryRequestBody, ProtocolMessage,
 };
 
 use crate::domain::AskRequest;
@@ -83,19 +83,19 @@ impl AibeUnixClient {
     pub fn memory_apply(
         &self,
         session_id: &str,
-        cwd: &str,
+        context: &MemoryContext,
         operation: MemoryOperationDto,
     ) -> Result<ClientResponse, AgentError> {
-        self.send_memory_request(memory_apply_request(session_id, cwd, operation))
+        self.send_memory_request(memory_apply_request(session_id, context, operation))
     }
 
     pub fn memory_query(
         &self,
         session_id: &str,
-        cwd: &str,
+        context: &MemoryContext,
         query: MemoryQueryDto,
     ) -> Result<ClientResponse, AgentError> {
-        self.send_memory_request(memory_query_request(session_id, cwd, query))
+        self.send_memory_request(memory_query_request(session_id, context, query))
     }
 
     fn send_memory_request(&self, request: ClientRequest) -> Result<ClientResponse, AgentError> {
@@ -144,44 +144,44 @@ impl MemoryClient for AibeUnixClient {
     fn memory_apply(
         &self,
         session_id: &str,
-        cwd: &str,
+        context: &MemoryContext,
         operation: MemoryOperationDto,
     ) -> Result<ClientResponse, AgentError> {
-        self.send_memory_request(memory_apply_request(session_id, cwd, operation))
+        self.send_memory_request(memory_apply_request(session_id, context, operation))
     }
 
     fn memory_query(
         &self,
         session_id: &str,
-        cwd: &str,
+        context: &MemoryContext,
         query: MemoryQueryDto,
     ) -> Result<ClientResponse, AgentError> {
-        self.send_memory_request(memory_query_request(session_id, cwd, query))
+        self.send_memory_request(memory_query_request(session_id, context, query))
     }
 }
 
 fn memory_apply_request(
     session_id: &str,
-    cwd: &str,
+    context: &MemoryContext,
     operation: MemoryOperationDto,
 ) -> ClientRequest {
     ClientRequest::MemoryApply(MemoryApplyRequestBody {
         id: correlation_id(),
         session_id: session_id.to_string(),
-        context: aibe_protocol::MemoryContext {
-            cwd: cwd.to_string(),
-        },
+        context: context.clone(),
         operation,
     })
 }
 
-fn memory_query_request(session_id: &str, cwd: &str, query: MemoryQueryDto) -> ClientRequest {
+fn memory_query_request(
+    session_id: &str,
+    context: &MemoryContext,
+    query: MemoryQueryDto,
+) -> ClientRequest {
     ClientRequest::MemoryQuery(MemoryQueryRequestBody {
         id: correlation_id(),
         session_id: session_id.to_string(),
-        context: aibe_protocol::MemoryContext {
-            cwd: cwd.to_string(),
-        },
+        context: context.clone(),
         query,
     })
 }

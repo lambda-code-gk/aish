@@ -18,6 +18,8 @@ pub struct AgentTurnContext {
     /// クライアントがこの turn 用に渡した system 本文（注入のみ。aibe は解釈しない）。
     pub system_instruction: Option<String>,
     pub ai_session_id: Option<String>,
+    /// クライアントが解決済みの memory space（注入時の解決順 1 位）。
+    pub memory_space_id: Option<String>,
 }
 
 impl AgentTurnContext {
@@ -27,6 +29,7 @@ impl AgentTurnContext {
             shell_log_tail: tail,
             system_instruction: None,
             ai_session_id: None,
+            memory_space_id: None,
         }
     }
 
@@ -36,6 +39,7 @@ impl AgentTurnContext {
             shell_log_tail: tail,
             system_instruction: None,
             ai_session_id: None,
+            memory_space_id: None,
         }
     }
 

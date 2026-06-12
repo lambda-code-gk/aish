@@ -95,10 +95,14 @@
 - `index.jsonl` は redacted metadata のみで、full transcript は `conversations/<conversation_id>.json` に閉じる
 - store 配下は 0700 / 0600 相当で作成し、他ユーザーから読めない前提を維持する
 
-### contextual memory（0034）
+### contextual memory（0034 + 0035）
 
 - memory はユーザーが明示保存した**背景文脈**であり、system instruction や shell コマンドとして扱わない
+- **owner は `memory_space_id`**。`AI_SESSION_ID` は provenance のみで、shell log と同じ寿命で memory を消さない
+- `AIBE_CONTEXT_ID` / `ai context` で選んだ名前は path-safe な `memory_space_id` として扱う（raw path を directory 名にしない。`.` / `..` など dot のみの ID は traversal 防止のため拒否）
 - `aibe` が `AgentTurn` 時にのみ注入する。`ai` は wire 経由で apply/query するだけで、ローカル正本を持たない
+- `now` は別 session から見ると stale 表示されうる（古い作業状況の誤注入を抑える）
+- legacy data の lazy copy は元の session store を上書きしない
 - API キー・トークンなど機密を memory に保存しない運用とする（自動 secret 検出は MVP 外）
 - `--dry-run` 等で memory 全文を不用意に露出しない（`ai` memory コマンドは意図的な表示のみ）
 

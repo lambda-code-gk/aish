@@ -1,8 +1,17 @@
 //! contextual memory 永続化 port。
 
+use std::path::Path;
+
 use aibe_protocol::MemoryOperationDto;
 
 use crate::domain::{MemoryBlock, MemoryEntry, MemoryValidationError, ProjectKeyError};
+
+#[derive(Debug, Clone)]
+pub struct MemoryStoreContext<'a> {
+    pub session_id: &'a str,
+    pub memory_space_id: String,
+    pub cwd: Option<&'a Path>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContextualMemoryStoreError {
@@ -19,23 +28,20 @@ pub enum ContextualMemoryStoreError {
 pub trait ContextualMemoryStore: Send + Sync {
     fn apply(
         &self,
-        session_id: &str,
-        cwd: Option<&std::path::Path>,
+        ctx: &MemoryStoreContext<'_>,
         operation: &MemoryOperationDto,
         now_ms: u64,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError>;
 
     fn query(
         &self,
-        session_id: &str,
-        cwd: Option<&std::path::Path>,
+        ctx: &MemoryStoreContext<'_>,
         query: &aibe_protocol::MemoryQueryDto,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError>;
 
     fn resolve_for_prompt(
         &self,
-        session_id: &str,
-        cwd: Option<&std::path::Path>,
+        ctx: &MemoryStoreContext<'_>,
         user_query: &str,
         budget_bytes: usize,
     ) -> Result<MemoryBlock, ContextualMemoryStoreError>;

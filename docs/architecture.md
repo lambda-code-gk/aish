@@ -137,12 +137,16 @@ aish          →  （aibe への path 依存禁止）
 
 `aibe` は `AI_SESSION_ID` ごとに conversation store を切り、`index.jsonl` には redacted metadata、`conversations/<conversation_id>.json` には full transcript と summary を保存する。
 
-### contextual memory（0034）
+### contextual memory（0034 + 0035 identity split）
 
-- **正本**: `aibe` の session 配下 JSONL（`conversations/<AI_SESSION_ID>/memory/events.jsonl`）。`ai` / `aish` は保存しない。
-- **RPC**: `memory_apply`（write）、`memory_query`（read）。`cwd` から `project_key` をサーバが導出する。
-- **注入**: `route_turn` は memory を見ない。`agent_turn` のみ `resolve_for_prompt` で user-maintained context block を synthetic user message として前置する（system instruction ではない）。
-- **標準 kind**: `goal`（project, pinned）、`now`（session, pinned）、`idea`（project, on-demand）。詳細は [spec/0034_aibe-contextual-memory-spec.md](spec/0034_aibe-contextual-memory-spec.md)。
+- **正本**: `memory_space_id` 単位の JSONL（`memory/spaces/<memory_space_id>/events.jsonl`）。`AI_SESSION_ID` は memory の owner ではない（runtime provenance のみ）。`ai` / `aish` は保存しない。
+- **identity**: `AI_SESSION_ID` = shell log / conversation / runtime session。`memory_space_id` = contextual memory の owner。user-facing 名は `AIBE_CONTEXT_ID`（CLI: `ai context`）。
+- **解決順**（`ai` が RPC / turn 送信時に解決済み `memory_space_id` を載せる）: `AIBE_CONTEXT_ID` > `~/.config/ai/config.toml` の `[context] current` > cwd から導出した `project_<hash>` > `legacy_session_<session_id>`（非推奨）。`aibe` 側は request 明示 > サーバ env `AIBE_CONTEXT_ID` > cwd project > legacy の順でフォールバックする（旧クライアント互換）。
+- **ID 検証**: `memory_space_id` は path-safe（ASCII 英数と `_` `.` `-`、128 byte 以下）。`.` / `..` など dot のみの ID は拒否する。
+- **RPC**: `memory_apply`（write）、`memory_query`（read）。`cwd` は絶対パス必須。`project_key` はサーバが導出する（wire に載せない）。
+- **注入**: `route_turn` は memory を見ない。`agent_turn` のみ `resolve_for_prompt` で user-maintained context block を synthetic user message として前置する（system instruction ではない）。`ai` は turn の `context.memory_space_id` に解決済み ID を載せるため、`ai context use` で選んだ context が注入にも反映される。cwd の無い turn は legacy session space に解決する（注入は best-effort）。`now` は別 session から見たとき stale 表示できる。
+- **legacy 互換**: 0034 の `conversations/<AI_SESSION_ID>/memory/events.jsonl` は read-through。`legacy_session_*` 以外の space を初回アクセスした際は legacy events を new layout へ lazy copy する（project-backed space を含む）。legacy space 自身への書き込み時も new layout へ seed してから append し、元の legacy store は変更しない。
+- **標準 kind**: `goal`（project, pinned）、`now`（session scope だが memory space に属する）、`idea`（project, on-demand）。詳細は [spec/0034_aibe-contextual-memory-spec.md](spec/0034_aibe-contextual-memory-spec.md)、[spec/0035_aibe-memory-identity-split-spec.md](spec/0035_aibe-memory-identity-split-spec.md)。
 
 リクエスト例（`memory_apply`）:
 
@@ -151,7 +155,10 @@ aish          →  （aibe への path 依存禁止）
   "type": "memory_apply",
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "session_id": "AI_SESSION_ID",
-  "context": { "cwd": "/abs/path/to/project" },
+  "context": {
+    "cwd": "/abs/path/to/project",
+    "memory_space_id": "ctx_a"
+  },
   "operation": {
     "op": "add",
     "kind": "goal",
@@ -171,7 +178,10 @@ aish          →  （aibe への path 依存禁止）
   "type": "memory_query",
   "id": "550e8400-e29b-41d4-a716-446655440001",
   "session_id": "AI_SESSION_ID",
-  "context": { "cwd": "/abs/path/to/project" },
+  "context": {
+    "cwd": "/abs/path/to/project",
+    "memory_space_id": "ctx_a"
+  },
   "query": {
     "include_prompt_block": true,
     "user_query": ""

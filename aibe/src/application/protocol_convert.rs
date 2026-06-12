@@ -60,6 +60,7 @@ impl TryFrom<RequestContext> for AgentTurnContext {
             shell_log_tail,
             system_instruction,
             ai_session_id: ctx.ai_session_id,
+            memory_space_id: ctx.memory_space_id.filter(|s| !s.is_empty()),
         })
     }
 }

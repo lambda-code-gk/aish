@@ -1,11 +1,14 @@
-//! session 配下 JSONL contextual memory store。
+//! memory space 配下 JSONL contextual memory store。
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use aibe_protocol::{MemoryOperationDto, MemoryQueryDto, MemoryScopeDto, MemoryStatusDto};
+use aibe_protocol::{
+    legacy_session_memory_space_id, MemoryOperationDto, MemoryQueryDto, MemoryScopeDto,
+    MemoryStatusDto,
+};
 
 use crate::domain::resolve_entries_for_prompt;
 use crate::domain::{
@@ -13,7 +16,9 @@ use crate::domain::{
     MemoryEntry, MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
     ProjectKeyError, STANDARD_KIND_IDEA,
 };
-use crate::ports::outbound::{ContextualMemoryStore, ContextualMemoryStoreError};
+use crate::ports::outbound::{
+    ContextualMemoryStore, ContextualMemoryStoreError, MemoryStoreContext,
+};
 
 /// テスト・既存経路向けの no-op store（常に空）。
 #[derive(Debug, Default, Clone)]
@@ -22,8 +27,7 @@ pub struct EmptyContextualMemoryStore;
 impl ContextualMemoryStore for EmptyContextualMemoryStore {
     fn apply(
         &self,
-        _session_id: &str,
-        _cwd: Option<&Path>,
+        _ctx: &MemoryStoreContext<'_>,
         _operation: &MemoryOperationDto,
         _now_ms: u64,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
@@ -32,8 +36,7 @@ impl ContextualMemoryStore for EmptyContextualMemoryStore {
 
     fn query(
         &self,
-        _session_id: &str,
-        _cwd: Option<&Path>,
+        _ctx: &MemoryStoreContext<'_>,
         _query: &MemoryQueryDto,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
         Ok(vec![])
@@ -41,8 +44,7 @@ impl ContextualMemoryStore for EmptyContextualMemoryStore {
 
     fn resolve_for_prompt(
         &self,
-        _session_id: &str,
-        _cwd: Option<&Path>,
+        _ctx: &MemoryStoreContext<'_>,
         _user_query: &str,
         _budget_bytes: usize,
     ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
@@ -54,70 +56,135 @@ impl ContextualMemoryStore for EmptyContextualMemoryStore {
 
 #[derive(Debug, Clone)]
 pub struct FilesystemContextualMemoryStore {
-    root: PathBuf,
+    aibe_root: PathBuf,
 }
 
 impl FilesystemContextualMemoryStore {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root }
+    pub fn new(aibe_root: PathBuf) -> Self {
+        Self { aibe_root }
+    }
+
+    pub fn with_aibe_root(aibe_root: PathBuf) -> Self {
+        Self::new(aibe_root)
     }
 
     pub fn with_conversation_root(conversation_root: PathBuf) -> Self {
-        Self::new(conversation_root)
+        let aibe_root = conversation_root
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(conversation_root);
+        Self::new(aibe_root)
     }
 
-    fn session_root(&self, session_id: &str) -> PathBuf {
-        self.root.join(session_id)
+    fn spaces_root(&self) -> PathBuf {
+        self.aibe_root.join("memory").join("spaces")
     }
 
-    fn memory_dir(&self, session_id: &str) -> PathBuf {
-        self.session_root(session_id).join("memory")
+    fn space_dir(&self, memory_space_id: &str) -> PathBuf {
+        self.spaces_root().join(memory_space_id)
     }
 
-    fn events_path(&self, session_id: &str) -> PathBuf {
-        self.memory_dir(session_id).join("events.jsonl")
+    fn space_events_path(&self, memory_space_id: &str) -> PathBuf {
+        self.space_dir(memory_space_id).join("events.jsonl")
     }
 
-    fn lock_path(&self, session_id: &str) -> PathBuf {
-        self.session_root(session_id).join(".lock")
+    fn space_lock_path(&self, memory_space_id: &str) -> PathBuf {
+        self.space_dir(memory_space_id).join(".lock")
     }
 
-    fn ensure_layout(&self, session_id: &str) -> Result<(), ContextualMemoryStoreError> {
-        create_dir_0700(&self.root).map_err(io_err)?;
-        create_dir_0700(&self.session_root(session_id)).map_err(io_err)?;
-        create_dir_0700(&self.memory_dir(session_id)).map_err(io_err)?;
+    fn legacy_events_path(&self, session_id: &str) -> PathBuf {
+        self.aibe_root
+            .join("conversations")
+            .join(session_id)
+            .join("memory")
+            .join("events.jsonl")
+    }
+
+    fn ensure_space_layout(&self, memory_space_id: &str) -> Result<(), ContextualMemoryStoreError> {
+        create_dir_0700(&self.spaces_root()).map_err(io_err)?;
+        create_dir_0700(&self.space_dir(memory_space_id)).map_err(io_err)?;
         Ok(())
     }
 
-    fn with_lock<T>(
+    fn with_space_lock<T>(
         &self,
-        session_id: &str,
+        memory_space_id: &str,
         f: impl FnOnce() -> Result<T, ContextualMemoryStoreError>,
     ) -> Result<T, ContextualMemoryStoreError> {
-        self.ensure_layout(session_id)?;
+        self.ensure_space_layout(memory_space_id)?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(true)
             .read(true)
             .write(true)
-            .open(self.lock_path(session_id))
+            .open(self.space_lock_path(memory_space_id))
             .map_err(io_err)?;
-        let guard = SessionLock::acquire(lock)?;
+        let guard = SpaceLock::acquire(lock)?;
         let result = f();
         drop(guard);
         result
     }
 
+    fn ensure_lazy_copy(
+        &self,
+        memory_space_id: &str,
+        session_id: &str,
+    ) -> Result<(), ContextualMemoryStoreError> {
+        // legacy space 自身は read-through（query では copy しない）
+        if memory_space_id == legacy_session_memory_space_id(session_id) {
+            return Ok(());
+        }
+        self.copy_legacy_into_space(memory_space_id, session_id)
+    }
+
+    /// legacy events を new layout へ copy する（space 未作成かつ legacy 存在時のみ）。
+    /// 元の legacy store は変更しない。
+    fn copy_legacy_into_space(
+        &self,
+        memory_space_id: &str,
+        session_id: &str,
+    ) -> Result<(), ContextualMemoryStoreError> {
+        let space_path = self.space_events_path(memory_space_id);
+        if space_path.exists() {
+            return Ok(());
+        }
+        let legacy_path = self.legacy_events_path(session_id);
+        if !legacy_path.exists() {
+            return Ok(());
+        }
+        self.ensure_space_layout(memory_space_id)?;
+        fs::copy(&legacy_path, &space_path).map_err(io_err)?;
+        set_permissions_0600(&space_path).ok();
+        Ok(())
+    }
+
     fn load_entries(
         &self,
+        memory_space_id: &str,
         session_id: &str,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
-        let path = self.events_path(session_id);
-        if !path.exists() {
-            return Ok(vec![]);
+        self.ensure_lazy_copy(memory_space_id, session_id)?;
+        let space_path = self.space_events_path(memory_space_id);
+        if space_path.exists() {
+            return self.load_from_path(&space_path, memory_space_id, session_id);
         }
-        let file = File::open(&path).map_err(io_err)?;
-        set_permissions_0600(&path).ok();
+        if memory_space_id == legacy_session_memory_space_id(session_id) {
+            let legacy_path = self.legacy_events_path(session_id);
+            if legacy_path.exists() {
+                return self.load_from_path(&legacy_path, memory_space_id, session_id);
+            }
+        }
+        Ok(vec![])
+    }
+
+    fn load_from_path(
+        &self,
+        path: &Path,
+        default_space_id: &str,
+        fallback_session: &str,
+    ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
+        let file = File::open(path).map_err(io_err)?;
+        set_permissions_0600(path).ok();
         let reader = BufReader::new(file);
         let mut map: HashMap<String, MemoryEntry> = HashMap::new();
         for line in reader.lines() {
@@ -125,19 +192,20 @@ impl FilesystemContextualMemoryStore {
             if line.trim().is_empty() {
                 continue;
             }
-            let event: StoredEvent =
+            let event: StoredEventRaw =
                 serde_json::from_str(&line).map_err(|e| io_err(e.to_string()))?;
-            apply_event(&mut map, event);
+            apply_event_raw(&mut map, event, default_space_id, fallback_session);
         }
         Ok(map.into_values().collect())
     }
 
     fn append_event(
         &self,
-        session_id: &str,
+        memory_space_id: &str,
         event: StoredEvent,
     ) -> Result<(), ContextualMemoryStoreError> {
-        let path = self.events_path(session_id);
+        let path = self.space_events_path(memory_space_id);
+        self.ensure_space_layout(memory_space_id)?;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -157,211 +225,238 @@ impl FilesystemContextualMemoryStore {
         };
         resolve_project_key(cwd).map(Some)
     }
+
+    /// テスト用: space 配下の entries を直接読む。
+    #[cfg(test)]
+    pub fn load_entries_for_test(
+        &self,
+        memory_space_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
+        self.load_entries(memory_space_id, session_id)
+    }
 }
 
 impl ContextualMemoryStore for FilesystemContextualMemoryStore {
     fn apply(
         &self,
-        session_id: &str,
-        cwd: Option<&Path>,
+        ctx: &MemoryStoreContext<'_>,
         operation: &MemoryOperationDto,
         now_ms: u64,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
-        if session_id.is_empty() {
+        if ctx.session_id.is_empty() {
             return Err(ContextualMemoryStoreError::Validation(
                 MemoryValidationError::EmptySessionId,
             ));
         }
-        let project_key = Self::project_key_from_cwd(cwd)?;
-        self.with_lock(session_id, || match operation {
-            MemoryOperationDto::Add {
-                kind,
-                scope,
-                inject,
-                status,
-                text,
-                make_active,
-            } => {
-                validate_kind(kind)?;
-                validate_text(text)?;
-                if is_standard_kind(kind) {
-                    validate_standard_kind_operation(kind, *scope, *inject, *status)?;
-                }
-                let scope = MemoryScope::try_from(*scope).map_err(|_| {
-                    ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
-                        "scope".into(),
-                    ))
-                })?;
-                if scope == MemoryScope::Project && project_key.is_none() {
-                    return Err(ContextualMemoryStoreError::Validation(
-                        MemoryValidationError::MissingCwdForProjectScope,
-                    ));
-                }
-                let inject = MemoryInjectPolicy::try_from(*inject).map_err(|_| {
-                    ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
-                        "inject".into(),
-                    ))
-                })?;
-                let client_status = MemoryStatus::try_from(*status).map_err(|_| {
-                    ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
-                        "status".into(),
-                    ))
-                })?;
-                let final_status = if *make_active {
-                    MemoryStatus::Active
-                } else {
-                    client_status
-                };
+        let project_key = Self::project_key_from_cwd(ctx.cwd)?;
+        let memory_space_id = ctx.memory_space_id.as_str();
+        let session_id = ctx.session_id;
+        self.with_space_lock(memory_space_id, || {
+            // 書き込み時は legacy space でも new layout へ seed し、
+            // append 後に legacy data が見えなくなる分裂を防ぐ。
+            self.copy_legacy_into_space(memory_space_id, session_id)?;
+            match operation {
+                MemoryOperationDto::Add {
+                    kind,
+                    scope,
+                    inject,
+                    status,
+                    text,
+                    make_active,
+                } => {
+                    validate_kind(kind)?;
+                    validate_text(text)?;
+                    if is_standard_kind(kind) {
+                        validate_standard_kind_operation(kind, *scope, *inject, *status)?;
+                    }
+                    let scope = MemoryScope::try_from(*scope).map_err(|_| {
+                        ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
+                            "scope".into(),
+                        ))
+                    })?;
+                    if scope == MemoryScope::Project && project_key.is_none() {
+                        return Err(ContextualMemoryStoreError::Validation(
+                            MemoryValidationError::MissingCwdForProjectScope,
+                        ));
+                    }
+                    let inject = MemoryInjectPolicy::try_from(*inject).map_err(|_| {
+                        ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
+                            "inject".into(),
+                        ))
+                    })?;
+                    let client_status = MemoryStatus::try_from(*status).map_err(|_| {
+                        ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
+                            "status".into(),
+                        ))
+                    })?;
+                    let final_status = if *make_active {
+                        MemoryStatus::Active
+                    } else {
+                        client_status
+                    };
 
-                let mut affected = Vec::new();
-                if *make_active {
-                    let mut entries = self.load_entries(session_id)?;
+                    let mut affected = Vec::new();
+                    if *make_active {
+                        let mut entries = self.load_entries(memory_space_id, session_id)?;
+                        for entry in entries.iter_mut() {
+                            if entry.kind == *kind
+                                && entry.scope == scope
+                                && entry.status == MemoryStatus::Active
+                                && scope_matches_project_key(
+                                    scope,
+                                    &entry.project_key,
+                                    &project_key,
+                                )
+                            {
+                                entry.status = MemoryStatus::Inactive;
+                                entry.updated_at_ms = now_ms;
+                                entry.last_session_id = session_id.to_string();
+                                entry.version += 1;
+                                self.append_event(
+                                    memory_space_id,
+                                    StoredEvent::StatusChanged {
+                                        id: entry.id.clone(),
+                                        status: MemoryStatus::Inactive,
+                                        updated_at_ms: now_ms,
+                                        last_session_id: entry.last_session_id.clone(),
+                                        version: entry.version,
+                                    },
+                                )?;
+                                affected.push(entry.clone());
+                            }
+                        }
+                    }
+
+                    let entries = self.load_entries(memory_space_id, session_id)?;
+                    let id = next_id(&entries, memory_space_id);
+                    let version = 1;
+                    let new_entry = MemoryEntry {
+                        id: id.clone(),
+                        memory_space_id: memory_space_id.to_string(),
+                        created_session_id: session_id.to_string(),
+                        last_session_id: session_id.to_string(),
+                        kind: kind.clone(),
+                        scope,
+                        inject,
+                        status: final_status,
+                        text: text.clone(),
+                        project_key: if scope == MemoryScope::Project {
+                            project_key.clone()
+                        } else {
+                            None
+                        },
+                        created_at_ms: now_ms,
+                        updated_at_ms: now_ms,
+                        version,
+                    };
+                    self.append_event(
+                        memory_space_id,
+                        StoredEvent::Added {
+                            entry: new_entry.clone(),
+                        },
+                    )?;
+                    affected.push(new_entry);
+                    Ok(affected)
+                }
+                MemoryOperationDto::ClearActive { kind, scope } => {
+                    validate_kind(kind)?;
+                    let scope = MemoryScope::try_from(*scope).map_err(|_| {
+                        ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
+                            "scope".into(),
+                        ))
+                    })?;
+                    if scope == MemoryScope::Project && project_key.is_none() {
+                        return Err(ContextualMemoryStoreError::Validation(
+                            MemoryValidationError::MissingCwdForProjectScope,
+                        ));
+                    }
+                    let mut entries = self.load_entries(memory_space_id, session_id)?;
+                    let mut affected = Vec::new();
                     for entry in entries.iter_mut() {
+                        let status_match = if *kind == STANDARD_KIND_IDEA {
+                            entry.status == MemoryStatus::Open
+                        } else {
+                            entry.status == MemoryStatus::Active
+                        };
                         if entry.kind == *kind
                             && entry.scope == scope
-                            && entry.status == MemoryStatus::Active
+                            && status_match
                             && scope_matches_project_key(scope, &entry.project_key, &project_key)
                         {
-                            entry.status = MemoryStatus::Inactive;
+                            let new_status = if *kind == STANDARD_KIND_IDEA {
+                                MemoryStatus::Archived
+                            } else {
+                                MemoryStatus::Inactive
+                            };
+                            entry.status = new_status;
                             entry.updated_at_ms = now_ms;
+                            entry.last_session_id = session_id.to_string();
                             entry.version += 1;
                             self.append_event(
-                                session_id,
+                                memory_space_id,
                                 StoredEvent::StatusChanged {
                                     id: entry.id.clone(),
-                                    status: MemoryStatus::Inactive,
+                                    status: new_status,
                                     updated_at_ms: now_ms,
+                                    last_session_id: entry.last_session_id.clone(),
                                     version: entry.version,
                                 },
                             )?;
                             affected.push(entry.clone());
                         }
                     }
+                    Ok(affected)
                 }
-
-                let entries = self.load_entries(session_id)?;
-                let id = next_id(&entries, session_id);
-                let version = 1;
-                let new_entry = MemoryEntry {
-                    id: id.clone(),
-                    session_id: session_id.to_string(),
-                    kind: kind.clone(),
-                    scope,
-                    inject,
-                    status: final_status,
-                    text: text.clone(),
-                    project_key: if scope == MemoryScope::Project {
-                        project_key.clone()
-                    } else {
-                        None
-                    },
-                    created_at_ms: now_ms,
-                    updated_at_ms: now_ms,
-                    version,
-                };
-                self.append_event(
-                    session_id,
-                    StoredEvent::Added {
-                        entry: new_entry.clone(),
-                    },
-                )?;
-                affected.push(new_entry);
-                Ok(affected)
-            }
-            MemoryOperationDto::ClearActive { kind, scope } => {
-                validate_kind(kind)?;
-                let scope = MemoryScope::try_from(*scope).map_err(|_| {
-                    ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
-                        "scope".into(),
-                    ))
-                })?;
-                if scope == MemoryScope::Project && project_key.is_none() {
-                    return Err(ContextualMemoryStoreError::Validation(
-                        MemoryValidationError::MissingCwdForProjectScope,
-                    ));
-                }
-                let mut entries = self.load_entries(session_id)?;
-                let mut affected = Vec::new();
-                for entry in entries.iter_mut() {
-                    let status_match = if *kind == STANDARD_KIND_IDEA {
-                        entry.status == MemoryStatus::Open
-                    } else {
-                        entry.status == MemoryStatus::Active
-                    };
-                    if entry.kind == *kind
-                        && entry.scope == scope
-                        && status_match
-                        && scope_matches_project_key(scope, &entry.project_key, &project_key)
-                    {
-                        let new_status = if *kind == STANDARD_KIND_IDEA {
-                            MemoryStatus::Archived
-                        } else {
-                            MemoryStatus::Inactive
-                        };
-                        entry.status = new_status;
-                        entry.updated_at_ms = now_ms;
-                        entry.version += 1;
-                        self.append_event(
-                            session_id,
-                            StoredEvent::StatusChanged {
-                                id: entry.id.clone(),
-                                status: new_status,
-                                updated_at_ms: now_ms,
-                                version: entry.version,
-                            },
-                        )?;
-                        affected.push(entry.clone());
+                MemoryOperationDto::Archive {
+                    id,
+                    expected_version,
+                } => {
+                    let mut entries = self.load_entries(memory_space_id, session_id)?;
+                    let entry = entries
+                        .iter_mut()
+                        .find(|e| e.id == *id)
+                        .ok_or_else(|| ContextualMemoryStoreError::NotFound(id.clone()))?;
+                    if let Some(expected) = expected_version {
+                        if entry.version != *expected {
+                            return Err(ContextualMemoryStoreError::Validation(
+                                MemoryValidationError::VersionConflict,
+                            ));
+                        }
                     }
+                    entry.status = MemoryStatus::Archived;
+                    entry.updated_at_ms = now_ms;
+                    entry.last_session_id = session_id.to_string();
+                    entry.version += 1;
+                    self.append_event(
+                        memory_space_id,
+                        StoredEvent::StatusChanged {
+                            id: entry.id.clone(),
+                            status: MemoryStatus::Archived,
+                            updated_at_ms: now_ms,
+                            last_session_id: entry.last_session_id.clone(),
+                            version: entry.version,
+                        },
+                    )?;
+                    Ok(vec![entry.clone()])
                 }
-                Ok(affected)
-            }
-            MemoryOperationDto::Archive {
-                id,
-                expected_version,
-            } => {
-                let mut entries = self.load_entries(session_id)?;
-                let entry = entries
-                    .iter_mut()
-                    .find(|e| e.id == *id)
-                    .ok_or_else(|| ContextualMemoryStoreError::NotFound(id.clone()))?;
-                if let Some(expected) = expected_version {
-                    if entry.version != *expected {
-                        return Err(ContextualMemoryStoreError::Validation(
-                            MemoryValidationError::VersionConflict,
-                        ));
-                    }
-                }
-                entry.status = MemoryStatus::Archived;
-                entry.updated_at_ms = now_ms;
-                entry.version += 1;
-                self.append_event(
-                    session_id,
-                    StoredEvent::StatusChanged {
-                        id: entry.id.clone(),
-                        status: MemoryStatus::Archived,
-                        updated_at_ms: now_ms,
-                        version: entry.version,
-                    },
-                )?;
-                Ok(vec![entry.clone()])
             }
         })
     }
 
     fn query(
         &self,
-        session_id: &str,
-        cwd: Option<&Path>,
+        ctx: &MemoryStoreContext<'_>,
         query: &MemoryQueryDto,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
-        if session_id.is_empty() {
+        if ctx.session_id.is_empty() {
             return Err(ContextualMemoryStoreError::Validation(
                 MemoryValidationError::EmptySessionId,
             ));
         }
-        let project_key = Self::project_key_from_cwd(cwd)?;
-        self.with_lock(session_id, || {
-            let mut entries = self.load_entries(session_id)?;
+        let project_key = Self::project_key_from_cwd(ctx.cwd)?;
+        self.with_space_lock(ctx.memory_space_id.as_str(), || {
+            let mut entries = self.load_entries(ctx.memory_space_id.as_str(), ctx.session_id)?;
             entries.retain(|e| filter_entry(e, query, project_key.as_deref()));
             entries.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
             if let Some(limit) = query.limit {
@@ -373,21 +468,23 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
 
     fn resolve_for_prompt(
         &self,
-        session_id: &str,
-        cwd: Option<&Path>,
+        ctx: &MemoryStoreContext<'_>,
         user_query: &str,
         budget_bytes: usize,
     ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
-        if session_id.is_empty() {
+        if ctx.session_id.is_empty() {
             return Ok(MemoryBlock {
                 content: String::new(),
             });
         }
-        let project_key = Self::project_key_from_cwd(cwd)?;
-        let entries = self.with_lock(session_id, || self.load_entries(session_id))?;
+        let project_key = Self::project_key_from_cwd(ctx.cwd)?;
+        let entries = self.with_space_lock(ctx.memory_space_id.as_str(), || {
+            self.load_entries(ctx.memory_space_id.as_str(), ctx.session_id)
+        })?;
         Ok(resolve_entries_for_prompt(
             &entries,
             project_key.as_deref(),
+            ctx.session_id,
             user_query,
             budget_bytes,
         ))
@@ -446,7 +543,6 @@ fn filter_entry(entry: &MemoryEntry, query: &MemoryQueryDto, project_key: Option
     )
 }
 
-/// project scope は `project_key` 一致が必要。session / global は同一 session 内で kind + scope のみ。
 fn scope_matches_project_key(
     scope: MemoryScope,
     entry_pk: &Option<String>,
@@ -466,12 +562,12 @@ fn project_keys_match(entry_pk: &Option<String>, query_pk: &Option<String>) -> b
     }
 }
 
-fn next_id(entries: &[MemoryEntry], session_id: &str) -> String {
+fn next_id(entries: &[MemoryEntry], memory_space_id: &str) -> String {
     let seq = entries.len() + 1;
-    format!("mem_{session_id}_{seq}")
+    format!("mem_{memory_space_id}_{seq}")
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum StoredEvent {
     Added {
@@ -481,24 +577,102 @@ enum StoredEvent {
         id: String,
         status: MemoryStatus,
         updated_at_ms: u64,
+        last_session_id: String,
         version: u64,
     },
 }
 
-fn apply_event(map: &mut HashMap<String, MemoryEntry>, event: StoredEvent) {
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum StoredEventRaw {
+    Added {
+        entry: StoredMemoryEntry,
+    },
+    StatusChanged {
+        id: String,
+        status: MemoryStatus,
+        updated_at_ms: u64,
+        #[serde(default)]
+        last_session_id: String,
+        version: u64,
+    },
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct StoredMemoryEntry {
+    id: String,
+    #[serde(default)]
+    memory_space_id: Option<String>,
+    #[serde(default)]
+    created_session_id: Option<String>,
+    #[serde(default)]
+    last_session_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    kind: String,
+    scope: MemoryScope,
+    inject: MemoryInjectPolicy,
+    status: MemoryStatus,
+    text: String,
+    #[serde(default)]
+    project_key: Option<String>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    version: u64,
+}
+
+impl StoredMemoryEntry {
+    fn into_entry(self, default_space_id: &str, fallback_session: &str) -> MemoryEntry {
+        let legacy_sid = self
+            .session_id
+            .or(self.created_session_id.clone())
+            .unwrap_or_else(|| fallback_session.to_string());
+        MemoryEntry {
+            id: self.id,
+            memory_space_id: self
+                .memory_space_id
+                .unwrap_or_else(|| default_space_id.to_string()),
+            created_session_id: self
+                .created_session_id
+                .unwrap_or_else(|| legacy_sid.clone()),
+            last_session_id: self.last_session_id.unwrap_or(legacy_sid),
+            kind: self.kind,
+            scope: self.scope,
+            inject: self.inject,
+            status: self.status,
+            text: self.text,
+            project_key: self.project_key,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+            version: self.version,
+        }
+    }
+}
+
+fn apply_event_raw(
+    map: &mut HashMap<String, MemoryEntry>,
+    event: StoredEventRaw,
+    default_space_id: &str,
+    fallback_session: &str,
+) {
     match event {
-        StoredEvent::Added { entry } => {
+        StoredEventRaw::Added { entry } => {
+            let entry = entry.into_entry(default_space_id, fallback_session);
             map.insert(entry.id.clone(), entry);
         }
-        StoredEvent::StatusChanged {
+        StoredEventRaw::StatusChanged {
             id,
             status,
             updated_at_ms,
+            last_session_id,
             version,
         } => {
             if let Some(entry) = map.get_mut(&id) {
                 entry.status = status;
                 entry.updated_at_ms = updated_at_ms;
+                if !last_session_id.is_empty() {
+                    entry.last_session_id = last_session_id;
+                }
                 entry.version = version;
             }
         }
@@ -509,23 +683,23 @@ fn io_err(e: impl ToString) -> ContextualMemoryStoreError {
     ContextualMemoryStoreError::Io(e.to_string())
 }
 
-struct SessionLock(File);
+struct SpaceLock(File);
 
-impl SessionLock {
+impl SpaceLock {
     fn acquire(file: File) -> Result<Self, ContextualMemoryStoreError> {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
             let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
             if rc != 0 {
-                return Err(io_err("failed to acquire session lock"));
+                return Err(io_err("failed to acquire memory space lock"));
             }
         }
         Ok(Self(file))
     }
 }
 
-impl Drop for SessionLock {
+impl Drop for SpaceLock {
     fn drop(&mut self) {
         #[cfg(unix)]
         {
@@ -583,6 +757,18 @@ mod tests {
         )
     }
 
+    fn ctx<'a>(
+        session_id: &'a str,
+        memory_space_id: &str,
+        cwd: Option<&'a Path>,
+    ) -> MemoryStoreContext<'a> {
+        MemoryStoreContext {
+            session_id,
+            memory_space_id: memory_space_id.to_string(),
+            cwd,
+        }
+    }
+
     fn goal_add(text: &str) -> MemoryOperationDto {
         MemoryOperationDto::Add {
             kind: STANDARD_KIND_GOAL.into(),
@@ -598,25 +784,22 @@ mod tests {
     fn goal_add_creates_active_goal() {
         let (store, _dir) = store();
         let cwd = std::env::current_dir().expect("cwd");
-        let entries = store
-            .apply("sess", Some(&cwd), &goal_add("first"), 1)
-            .expect("apply");
+        let c = ctx("sess", "ctx_a", Some(&cwd));
+        let entries = store.apply(&c, &goal_add("first"), 1).expect("apply");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, MemoryStatus::Active);
+        assert_eq!(entries[0].memory_space_id, "ctx_a");
     }
 
     #[test]
     fn goal_add_twice_inactivates_old() {
         let (store, _dir) = store();
         let cwd = std::env::current_dir().expect("cwd");
-        store
-            .apply("sess", Some(&cwd), &goal_add("first"), 1)
-            .expect("apply");
-        let second = store
-            .apply("sess", Some(&cwd), &goal_add("second"), 2)
-            .expect("apply");
+        let c = ctx("sess", "ctx_a", Some(&cwd));
+        store.apply(&c, &goal_add("first"), 1).expect("apply");
+        let second = store.apply(&c, &goal_add("second"), 2).expect("apply");
         assert_eq!(second.last().expect("new").text, "second");
-        let all = store.load_entries("sess").expect("load");
+        let all = store.load_entries_for_test("ctx_a", "sess").expect("load");
         let active: Vec<_> = all
             .iter()
             .filter(|e| e.kind == STANDARD_KIND_GOAL && e.status == MemoryStatus::Active)
@@ -640,79 +823,68 @@ mod tests {
     fn now_add_twice_inactivates_old() {
         let (store, _dir) = store();
         let cwd = std::env::current_dir().expect("cwd");
-        store
-            .apply("sess", Some(&cwd), &now_add("first"), 1)
-            .expect("apply");
-        let second = store
-            .apply("sess", Some(&cwd), &now_add("second"), 2)
-            .expect("apply");
+        let c = ctx("sess", "ctx_a", Some(&cwd));
+        store.apply(&c, &now_add("first"), 1).expect("apply");
+        let second = store.apply(&c, &now_add("second"), 2).expect("apply");
         assert_eq!(second.last().expect("new").text, "second");
-        let all = store.load_entries("sess").expect("load");
-        let active: Vec<_> = all
-            .iter()
-            .filter(|e| e.kind == STANDARD_KIND_NOW && e.status == MemoryStatus::Active)
-            .collect();
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].text, "second");
     }
 
     #[test]
-    fn now_clear_inactivates_active() {
+    fn different_sessions_share_memory_space() {
         let (store, _dir) = store();
         let cwd = std::env::current_dir().expect("cwd");
+        let c1 = ctx("sess_001", "ctx_a", Some(&cwd));
         store
-            .apply("sess", Some(&cwd), &now_add("focus"), 1)
+            .apply(&c1, &goal_add("shared goal"), 1)
             .expect("apply");
-        let cleared = store
-            .apply(
-                "sess",
-                Some(&cwd),
-                &MemoryOperationDto::ClearActive {
-                    kind: STANDARD_KIND_NOW.into(),
-                    scope: MemoryScopeDto::Session,
+        let c2 = ctx("sess_002", "ctx_a", Some(&cwd));
+        let entries = store
+            .query(
+                &c2,
+                &MemoryQueryDto {
+                    kind: Some(STANDARD_KIND_GOAL.into()),
+                    scope: Some(MemoryScopeDto::Project),
+                    status: Some(MemoryStatusDto::Active),
+                    active_only: true,
+                    include_archived: false,
+                    limit: None,
+                    include_prompt_block: false,
+                    user_query: None,
                 },
-                2,
             )
-            .expect("clear");
-        assert_eq!(cleared.len(), 1);
-        assert_eq!(cleared[0].status, MemoryStatus::Inactive);
-        let all = store.load_entries("sess").expect("load");
-        assert!(
-            all.iter()
-                .filter(|e| e.kind == STANDARD_KIND_NOW && e.status == MemoryStatus::Active)
-                .count()
-                == 0
+            .expect("query");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "shared goal");
+    }
+
+    /// 0034 形式（`session_id` のみ、`memory_space_id` なし）の legacy events を書く。
+    fn write_legacy_events(aibe_root: &Path, session_id: &str, text: &str) -> PathBuf {
+        let dir = aibe_root
+            .join("conversations")
+            .join(session_id)
+            .join("memory");
+        fs::create_dir_all(&dir).expect("legacy dir");
+        let path = dir.join("events.jsonl");
+        let line = format!(
+            r#"{{"event":"added","entry":{{"id":"mem_{session_id}_1","session_id":"{session_id}","kind":"goal","scope":"global","inject":"pinned","status":"active","text":"{text}","created_at_ms":1,"updated_at_ms":1,"version":1}}}}"#
         );
+        fs::write(&path, format!("{line}\n")).expect("write legacy events");
+        path
     }
 
     #[test]
-    fn idea_add_keeps_multiple_open() {
-        let (store, _dir) = store();
+    fn lazy_copy_seeds_named_space_and_keeps_legacy_store_intact() {
+        let (store, dir) = store();
+        let legacy_path = write_legacy_events(dir.path(), "sess_001", "legacy goal");
+        let original = fs::read_to_string(&legacy_path).expect("read legacy");
+
         let cwd = std::env::current_dir().expect("cwd");
-        let op = MemoryOperationDto::Add {
-            kind: STANDARD_KIND_IDEA.into(),
-            scope: MemoryScopeDto::Project,
-            inject: MemoryInjectPolicyDto::OnDemand,
-            status: MemoryStatusDto::Open,
-            text: "a".into(),
-            make_active: false,
-        };
-        store.apply("sess", Some(&cwd), &op, 1).expect("apply");
-        let op2 = MemoryOperationDto::Add {
-            kind: STANDARD_KIND_IDEA.into(),
-            scope: MemoryScopeDto::Project,
-            inject: MemoryInjectPolicyDto::OnDemand,
-            status: MemoryStatusDto::Open,
-            text: "b".into(),
-            make_active: false,
-        };
-        store.apply("sess", Some(&cwd), &op2, 2).expect("apply");
-        let ideas = store
+        let c1 = ctx("sess_001", "ctx_a", Some(&cwd));
+        let entries = store
             .query(
-                "sess",
-                Some(&cwd),
+                &c1,
                 &MemoryQueryDto {
-                    kind: Some(STANDARD_KIND_IDEA.into()),
+                    kind: Some(STANDARD_KIND_GOAL.into()),
                     scope: None,
                     status: None,
                     active_only: false,
@@ -723,6 +895,116 @@ mod tests {
                 },
             )
             .expect("query");
-        assert_eq!(ideas.len(), 2);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "legacy goal");
+
+        // new layout に copy され、元の legacy store は無傷
+        assert!(dir
+            .path()
+            .join("memory/spaces/ctx_a/events.jsonl")
+            .is_file());
+        assert_eq!(
+            fs::read_to_string(&legacy_path).expect("re-read legacy"),
+            original
+        );
+
+        // 別 session から同じ named space を見ても同じ state
+        let c2 = ctx("sess_002", "ctx_a", Some(&cwd));
+        let entries = store
+            .query(
+                &c2,
+                &MemoryQueryDto {
+                    kind: Some(STANDARD_KIND_GOAL.into()),
+                    scope: None,
+                    status: None,
+                    active_only: false,
+                    include_archived: false,
+                    limit: None,
+                    include_prompt_block: false,
+                    user_query: None,
+                },
+            )
+            .expect("query from sess_002");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "legacy goal");
+    }
+
+    #[test]
+    fn legacy_session_space_reads_through_without_copy() {
+        let (store, dir) = store();
+        let legacy_path = write_legacy_events(dir.path(), "sess_001", "legacy goal");
+        let original = fs::read_to_string(&legacy_path).expect("read legacy");
+
+        let cwd = std::env::current_dir().expect("cwd");
+        let c = ctx("sess_001", "legacy_session_sess_001", Some(&cwd));
+        let entries = store
+            .query(
+                &c,
+                &MemoryQueryDto {
+                    kind: Some(STANDARD_KIND_GOAL.into()),
+                    scope: None,
+                    status: None,
+                    active_only: false,
+                    include_archived: false,
+                    limit: None,
+                    include_prompt_block: false,
+                    user_query: None,
+                },
+            )
+            .expect("query");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "legacy goal");
+
+        // read-through のみで copy しない（legacy 自身が正本）
+        assert!(!dir
+            .path()
+            .join("memory/spaces/legacy_session_sess_001/events.jsonl")
+            .exists());
+        assert_eq!(
+            fs::read_to_string(&legacy_path).expect("re-read legacy"),
+            original
+        );
+
+        // 新規書き込みは legacy data ごと new layout へ seed され、両方見える
+        store.apply(&c, &goal_add("new goal"), 2).expect("apply");
+        assert!(dir
+            .path()
+            .join("memory/spaces/legacy_session_sess_001/events.jsonl")
+            .is_file());
+        assert_eq!(
+            fs::read_to_string(&legacy_path).expect("re-read legacy after write"),
+            original
+        );
+        let entries = store
+            .load_entries_for_test("legacy_session_sess_001", "sess_001")
+            .expect("load after write");
+        let texts: Vec<_> = entries.iter().map(|e| e.text.as_str()).collect();
+        assert!(texts.contains(&"legacy goal"));
+        assert!(texts.contains(&"new goal"));
+    }
+
+    #[test]
+    fn different_memory_spaces_are_isolated() {
+        let (store, _dir) = store();
+        let cwd = std::env::current_dir().expect("cwd");
+        let c1 = ctx("sess_001", "ctx_a", Some(&cwd));
+        store.apply(&c1, &goal_add("ctx a goal"), 1).expect("apply");
+        let c3 = ctx("sess_003", "ctx_b", Some(&cwd));
+        let entries = store
+            .query(
+                &c3,
+                &MemoryQueryDto {
+                    kind: Some(STANDARD_KIND_GOAL.into()),
+                    scope: Some(MemoryScopeDto::Project),
+                    status: Some(MemoryStatusDto::Active),
+                    active_only: true,
+                    include_archived: false,
+                    limit: None,
+                    include_prompt_block: false,
+                    user_query: None,
+                },
+            )
+            .expect("query");
+        assert!(entries.is_empty());
     }
 }

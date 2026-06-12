@@ -14,6 +14,7 @@ pub const DEFAULT_HISTORY_MAX_ENTRIES: usize = 500;
 #[derive(Debug, Clone)]
 pub struct AiConfig {
     pub socket_path: PathBuf,
+    pub context_current: Option<String>,
     pub ask_tools: ConfigToolsTokens,
     pub ask_default_profile: Option<String>,
     pub ask_filter: Option<String>,
@@ -45,6 +46,7 @@ impl AiConfig {
         let path = Self::resolve_path();
         let mut cfg = Self {
             socket_path: default_socket_path(),
+            context_current: None,
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,
@@ -60,6 +62,9 @@ impl AiConfig {
                 if let Ok(file) = toml::from_str::<FileConfig>(&raw) {
                     if let Some(p) = file.socket_path {
                         cfg.socket_path = expand_home(p);
+                    }
+                    if let Some(ctx) = file.context {
+                        cfg.context_current = ctx.current.filter(|s| !s.is_empty());
                     }
                     if let Some(ask) = file.ask {
                         if let Some(tools) = ask.tools {
@@ -107,6 +112,41 @@ impl AiConfig {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         PathBuf::from(home).join(DEFAULT_HISTORY_DIR)
     }
+
+    pub fn save_context_current(name: &str) -> Result<(), String> {
+        aibe_protocol::is_valid_memory_space_id(name)
+            .then_some(())
+            .ok_or_else(|| format!("invalid context name: {name}"))?;
+        let path = Self::resolve_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut doc = if path.is_file() {
+            let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            // parse 失敗時に既存 config を空で上書きしないため、エラーで止める
+            toml::from_str::<toml::Value>(&raw).map_err(|e| {
+                format!(
+                    "existing config is not valid TOML ({}): {e}",
+                    path.display()
+                )
+            })?
+        } else {
+            toml::Value::Table(Default::default())
+        };
+        let toml::Value::Table(ref mut root) = doc else {
+            return Err("config root must be a table".into());
+        };
+        let ctx = root
+            .entry("context")
+            .or_insert_with(|| toml::Value::Table(Default::default()));
+        let toml::Value::Table(ctx_table) = ctx else {
+            return Err("config [context] must be a table".into());
+        };
+        ctx_table.insert("current".to_string(), toml::Value::String(name.to_string()));
+        let out = toml::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+        fs::write(&path, out).map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 fn expand_home(path: String) -> PathBuf {
@@ -120,11 +160,17 @@ fn expand_home(path: String) -> PathBuf {
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     socket_path: Option<String>,
+    context: Option<ContextSection>,
     ask: Option<AskSection>,
     history_dir: Option<String>,
     history_max_entries: Option<usize>,
     log_tail_bytes: Option<usize>,
     presets: Option<HashMap<String, PresetToml>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextSection {
+    current: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

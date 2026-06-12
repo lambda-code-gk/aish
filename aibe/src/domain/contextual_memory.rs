@@ -3,6 +3,8 @@
 use aibe_protocol::{
     MemoryEntryDto, MemoryInjectPolicyDto, MemoryScopeDto, MemoryStatusDto, MEMORY_TEXT_MAX_BYTES,
 };
+
+use super::memory_space::{now_freshness, MemoryFreshness};
 use thiserror::Error;
 
 pub const STANDARD_KIND_GOAL: &str = "goal";
@@ -38,7 +40,9 @@ pub enum MemoryStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemoryEntry {
     pub id: String,
-    pub session_id: String,
+    pub memory_space_id: String,
+    pub created_session_id: String,
+    pub last_session_id: String,
     pub kind: String,
     pub scope: MemoryScope,
     pub inject: MemoryInjectPolicy,
@@ -75,6 +79,8 @@ pub enum MemoryValidationError {
     VersionConflict,
     #[error("entry not found: {0}")]
     EntryNotFound(String),
+    #[error("invalid memory_space_id: {0}")]
+    InvalidMemorySpaceId(String),
 }
 
 #[derive(Debug, Error)]
@@ -183,7 +189,7 @@ pub fn query_matches_idea_on_demand(user_query: &str) -> bool {
     KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
-pub fn format_memory_block(entries: &[MemoryEntry]) -> String {
+pub fn format_memory_block(entries: &[MemoryEntry], current_session_id: Option<&str>) -> String {
     if entries.is_empty() {
         return String::new();
     }
@@ -201,6 +207,13 @@ pub fn format_memory_block(entries: &[MemoryEntry]) -> String {
             }
             out.push_str(&format!("[{}]\n", entry.kind));
             current_kind = Some(entry.kind.as_str());
+        }
+        if entry.kind == STANDARD_KIND_NOW {
+            if let Some(sess) = current_session_id {
+                if now_freshness(&entry.last_session_id, sess) == MemoryFreshness::Stale {
+                    out.push_str("(stale — last updated in another session)\n");
+                }
+            }
         }
         if entry.kind == STANDARD_KIND_IDEA {
             out.push_str(&format!("- {}\n", entry.text));
@@ -225,6 +238,7 @@ pub fn truncate_to_budget(mut content: String, budget: usize) -> String {
 pub fn resolve_entries_for_prompt(
     all: &[MemoryEntry],
     project_key: Option<&str>,
+    current_session_id: &str,
     user_query: &str,
     budget: usize,
 ) -> MemoryBlock {
@@ -253,7 +267,7 @@ pub fn resolve_entries_for_prompt(
         }
     }
 
-    let block = format_memory_block(&selected);
+    let block = format_memory_block(&selected, Some(current_session_id));
     MemoryBlock {
         content: truncate_to_budget(block, budget),
     }
@@ -289,7 +303,9 @@ impl MemoryEntry {
     pub fn to_dto(&self) -> MemoryEntryDto {
         MemoryEntryDto {
             id: self.id.clone(),
-            session_id: self.session_id.clone(),
+            memory_space_id: self.memory_space_id.clone(),
+            created_session_id: self.created_session_id.clone(),
+            last_session_id: self.last_session_id.clone(),
             kind: self.kind.clone(),
             scope: self.scope.into(),
             inject: self.inject.into(),
@@ -381,7 +397,9 @@ mod tests {
     fn sample_entry(kind: &str, status: MemoryStatus, text: &str) -> MemoryEntry {
         MemoryEntry {
             id: format!("mem_{kind}"),
-            session_id: "s1".into(),
+            memory_space_id: "ctx_a".into(),
+            created_session_id: "s1".into(),
+            last_session_id: "s1".into(),
             kind: kind.into(),
             scope: if kind == STANDARD_KIND_NOW {
                 MemoryScope::Session
@@ -438,6 +456,7 @@ mod tests {
         let block = resolve_entries_for_prompt(
             &entries,
             Some("/proj"),
+            "s1",
             "fix rust error",
             MEMORY_PROMPT_BUDGET_BYTES,
         );
@@ -456,6 +475,7 @@ mod tests {
         let block = resolve_entries_for_prompt(
             &entries,
             Some("/proj"),
+            "s1",
             "MVPを整理",
             MEMORY_PROMPT_BUDGET_BYTES,
         );

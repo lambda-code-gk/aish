@@ -69,6 +69,9 @@ pub struct RequestContext {
     /// この turn のみ LLM に前置する system 本文。クライアントが組み立て、aibe は注入のみ行う。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<String>,
+    /// クライアントが解決済みの contextual memory space。注入時の解決順 1 位（0035）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_space_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -152,6 +155,27 @@ mod tests {
             }
             _ => panic!("expected agent_turn"),
         }
+    }
+
+    #[test]
+    fn agent_turn_deserializes_context_memory_space_id() {
+        let req: ClientRequest = serde_json::from_str(
+            r#"{"type":"agent_turn","id":"1","messages":[{"role":"user","content":"hi"}],"context":{"memory_space_id":"ctx_a"}}"#,
+        )
+        .expect("parse");
+        match req {
+            ClientRequest::AgentTurn { context, .. } => {
+                assert_eq!(context.memory_space_id.as_deref(), Some("ctx_a"));
+            }
+            _ => panic!("expected agent_turn"),
+        }
+    }
+
+    #[test]
+    fn agent_turn_context_omits_memory_space_id_when_none() {
+        let context = RequestContext::default();
+        let json = serde_json::to_string(&context).expect("serialize");
+        assert!(!json.contains("memory_space_id"));
     }
 
     #[test]
@@ -239,6 +263,7 @@ mod tests {
             session_id: "sess-1".into(),
             context: MemoryContext {
                 cwd: "/tmp/proj".into(),
+                memory_space_id: None,
             },
             operation: MemoryOperationDto::Add {
                 kind: "goal".into(),
@@ -277,6 +302,7 @@ mod tests {
             session_id: "sess-1".into(),
             context: MemoryContext {
                 cwd: "/tmp/proj".into(),
+                memory_space_id: None,
             },
             query: MemoryQueryDto {
                 kind: Some("idea".into()),

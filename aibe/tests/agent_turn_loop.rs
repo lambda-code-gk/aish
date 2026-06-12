@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::{EmptyContextualMemoryStore, ScriptedMockLlm};
+use aibe::adapters::outbound::{
+    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, ScriptedMockLlm,
+};
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{
@@ -38,6 +40,7 @@ fn agent_turn_service(
         terminator,
         capability,
         Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
     )
 }
 

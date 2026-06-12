@@ -499,6 +499,7 @@ fn goal_set_sends_memory_apply() {
         ClientRequest::MemoryApply(body) => {
             assert!(!body.session_id.is_empty());
             assert!(!body.context.cwd.is_empty());
+            assert!(body.context.memory_space_id.is_some());
             let operation = body.operation;
             assert!(matches!(
                 operation,
@@ -535,6 +536,73 @@ fn goal_set_sends_memory_apply() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("goal set: ship memory"));
+}
+
+#[test]
+fn agent_turn_sends_memory_space_id_from_env_context() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::AgentTurn { context, .. } => {
+            assert_eq!(context.memory_space_id.as_deref(), Some("ctx_turn"));
+            ClientResponse::AgentTurnResult {
+                id: "turn-1".to_string(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".to_string(),
+                    content: "ok".to_string(),
+                },
+                tool_calls: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AIBE_CONTEXT_ID", "ctx_turn")
+        .args(["--quiet", "--no-start", "--no-progress", "hello"])
+        .output()
+        .expect("run ai");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn goal_set_sends_env_context_as_memory_space_id() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryApply(body) => {
+            assert_eq!(body.context.memory_space_id.as_deref(), Some("ctx_goal"));
+            ClientResponse::MemoryApplyResult {
+                id: "m1".to_string(),
+                status: MemoryApplyStatus::Ok,
+                entries: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .env("AIBE_CONTEXT_ID", "ctx_goal")
+        .args(["goal", "set", "--no-start", "ship memory"])
+        .output()
+        .expect("run ai goal set");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]

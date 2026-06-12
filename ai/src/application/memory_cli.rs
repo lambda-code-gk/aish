@@ -13,6 +13,7 @@ use crate::ports::outbound::{AgentError, MemoryClient};
 pub struct MemoryCliContext {
     pub socket_path: PathBuf,
     pub session_id: String,
+    pub memory_context: aibe_protocol::MemoryContext,
     pub cwd: PathBuf,
     pub format: OutputFormat,
 }
@@ -107,7 +108,7 @@ pub fn run_idea_list(
         include_prompt_block: false,
         user_query: None,
     };
-    let response = client.memory_query(&ctx.session_id, &ctx.cwd.to_string_lossy(), query)?;
+    let response = client.memory_query(&ctx.session_id, &ctx.memory_context, query)?;
     match response {
         ClientResponse::MemoryQueryResult { entries, .. } => {
             Ok(format_entries(&entries, ctx.format))
@@ -158,7 +159,7 @@ pub fn run_mem_list(
         include_prompt_block: false,
         user_query: None,
     };
-    let response = client.memory_query(&ctx.session_id, &ctx.cwd.to_string_lossy(), query)?;
+    let response = client.memory_query(&ctx.session_id, &ctx.memory_context, query)?;
     match response {
         ClientResponse::MemoryQueryResult { entries, .. } => {
             Ok(format_entries(&entries, ctx.format))
@@ -185,11 +186,13 @@ pub fn run_mem_show(
         include_prompt_block: true,
         user_query: user_query.map(str::to_string),
     };
-    let response = client.memory_query(&ctx.session_id, &ctx.cwd.to_string_lossy(), query)?;
+    let response = client.memory_query(&ctx.session_id, &ctx.memory_context, query)?;
     match response {
-        ClientResponse::MemoryQueryResult { prompt_block, .. } => {
-            format_prompt_block(prompt_block.as_deref(), ctx.format)
-        }
+        ClientResponse::MemoryQueryResult { prompt_block, .. } => format_prompt_block(
+            prompt_block.as_deref(),
+            ctx.memory_context.memory_space_id.as_deref(),
+            ctx.format,
+        ),
         ClientResponse::Error { message, .. } => Err(AgentError::Request(message)),
         other => Err(AgentError::Request(format!(
             "unexpected response: {other:?}"
@@ -224,7 +227,7 @@ fn apply_and_summarize(
     operation: MemoryOperationDto,
     ok_line: &str,
 ) -> Result<String, AgentError> {
-    let response = client.memory_apply(&ctx.session_id, &ctx.cwd.to_string_lossy(), operation)?;
+    let response = client.memory_apply(&ctx.session_id, &ctx.memory_context, operation)?;
     match response {
         ClientResponse::MemoryApplyResult { .. } => Ok(ok_line.to_string()),
         ClientResponse::Error { message, .. } => Err(AgentError::Request(message)),
@@ -255,7 +258,7 @@ fn query_active(
         include_prompt_block: false,
         user_query: None,
     };
-    let response = client.memory_query(&ctx.session_id, &ctx.cwd.to_string_lossy(), query)?;
+    let response = client.memory_query(&ctx.session_id, &ctx.memory_context, query)?;
     match response {
         ClientResponse::MemoryQueryResult { entries, .. } => {
             if entries.is_empty() {
@@ -282,7 +285,7 @@ fn clear_active(
         kind: kind.to_string(),
         scope,
     };
-    let response = client.memory_apply(&ctx.session_id, &ctx.cwd.to_string_lossy(), operation)?;
+    let response = client.memory_apply(&ctx.session_id, &ctx.memory_context, operation)?;
     match response {
         ClientResponse::MemoryApplyResult { .. } => Ok(ok_line.to_string()),
         ClientResponse::Error { message, .. } => Err(AgentError::Request(message)),
@@ -294,20 +297,22 @@ fn clear_active(
 
 fn format_prompt_block(
     prompt_block: Option<&str>,
+    memory_space_id: Option<&str>,
     format: OutputFormat,
 ) -> Result<String, AgentError> {
     let block = prompt_block.unwrap_or("");
+    let space = memory_space_id.unwrap_or("(unresolved)");
     match format {
         OutputFormat::Json => {
-            let payload = serde_json::json!({ "prompt_block": block });
+            let payload = serde_json::json!({
+                "memory_space_id": space,
+                "prompt_block": block,
+            });
             Ok(serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into()))
         }
         OutputFormat::Tsv | OutputFormat::Env => {
-            if block.is_empty() {
-                Ok("(empty)".to_string())
-            } else {
-                Ok(block.to_string())
-            }
+            let body = if block.is_empty() { "(empty)" } else { block };
+            Ok(format!("memory_space_id: {space}\n{body}"))
         }
     }
 }
@@ -316,11 +321,12 @@ fn format_entries(entries: &[MemoryEntryDto], format: OutputFormat) -> String {
     match format {
         OutputFormat::Json => serde_json::to_string_pretty(entries).unwrap_or_else(|_| "[]".into()),
         OutputFormat::Tsv | OutputFormat::Env => {
-            let mut out = String::from("id\tkind\tstatus\tscope\ttext\n");
+            let mut out =
+                String::from("id\tkind\tstatus\tscope\tmemory_space_id\tlast_session_id\ttext\n");
             for e in entries {
                 out.push_str(&format!(
-                    "{}\t{}\t{:?}\t{:?}\t{}\n",
-                    e.id, e.kind, e.status, e.scope, e.text
+                    "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}\n",
+                    e.id, e.kind, e.status, e.scope, e.memory_space_id, e.last_session_id, e.text
                 ));
             }
             out

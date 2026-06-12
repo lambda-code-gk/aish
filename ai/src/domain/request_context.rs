@@ -10,6 +10,8 @@ pub struct RequestContextInput {
     pub conversation_id: Option<String>,
     /// この turn のみ LLM に前置する system 本文（会話履歴には載せない）。
     pub system_instruction: Option<String>,
+    /// 解決済みの contextual memory space（0035。注入の解決順 1 位として aibe へ渡す）。
+    pub memory_space_id: Option<String>,
 }
 
 impl RequestContextInput {
@@ -20,6 +22,7 @@ impl RequestContextInput {
             ai_session_id: self.ai_session_id,
             conversation_id: self.conversation_id,
             system_instruction: normalize_system_instruction(self.system_instruction),
+            memory_space_id: self.memory_space_id,
         }
     }
 }

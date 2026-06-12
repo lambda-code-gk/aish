@@ -6,6 +6,7 @@ mod dynamic_completion;
 mod file_log;
 mod local_history;
 mod output_filter;
+pub mod project_key;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
 mod stderr_spinner;

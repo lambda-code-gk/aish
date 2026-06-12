@@ -7,8 +7,9 @@ use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, ChatMessage, ToolName};
 use crate::ports::outbound::{
-    ContextualMemoryStore, LlmProvider, ShellExecApprovalGate, TerminationCapability,
-    ToolExecutionContext, ToolRoundTerminator, TurnCancellation, TurnEventSink,
+    ContextualMemoryStore, LlmProvider, MemorySpaceResolver, ShellExecApprovalGate,
+    TerminationCapability, ToolExecutionContext, ToolRoundTerminator, TurnCancellation,
+    TurnEventSink,
 };
 use aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES;
 use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase};
@@ -21,6 +22,7 @@ pub struct AgentTurnService {
     terminator: Arc<dyn ToolRoundTerminator>,
     termination_capability: TerminationCapability,
     memory_store: Arc<dyn ContextualMemoryStore>,
+    memory_space_resolver: Arc<dyn MemorySpaceResolver>,
 }
 
 impl AgentTurnService {
@@ -30,6 +32,7 @@ impl AgentTurnService {
         terminator: Arc<dyn ToolRoundTerminator>,
         termination_capability: TerminationCapability,
         memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     ) -> Self {
         Self {
             llm,
@@ -37,6 +40,7 @@ impl AgentTurnService {
             terminator,
             termination_capability,
             memory_store,
+            memory_space_resolver,
         }
     }
 
@@ -71,7 +75,12 @@ impl AgentTurnService {
             );
         }
 
-        let conversation = prepare_turn_messages(messages, &context, self.memory_store.as_ref());
+        let conversation = prepare_turn_messages(
+            messages,
+            &context,
+            self.memory_store.as_ref(),
+            self.memory_space_resolver.as_ref(),
+        );
 
         if tools.is_empty() {
             return self
@@ -339,6 +348,7 @@ fn prepare_turn_messages(
     mut messages: Vec<ChatMessage>,
     context: &AgentTurnContext,
     memory_store: &dyn ContextualMemoryStore,
+    memory_space_resolver: &dyn MemorySpaceResolver,
 ) -> Vec<ChatMessage> {
     let mut insert_at = 0;
     if let Some(ref instruction) = context.system_instruction {
@@ -360,9 +370,15 @@ fn prepare_turn_messages(
             .map(|m| m.content.as_str())
             .unwrap_or("");
         let cwd = context.client_cwd.as_ref().map(|c| c.as_path());
-        if let Ok(block) =
-            memory_store.resolve_for_prompt(session_id, cwd, user_query, MEMORY_PROMPT_BUDGET_BYTES)
-        {
+        let block = memory_space_resolver
+            .resolve_for_turn(session_id, context.memory_space_id.as_deref(), cwd)
+            .ok()
+            .and_then(|store_ctx| {
+                memory_store
+                    .resolve_for_prompt(&store_ctx, user_query, MEMORY_PROMPT_BUDGET_BYTES)
+                    .ok()
+            });
+        if let Some(block) = block {
             if !block.content.is_empty() {
                 messages.insert(insert_at, ChatMessage::user(block.content));
             }
@@ -375,15 +391,17 @@ fn prepare_turn_messages(
 mod tests {
     use super::*;
     use crate::domain::{ClientCwd, MemoryBlock, ShellLogTail};
-    use crate::ports::outbound::{ContextualMemoryStore, ContextualMemoryStoreError};
+    use crate::ports::outbound::{
+        ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
+    };
+    use aibe_protocol::MemoryContext;
 
     struct NoopMemoryStore;
 
     impl ContextualMemoryStore for NoopMemoryStore {
         fn apply(
             &self,
-            _session_id: &str,
-            _cwd: Option<&std::path::Path>,
+            _ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
             _operation: &aibe_protocol::MemoryOperationDto,
             _now_ms: u64,
         ) -> Result<Vec<crate::domain::MemoryEntry>, ContextualMemoryStoreError> {
@@ -392,8 +410,7 @@ mod tests {
 
         fn query(
             &self,
-            _session_id: &str,
-            _cwd: Option<&std::path::Path>,
+            _ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
             _query: &aibe_protocol::MemoryQueryDto,
         ) -> Result<Vec<crate::domain::MemoryEntry>, ContextualMemoryStoreError> {
             Ok(vec![])
@@ -401,8 +418,7 @@ mod tests {
 
         fn resolve_for_prompt(
             &self,
-            _session_id: &str,
-            _cwd: Option<&std::path::Path>,
+            _ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
             _user_query: &str,
             _budget_bytes: usize,
         ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
@@ -412,14 +428,117 @@ mod tests {
         }
     }
 
+    struct NoopMemorySpaceResolver;
+
+    impl MemorySpaceResolver for NoopMemorySpaceResolver {
+        fn resolve_store_context<'a>(
+            &self,
+            session_id: &'a str,
+            _context: &MemoryContext,
+            cwd_path: &'a std::path::Path,
+        ) -> Result<crate::ports::outbound::MemoryStoreContext<'a>, ContextualMemoryStoreError>
+        {
+            Ok(crate::ports::outbound::MemoryStoreContext {
+                session_id,
+                memory_space_id: "test".into(),
+                cwd: Some(cwd_path),
+            })
+        }
+
+        fn resolve_for_turn<'a>(
+            &self,
+            session_id: &'a str,
+            explicit_memory_space_id: Option<&str>,
+            cwd_path: Option<&'a std::path::Path>,
+        ) -> Result<crate::ports::outbound::MemoryStoreContext<'a>, ContextualMemoryStoreError>
+        {
+            Ok(crate::ports::outbound::MemoryStoreContext {
+                session_id,
+                memory_space_id: explicit_memory_space_id.unwrap_or("test").to_string(),
+                cwd: cwd_path,
+            })
+        }
+    }
+
+    /// 解決された memory_space_id をそのまま block にして返す store。
+    struct EchoSpaceMemoryStore;
+
+    impl ContextualMemoryStore for EchoSpaceMemoryStore {
+        fn apply(
+            &self,
+            _ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
+            _operation: &aibe_protocol::MemoryOperationDto,
+            _now_ms: u64,
+        ) -> Result<Vec<crate::domain::MemoryEntry>, ContextualMemoryStoreError> {
+            Ok(vec![])
+        }
+
+        fn query(
+            &self,
+            _ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
+            _query: &aibe_protocol::MemoryQueryDto,
+        ) -> Result<Vec<crate::domain::MemoryEntry>, ContextualMemoryStoreError> {
+            Ok(vec![])
+        }
+
+        fn resolve_for_prompt(
+            &self,
+            ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
+            _user_query: &str,
+            _budget_bytes: usize,
+        ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
+            Ok(MemoryBlock {
+                content: format!("[memory from {}]", ctx.memory_space_id),
+            })
+        }
+    }
+
     fn empty_memory() -> NoopMemoryStore {
         NoopMemoryStore
+    }
+
+    fn noop_resolver() -> NoopMemorySpaceResolver {
+        NoopMemorySpaceResolver
+    }
+
+    #[test]
+    fn prepare_turn_messages_uses_explicit_memory_space_id() {
+        let mut ctx = AgentTurnContext::for_text_only(None);
+        ctx.ai_session_id = Some("sess_001".into());
+        ctx.memory_space_id = Some("ctx_a".into());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            &EchoSpaceMemoryStore,
+            &noop_resolver(),
+        );
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "[memory from ctx_a]");
+    }
+
+    #[test]
+    fn prepare_turn_messages_injects_memory_without_cwd() {
+        let mut ctx = AgentTurnContext::for_text_only(None);
+        ctx.ai_session_id = Some("sess_001".into());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            &EchoSpaceMemoryStore,
+            &noop_resolver(),
+        );
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "[memory from test]");
     }
 
     #[test]
     fn prepare_turn_messages_skips_empty_normalized_tail() {
         let ctx = AgentTurnContext::for_text_only(None);
-        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx, &empty_memory());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            &empty_memory(),
+            &noop_resolver(),
+        );
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hi");
     }
@@ -428,7 +547,12 @@ mod tests {
     fn prepare_turn_messages_prepends_shell_log_tail() {
         let tail = ShellLogTail::from_wire_opt("log line").expect("tail");
         let ctx = AgentTurnContext::for_text_only(Some(tail));
-        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx, &empty_memory());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            &empty_memory(),
+            &noop_resolver(),
+        );
         assert_eq!(msgs.len(), 2);
         assert!(msgs[0].content.starts_with("[shell log tail]\n"));
         assert!(msgs[0].content.contains("log line"));
@@ -439,7 +563,12 @@ mod tests {
     fn prepare_turn_messages_prepends_client_system_instruction() {
         let mut ctx = AgentTurnContext::for_text_only(None);
         ctx.system_instruction = Some("be brief".into());
-        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx, &empty_memory());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            &empty_memory(),
+            &noop_resolver(),
+        );
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, crate::domain::MessageRole::System);
         assert_eq!(msgs[0].content, "be brief");
@@ -451,7 +580,12 @@ mod tests {
         let tail = ShellLogTail::from_wire_opt("log line").expect("tail");
         let mut ctx = AgentTurnContext::for_text_only(Some(tail));
         ctx.system_instruction = Some("be brief".into());
-        let msgs = prepare_turn_messages(vec![ChatMessage::user("hi")], &ctx, &empty_memory());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            &empty_memory(),
+            &noop_resolver(),
+        );
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].role, crate::domain::MessageRole::System);
         assert!(msgs[1].content.starts_with("[shell log tail]\n"));

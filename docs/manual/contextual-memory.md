@@ -1,6 +1,6 @@
 # contextual memory 手動検証
 
-`ai goal` / `ai now` / `ai idea` / `ai mem` と、`AgentTurn` への自動注入を確認する。
+`ai goal` / `ai now` / `ai idea` / `ai mem` / `ai context` と、`AgentTurn` への自動注入を確認する。
 
 ## 前提
 
@@ -10,21 +10,25 @@ export PATH="$PWD/target/debug:$PATH"
 # mock または本番 aibe 設定
 ```
 
-`AI_SESSION_ID` は `aish shell` から export されるか、`ai` が自前生成する。
+- `AI_SESSION_ID` は runtime session（`aish shell` export または `ai` 自前生成）。**memory の owner ではない**。
+- contextual memory の owner は `memory_space_id`（`AIBE_CONTEXT_ID` または `ai context use/new`、または project 自動導出）。
 
 ## 手順
 
-1. `ai goal set "AIBEに文脈付き記憶レイヤーを作る"` — `goal set:` が表示されること。
-2. `ai now set "まず MemoryApply / MemoryQuery を実装する"` — `now set:` が表示されること。
-3. `ai idea add "Context Card をユーザー定義にしたい"` — `idea added:` が表示されること。
-4. `ai goal show` / `ai now show` / `ai idea list` — 保存内容が TSV で見えること。
-5. `ai mem show` — `[aibe contextual memory]` を含む prompt block が表示されること（`--query "今あるideaからMVPを整理して"` で idea も含むこと）。
-6. 同じ `AI_SESSION_ID` の別ターミナルから `ai goal show` — 同じ goal が見えること。
-7. `ai "次にどこから実装すべき？"` — LLM 側（mock ログ等）で `[aibe contextual memory]` に goal / now が入り、idea は入らないこと。
-8. `ai "今あるideaからMVPを整理して"` — open idea も注入されること。
+1. `ai context current` — 解決された `memory_space_id` と source が表示されること。
+2. `ai context use ctx_a` — config に current context が保存されること（`AIBE_CONTEXT_ID` があればそちらが優先）。
+3. `AI_SESSION_ID=sess_001 ai goal set "AIBEに文脈付き記憶レイヤーを作る"` — `goal set:` が表示されること。
+4. `AI_SESSION_ID=sess_001 ai now set "まず MemoryApply / MemoryQuery を実装する"` — `now set:` が表示されること。
+5. `AI_SESSION_ID=sess_002 ai context use ctx_a` のうえで `ai goal show` — **sess_001 と同じ goal** が見えること（session が違っても memory space が同じ）。
+6. `AI_SESSION_ID=sess_002 ai now show` または `ai mem show` — `now` は見えるが **stale** 表示があること（別 session で更新されていないため）。
+7. `AI_SESSION_ID=sess_003 ai context use ctx_b` のうえで `ai goal show` — `ctx_a` の goal は**見えない**こと。
+8. `ai idea add "Context Card をユーザー定義にしたい"` — `idea added:` が表示されること。
+9. `ai mem show` — `memory_space_id:` の行（current context）と `[aibe contextual memory]` を含む prompt block が表示されること。
+10. `ai context use ctx_a` に戻したうえで `ai "次にどこから実装すべき？"` — LLM 側で **ctx_a の goal / now** が注入され idea は通常入らないこと（turn も current context に従う）。
 
 ## 期待結果
 
-- memory の正本は `~/.local/share/aibe/conversations/<AI_SESSION_ID>/memory/events.jsonl`（aibe 側）。
-- `aish` は変更なし。`ai` は memory をローカル保持しない。
+- memory の正本は `~/.local/share/aibe/memory/spaces/<memory_space_id>/events.jsonl`（aibe 側）。
+- 0034 以前の `conversations/<AI_SESSION_ID>/memory/events.jsonl` は read-through / lazy copy で互換（破壊しない）。
+- `aish` は変更なし。`ai` は memory をローカル正本として保持しない（`[context] current` の名前のみ config に保存）。
 - memory は system instruction ではなく user-maintained context block として注入される。

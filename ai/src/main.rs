@@ -19,14 +19,15 @@ use ai::adapters::outbound::{
     StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli::MemoryCliContext;
+use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
     build_response_summary, build_summary, ensure_aibe_if_needed, list_history, memory_cli,
     next_history_id, plan_ask_launch, record_turn, HistoryRecordInput, HistoryReplayInput,
     TurnCancelGuard,
 };
 use ai::clap_cli::{
-    AiCli, AiCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand, MemoryCliOptions,
-    NowCommand, OutputFormatArg, TurnOptions,
+    AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
+    MemoryCliOptions, NowCommand, OutputFormatArg, TurnOptions,
 };
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
@@ -116,6 +117,7 @@ fn run() -> anyhow::Result<ExitCode> {
         AiCommand::Now { command } => run_now(command),
         AiCommand::Idea { command } => run_idea(command),
         AiCommand::Mem { command } => run_mem(command),
+        AiCommand::Context { command } => run_context(command),
     }
 }
 
@@ -484,12 +486,15 @@ fn execute_turn(
         conversation_id: conversation_id.clone(),
     };
     let mut request = ask_input.into_request()?;
+    let memory_space_id =
+        resolve_turn_memory_space_id(cfg, request.client_cwd.as_deref(), &settings.ai_session_id);
     request.request_context = build_request_context(
         shell_log_tail_text.clone(),
         request.client_cwd.as_deref(),
         settings.ai_session_id.clone(),
         conversation_id.clone(),
         &settings.console_hint,
+        memory_space_id,
     );
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
@@ -810,12 +815,36 @@ fn cli_progress_explicit(turn: &TurnOptions) -> Option<bool> {
     }
 }
 
+/// turn 用の `memory_space_id` を解決する（best-effort。失敗時は aibe 側の解決に任せる）。
+fn resolve_turn_memory_space_id(
+    cfg: &AiConfig,
+    client_cwd: Option<&Path>,
+    ai_session_id: &str,
+) -> Option<String> {
+    let canonical_cwd = client_cwd.and_then(|p| p.canonicalize().ok());
+    let project_key = canonical_cwd.as_deref().and_then(|p| {
+        ai::adapters::outbound::project_key::canonical_project_key_from_cwd(p)
+            .ok()
+            .flatten()
+    });
+    let env_context = std::env::var("AIBE_CONTEXT_ID").ok();
+    resolve_memory_space_id(
+        ai_session_id,
+        project_key.as_deref(),
+        cfg.context_current.as_deref(),
+        env_context.as_deref(),
+    )
+    .ok()
+    .map(|resolution| resolution.memory_space_id)
+}
+
 fn build_request_context(
     shell_log_tail: Option<String>,
     client_cwd: Option<&Path>,
     ai_session_id: String,
     conversation_id: Option<String>,
     console_hint: &ConsoleHintReport,
+    memory_space_id: Option<String>,
 ) -> RequestContextInput {
     let terminal_size = if console_hint.effective {
         detect_terminal_size()
@@ -827,6 +856,7 @@ fn build_request_context(
         cwd: client_cwd.map(|p| p.display().to_string()),
         ai_session_id: Some(ai_session_id),
         conversation_id,
+        memory_space_id,
         ..Default::default()
     }
     .with_console_system_instruction(terminal_size, console_hint.effective)
@@ -1347,12 +1377,65 @@ fn prepare_memory_context(options: &MemoryCliOptions) -> anyhow::Result<MemoryCl
         ensure_running(&socket_path).map_err(|e| anyhow::anyhow!(e))?;
     }
     let cwd = std::env::current_dir()?;
+    let canonical_cwd = cwd
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("failed to canonicalize cwd: {e}"))?;
+    let project_key =
+        ai::adapters::outbound::project_key::canonical_project_key_from_cwd(&canonical_cwd)
+            .map_err(anyhow::Error::msg)?;
+    let session_id = resolve_ai_session_id();
+    let env_context = std::env::var("AIBE_CONTEXT_ID").ok();
+    let memory_context = ai::application::memory_space::build_memory_context(
+        &session_id,
+        &canonical_cwd,
+        project_key.as_deref(),
+        cfg.context_current.as_deref(),
+        env_context.as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
     Ok(MemoryCliContext {
         socket_path,
-        session_id: resolve_ai_session_id(),
+        session_id,
+        memory_context,
         cwd,
         format: options.format.into(),
     })
+}
+
+fn run_context(command: ContextCommand) -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let cwd = std::env::current_dir()?;
+    let canonical_cwd = cwd
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("failed to canonicalize cwd: {e}"))?;
+    let project_key =
+        ai::adapters::outbound::project_key::canonical_project_key_from_cwd(&canonical_cwd)
+            .map_err(anyhow::Error::msg)?;
+    let session_id = resolve_ai_session_id();
+    match command {
+        ContextCommand::Current => {
+            let env_context = std::env::var("AIBE_CONTEXT_ID").ok();
+            let resolution = resolve_memory_space_id(
+                &session_id,
+                project_key.as_deref(),
+                cfg.context_current.as_deref(),
+                env_context.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            println!("{}", format_resolution(&resolution));
+            println!("session_id (provenance): {session_id}");
+        }
+        ContextCommand::Use { name } => {
+            AiConfig::save_context_current(&name).map_err(anyhow::Error::msg)?;
+            println!("context set to: {name}");
+            println!("note: AIBE_CONTEXT_ID environment variable overrides config");
+        }
+        ContextCommand::New { name } => {
+            AiConfig::save_context_current(&name).map_err(anyhow::Error::msg)?;
+            println!("context created and set to: {name}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_memory_command(
@@ -1958,6 +2041,7 @@ mod cli_tests {
 
         let cfg = AiConfig {
             socket_path: default_socket_path(),
+            context_current: None,
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,
@@ -2018,6 +2102,7 @@ mod cli_tests {
 
         let cfg = AiConfig {
             socket_path: default_socket_path(),
+            context_current: None,
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,

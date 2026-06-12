@@ -2,6 +2,7 @@
 
 mod executed_tool;
 mod memory;
+mod memory_space;
 mod request;
 mod response;
 mod tool_name;
@@ -15,6 +16,9 @@ pub use memory::{
     MemoryInjectPolicyDto, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
     MemoryQueryStatus, MemoryScopeDto, MemoryStatusDto, MEMORY_PROMPT_BUDGET_BYTES,
     MEMORY_TEXT_MAX_BYTES,
+};
+pub use memory_space::{
+    is_valid_memory_space_id, legacy_session_memory_space_id, project_memory_space_id,
 };
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
 pub use request::{RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession};
