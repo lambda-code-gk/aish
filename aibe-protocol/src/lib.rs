@@ -13,12 +13,13 @@ pub use executed_tool::{
 };
 pub use memory::{
     MemoryApplyRequestBody, MemoryApplyStatus, MemoryContext, MemoryEntryDto,
-    MemoryInjectPolicyDto, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
-    MemoryQueryStatus, MemoryScopeDto, MemoryStatusDto, MEMORY_PROMPT_BUDGET_BYTES,
-    MEMORY_TEXT_MAX_BYTES,
+    MemoryInjectPolicyDto, MemoryOperationAdd, MemoryOperationArchive, MemoryOperationClearKind,
+    MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody, MemoryQueryStatus, MemoryScopeDto,
+    MemoryStatusDto, MEMORY_PROMPT_BUDGET_BYTES, MEMORY_TEXT_MAX_BYTES,
 };
 pub use memory_space::{
-    is_valid_memory_space_id, legacy_session_memory_space_id, project_memory_space_id,
+    is_valid_memory_space_id, is_valid_session_id, legacy_session_memory_space_id,
+    project_memory_space_id,
 };
 pub use request::{ClientRequest, ProtocolMessage, RequestContext};
 pub use request::{RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession};

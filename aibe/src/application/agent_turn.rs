@@ -435,13 +435,13 @@ mod tests {
             &self,
             session_id: &'a str,
             _context: &MemoryContext,
-            cwd_path: &'a std::path::Path,
+            cwd_path: Option<&'a std::path::Path>,
         ) -> Result<crate::ports::outbound::MemoryStoreContext<'a>, ContextualMemoryStoreError>
         {
             Ok(crate::ports::outbound::MemoryStoreContext {
                 session_id,
                 memory_space_id: "test".into(),
-                cwd: Some(cwd_path),
+                cwd: cwd_path,
             })
         }
 

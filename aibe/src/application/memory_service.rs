@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use aibe_protocol::{
-    ClientResponse, ErrorCode, MemoryApplyStatus, MemoryContext, MemoryOperationDto,
-    MemoryQueryDto, MemoryQueryStatus,
+    is_valid_session_id, ClientResponse, ErrorCode, MemoryApplyStatus, MemoryContext,
+    MemoryOperationDto, MemoryQueryDto, MemoryQueryStatus, MemoryScopeDto,
 };
 
 use crate::domain::MemoryValidationError;
@@ -32,13 +32,13 @@ impl MemoryService {
         context: &MemoryContext,
         operation: MemoryOperationDto,
     ) -> ClientResponse {
-        if session_id.is_empty() {
-            return invalid(id, "session_id must not be empty");
+        if let Err(msg) = validate_session_id(&session_id) {
+            return invalid(id, msg);
         }
-        if context.cwd.is_empty() {
-            return invalid(id, "cwd must not be empty");
+        if let Err(msg) = validate_cwd_for_operation(context, &operation) {
+            return invalid(id, msg);
         }
-        let cwd_path = Path::new(&context.cwd);
+        let cwd_path = context.cwd.as_deref().map(Path::new);
         let store_ctx = match self
             .resolver
             .resolve_store_context(&session_id, context, cwd_path)
@@ -64,13 +64,13 @@ impl MemoryService {
         context: &MemoryContext,
         query: MemoryQueryDto,
     ) -> ClientResponse {
-        if session_id.is_empty() {
-            return invalid(id, "session_id must not be empty");
+        if let Err(msg) = validate_session_id(&session_id) {
+            return invalid(id, msg);
         }
-        if context.cwd.is_empty() {
-            return invalid(id, "cwd must not be empty");
+        if let Err(msg) = validate_cwd_for_query(context, &query) {
+            return invalid(id, msg);
         }
-        let cwd_path = Path::new(&context.cwd);
+        let cwd_path = context.cwd.as_deref().map(Path::new);
         let store_ctx = match self
             .resolver
             .resolve_store_context(&session_id, context, cwd_path)
@@ -104,6 +104,41 @@ impl MemoryService {
             Err(e) => map_store_error(id, e),
         }
     }
+}
+
+fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
+    if is_valid_session_id(session_id) {
+        Ok(())
+    } else {
+        Err("invalid session_id")
+    }
+}
+
+fn validate_cwd_for_operation(
+    context: &MemoryContext,
+    operation: &MemoryOperationDto,
+) -> Result<(), &'static str> {
+    let needs_cwd = match operation {
+        MemoryOperationDto::Add(add) => add.scope == MemoryScopeDto::Project,
+        MemoryOperationDto::ClearKind(clear) => clear.scope == MemoryScopeDto::Project,
+        MemoryOperationDto::Archive(_) => false,
+    };
+    if needs_cwd && context.cwd.as_deref().is_none_or(str::is_empty) {
+        return Err("cwd is required for project-scoped memory");
+    }
+    Ok(())
+}
+
+fn validate_cwd_for_query(
+    context: &MemoryContext,
+    query: &MemoryQueryDto,
+) -> Result<(), &'static str> {
+    if query.scope == Some(MemoryScopeDto::Project)
+        && context.cwd.as_deref().is_none_or(str::is_empty)
+    {
+        return Err("cwd is required for project-scoped memory");
+    }
+    Ok(())
 }
 
 fn map_store_error(id: String, err: ContextualMemoryStoreError) -> ClientResponse {

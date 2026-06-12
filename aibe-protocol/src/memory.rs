@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryContext {
-    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_space_id: Option<String>,
 }
@@ -76,26 +77,38 @@ pub struct MemoryEntryDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryOperationAdd {
+    pub kind: String,
+    pub scope: MemoryScopeDto,
+    pub inject: MemoryInjectPolicyDto,
+    pub status: MemoryStatusDto,
+    pub text: String,
+    #[serde(default)]
+    pub make_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryOperationClearKind {
+    pub kind: String,
+    pub scope: MemoryScopeDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryOperationArchive {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MemoryOperationDto {
-    Add {
-        kind: String,
-        scope: MemoryScopeDto,
-        inject: MemoryInjectPolicyDto,
-        status: MemoryStatusDto,
-        text: String,
-        #[serde(default)]
-        make_active: bool,
-    },
-    ClearActive {
-        kind: String,
-        scope: MemoryScopeDto,
-    },
-    Archive {
-        id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        expected_version: Option<u64>,
-    },
+    Add(MemoryOperationAdd),
+    ClearKind(MemoryOperationClearKind),
+    Archive(MemoryOperationArchive),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +157,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn memory_operation_rejects_unknown_fields() {
+        let json = r#"{"op":"add","kind":"goal","scope":"project","inject":"pinned","status":"active","text":"x","unknown":true}"#;
+        assert!(serde_json::from_str::<MemoryOperationDto>(json).is_err());
+    }
+
+    #[test]
     fn memory_apply_roundtrip() {
         let req = serde_json::json!({
             "type": "memory_apply",
@@ -168,15 +187,15 @@ mod tests {
 
     #[test]
     fn memory_operation_dto_roundtrip() {
-        let op = MemoryOperationDto::ClearActive {
+        let op = MemoryOperationDto::ClearKind(MemoryOperationClearKind {
             kind: "goal".into(),
             scope: MemoryScopeDto::Project,
-        };
+        });
         let json = serde_json::to_string(&op).expect("serialize");
         let back: MemoryOperationDto = serde_json::from_str(&json).expect("deserialize");
         assert!(matches!(
             back,
-            MemoryOperationDto::ClearActive { kind, .. } if kind == "goal"
+            MemoryOperationDto::ClearKind(c) if c.kind == "goal"
         ));
     }
 

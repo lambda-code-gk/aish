@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use aibe_protocol::{
-    is_valid_memory_space_id, legacy_session_memory_space_id, project_memory_space_id,
-    MemoryContext,
+    is_valid_memory_space_id, is_valid_session_id, legacy_session_memory_space_id,
+    project_memory_space_id, MemoryContext,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,8 +27,8 @@ pub fn resolve_memory_space_id(
     config_current: Option<&str>,
     env_context_id: Option<&str>,
 ) -> Result<MemorySpaceResolution, String> {
-    if session_id.is_empty() {
-        return Err("session_id must not be empty".into());
+    if !is_valid_session_id(session_id) {
+        return Err("invalid session_id".into());
     }
     if let Some(id) = env_context_id.filter(|s| !s.is_empty()) {
         validate_id(id)?;
@@ -74,7 +74,7 @@ pub fn build_memory_context(
         env_context_id,
     )?;
     Ok(MemoryContext {
-        cwd: canonical_cwd.to_string_lossy().into_owned(),
+        cwd: Some(canonical_cwd.to_string_lossy().into_owned()),
         memory_space_id: Some(resolution.memory_space_id),
     })
 }

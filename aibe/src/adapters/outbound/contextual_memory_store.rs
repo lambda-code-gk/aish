@@ -6,15 +6,15 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use aibe_protocol::{
-    legacy_session_memory_space_id, MemoryOperationDto, MemoryQueryDto, MemoryScopeDto,
-    MemoryStatusDto,
+    is_valid_session_id, legacy_session_memory_space_id, MemoryOperationDto, MemoryQueryDto,
+    MemoryScopeDto, MemoryStatusDto,
 };
 
 use crate::domain::resolve_entries_for_prompt;
 use crate::domain::{
     is_standard_kind, validate_kind, validate_standard_kind_operation, validate_text, MemoryBlock,
     MemoryEntry, MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
-    ProjectKeyError, STANDARD_KIND_IDEA,
+    ProjectKeyError, STANDARD_KIND_GOAL, STANDARD_KIND_NOW,
 };
 use crate::ports::outbound::{
     ContextualMemoryStore, ContextualMemoryStoreError, MemoryStoreContext,
@@ -163,6 +163,11 @@ impl FilesystemContextualMemoryStore {
         memory_space_id: &str,
         session_id: &str,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
+        if !is_valid_session_id(session_id) {
+            return Err(ContextualMemoryStoreError::Validation(
+                MemoryValidationError::InvalidSessionId(session_id.to_string()),
+            ));
+        }
         self.ensure_lazy_copy(memory_space_id, session_id)?;
         let space_path = self.space_events_path(memory_space_id);
         if space_path.exists() {
@@ -244,9 +249,9 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
         operation: &MemoryOperationDto,
         now_ms: u64,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
-        if ctx.session_id.is_empty() {
+        if !is_valid_session_id(ctx.session_id) {
             return Err(ContextualMemoryStoreError::Validation(
-                MemoryValidationError::EmptySessionId,
+                MemoryValidationError::InvalidSessionId(ctx.session_id.to_string()),
             ));
         }
         let project_key = Self::project_key_from_cwd(ctx.cwd)?;
@@ -257,20 +262,14 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
             // append 後に legacy data が見えなくなる分裂を防ぐ。
             self.copy_legacy_into_space(memory_space_id, session_id)?;
             match operation {
-                MemoryOperationDto::Add {
-                    kind,
-                    scope,
-                    inject,
-                    status,
-                    text,
-                    make_active,
-                } => {
+                MemoryOperationDto::Add(add) => {
+                    let kind = &add.kind;
                     validate_kind(kind)?;
-                    validate_text(text)?;
+                    validate_text(&add.text)?;
                     if is_standard_kind(kind) {
-                        validate_standard_kind_operation(kind, *scope, *inject, *status)?;
+                        validate_standard_kind_operation(kind, add.scope, add.inject, add.status)?;
                     }
-                    let scope = MemoryScope::try_from(*scope).map_err(|_| {
+                    let scope = MemoryScope::try_from(add.scope).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "scope".into(),
                         ))
@@ -280,24 +279,24 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                             MemoryValidationError::MissingCwdForProjectScope,
                         ));
                     }
-                    let inject = MemoryInjectPolicy::try_from(*inject).map_err(|_| {
+                    let inject = MemoryInjectPolicy::try_from(add.inject).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "inject".into(),
                         ))
                     })?;
-                    let client_status = MemoryStatus::try_from(*status).map_err(|_| {
+                    let client_status = MemoryStatus::try_from(add.status).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "status".into(),
                         ))
                     })?;
-                    let final_status = if *make_active {
+                    let final_status = if add.make_active {
                         MemoryStatus::Active
                     } else {
                         client_status
                     };
 
                     let mut affected = Vec::new();
-                    if *make_active {
+                    if add.make_active {
                         let mut entries = self.load_entries(memory_space_id, session_id)?;
                         for entry in entries.iter_mut() {
                             if entry.kind == *kind
@@ -340,7 +339,7 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                         scope,
                         inject,
                         status: final_status,
-                        text: text.clone(),
+                        text: add.text.clone(),
                         project_key: if scope == MemoryScope::Project {
                             project_key.clone()
                         } else {
@@ -359,9 +358,10 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                     affected.push(new_entry);
                     Ok(affected)
                 }
-                MemoryOperationDto::ClearActive { kind, scope } => {
+                MemoryOperationDto::ClearKind(clear) => {
+                    let kind = &clear.kind;
                     validate_kind(kind)?;
-                    let scope = MemoryScope::try_from(*scope).map_err(|_| {
+                    let scope = MemoryScope::try_from(clear.scope).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "scope".into(),
                         ))
@@ -371,25 +371,16 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                             MemoryValidationError::MissingCwdForProjectScope,
                         ));
                     }
+                    let (from_status, to_status) = clear_kind_status_transition(kind);
                     let mut entries = self.load_entries(memory_space_id, session_id)?;
                     let mut affected = Vec::new();
                     for entry in entries.iter_mut() {
-                        let status_match = if *kind == STANDARD_KIND_IDEA {
-                            entry.status == MemoryStatus::Open
-                        } else {
-                            entry.status == MemoryStatus::Active
-                        };
                         if entry.kind == *kind
                             && entry.scope == scope
-                            && status_match
+                            && entry.status == from_status
                             && scope_matches_project_key(scope, &entry.project_key, &project_key)
                         {
-                            let new_status = if *kind == STANDARD_KIND_IDEA {
-                                MemoryStatus::Archived
-                            } else {
-                                MemoryStatus::Inactive
-                            };
-                            entry.status = new_status;
+                            entry.status = to_status;
                             entry.updated_at_ms = now_ms;
                             entry.last_session_id = session_id.to_string();
                             entry.version += 1;
@@ -397,7 +388,7 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                                 memory_space_id,
                                 StoredEvent::StatusChanged {
                                     id: entry.id.clone(),
-                                    status: new_status,
+                                    status: to_status,
                                     updated_at_ms: now_ms,
                                     last_session_id: entry.last_session_id.clone(),
                                     version: entry.version,
@@ -408,17 +399,14 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                     }
                     Ok(affected)
                 }
-                MemoryOperationDto::Archive {
-                    id,
-                    expected_version,
-                } => {
+                MemoryOperationDto::Archive(archive) => {
                     let mut entries = self.load_entries(memory_space_id, session_id)?;
                     let entry = entries
                         .iter_mut()
-                        .find(|e| e.id == *id)
-                        .ok_or_else(|| ContextualMemoryStoreError::NotFound(id.clone()))?;
-                    if let Some(expected) = expected_version {
-                        if entry.version != *expected {
+                        .find(|e| e.id == archive.id)
+                        .ok_or_else(|| ContextualMemoryStoreError::NotFound(archive.id.clone()))?;
+                    if let Some(expected) = archive.expected_version {
+                        if entry.version != expected {
                             return Err(ContextualMemoryStoreError::Validation(
                                 MemoryValidationError::VersionConflict,
                             ));
@@ -449,9 +437,9 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
         ctx: &MemoryStoreContext<'_>,
         query: &MemoryQueryDto,
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError> {
-        if ctx.session_id.is_empty() {
+        if !is_valid_session_id(ctx.session_id) {
             return Err(ContextualMemoryStoreError::Validation(
-                MemoryValidationError::EmptySessionId,
+                MemoryValidationError::InvalidSessionId(ctx.session_id.to_string()),
             ));
         }
         let project_key = Self::project_key_from_cwd(ctx.cwd)?;
@@ -541,6 +529,13 @@ fn filter_entry(entry: &MemoryEntry, query: &MemoryQueryDto, project_key: Option
         &entry.project_key,
         &project_key.map(String::from),
     )
+}
+
+fn clear_kind_status_transition(kind: &str) -> (MemoryStatus, MemoryStatus) {
+    match kind {
+        STANDARD_KIND_GOAL | STANDARD_KIND_NOW => (MemoryStatus::Active, MemoryStatus::Inactive),
+        _ => (MemoryStatus::Open, MemoryStatus::Archived),
+    }
 }
 
 fn scope_matches_project_key(
@@ -746,7 +741,10 @@ fn set_permissions_0700(_path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::domain::{STANDARD_KIND_GOAL, STANDARD_KIND_NOW};
-    use aibe_protocol::{MemoryInjectPolicyDto, MemoryScopeDto, MemoryStatusDto};
+    use aibe_protocol::{
+        MemoryInjectPolicyDto, MemoryOperationAdd, MemoryOperationDto, MemoryScopeDto,
+        MemoryStatusDto,
+    };
     use tempfile::TempDir;
 
     fn store() -> (FilesystemContextualMemoryStore, TempDir) {
@@ -770,14 +768,14 @@ mod tests {
     }
 
     fn goal_add(text: &str) -> MemoryOperationDto {
-        MemoryOperationDto::Add {
+        MemoryOperationDto::Add(MemoryOperationAdd {
             kind: STANDARD_KIND_GOAL.into(),
             scope: MemoryScopeDto::Project,
             inject: MemoryInjectPolicyDto::Pinned,
             status: MemoryStatusDto::Active,
             text: text.into(),
             make_active: true,
-        }
+        })
     }
 
     #[test]
@@ -809,14 +807,14 @@ mod tests {
     }
 
     fn now_add(text: &str) -> MemoryOperationDto {
-        MemoryOperationDto::Add {
+        MemoryOperationDto::Add(MemoryOperationAdd {
             kind: STANDARD_KIND_NOW.into(),
             scope: MemoryScopeDto::Session,
             inject: MemoryInjectPolicyDto::Pinned,
             status: MemoryStatusDto::Active,
             text: text.into(),
             make_active: true,
-        }
+        })
     }
 
     #[test]

@@ -1,4 +1,17 @@
-//! memory space ID の生成・検証（wire 共有）。
+//! memory space / session ID の生成・検証（wire 共有）。
+
+/// `session_id` が path component として安全か検証する。
+pub fn is_valid_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && !id.chars().all(|c| c == '.')
+        && !id.contains('/')
+        && !id.contains('\\')
+        && !id.contains("..")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
 
 /// `memory_space_id` が path component として安全か検証する。
 pub fn is_valid_memory_space_id(id: &str) -> bool {
@@ -11,8 +24,9 @@ pub fn is_valid_memory_space_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-/// session 由来の暫定 fallback ID（非推奨）。
+/// session 由来の暫定 fallback ID（非推奨）。`session_id` は事前に [`is_valid_session_id`] で検証すること。
 pub fn legacy_session_memory_space_id(session_id: &str) -> String {
+    debug_assert!(is_valid_session_id(session_id));
     format!("legacy_session_{session_id}")
 }
 
@@ -65,5 +79,17 @@ mod tests {
         assert!(!is_valid_memory_space_id("..."));
         assert!(is_valid_memory_space_id("ctx.a"));
         assert!(is_valid_memory_space_id("v1.2"));
+    }
+
+    #[test]
+    fn session_id_validation() {
+        assert!(is_valid_session_id("sess_001"));
+        assert!(is_valid_session_id("abc-123.v2"));
+        assert!(!is_valid_session_id(""));
+        assert!(!is_valid_session_id("."));
+        assert!(!is_valid_session_id(".."));
+        assert!(!is_valid_session_id("foo/bar"));
+        assert!(!is_valid_session_id(r"foo\bar"));
+        assert!(!is_valid_session_id("foo..bar"));
     }
 }

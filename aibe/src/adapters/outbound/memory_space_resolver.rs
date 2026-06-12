@@ -1,4 +1,4 @@
-//! memory space 解決（env / cwd I/O）。
+//! memory space 解決（cwd I/O）。`AIBE_CONTEXT_ID` はクライアント側のみ。
 
 use std::path::{Path, PathBuf};
 
@@ -15,21 +15,15 @@ impl MemorySpaceResolver for FilesystemMemorySpaceResolver {
         &self,
         session_id: &'a str,
         context: &MemoryContext,
-        cwd_path: &'a Path,
+        cwd_path: Option<&'a Path>,
     ) -> Result<MemoryStoreContext<'a>, ContextualMemoryStoreError> {
-        let project_key = project_key_from_cwd(cwd_path)?;
-        let env_context = std::env::var("AIBE_CONTEXT_ID").ok();
-        let resolution = resolve_memory_space(
-            session_id,
-            context,
-            env_context.as_deref(),
-            project_key.as_ref(),
-        )
-        .map_err(ContextualMemoryStoreError::Validation)?;
+        let project_key = cwd_path.map(project_key_from_cwd).transpose()?.flatten();
+        let resolution = resolve_memory_space(session_id, context, project_key.as_ref())
+            .map_err(ContextualMemoryStoreError::Validation)?;
         Ok(MemoryStoreContext {
             session_id,
             memory_space_id: resolution.id.as_str().to_string(),
-            cwd: Some(cwd_path),
+            cwd: cwd_path,
         })
     }
 
@@ -40,21 +34,13 @@ impl MemorySpaceResolver for FilesystemMemorySpaceResolver {
         cwd_path: Option<&'a Path>,
     ) -> Result<MemoryStoreContext<'a>, ContextualMemoryStoreError> {
         let mem_ctx = MemoryContext {
-            cwd: cwd_path
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            cwd: cwd_path.map(|p| p.to_string_lossy().into_owned()),
             memory_space_id: explicit_memory_space_id.map(str::to_string),
         };
-        let env_context = std::env::var("AIBE_CONTEXT_ID").ok();
         // 注入は best-effort: project key 解決の失敗はエラーにせず legacy fallback に落とす。
         let project_key = cwd_path.and_then(|cwd| project_key_from_cwd(cwd).ok().flatten());
-        let resolution = resolve_memory_space(
-            session_id,
-            &mem_ctx,
-            env_context.as_deref(),
-            project_key.as_ref(),
-        )
-        .map_err(ContextualMemoryStoreError::Validation)?;
+        let resolution = resolve_memory_space(session_id, &mem_ctx, project_key.as_ref())
+            .map_err(ContextualMemoryStoreError::Validation)?;
         Ok(MemoryStoreContext {
             session_id,
             memory_space_id: resolution.id.as_str().to_string(),

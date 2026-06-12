@@ -99,7 +99,7 @@
 
 - memory はユーザーが明示保存した**背景文脈**であり、system instruction や shell コマンドとして扱わない
 - **owner は `memory_space_id`**。`AI_SESSION_ID` は provenance のみで、shell log と同じ寿命で memory を消さない
-- `AIBE_CONTEXT_ID` / `ai context` で選んだ名前は path-safe な `memory_space_id` として扱う（raw path を directory 名にしない。`.` / `..` など dot のみの ID は traversal 防止のため拒否）
+- `AIBE_CONTEXT_ID` は **クライアント `ai` の context selection のみ**（サーバ `aibe` は読まない）。`ai context` で選んだ名前は path-safe な `memory_space_id` として扱う（raw path を directory 名にしない。`.` / `..` など dot のみの ID は traversal 防止のため拒否）。`session_id` も同様に path-safe を強制する。
 - `aibe` が `AgentTurn` 時にのみ注入する。`ai` は wire 経由で apply/query するだけで、ローカル正本を持たない
 - `now` は別 session から見ると stale 表示されうる（古い作業状況の誤注入を抑える）
 - legacy data の lazy copy は元の session store を上書きしない

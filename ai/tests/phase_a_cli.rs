@@ -498,17 +498,15 @@ fn goal_set_sends_memory_apply() {
     let server = MockSocketServer::spawn(|req| match req {
         ClientRequest::MemoryApply(body) => {
             assert!(!body.session_id.is_empty());
-            assert!(!body.context.cwd.is_empty());
+            assert!(body.context.cwd.is_some());
             assert!(body.context.memory_space_id.is_some());
             let operation = body.operation;
             assert!(matches!(
                 operation,
-                MemoryOperationDto::Add {
-                    kind,
-                    scope: MemoryScopeDto::Project,
-                    make_active: true,
-                    ..
-                } if kind == "goal"
+                MemoryOperationDto::Add(add)
+                    if add.kind == "goal"
+                        && add.scope == MemoryScopeDto::Project
+                        && add.make_active
             ));
             ClientResponse::MemoryApplyResult {
                 id: "m1".to_string(),
@@ -641,4 +639,28 @@ fn mem_show_requests_prompt_block() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("[aibe contextual memory]"));
     assert!(stdout.contains("ship"));
+}
+
+#[test]
+fn mem_add_goal_shows_standard_kind_hint() {
+    let server = MockSocketServer::spawn(|_req| {
+        panic!("mem add goal must not reach aibe");
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["mem", "add", "goal", "ship", "memory", "--no-start"])
+        .output()
+        .expect("run ai mem add goal");
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("goal is a standard memory kind; use `ai goal set ...`"),
+        "stderr: {stderr}"
+    );
 }

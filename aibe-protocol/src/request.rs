@@ -254,25 +254,25 @@ mod tests {
     #[test]
     fn memory_apply_roundtrip() {
         use crate::memory::{
-            MemoryApplyRequestBody, MemoryContext, MemoryInjectPolicyDto, MemoryOperationDto,
-            MemoryScopeDto, MemoryStatusDto,
+            MemoryApplyRequestBody, MemoryContext, MemoryInjectPolicyDto, MemoryOperationAdd,
+            MemoryOperationDto, MemoryScopeDto, MemoryStatusDto,
         };
 
         let req = ClientRequest::MemoryApply(MemoryApplyRequestBody {
             id: "m1".into(),
             session_id: "sess-1".into(),
             context: MemoryContext {
-                cwd: "/tmp/proj".into(),
+                cwd: Some("/tmp/proj".into()),
                 memory_space_id: None,
             },
-            operation: MemoryOperationDto::Add {
+            operation: MemoryOperationDto::Add(MemoryOperationAdd {
                 kind: "goal".into(),
                 scope: MemoryScopeDto::Project,
                 inject: MemoryInjectPolicyDto::Pinned,
                 status: MemoryStatusDto::Active,
                 text: "ship it".into(),
                 make_active: true,
-            },
+            }),
         });
         let json = serde_json::to_string(&req).expect("serialize");
         assert!(json.contains(r#""type":"memory_apply""#));
@@ -281,10 +281,10 @@ mod tests {
             ClientRequest::MemoryApply(body) => {
                 assert_eq!(body.id, "m1");
                 assert_eq!(body.session_id, "sess-1");
-                assert_eq!(body.context.cwd, "/tmp/proj");
+                assert_eq!(body.context.cwd.as_deref(), Some("/tmp/proj"));
                 assert!(matches!(
                     body.operation,
-                    MemoryOperationDto::Add { kind, text, .. } if kind == "goal" && text == "ship it"
+                    MemoryOperationDto::Add(add) if add.kind == "goal" && add.text == "ship it"
                 ));
             }
             _ => panic!("expected memory_apply"),
@@ -301,7 +301,7 @@ mod tests {
             id: "q1".into(),
             session_id: "sess-1".into(),
             context: MemoryContext {
-                cwd: "/tmp/proj".into(),
+                cwd: Some("/tmp/proj".into()),
                 memory_space_id: None,
             },
             query: MemoryQueryDto {
@@ -322,12 +322,33 @@ mod tests {
             ClientRequest::MemoryQuery(body) => {
                 assert_eq!(body.id, "q1");
                 assert_eq!(body.session_id, "sess-1");
-                assert_eq!(body.context.cwd, "/tmp/proj");
+                assert_eq!(body.context.cwd.as_deref(), Some("/tmp/proj"));
                 assert_eq!(body.query.kind.as_deref(), Some("idea"));
                 assert_eq!(body.query.limit, Some(10));
             }
             _ => panic!("expected memory_query"),
         }
+    }
+
+    #[test]
+    fn memory_apply_rejects_unknown_operation_fields() {
+        let json = r#"{
+            "type": "memory_apply",
+            "id": "m1",
+            "session_id": "sess",
+            "context": { "cwd": "/tmp" },
+            "operation": {
+                "op": "add",
+                "kind": "goal",
+                "scope": "project",
+                "inject": "pinned",
+                "status": "active",
+                "text": "x",
+                "make_active": true,
+                "unknown": true
+            }
+        }"#;
+        assert!(serde_json::from_str::<ClientRequest>(json).is_err());
     }
 
     #[test]

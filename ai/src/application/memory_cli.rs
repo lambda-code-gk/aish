@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use aibe_protocol::{
-    ClientResponse, MemoryEntryDto, MemoryInjectPolicyDto, MemoryOperationDto, MemoryQueryDto,
-    MemoryScopeDto, MemoryStatusDto,
+    ClientResponse, MemoryEntryDto, MemoryInjectPolicyDto, MemoryOperationAdd,
+    MemoryOperationClearKind, MemoryOperationDto, MemoryQueryDto, MemoryScopeDto, MemoryStatusDto,
 };
 
 use crate::domain::OutputFormat;
@@ -23,14 +23,14 @@ pub fn run_goal_set(
     ctx: &MemoryCliContext,
     text: &str,
 ) -> Result<String, AgentError> {
-    let op = MemoryOperationDto::Add {
+    let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "goal".into(),
         scope: MemoryScopeDto::Project,
         inject: MemoryInjectPolicyDto::Pinned,
         status: MemoryStatusDto::Active,
         text: text.to_string(),
         make_active: true,
-    };
+    });
     apply_and_summarize(client, ctx, op, &format!("goal set: {text}"))
 }
 
@@ -53,14 +53,14 @@ pub fn run_now_set(
     ctx: &MemoryCliContext,
     text: &str,
 ) -> Result<String, AgentError> {
-    let op = MemoryOperationDto::Add {
+    let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "now".into(),
         scope: MemoryScopeDto::Session,
         inject: MemoryInjectPolicyDto::Pinned,
         status: MemoryStatusDto::Active,
         text: text.to_string(),
         make_active: true,
-    };
+    });
     apply_and_summarize(client, ctx, op, &format!("now set: {text}"))
 }
 
@@ -83,14 +83,14 @@ pub fn run_idea_add(
     ctx: &MemoryCliContext,
     text: &str,
 ) -> Result<String, AgentError> {
-    let op = MemoryOperationDto::Add {
+    let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "idea".into(),
         scope: MemoryScopeDto::Project,
         inject: MemoryInjectPolicyDto::OnDemand,
         status: MemoryStatusDto::Open,
         text: text.to_string(),
         make_active: false,
-    };
+    });
     apply_and_summarize(client, ctx, op, &format!("idea added: {text}"))
 }
 
@@ -133,14 +133,17 @@ pub fn run_mem_add(
     kind: &str,
     text: &str,
 ) -> Result<String, AgentError> {
-    let op = MemoryOperationDto::Add {
+    if let Some(message) = standard_kind_mem_add_hint(kind) {
+        return Err(AgentError::Request(message));
+    }
+    let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: kind.to_string(),
         scope: MemoryScopeDto::Project,
         inject: MemoryInjectPolicyDto::Manual,
         status: MemoryStatusDto::Open,
         text: text.to_string(),
         make_active: false,
-    };
+    });
     apply_and_summarize(client, ctx, op, &format!("mem add {kind}: {text}"))
 }
 
@@ -281,10 +284,10 @@ fn clear_active(
     scope: MemoryScopeDto,
     ok_line: &str,
 ) -> Result<String, AgentError> {
-    let operation = MemoryOperationDto::ClearActive {
+    let operation = MemoryOperationDto::ClearKind(MemoryOperationClearKind {
         kind: kind.to_string(),
         scope,
-    };
+    });
     let response = client.memory_apply(&ctx.session_id, &ctx.memory_context, operation)?;
     match response {
         ClientResponse::MemoryApplyResult { .. } => Ok(ok_line.to_string()),
@@ -292,6 +295,66 @@ fn clear_active(
         other => Err(AgentError::Request(format!(
             "unexpected response: {other:?}"
         ))),
+    }
+}
+
+fn standard_kind_mem_add_hint(kind: &str) -> Option<String> {
+    match kind {
+        "goal" => Some("goal is a standard memory kind; use `ai goal set ...`".into()),
+        "now" => Some("now is a standard memory kind; use `ai now set ...`".into()),
+        "idea" => Some("idea is a standard memory kind; use `ai idea add ...`".into()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::OutputFormat;
+    use crate::ports::outbound::{AgentError, MemoryClient};
+    use aibe_protocol::ClientResponse;
+    use std::path::PathBuf;
+
+    struct PanicMemoryClient;
+
+    impl MemoryClient for PanicMemoryClient {
+        fn memory_apply(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+            _operation: aibe_protocol::MemoryOperationDto,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_apply must not be called");
+        }
+
+        fn memory_query(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+            _query: aibe_protocol::MemoryQueryDto,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_query must not be called");
+        }
+    }
+
+    fn test_ctx() -> MemoryCliContext {
+        MemoryCliContext {
+            socket_path: PathBuf::from("/nonexistent"),
+            session_id: "sess".into(),
+            memory_context: aibe_protocol::MemoryContext {
+                cwd: Some("/tmp".into()),
+                memory_space_id: Some("ctx".into()),
+            },
+            cwd: PathBuf::from("/tmp"),
+            format: OutputFormat::Tsv,
+        }
+    }
+
+    #[test]
+    fn mem_add_goal_returns_standard_kind_hint() {
+        let err = run_mem_add(&PanicMemoryClient, &test_ctx(), "goal", "ship")
+            .expect_err("expected error");
+        assert!(matches!(err, AgentError::Request(ref m) if m.contains("ai goal set")));
     }
 }
 

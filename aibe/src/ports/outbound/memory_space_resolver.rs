@@ -11,7 +11,7 @@ pub trait MemorySpaceResolver: Send + Sync {
         &self,
         session_id: &'a str,
         context: &MemoryContext,
-        cwd_path: &'a Path,
+        cwd_path: Option<&'a Path>,
     ) -> Result<MemoryStoreContext<'a>, ContextualMemoryStoreError>;
 
     /// turn 注入用の解決。explicit id（request 由来）を最優先し、cwd 無し・

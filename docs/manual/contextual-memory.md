@@ -11,7 +11,7 @@ export PATH="$PWD/target/debug:$PATH"
 ```
 
 - `AI_SESSION_ID` は runtime session（`aish shell` export または `ai` 自前生成）。**memory の owner ではない**。
-- contextual memory の owner は `memory_space_id`（`AIBE_CONTEXT_ID` または `ai context use/new`、または project 自動導出）。
+- contextual memory の owner は `memory_space_id`（**クライアント**の `AIBE_CONTEXT_ID` または `ai context use/new`、または project 自動導出）。サーバ `aibe` は `AIBE_CONTEXT_ID` を読まない。
 
 ## 手順
 
