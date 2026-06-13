@@ -916,6 +916,8 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         ClientRequest::MemoryApply(body) => Ok(body.id.clone()),
         ClientRequest::MemoryQuery(body) => Ok(body.id.clone()),
         ClientRequest::MemoryKindList(body) => Ok(body.id.clone()),
+        ClientRequest::MemoryRecipeRun(body) => Ok(body.id.clone()),
+        ClientRequest::MemorySubscribe(body) => Ok(body.id.clone()),
     }
 }
 
@@ -1031,7 +1033,10 @@ fn exit_code_for_response(
         | ClientResponse::ShellExecApprovalPrompt { .. }
         | ClientResponse::MemoryApplyResult { .. }
         | ClientResponse::MemoryQueryResult { .. }
-        | ClientResponse::MemoryKindListResult { .. } => ExitCode::SUCCESS,
+        | ClientResponse::MemoryKindListResult { .. }
+        | ClientResponse::MemoryRecipeRunResult { .. }
+        | ClientResponse::MemorySubscribeResult { .. }
+        | ClientResponse::MemoryChanged { .. } => ExitCode::SUCCESS,
     }
 }
 
@@ -1623,6 +1628,31 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
             memory_cli::run_mem_clear(client, ctx, &kind)
         }),
         MemCommand::Kinds { options } => run_memory_command(options, memory_cli::run_mem_kinds),
+        MemCommand::Run {
+            recipe,
+            apply,
+            instruction,
+            options,
+        } => {
+            if recipe != "clarify-goal" {
+                anyhow::bail!("unknown recipe: {recipe} (supported: clarify-goal)");
+            }
+            run_memory_command(options, |client, ctx| {
+                memory_cli::run_mem_recipe_clarify_goal(
+                    client,
+                    ctx,
+                    apply,
+                    instruction.as_deref(),
+                    || {
+                        if apply {
+                            ai::adapters::outbound::prompt_memory_recipe_apply()
+                        } else {
+                            false
+                        }
+                    },
+                )
+            })
+        }
     }
 }
 

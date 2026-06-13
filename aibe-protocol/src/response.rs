@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::executed_tool::ExecutedToolCall;
 use crate::memory::{
-    MemoryApplyStatus, MemoryEntryDto, MemoryKindDefinitionDto, MemoryQueryStatus,
+    MemoryApplyStatus, MemoryChangeEventDto, MemoryEntryDto, MemoryKindDefinitionDto,
+    MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeStatus, MemorySubscribeStatus,
 };
 
 /// NDJSON 1 行のレスポンス。
@@ -65,6 +66,23 @@ pub enum ClientResponse {
         id: String,
         status: MemoryQueryStatus,
         kinds: Vec<MemoryKindDefinitionDto>,
+    },
+    MemoryRecipeRunResult {
+        id: String,
+        status: MemoryRecipeStatus,
+        summary: String,
+        proposals: Vec<MemoryRecipeProposalDto>,
+        applied_entries: Vec<MemoryEntryDto>,
+    },
+    MemorySubscribeResult {
+        id: String,
+        status: MemorySubscribeStatus,
+        memory_space_id: String,
+    },
+    MemoryChanged {
+        id: String,
+        memory_space_id: String,
+        event: MemoryChangeEventDto,
     },
     Error {
         id: String,
@@ -317,5 +335,70 @@ mod tests {
         assert!(
             matches!(back, ClientResponse::Cancelled { id, turn_id, reason } if id == "c1" && turn_id == "t1" && reason.as_deref() == Some("user requested"))
         );
+    }
+
+    #[test]
+    fn memory_subscribe_result_roundtrip() {
+        let resp = ClientResponse::MemorySubscribeResult {
+            id: "sub1".into(),
+            status: MemorySubscribeStatus::Ok,
+            memory_space_id: "ctx_a".into(),
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(json.contains(r#""type":"memory_subscribe_result""#));
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientResponse::MemorySubscribeResult {
+                id,
+                memory_space_id,
+                ..
+            } => {
+                assert_eq!(id, "sub1");
+                assert_eq!(memory_space_id, "ctx_a");
+            }
+            _ => panic!("expected memory_subscribe_result"),
+        }
+    }
+
+    #[test]
+    fn memory_changed_roundtrip() {
+        use crate::memory::{
+            MemoryChangeEventDto, MemoryChangeKind, MemoryEntryDto, MemoryInjectPolicyDto,
+            MemoryScopeDto, MemoryStatusDto, MemorySubscribeStatus,
+        };
+
+        let resp = ClientResponse::MemoryChanged {
+            id: "sub1".into(),
+            memory_space_id: "ctx_a".into(),
+            event: MemoryChangeEventDto {
+                kind: "goal".into(),
+                change: MemoryChangeKind::Added,
+                entries: vec![MemoryEntryDto {
+                    id: "mem_01".into(),
+                    memory_space_id: "ctx_a".into(),
+                    created_session_id: "s-1".into(),
+                    last_session_id: "s-1".into(),
+                    kind: "goal".into(),
+                    scope: MemoryScopeDto::Project,
+                    inject: MemoryInjectPolicyDto::Pinned,
+                    status: MemoryStatusDto::Active,
+                    text: "ship".into(),
+                    project_key: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                    version: 1,
+                }],
+            },
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(json.contains(r#""type":"memory_changed""#));
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientResponse::MemoryChanged { event, .. } => {
+                assert_eq!(event.kind, "goal");
+                assert_eq!(event.change, MemoryChangeKind::Added);
+            }
+            _ => panic!("expected memory_changed"),
+        }
     }
 }

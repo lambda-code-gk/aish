@@ -2,10 +2,15 @@
 
 use std::sync::Arc;
 
-use aibe_protocol::{ClientRequest, ClientResponse};
+use aibe_protocol::{ClientRequest, ClientResponse, MemorySubscribeRequestBody};
 use async_trait::async_trait;
+use tokio::io::BufReader;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::sync::Mutex;
 
 use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
+
+pub type SubscribeConnectionLines = tokio::io::Lines<BufReader<OwnedReadHalf>>;
 
 #[async_trait]
 pub trait ClientRequestHandler: Send + Sync {
@@ -16,4 +21,14 @@ pub trait ClientRequestHandler: Send + Sync {
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse;
+
+    async fn handle_memory_subscribe(
+        &self,
+        body: MemorySubscribeRequestBody,
+        writer: Arc<Mutex<OwnedWriteHalf>>,
+        lines: Arc<Mutex<SubscribeConnectionLines>>,
+    ) -> anyhow::Result<()> {
+        let _ = (body, writer, lines);
+        Err(anyhow::anyhow!("memory_subscribe is not supported"))
+    }
 }

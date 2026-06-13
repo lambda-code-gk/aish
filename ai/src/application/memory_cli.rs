@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use aibe_protocol::{
     ClientResponse, MemoryEntryDto, MemoryInjectPolicyDto, MemoryKindDefinitionDto,
     MemoryOperationAdd, MemoryOperationClearKind, MemoryOperationDto, MemoryQueryDto,
-    MemoryScopeDto, MemoryStatusDto,
+    MemoryRecipeProposalDto, MemoryScopeDto, MemoryStatusDto,
 };
 
 use crate::domain::{append_env_line, OutputFormat};
@@ -239,6 +239,107 @@ pub fn run_mem_kinds(
     }
 }
 
+/// `ai mem run clarify-goal` — LLM 提案を表示し、任意で apply する。
+pub fn run_mem_recipe_clarify_goal(
+    client: &dyn MemoryClient,
+    ctx: &MemoryCliContext,
+    apply: bool,
+    user_instruction: Option<&str>,
+    confirm_apply: impl FnOnce() -> bool,
+) -> Result<String, AgentError> {
+    let response = client.memory_recipe_run(
+        &ctx.session_id,
+        &ctx.memory_context,
+        "clarify-goal",
+        false,
+        user_instruction.map(str::to_string),
+    )?;
+    let (summary, proposals) = match response {
+        ClientResponse::MemoryRecipeRunResult {
+            summary, proposals, ..
+        } => (summary, proposals),
+        ClientResponse::Error { message, .. } => return Err(AgentError::Request(message)),
+        other => {
+            return Err(AgentError::Request(format!(
+                "unexpected response: {other:?}"
+            )))
+        }
+    };
+
+    let mut out = format_recipe_proposals(&summary, &proposals, ctx.format);
+
+    if apply {
+        if !confirm_apply() {
+            return Ok(out);
+        }
+        let mut applied = 0usize;
+        for proposal in &proposals {
+            match client.memory_apply(
+                &ctx.session_id,
+                &ctx.memory_context,
+                proposal.operation.clone(),
+            )? {
+                ClientResponse::MemoryApplyResult { .. } => applied += 1,
+                ClientResponse::Error { message, .. } => {
+                    return Err(AgentError::Request(message));
+                }
+                other => {
+                    return Err(AgentError::Request(format!(
+                        "unexpected response: {other:?}"
+                    )))
+                }
+            }
+        }
+        out.push_str(&format!("\napplied {applied} memory operation(s)\n"));
+    }
+
+    Ok(out)
+}
+
+fn format_recipe_proposals(
+    summary: &str,
+    proposals: &[MemoryRecipeProposalDto],
+    format: OutputFormat,
+) -> String {
+    match format {
+        OutputFormat::Json => {
+            let value = serde_json::json!({
+                "summary": summary,
+                "proposals": proposals,
+            });
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&value).unwrap_or_default()
+            )
+        }
+        OutputFormat::Tsv | OutputFormat::Env => {
+            let mut out = format!("summary: {summary}\n");
+            if proposals.is_empty() {
+                out.push_str("proposals: (none)\n");
+            } else {
+                out.push_str("proposals:\n");
+                for (idx, p) in proposals.iter().enumerate() {
+                    out.push_str(&format!(
+                        "  {}. {} — {}\n",
+                        idx + 1,
+                        format_operation_line(&p.operation),
+                        p.rationale
+                    ));
+                }
+            }
+            out
+        }
+    }
+}
+
+fn format_operation_line(operation: &MemoryOperationDto) -> String {
+    match operation {
+        MemoryOperationDto::Add(add) => format!("add {}: {}", add.kind, add.text),
+        MemoryOperationDto::ClearKind(c) => format!("clear_kind {} ({:?})", c.kind, c.scope),
+        MemoryOperationDto::Archive(a) => format!("archive {}", a.id),
+    }
+}
+
 fn clear_scope_for_kind(kind: &str) -> MemoryScopeDto {
     match kind {
         "now" => MemoryScopeDto::Session,
@@ -366,6 +467,17 @@ mod tests {
         ) -> Result<ClientResponse, AgentError> {
             panic!("memory_kind_list must not be called");
         }
+
+        fn memory_recipe_run(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+            _recipe: &str,
+            _apply: bool,
+            _user_instruction: Option<String>,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_recipe_run must not be called");
+        }
     }
 
     struct RecordingMemAddClient {
@@ -416,6 +528,17 @@ mod tests {
             _context: &aibe_protocol::MemoryContext,
         ) -> Result<ClientResponse, AgentError> {
             panic!("memory_kind_list must not be called");
+        }
+
+        fn memory_recipe_run(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+            _recipe: &str,
+            _apply: bool,
+            _user_instruction: Option<String>,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_recipe_run must not be called");
         }
     }
 

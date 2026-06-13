@@ -7,14 +7,19 @@ use aibe_protocol::{
     MemoryKindDefinitionDto, MemoryOperationDto, MemoryQueryDto, MemoryQueryStatus, MemoryScopeDto,
 };
 
-use crate::domain::{resolve_memory_operation_add, MemoryValidationError};
+use crate::domain::{
+    change_kind_for_operation, publish_memory_changes, resolve_memory_operation_add,
+    MemoryValidationError,
+};
 use crate::ports::outbound::{
     ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
+    MemorySubscriptionBroker,
 };
 
 pub struct MemoryService {
     store: std::sync::Arc<dyn ContextualMemoryStore>,
     resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+    broker: Option<std::sync::Arc<dyn MemorySubscriptionBroker>>,
 }
 
 impl MemoryService {
@@ -22,7 +27,23 @@ impl MemoryService {
         store: std::sync::Arc<dyn ContextualMemoryStore>,
         resolver: std::sync::Arc<dyn MemorySpaceResolver>,
     ) -> Self {
-        Self { store, resolver }
+        Self {
+            store,
+            resolver,
+            broker: None,
+        }
+    }
+
+    pub fn with_broker(
+        store: std::sync::Arc<dyn ContextualMemoryStore>,
+        resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+        broker: std::sync::Arc<dyn MemorySubscriptionBroker>,
+    ) -> Self {
+        Self {
+            store,
+            resolver,
+            broker: Some(broker),
+        }
     }
 
     pub fn apply(
@@ -52,11 +73,21 @@ impl MemoryService {
         };
         let now_ms = current_time_ms();
         match self.store.apply(&store_ctx, &operation, now_ms) {
-            Ok(entries) => ClientResponse::MemoryApplyResult {
-                id,
-                status: MemoryApplyStatus::Ok,
-                entries: entries.iter().map(|e| e.to_dto()).collect(),
-            },
+            Ok(entries) => {
+                if let Some(broker) = &self.broker {
+                    publish_memory_changes(
+                        broker.as_ref(),
+                        &store_ctx.memory_space_id,
+                        change_kind_for_operation(&operation),
+                        &entries,
+                    );
+                }
+                ClientResponse::MemoryApplyResult {
+                    id,
+                    status: MemoryApplyStatus::Ok,
+                    entries: entries.iter().map(|e| e.to_dto()).collect(),
+                }
+            }
             Err(e) => map_store_error(id, e),
         }
     }

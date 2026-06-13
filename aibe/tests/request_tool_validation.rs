@@ -5,7 +5,8 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, MockLlm,
+    ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
+    InProcessMemorySubscriptionBroker, MockLlm,
 };
 use aibe::application::RequestService;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
@@ -31,6 +32,7 @@ fn service() -> RequestService {
         )),
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
     )
 }
 

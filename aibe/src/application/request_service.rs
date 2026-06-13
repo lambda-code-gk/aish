@@ -10,10 +10,14 @@ use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    ContextualMemoryStore, ConversationStore, MemorySpaceResolver, ProfileRegistry, RouterConfig,
-    ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
+    ContextualMemoryStore, ConversationStore, MemorySpaceResolver, MemorySubscriptionBroker,
+    ProfileRegistry, RouterConfig, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig,
+    TurnCancellation, TurnEventSink,
 };
-use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
+use aibe_protocol::{
+    ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody, ProtocolMessage,
+    RequestContext,
+};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
@@ -29,6 +33,7 @@ pub struct RequestService {
     conversation_store: Arc<dyn ConversationStore>,
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+    memory_broker: Arc<dyn MemorySubscriptionBroker>,
 }
 
 impl RequestService {
@@ -42,6 +47,7 @@ impl RequestService {
         conversation_store: Arc<dyn ConversationStore>,
         memory_store: Arc<dyn ContextualMemoryStore>,
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
         Self::new_with_turns(
             profile_registry,
@@ -53,6 +59,7 @@ impl RequestService {
             conversation_store,
             memory_store,
             memory_space_resolver,
+            memory_broker,
         )
     }
 
@@ -67,6 +74,7 @@ impl RequestService {
         conversation_store: Arc<dyn ConversationStore>,
         memory_store: Arc<dyn ContextualMemoryStore>,
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
         Self {
             profile_registry,
@@ -78,6 +86,7 @@ impl RequestService {
             conversation_store,
             memory_store,
             memory_space_resolver,
+            memory_broker,
         }
     }
 
@@ -141,9 +150,10 @@ impl RequestService {
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
             ClientRequest::MemoryApply(body) => {
-                let service = MemoryService::new(
+                let service = MemoryService::with_broker(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    Arc::clone(&self.memory_broker),
                 );
                 service.apply(body.id, body.session_id, &body.context, body.operation)
             }
@@ -161,6 +171,30 @@ impl RequestService {
                 );
                 service.kind_list(body.id, body.session_id, &body.context)
             }
+            ClientRequest::MemoryRecipeRun(body) => {
+                let service =
+                    crate::application::memory_recipe_service::MemoryRecipeService::with_broker(
+                        Arc::clone(&self.memory_store),
+                        Arc::clone(&self.memory_space_resolver),
+                        self.profile_registry.clone(),
+                        Arc::clone(&self.memory_broker),
+                    );
+                service
+                    .run(
+                        body.id,
+                        body.session_id,
+                        &body.context,
+                        &body.recipe,
+                        body.apply,
+                        body.user_instruction,
+                    )
+                    .await
+            }
+            ClientRequest::MemorySubscribe(_) => ClientResponse::error(
+                String::new(),
+                ErrorCode::InvalidRequest,
+                "memory_subscribe must use a dedicated connection handler",
+            ),
             ClientRequest::AgentTurn {
                 id,
                 messages,
@@ -288,6 +322,39 @@ impl RequestService {
             }
         }
     }
+
+    pub async fn handle_memory_subscribe(
+        &self,
+        body: MemorySubscribeRequestBody,
+        writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+        lines: Arc<Mutex<crate::ports::inbound::SubscribeConnectionLines>>,
+    ) -> anyhow::Result<()> {
+        use crate::application::memory_subscribe_service::MemorySubscribeService;
+
+        let service = MemorySubscribeService::new(
+            Arc::clone(&self.memory_broker),
+            Arc::clone(&self.memory_space_resolver),
+        );
+        let (response, subscription) = service.begin(body.clone());
+        MemorySubscribeService::write_response_line(&writer, &response).await?;
+        let Some(subscription) = subscription else {
+            return Ok(());
+        };
+        let memory_space_id = match &response {
+            ClientResponse::MemorySubscribeResult {
+                memory_space_id, ..
+            } => memory_space_id.clone(),
+            _ => return Ok(()),
+        };
+        MemorySubscribeService::push_until_disconnect(
+            body.id,
+            memory_space_id,
+            subscription,
+            writer,
+            lines,
+        )
+        .await
+    }
 }
 
 fn current_time_ms() -> u64 {
@@ -314,5 +381,14 @@ impl ClientRequestHandler for RequestService {
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
         RequestService::handle_with_events(self, request, approval_gate, events, cancellation).await
+    }
+
+    async fn handle_memory_subscribe(
+        &self,
+        body: aibe_protocol::MemorySubscribeRequestBody,
+        writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+        lines: Arc<Mutex<crate::ports::inbound::SubscribeConnectionLines>>,
+    ) -> anyhow::Result<()> {
+        RequestService::handle_memory_subscribe(self, body, writer, lines).await
     }
 }

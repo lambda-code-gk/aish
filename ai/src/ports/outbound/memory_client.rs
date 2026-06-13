@@ -24,4 +24,13 @@ pub trait MemoryClient: Send + Sync {
         session_id: &str,
         context: &MemoryContext,
     ) -> Result<ClientResponse, AgentError>;
+
+    fn memory_recipe_run(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+        recipe: &str,
+        apply: bool,
+        user_instruction: Option<String>,
+    ) -> Result<ClientResponse, AgentError>;
 }

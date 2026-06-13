@@ -4,6 +4,7 @@ pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod llm;
 pub mod memory_space_resolver;
+pub mod memory_subscription_broker;
 pub mod shell_exec_approval;
 pub mod termination_capability;
 mod tool_context;
@@ -30,6 +31,7 @@ pub use conversation_store::{
 };
 pub use llm::{LlmError, LlmProvider};
 pub use memory_space_resolver::MemorySpaceResolver;
+pub use memory_subscription_broker::{MemorySubscription, MemorySubscriptionBroker};
 pub use shell_exec_approval::ShellExecApprovalGate;
 pub use termination_capability::TerminationCapability;
 pub use tool_context::ToolExecutionContext;

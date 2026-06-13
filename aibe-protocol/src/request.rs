@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody};
+use crate::memory::{
+    MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
+    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody,
+};
 
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +51,10 @@ pub enum ClientRequest {
     MemoryQuery(MemoryQueryRequestBody),
     /// memory kind registry の一覧。
     MemoryKindList(MemoryKindListRequestBody),
+    /// memory recipe の実行（LLM 提案 / 任意 apply）。
+    MemoryRecipeRun(MemoryRecipeRunRequestBody),
+    /// memory 変更の購読（専用接続。結果後に `MemoryChanged` を push）。
+    MemorySubscribe(MemorySubscribeRequestBody),
 }
 
 /// `shell_exec` 承認の provenance。
@@ -445,6 +452,58 @@ mod tests {
                 assert_eq!(body.session_id, "sess-1");
             }
             _ => panic!("expected memory_kind_list"),
+        }
+    }
+
+    #[test]
+    fn memory_recipe_run_request_roundtrip() {
+        use crate::memory::{MemoryContext, MemoryRecipeRunRequestBody};
+
+        let req = ClientRequest::MemoryRecipeRun(MemoryRecipeRunRequestBody {
+            id: "r1".into(),
+            session_id: "sess-1".into(),
+            context: MemoryContext {
+                cwd: Some("/tmp/proj".into()),
+                memory_space_id: Some("ctx_a".into()),
+            },
+            recipe: "clarify-goal".into(),
+            apply: true,
+            user_instruction: Some("focus MVP".into()),
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""type":"memory_recipe_run""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::MemoryRecipeRun(body) => {
+                assert_eq!(body.recipe, "clarify-goal");
+                assert!(body.apply);
+            }
+            _ => panic!("expected memory_recipe_run"),
+        }
+    }
+
+    #[test]
+    fn memory_subscribe_request_roundtrip() {
+        use crate::memory::{MemoryContext, MemorySubscribeRequestBody};
+
+        let req = ClientRequest::MemorySubscribe(MemorySubscribeRequestBody {
+            id: "sub1".into(),
+            session_id: "sess-1".into(),
+            context: MemoryContext {
+                cwd: Some("/tmp/proj".into()),
+                memory_space_id: Some("ctx_a".into()),
+            },
+            kind: Some("goal".into()),
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""type":"memory_subscribe""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::MemorySubscribe(body) => {
+                assert_eq!(body.id, "sub1");
+                assert_eq!(body.kind.as_deref(), Some("goal"));
+            }
+            _ => panic!("expected memory_subscribe"),
         }
     }
 }

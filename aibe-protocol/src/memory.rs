@@ -76,7 +76,7 @@ pub struct MemoryEntryDto {
     pub version: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryOperationAdd {
     pub kind: String,
@@ -98,6 +98,35 @@ pub struct MemoryKindListRequestBody {
     pub id: String,
     pub session_id: String,
     pub context: MemoryContext,
+}
+
+/// `ClientRequest::MemoryRecipeRun` の payload。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryRecipeRunRequestBody {
+    pub id: String,
+    pub session_id: String,
+    pub context: MemoryContext,
+    pub recipe: String,
+    #[serde(default)]
+    pub apply: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_instruction: Option<String>,
+}
+
+/// recipe 提案 1 件（operation + 表示専用 rationale）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryRecipeProposalDto {
+    pub operation: MemoryOperationDto,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRecipeStatus {
+    Proposed,
+    Applied,
 }
 
 /// registry kind 定義の wire DTO。
@@ -124,14 +153,14 @@ pub struct MemoryKindDefinitionDto {
     pub dedicated_cli: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryOperationClearKind {
     pub kind: String,
     pub scope: MemoryScopeDto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryOperationArchive {
     pub id: String,
@@ -139,7 +168,7 @@ pub struct MemoryOperationArchive {
     pub expected_version: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MemoryOperationDto {
     Add(MemoryOperationAdd),
@@ -180,6 +209,42 @@ pub enum MemoryApplyStatus {
 #[serde(rename_all = "snake_case")]
 pub enum MemoryQueryStatus {
     Ok,
+}
+
+/// `ClientRequest::MemorySubscribe` の payload。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemorySubscribeRequestBody {
+    pub id: String,
+    pub session_id: String,
+    pub context: MemoryContext,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySubscribeStatus {
+    Ok,
+}
+
+/// memory 変更通知の種別。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryChangeKind {
+    Added,
+    StatusChanged,
+    Archived,
+    RecipeApplied,
+}
+
+/// `ClientResponse::MemoryChanged.event`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryChangeEventDto {
+    pub kind: String,
+    pub change: MemoryChangeKind,
+    pub entries: Vec<MemoryEntryDto>,
 }
 
 /// `MemoryEntry.text` の最大長（バイト）。
@@ -339,5 +404,93 @@ mod tests {
         let json = r#"{"kind":"goal","unknown":true}"#;
         let err = serde_json::from_str::<MemoryQueryDto>(json);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn memory_recipe_run_roundtrip() {
+        let req = serde_json::json!({
+            "type": "memory_recipe_run",
+            "id": "r1",
+            "session_id": "sess-1",
+            "context": { "cwd": "/tmp/proj", "memory_space_id": "ctx_a" },
+            "recipe": "clarify-goal",
+            "apply": false,
+            "user_instruction": "focus on MVP"
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back["type"], "memory_recipe_run");
+        assert_eq!(back["recipe"], "clarify-goal");
+    }
+
+    #[test]
+    fn memory_recipe_proposal_dto_roundtrip() {
+        let proposal = MemoryRecipeProposalDto {
+            operation: MemoryOperationDto::Add(MemoryOperationAdd {
+                kind: "goal".into(),
+                scope: None,
+                inject: None,
+                status: None,
+                text: "ship memory v1".into(),
+                make_active: None,
+            }),
+            rationale: "consolidates open ideas".into(),
+        };
+        let json = serde_json::to_string(&proposal).expect("serialize");
+        let back: MemoryRecipeProposalDto = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.rationale, "consolidates open ideas");
+        match back.operation {
+            MemoryOperationDto::Add(add) => assert_eq!(add.kind, "goal"),
+            _ => panic!("expected add"),
+        }
+    }
+
+    #[test]
+    fn memory_recipe_proposal_rejects_unknown_fields() {
+        let json =
+            r#"{"operation":{"op":"add","kind":"goal","text":"x"},"rationale":"y","extra":1}"#;
+        assert!(serde_json::from_str::<MemoryRecipeProposalDto>(json).is_err());
+    }
+
+    #[test]
+    fn memory_subscribe_request_roundtrip() {
+        let req = serde_json::json!({
+            "type": "memory_subscribe",
+            "id": "s1",
+            "session_id": "sess-1",
+            "context": { "cwd": "/tmp/proj", "memory_space_id": "ctx_a" },
+            "kind": "goal"
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back["type"], "memory_subscribe");
+        assert_eq!(back["kind"], "goal");
+    }
+
+    #[test]
+    fn memory_change_event_dto_roundtrip() {
+        let event = MemoryChangeEventDto {
+            kind: "goal".into(),
+            change: MemoryChangeKind::Added,
+            entries: vec![MemoryEntryDto {
+                id: "mem_01".into(),
+                memory_space_id: "ctx_a".into(),
+                created_session_id: "s-1".into(),
+                last_session_id: "s-1".into(),
+                kind: "goal".into(),
+                scope: MemoryScopeDto::Project,
+                inject: MemoryInjectPolicyDto::Pinned,
+                status: MemoryStatusDto::Active,
+                text: "ship".into(),
+                project_key: None,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                version: 1,
+            }],
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: MemoryChangeEventDto = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.kind, "goal");
+        assert_eq!(back.change, MemoryChangeKind::Added);
     }
 }

@@ -9,8 +9,9 @@ use std::thread::{self, JoinHandle};
 
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, MemoryApplyStatus, MemoryInjectPolicyDto,
-    MemoryKindDefinitionDto, MemoryOperationDto, MemoryQueryStatus, MemoryScopeDto,
-    MemoryStatusDto, ProtocolMessageOut,
+    MemoryKindDefinitionDto, MemoryOperationAdd, MemoryOperationDto, MemoryQueryStatus,
+    MemoryRecipeProposalDto, MemoryRecipeStatus, MemoryScopeDto, MemoryStatusDto,
+    ProtocolMessageOut,
 };
 use serde_json::Value;
 
@@ -770,4 +771,95 @@ fn mem_add_custom_sends_kind_and_text_only() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("mem add custom: memo text"));
+}
+
+#[test]
+fn mem_run_clarify_goal_displays_proposals() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryRecipeRun(body) => {
+            assert_eq!(body.recipe, "clarify-goal");
+            assert!(!body.apply);
+            ClientResponse::MemoryRecipeRunResult {
+                id: "r1".to_string(),
+                status: MemoryRecipeStatus::Proposed,
+                summary: "Refined goal from ideas".to_string(),
+                proposals: vec![MemoryRecipeProposalDto {
+                    operation: MemoryOperationDto::Add(MemoryOperationAdd {
+                        kind: "goal".into(),
+                        scope: None,
+                        inject: None,
+                        status: None,
+                        text: "ship memory v1".into(),
+                        make_active: None,
+                    }),
+                    rationale: "main theme".to_string(),
+                }],
+                applied_entries: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["mem", "run", "clarify-goal", "--no-start"])
+        .output()
+        .expect("run ai mem run clarify-goal");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Refined goal from ideas"));
+    assert!(stdout.contains("main theme"));
+    assert!(stdout.contains("ship memory v1"));
+}
+
+#[test]
+fn mem_run_clarify_goal_apply_denied_on_non_interactive_stdin() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryRecipeRun(body) => {
+            assert!(!body.apply);
+            ClientResponse::MemoryRecipeRunResult {
+                id: "r1".to_string(),
+                status: MemoryRecipeStatus::Proposed,
+                summary: "summary".to_string(),
+                proposals: vec![MemoryRecipeProposalDto {
+                    operation: MemoryOperationDto::Add(MemoryOperationAdd {
+                        kind: "goal".into(),
+                        scope: None,
+                        inject: None,
+                        status: None,
+                        text: "new goal".into(),
+                        make_active: None,
+                    }),
+                    rationale: "why".to_string(),
+                }],
+                applied_entries: vec![],
+            }
+        }
+        ClientRequest::MemoryApply(_) => panic!("memory_apply must not be called"),
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .stdin(std::process::Stdio::piped())
+        .args(["mem", "run", "clarify-goal", "--apply", "--no-start"])
+        .output()
+        .expect("run ai mem run clarify-goal --apply");
+
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("non-interactive stdin"), "stderr: {stderr}");
 }

@@ -295,7 +295,10 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
         },
         ClientResponse::MemoryApplyResult { .. }
         | ClientResponse::MemoryQueryResult { .. }
-        | ClientResponse::MemoryKindListResult { .. } => PresenterOutput {
+        | ClientResponse::MemoryKindListResult { .. }
+        | ClientResponse::MemoryRecipeRunResult { .. }
+        | ClientResponse::MemorySubscribeResult { .. }
+        | ClientResponse::MemoryChanged { .. } => PresenterOutput {
             stdout: None,
             stderr: Vec::new(),
         },
@@ -556,6 +559,48 @@ impl ResponseView {
             },
             ClientResponse::MemoryKindListResult { id, .. } => Self {
                 response_type: "memory_kind_list_result".to_string(),
+                id: id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::MemoryRecipeRunResult { id, .. } => Self {
+                response_type: "memory_recipe_run_result".to_string(),
+                id: id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::MemorySubscribeResult { id, .. } => Self {
+                response_type: "memory_subscribe_result".to_string(),
+                id: id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::MemoryChanged { id, .. } => Self {
+                response_type: "memory_changed".to_string(),
                 id: id.clone(),
                 status: Some("ok".to_string()),
                 assistant_message: None,

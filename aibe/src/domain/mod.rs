@@ -5,8 +5,10 @@ mod client_cwd;
 mod contextual_memory;
 mod llm_step;
 mod memory_kind_registry;
+mod memory_recipe;
 mod memory_resolver_policy;
 mod memory_space;
+mod memory_subscription;
 mod message;
 mod shell_log_tail;
 mod tool;
@@ -26,10 +28,19 @@ pub use memory_kind_registry::{
     builtin_memory_kind_registry, MemoryCardinality, MemoryKindDefinition, MemoryKindRegistry,
     MemoryLifecycle, MemoryPromptPolicy, MemoryStalePolicy,
 };
+pub use memory_recipe::{
+    build_clarify_goal_messages, collect_clarify_goal_materials, parse_and_validate_recipe_output,
+    ClarifyGoalMaterials, MemoryRecipeError, ValidatedRecipeOutput, ValidatedRecipeProposal,
+    RECIPE_CLARIFY_GOAL,
+};
 pub use memory_resolver_policy::{MemoryResolveInput, MemoryResolverPolicy};
 pub use memory_space::{
     now_freshness, resolve_memory_space, MemoryFreshness, MemorySpaceId, MemorySpaceResolution,
     MemorySpaceSource,
+};
+pub use memory_subscription::{
+    change_kind_for_operation, memory_change_events_from_entries, publish_memory_changes,
+    MemoryChangeEvent, MemorySubscriptionFilter,
 };
 pub use message::{ChatMessage, MessageRole, UnknownMessageRole};
 pub use shell_log_tail::ShellLogTail;

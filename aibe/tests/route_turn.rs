@@ -5,7 +5,8 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, ScriptedMockLlm,
+    ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
+    InProcessMemorySubscriptionBroker, ScriptedMockLlm,
 };
 use aibe::application::RequestService;
 use aibe::domain::LlmStepResult;
@@ -41,6 +42,7 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
         Arc::new(ConversationStore::new(store_root)),
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
     )
 }
 

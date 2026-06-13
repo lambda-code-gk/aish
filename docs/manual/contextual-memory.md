@@ -30,6 +30,8 @@ export PATH="$PWD/target/debug:$PATH"
 11. `AIBE_CONTEXT_ID=ctx_a ai mem add rule "idea は通常クエリへ常時注入しない"` — `mem add rule:` が表示され、次の `ai mem show` の prompt block に `[rule]` が含まれること。
 12. `AIBE_CONTEXT_ID=ctx_a ai mem add custom "メモ"` — unregistered kind も `kind + text` のみで追加できること（server が `project/manual/open` で補完）。
 13. `ai context use ctx_a` に戻したうえで `ai "次にどこから実装すべき？"` — LLM 側で **ctx_a の goal / now / rule** が注入され idea は通常入らないこと（turn も current context に従う）。
+14. `ai mem run clarify-goal` — `summary:` と `proposals`（`rationale` 含む）が表示され、store は変化しないこと。
+15. `echo | ai mem run clarify-goal --apply` — 提案は表示されるが stderr に `non-interactive stdin` で apply が拒否され、store が変化しないこと。
 
 ## 期待結果
 

@@ -5,6 +5,7 @@ mod chat_line_editor;
 mod dynamic_completion;
 mod file_log;
 mod local_history;
+mod memory_recipe_approval_ui;
 mod output_filter;
 pub mod project_key;
 mod shell_exec_approval_ui;
@@ -25,6 +26,10 @@ pub use dynamic_completion::{
 };
 pub use file_log::FileLogTail;
 pub use local_history::LocalHistoryStore;
+pub use memory_recipe_approval_ui::{
+    parse_memory_recipe_apply_choice, prompt_memory_recipe_apply,
+    stdin_ready_for_memory_recipe_apply,
+};
 pub use output_filter::{apply_output_filter, format_filter_exit_status, FilterRunOutcome};
 pub use shell_exec_approval_ui::{
     approval_prompt_stderr_lines, escape_for_shell_exec_approval_display, parse_shell_exec_choice,

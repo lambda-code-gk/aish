@@ -78,6 +78,12 @@ async fn serve_connection(
 
         let response = match serde_json::from_str::<ClientRequest>(line) {
             Ok(req) => {
+                if let ClientRequest::MemorySubscribe(body) = req {
+                    handler
+                        .handle_memory_subscribe(body, Arc::clone(&writer), Arc::clone(&lines))
+                        .await?;
+                    break;
+                }
                 let mut cancellation: Option<Arc<TurnCancellation>> = None;
                 let mut gate: Option<Arc<dyn ShellExecApprovalGate>> = None;
                 let mut events: Option<Arc<dyn TurnEventSink>> = None;

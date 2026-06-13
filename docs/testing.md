@@ -119,6 +119,26 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **unit** | `ai/src/application/memory_space.rs` | `AIBE_CONTEXT_ID` > config > project > legacy の優先順 |
 | **manual** | [manual/contextual-memory.md](manual/contextual-memory.md) | `ai context` と sess/context マトリクス |
 
+### 0037 Phase 4 MemoryRecipe の検証観点
+
+設計: [spec/0037_aibe-contextual-memory-runtime-v1-spec.md](spec/0037_aibe-contextual-memory-runtime-v1-spec.md) §8 / Phase 4。
+
+| 種別 | 場所 | 内容 |
+|------|------|------|
+| **unit** | `aibe-protocol/src/memory.rs` / `request.rs` | `MemoryRecipeRun` / `MemoryRecipeProposalDto` roundtrip、unknown field 拒否 |
+| **unit** | `aibe/src/domain/memory_recipe.rs` | LLM JSON 検証、markdown fence 拒否、`Add` のみ許可 |
+| **integration** | `aibe/tests/memory_recipe.rs` | `ScriptedMockLlm` による clarify-goal、`apply=false` / `apply=true`、invalid output |
+| **integration** | `ai/tests/phase_a_cli.rs` | `ai mem run clarify-goal` 表示、`--apply` 非対話 fail-closed |
+| **manual** | [manual/contextual-memory.md](manual/contextual-memory.md) | `ai mem run clarify-goal` / `--apply` |
+
+### 0037 Phase 5 MemorySubscribe の検証観点
+
+| 種別 | 場所 | 内容 |
+|------|------|------|
+| **unit** | `aibe-protocol/src/memory.rs` / `request.rs` / `response.rs` | `MemorySubscribe` / `MemoryChanged` / `MemoryChangeEventDto` roundtrip |
+| **unit** | `aibe/src/adapters/outbound/in_process_memory_subscription_broker.rs` | broker publish / kind filter / drop で unregister |
+| **integration** | `aibe/tests/memory_subscribe.rs` | apply → publish、専用 socket で `memory_changed` 受信、他 RPC 混在拒否 |
+
 ### 0022 output filter の検証観点
 
 正式指示書: [0022_ai-filter-spec.md](done/0022_ai-filter-spec.md)。

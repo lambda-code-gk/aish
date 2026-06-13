@@ -1061,6 +1061,7 @@ ai mem run clarify-goal --apply
 ```
 
 `--apply` は必ず確認を挟む。
+非対話 stdin では確認できないため、`--apply` は fail-closed とする。
 
 確認プロンプト例:
 

@@ -2,4 +2,4 @@
 
 mod client_request;
 
-pub use client_request::ClientRequestHandler;
+pub use client_request::{ClientRequestHandler, SubscribeConnectionLines};

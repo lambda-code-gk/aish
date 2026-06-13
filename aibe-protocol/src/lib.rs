@@ -12,10 +12,12 @@ pub use executed_tool::{
     ToolRiskClass,
 };
 pub use memory::{
-    MemoryApplyRequestBody, MemoryApplyStatus, MemoryContext, MemoryEntryDto,
-    MemoryInjectPolicyDto, MemoryKindDefinitionDto, MemoryKindListRequestBody, MemoryOperationAdd,
-    MemoryOperationArchive, MemoryOperationClearKind, MemoryOperationDto, MemoryQueryDto,
-    MemoryQueryRequestBody, MemoryQueryStatus, MemoryScopeDto, MemoryStatusDto,
+    MemoryApplyRequestBody, MemoryApplyStatus, MemoryChangeEventDto, MemoryChangeKind,
+    MemoryContext, MemoryEntryDto, MemoryInjectPolicyDto, MemoryKindDefinitionDto,
+    MemoryKindListRequestBody, MemoryOperationAdd, MemoryOperationArchive,
+    MemoryOperationClearKind, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
+    MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeRunRequestBody, MemoryRecipeStatus,
+    MemoryScopeDto, MemoryStatusDto, MemorySubscribeRequestBody, MemorySubscribeStatus,
     MEMORY_PROMPT_BUDGET_BYTES, MEMORY_TEXT_MAX_BYTES,
 };
 pub use memory_space::{

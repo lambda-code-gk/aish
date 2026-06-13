@@ -1,6 +1,8 @@
 pub mod agent_turn;
 pub mod llm_error;
+pub mod memory_recipe_service;
 pub mod memory_service;
+pub mod memory_subscribe_service;
 pub mod protocol_convert;
 pub mod request_service;
 pub mod route_turn;

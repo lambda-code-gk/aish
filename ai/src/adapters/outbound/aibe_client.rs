@@ -13,7 +13,7 @@ use crate::domain::classify_shell_exec_tier;
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext,
     MemoryKindListRequestBody, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
-    ProtocolMessage,
+    MemoryRecipeRunRequestBody, ProtocolMessage,
 };
 
 use crate::domain::AskRequest;
@@ -108,6 +108,23 @@ impl AibeUnixClient {
         self.send_memory_request(memory_kind_list_request(session_id, context))
     }
 
+    pub fn memory_recipe_run(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+        recipe: &str,
+        apply: bool,
+        user_instruction: Option<String>,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_recipe_run_request(
+            session_id,
+            context,
+            recipe,
+            apply,
+            user_instruction,
+        ))
+    }
+
     fn send_memory_request(&self, request: ClientRequest) -> Result<ClientResponse, AgentError> {
         transport_memory_request(self.socket_path(), request).map_err(map_client_error)
     }
@@ -183,6 +200,23 @@ impl MemoryClient for AibeUnixClient {
     ) -> Result<ClientResponse, AgentError> {
         self.send_memory_request(memory_kind_list_request(session_id, context))
     }
+
+    fn memory_recipe_run(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+        recipe: &str,
+        apply: bool,
+        user_instruction: Option<String>,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_recipe_run_request(
+            session_id,
+            context,
+            recipe,
+            apply,
+            user_instruction,
+        ))
+    }
 }
 
 fn memory_apply_request(
@@ -216,6 +250,23 @@ fn memory_kind_list_request(session_id: &str, context: &MemoryContext) -> Client
         id: correlation_id(),
         session_id: session_id.to_string(),
         context: context.clone(),
+    })
+}
+
+fn memory_recipe_run_request(
+    session_id: &str,
+    context: &MemoryContext,
+    recipe: &str,
+    apply: bool,
+    user_instruction: Option<String>,
+) -> ClientRequest {
+    ClientRequest::MemoryRecipeRun(MemoryRecipeRunRequestBody {
+        id: correlation_id(),
+        session_id: session_id.to_string(),
+        context: context.clone(),
+        recipe: recipe.to_string(),
+        apply,
+        user_instruction,
     })
 }
 
