@@ -143,12 +143,48 @@ aish          →  （aibe への path 依存禁止）
 - **identity**: `AI_SESSION_ID` = shell log / conversation / runtime session。`memory_space_id` = contextual memory の owner。user-facing 名は `AIBE_CONTEXT_ID`（CLI: `ai context`）。
 - **解決順**（**クライアント `ai` のみ**。RPC / turn 送信時に解決済み `memory_space_id` を載せる）: `AIBE_CONTEXT_ID` > `~/.config/ai/config.toml` の `[context] current` > cwd から導出した `project_<hash>` > `legacy_session_<session_id>`（非推奨）。**`aibe` デーモンはサーバ環境変数 `AIBE_CONTEXT_ID` を読まない**（複数クライアント接続時にサーバ env で全員の context が変わるのを防ぐ）。サーバ側フォールバックは request 明示 `memory_space_id` > cwd project > legacy session のみ。
 - **ID 検証**: `memory_space_id` と `session_id` は path-safe（ASCII 英数と `_` `.` `-`、128 byte 以下、`/` `\` `..` dot-only 拒否）。legacy path 読み取り前に `session_id` を検証する。
-- **RPC**: `memory_apply`（write）、`memory_query`（read）。`MemoryContext.cwd` は `Option`。**project scope** の apply/query のみ cwd 必須。session / global scope は cwd なし可。`project_key` はサーバが cwd から導出する（wire に載せない）。
-- **注入**: `route_turn` は memory を見ない。`agent_turn` のみ `resolve_for_prompt` で user-maintained context block を synthetic user message として前置する（system instruction ではない）。`ai` は turn の `context.memory_space_id` に解決済み ID を載せるため、`ai context use` で選んだ context が注入にも反映される。cwd の無い turn は legacy session space に解決する（注入は best-effort）。`now` は別 session から見たとき stale 表示できる。
+- **RPC**: `memory_apply`（write）、`memory_query`（read）、`memory_kind_list`（registry 一覧）。`MemoryContext.cwd` は `Option`。**project scope** の apply/query のみ cwd 必須。session / global scope は cwd なし可。`project_key` はサーバが cwd から導出する（wire に載せない）。
+- **Add defaulting（0037 Phase 2）**: `MemoryOperationAdd` の `scope` / `inject` / `status` / `make_active` は optional。AIBE `resolve_memory_operation_add` が補完する。registered kind は registry default、unregistered kind は server 既定（`project` / `manual` / `open` / `make_active=false`）。`ai mem add` は `kind + text` のみ送り、policy は AIBE 正本。
+- **注入**: `route_turn` は memory を見ない。`agent_turn` のみ `resolve_for_prompt` で user-maintained context block を synthetic user message として前置する（system instruction ではない）。通常 query では **goal / now / rule**（active）が pinned 注入される（Phase 1 registry + Phase 2 継続）。`ai` は turn の `context.memory_space_id` に解決済み ID を載せるため、`ai context use` で選んだ context が注入にも反映される。cwd の無い turn は legacy session space に解決する（注入は best-effort）。`now` は別 session から見たとき stale 表示できる。
 - **legacy 互換**: 0034 の `conversations/<AI_SESSION_ID>/memory/events.jsonl` は read-through。`legacy_session_*` 以外の space を初回アクセスした際は legacy events を new layout へ lazy copy する（project-backed space を含む）。legacy space 自身への書き込み時も new layout へ seed してから append し、元の legacy store は変更しない。
-- **標準 kind**: `goal`（project, pinned, `active`）、`now`（session scope だが memory space に属する, pinned, `active`）、`idea`（project, on-demand, `open`, `make_active=false` — **通常クエリへ常時注入しない**）。clear 操作は wire 上 `ClearKind`（`op: "clear_kind"`）。MVP 詳細は [spec/0034_aibe-contextual-memory-spec.md](spec/0034_aibe-contextual-memory-spec.md)、[spec/0035_aibe-memory-identity-split-spec.md](spec/0035_aibe-memory-identity-split-spec.md)。正式版 v1 は [spec/0037_aibe-contextual-memory-runtime-v1-spec.md](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)。
+- **標準 kind（built-in registry）**: `goal` / `now` / `idea`（dedicated CLI あり）、`rule` / `decision` / `note`（`ai mem add` 可）。`goal`（project, pinned, `active`）、`now`（session, pinned, `active`）、`rule`（project, pinned, `active`, multiple）、`idea`（project, on-demand, `open` — **通常クエリへ常時注入しない**）、`decision`（on-demand）、`note`（manual）。clear 操作は wire 上 `ClearKind`（`op: "clear_kind"`）。MVP 詳細は [spec/0034](spec/0034_aibe-contextual-memory-spec.md)、[spec/0035](spec/0035_aibe-memory-identity-split-spec.md)。正式版 v1 は [spec/0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)。
 
 リクエスト例（`memory_apply`）:
+
+```json
+{
+  "type": "memory_apply",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "AI_SESSION_ID",
+  "context": {
+    "cwd": "/abs/path/to/project",
+    "memory_space_id": "ctx_a"
+  },
+  "operation": {
+    "op": "add",
+    "kind": "rule",
+    "text": "idea は通常クエリへ常時注入しない"
+  }
+}
+```
+
+registered kind は `scope` / `inject` / `status` / `make_active` を省略可能（server が registry default で補完）。explicit DTO も引き続き有効。
+
+リクエスト例（`memory_kind_list`）:
+
+```json
+{
+  "type": "memory_kind_list",
+  "id": "550e8400-e29b-41d4-a716-446655440002",
+  "session_id": "AI_SESSION_ID",
+  "context": {
+    "cwd": "/abs/path/to/project",
+    "memory_space_id": "ctx_a"
+  }
+}
+```
+
+リクエスト例（`memory_apply`、explicit DTO。互換経路）:
 
 ```json
 {

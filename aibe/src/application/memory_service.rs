@@ -4,10 +4,10 @@ use std::path::Path;
 
 use aibe_protocol::{
     is_valid_session_id, ClientResponse, ErrorCode, MemoryApplyStatus, MemoryContext,
-    MemoryOperationDto, MemoryQueryDto, MemoryQueryStatus, MemoryScopeDto,
+    MemoryKindDefinitionDto, MemoryOperationDto, MemoryQueryDto, MemoryQueryStatus, MemoryScopeDto,
 };
 
-use crate::domain::MemoryValidationError;
+use crate::domain::{resolve_memory_operation_add, MemoryValidationError};
 use crate::ports::outbound::{
     ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
 };
@@ -35,6 +35,10 @@ impl MemoryService {
         if let Err(msg) = validate_session_id(&session_id) {
             return invalid(id, msg);
         }
+        let operation = match normalize_operation(operation) {
+            Ok(op) => op,
+            Err(e) => return map_validation_error(id, e),
+        };
         if let Err(msg) = validate_cwd_for_operation(context, &operation) {
             return invalid(id, msg);
         }
@@ -104,6 +108,28 @@ impl MemoryService {
             Err(e) => map_store_error(id, e),
         }
     }
+
+    pub fn kind_list(
+        &self,
+        id: String,
+        session_id: String,
+        context: &MemoryContext,
+    ) -> ClientResponse {
+        if let Err(msg) = validate_session_id(&session_id) {
+            return invalid(id, msg);
+        }
+        let _ = context;
+        let kinds = crate::domain::builtin_memory_kind_registry()
+            .list_definitions()
+            .into_iter()
+            .map(MemoryKindDefinitionDto::from)
+            .collect();
+        ClientResponse::MemoryKindListResult {
+            id,
+            status: MemoryQueryStatus::Ok,
+            kinds,
+        }
+    }
 }
 
 fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
@@ -114,12 +140,24 @@ fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
     }
 }
 
+fn normalize_operation(
+    operation: MemoryOperationDto,
+) -> Result<MemoryOperationDto, MemoryValidationError> {
+    match operation {
+        MemoryOperationDto::Add(add) => {
+            let resolved = resolve_memory_operation_add(&add)?;
+            Ok(MemoryOperationDto::Add(resolved))
+        }
+        other => Ok(other),
+    }
+}
+
 fn validate_cwd_for_operation(
     context: &MemoryContext,
     operation: &MemoryOperationDto,
 ) -> Result<(), &'static str> {
     let needs_cwd = match operation {
-        MemoryOperationDto::Add(add) => add.scope == MemoryScopeDto::Project,
+        MemoryOperationDto::Add(add) => add.scope == Some(MemoryScopeDto::Project),
         MemoryOperationDto::ClearKind(clear) => clear.scope == MemoryScopeDto::Project,
         MemoryOperationDto::Archive(_) => false,
     };
@@ -149,6 +187,10 @@ fn map_store_error(id: String, err: ContextualMemoryStoreError) -> ClientRespons
         _ => err.to_string(),
     };
     ClientResponse::error(id, ErrorCode::InvalidRequest, message)
+}
+
+fn map_validation_error(id: String, err: MemoryValidationError) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, err.to_string())
 }
 
 fn invalid(id: String, message: &str) -> ClientResponse {

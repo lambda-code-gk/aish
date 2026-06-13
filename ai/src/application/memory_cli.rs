@@ -3,11 +3,12 @@
 use std::path::PathBuf;
 
 use aibe_protocol::{
-    ClientResponse, MemoryEntryDto, MemoryInjectPolicyDto, MemoryOperationAdd,
-    MemoryOperationClearKind, MemoryOperationDto, MemoryQueryDto, MemoryScopeDto, MemoryStatusDto,
+    ClientResponse, MemoryEntryDto, MemoryInjectPolicyDto, MemoryKindDefinitionDto,
+    MemoryOperationAdd, MemoryOperationClearKind, MemoryOperationDto, MemoryQueryDto,
+    MemoryScopeDto, MemoryStatusDto,
 };
 
-use crate::domain::OutputFormat;
+use crate::domain::{append_env_line, OutputFormat};
 use crate::ports::outbound::{AgentError, MemoryClient};
 
 pub struct MemoryCliContext {
@@ -25,11 +26,11 @@ pub fn run_goal_set(
 ) -> Result<String, AgentError> {
     let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "goal".into(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::Pinned,
-        status: MemoryStatusDto::Active,
+        scope: Some(MemoryScopeDto::Project),
+        inject: Some(MemoryInjectPolicyDto::Pinned),
+        status: Some(MemoryStatusDto::Active),
         text: text.to_string(),
-        make_active: true,
+        make_active: Some(true),
     });
     apply_and_summarize(client, ctx, op, &format!("goal set: {text}"))
 }
@@ -55,11 +56,11 @@ pub fn run_now_set(
 ) -> Result<String, AgentError> {
     let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "now".into(),
-        scope: MemoryScopeDto::Session,
-        inject: MemoryInjectPolicyDto::Pinned,
-        status: MemoryStatusDto::Active,
+        scope: Some(MemoryScopeDto::Session),
+        inject: Some(MemoryInjectPolicyDto::Pinned),
+        status: Some(MemoryStatusDto::Active),
         text: text.to_string(),
-        make_active: true,
+        make_active: Some(true),
     });
     apply_and_summarize(client, ctx, op, &format!("now set: {text}"))
 }
@@ -85,11 +86,11 @@ pub fn run_idea_add(
 ) -> Result<String, AgentError> {
     let op = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "idea".into(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::OnDemand,
-        status: MemoryStatusDto::Open,
+        scope: Some(MemoryScopeDto::Project),
+        inject: Some(MemoryInjectPolicyDto::OnDemand),
+        status: Some(MemoryStatusDto::Open),
         text: text.to_string(),
-        make_active: false,
+        make_active: Some(false),
     });
     apply_and_summarize(client, ctx, op, &format!("idea added: {text}"))
 }
@@ -136,15 +137,20 @@ pub fn run_mem_add(
     if let Some(message) = standard_kind_mem_add_hint(kind) {
         return Err(AgentError::Request(message));
     }
-    let op = MemoryOperationDto::Add(MemoryOperationAdd {
-        kind: kind.to_string(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::Manual,
-        status: MemoryStatusDto::Open,
-        text: text.to_string(),
-        make_active: false,
-    });
+    let op = mem_add_operation(kind, text);
     apply_and_summarize(client, ctx, op, &format!("mem add {kind}: {text}"))
+}
+
+/// scope/inject/status/make_active は AIBE server が補完する（registered / unregistered とも）。
+fn mem_add_operation(kind: &str, text: &str) -> MemoryOperationDto {
+    MemoryOperationDto::Add(MemoryOperationAdd {
+        kind: kind.to_string(),
+        text: text.to_string(),
+        scope: None,
+        inject: None,
+        status: None,
+        make_active: None,
+    })
 }
 
 pub fn run_mem_list(
@@ -215,6 +221,22 @@ pub fn run_mem_clear(
         clear_scope_for_kind(kind),
         &format!("mem clear {kind}"),
     )
+}
+
+pub fn run_mem_kinds(
+    client: &dyn MemoryClient,
+    ctx: &MemoryCliContext,
+) -> Result<String, AgentError> {
+    let response = client.memory_kind_list(&ctx.session_id, &ctx.memory_context)?;
+    match response {
+        ClientResponse::MemoryKindListResult { kinds, .. } => {
+            Ok(format_kind_definitions(&kinds, ctx.format))
+        }
+        ClientResponse::Error { message, .. } => Err(AgentError::Request(message)),
+        other => Err(AgentError::Request(format!(
+            "unexpected response: {other:?}"
+        ))),
+    }
 }
 
 fn clear_scope_for_kind(kind: &str) -> MemoryScopeDto {
@@ -312,8 +334,9 @@ mod tests {
     use super::*;
     use crate::domain::OutputFormat;
     use crate::ports::outbound::{AgentError, MemoryClient};
-    use aibe_protocol::ClientResponse;
+    use aibe_protocol::{ClientResponse, MemoryApplyStatus};
     use std::path::PathBuf;
+    use std::sync::Mutex;
 
     struct PanicMemoryClient;
 
@@ -334,6 +357,65 @@ mod tests {
             _query: aibe_protocol::MemoryQueryDto,
         ) -> Result<ClientResponse, AgentError> {
             panic!("memory_query must not be called");
+        }
+
+        fn memory_kind_list(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_kind_list must not be called");
+        }
+    }
+
+    struct RecordingMemAddClient {
+        applied: Mutex<Option<MemoryOperationDto>>,
+    }
+
+    impl RecordingMemAddClient {
+        fn new() -> Self {
+            Self {
+                applied: Mutex::new(None),
+            }
+        }
+
+        fn applied_operation(&self) -> Option<MemoryOperationDto> {
+            self.applied.lock().ok().and_then(|g| g.clone())
+        }
+    }
+
+    impl MemoryClient for RecordingMemAddClient {
+        fn memory_apply(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+            operation: aibe_protocol::MemoryOperationDto,
+        ) -> Result<ClientResponse, AgentError> {
+            if let Ok(mut guard) = self.applied.lock() {
+                *guard = Some(operation);
+            }
+            Ok(ClientResponse::MemoryApplyResult {
+                id: "m1".into(),
+                status: MemoryApplyStatus::Ok,
+                entries: vec![],
+            })
+        }
+
+        fn memory_query(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+            _query: aibe_protocol::MemoryQueryDto,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_query must not be called");
+        }
+
+        fn memory_kind_list(
+            &self,
+            _session_id: &str,
+            _context: &aibe_protocol::MemoryContext,
+        ) -> Result<ClientResponse, AgentError> {
+            panic!("memory_kind_list must not be called");
         }
     }
 
@@ -356,6 +438,91 @@ mod tests {
             .expect_err("expected error");
         assert!(matches!(err, AgentError::Request(ref m) if m.contains("ai goal set")));
     }
+
+    #[test]
+    fn mem_add_operation_sends_kind_and_text_only() {
+        let op = mem_add_operation("rule", "no fat aish");
+        match op {
+            MemoryOperationDto::Add(add) => {
+                assert_eq!(add.kind, "rule");
+                assert_eq!(add.text, "no fat aish");
+                assert!(add.scope.is_none());
+                assert!(add.inject.is_none());
+                assert!(add.status.is_none());
+                assert!(add.make_active.is_none());
+            }
+            _ => panic!("expected add"),
+        }
+    }
+
+    #[test]
+    fn mem_add_delegates_defaulting_to_server_without_kind_list() {
+        let client = RecordingMemAddClient::new();
+        run_mem_add(&client, &test_ctx(), "custom", "memo").expect("ok");
+        match client.applied_operation() {
+            Some(MemoryOperationDto::Add(add)) => {
+                assert_eq!(add.kind, "custom");
+                assert!(add.scope.is_none());
+                assert!(add.inject.is_none());
+                assert!(add.status.is_none());
+                assert!(add.make_active.is_none());
+            }
+            other => panic!("expected add operation: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_kind_definitions_env_uses_shell_assignments() {
+        let kinds = vec![MemoryKindDefinitionDto {
+            id: "rule".into(),
+            description: "rules".into(),
+            default_scope: MemoryScopeDto::Project,
+            default_inject: MemoryInjectPolicyDto::Pinned,
+            default_status: MemoryStatusDto::Active,
+            lifecycle: "active_archive".into(),
+            cardinality: "multiple".into(),
+            clear_from: MemoryStatusDto::Active,
+            clear_to: MemoryStatusDto::Archived,
+            auto_inject: true,
+            on_demand: false,
+            priority: 30,
+            keywords: vec![],
+            max_entries: Some(8),
+            aliases: vec!["rule".into()],
+            builtin: true,
+            dedicated_cli: None,
+        }];
+        let out = format_kind_definitions(&kinds, OutputFormat::Env);
+        assert!(out.contains("kinds[0].id='rule'\n"));
+        assert!(out.contains("kinds[0].default_scope='project'\n"));
+        assert!(out.contains("kinds[0].default_inject='pinned'\n"));
+        assert!(!out.contains("Project"));
+    }
+
+    #[test]
+    fn format_kind_definitions_tsv_uses_wire_enum_labels() {
+        let kinds = vec![MemoryKindDefinitionDto {
+            id: "note".into(),
+            description: "memo".into(),
+            default_scope: MemoryScopeDto::Project,
+            default_inject: MemoryInjectPolicyDto::Manual,
+            default_status: MemoryStatusDto::Open,
+            lifecycle: "open_archive".into(),
+            cardinality: "multiple".into(),
+            clear_from: MemoryStatusDto::Open,
+            clear_to: MemoryStatusDto::Archived,
+            auto_inject: false,
+            on_demand: false,
+            priority: 100,
+            keywords: vec![],
+            max_entries: Some(0),
+            aliases: vec!["note".into()],
+            builtin: true,
+            dedicated_cli: None,
+        }];
+        let out = format_kind_definitions(&kinds, OutputFormat::Tsv);
+        assert!(out.contains("note\tmemo\tproject\tmanual\topen\t100\ttrue\t\n"));
+    }
 }
 
 fn format_prompt_block(
@@ -377,6 +544,96 @@ fn format_prompt_block(
             let body = if block.is_empty() { "(empty)" } else { block };
             Ok(format!("memory_space_id: {space}\n{body}"))
         }
+    }
+}
+
+fn format_kind_definitions(kinds: &[MemoryKindDefinitionDto], format: OutputFormat) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(kinds).unwrap_or_else(|_| "[]".into()),
+        OutputFormat::Tsv => {
+            let mut out = String::from(
+                "id\tdescription\tdefault_scope\tdefault_inject\tdefault_status\tpriority\tbuiltin\tdedicated_cli\n",
+            );
+            for k in kinds {
+                out.push_str(&format_kind_row_tsv(k));
+            }
+            out
+        }
+        OutputFormat::Env => {
+            let mut out = String::new();
+            for (index, k) in kinds.iter().enumerate() {
+                append_kind_definition_env(&mut out, index, k);
+            }
+            out
+        }
+    }
+}
+
+fn format_kind_row_tsv(k: &MemoryKindDefinitionDto) -> String {
+    format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        k.id,
+        k.description,
+        memory_scope_wire(k.default_scope),
+        memory_inject_wire(k.default_inject),
+        memory_status_wire(k.default_status),
+        k.priority,
+        k.builtin,
+        k.dedicated_cli.as_deref().unwrap_or("")
+    )
+}
+
+fn append_kind_definition_env(out: &mut String, index: usize, k: &MemoryKindDefinitionDto) {
+    let prefix = format!("kinds[{index}]");
+    append_env_line(out, &format!("{prefix}.id"), &k.id);
+    append_env_line(out, &format!("{prefix}.description"), &k.description);
+    append_env_line(
+        out,
+        &format!("{prefix}.default_scope"),
+        memory_scope_wire(k.default_scope),
+    );
+    append_env_line(
+        out,
+        &format!("{prefix}.default_inject"),
+        memory_inject_wire(k.default_inject),
+    );
+    append_env_line(
+        out,
+        &format!("{prefix}.default_status"),
+        memory_status_wire(k.default_status),
+    );
+    append_env_line(out, &format!("{prefix}.priority"), &k.priority.to_string());
+    append_env_line(out, &format!("{prefix}.builtin"), &k.builtin.to_string());
+    append_env_line(
+        out,
+        &format!("{prefix}.dedicated_cli"),
+        k.dedicated_cli.as_deref().unwrap_or(""),
+    );
+}
+
+fn memory_scope_wire(scope: MemoryScopeDto) -> &'static str {
+    match scope {
+        MemoryScopeDto::Session => "session",
+        MemoryScopeDto::Project => "project",
+        MemoryScopeDto::Global => "global",
+    }
+}
+
+fn memory_inject_wire(inject: MemoryInjectPolicyDto) -> &'static str {
+    match inject {
+        MemoryInjectPolicyDto::Pinned => "pinned",
+        MemoryInjectPolicyDto::OnDemand => "on_demand",
+        MemoryInjectPolicyDto::Manual => "manual",
+        MemoryInjectPolicyDto::Never => "never",
+    }
+}
+
+fn memory_status_wire(status: MemoryStatusDto) -> &'static str {
+    match status {
+        MemoryStatusDto::Active => "active",
+        MemoryStatusDto::Inactive => "inactive",
+        MemoryStatusDto::Open => "open",
+        MemoryStatusDto::Archived => "archived",
     }
 }
 

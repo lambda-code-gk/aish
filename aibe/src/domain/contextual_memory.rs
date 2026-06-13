@@ -1,7 +1,8 @@
 //! contextual memory ドメイン型。
 
 use aibe_protocol::{
-    MemoryEntryDto, MemoryInjectPolicyDto, MemoryScopeDto, MemoryStatusDto, MEMORY_TEXT_MAX_BYTES,
+    MemoryEntryDto, MemoryInjectPolicyDto, MemoryOperationAdd, MemoryScopeDto, MemoryStatusDto,
+    MEMORY_TEXT_MAX_BYTES,
 };
 
 use super::memory_kind_registry::{
@@ -78,6 +79,14 @@ pub enum MemoryValidationError {
     MissingCwdForProjectScope,
     #[error("standard kind {kind} does not accept client-specified scope/inject/status")]
     StandardKindMismatch { kind: String },
+    #[error(
+        "unregistered kind {kind} requires explicit scope/inject/status when overriding defaults"
+    )]
+    UnregisteredKindMissingFields { kind: String },
+    #[error("make_active=true is incompatible with kind {kind} lifecycle")]
+    MakeActiveLifecycleConflict { kind: String },
+    #[error("make_active=false is incompatible with single-effective kind {kind}")]
+    MakeActiveSingleEffectiveConflict { kind: String },
     #[error("version conflict")]
     VersionConflict,
     #[error("entry not found: {0}")]
@@ -144,6 +153,97 @@ pub fn validate_standard_kind_operation(
     status: MemoryStatusDto,
 ) -> Result<(), MemoryValidationError> {
     builtin_memory_kind_registry().validate_operation(kind, scope, inject, status)
+}
+
+/// `MemoryOperationAdd` の optional フィールドを補完する。
+/// registered kind は registry default、unregistered kind は server 既定（Project/Manual/Open）を使う。
+pub fn resolve_memory_operation_add(
+    add: &MemoryOperationAdd,
+) -> Result<MemoryOperationAdd, MemoryValidationError> {
+    validate_kind(&add.kind)?;
+    validate_text(&add.text)?;
+
+    let registry = builtin_memory_kind_registry();
+    if let Some(def) = registry.get(&add.kind) {
+        let expected_scope = MemoryScopeDto::from(def.default_scope);
+        let scope = match add.scope {
+            Some(scope) => {
+                if scope != expected_scope {
+                    return Err(MemoryValidationError::StandardKindMismatch {
+                        kind: add.kind.clone(),
+                    });
+                }
+                scope
+            }
+            None => expected_scope,
+        };
+
+        let expected_inject = MemoryInjectPolicyDto::from(def.default_inject);
+        let inject = match add.inject {
+            Some(inject) => {
+                if inject != expected_inject {
+                    return Err(MemoryValidationError::StandardKindMismatch {
+                        kind: add.kind.clone(),
+                    });
+                }
+                inject
+            }
+            None => expected_inject,
+        };
+
+        let expected_status = MemoryStatusDto::from(def.default_status);
+        let status = match add.status {
+            Some(status) => {
+                if status != expected_status {
+                    return Err(MemoryValidationError::StandardKindMismatch {
+                        kind: add.kind.clone(),
+                    });
+                }
+                status
+            }
+            None => expected_status,
+        };
+
+        let default_make_active = def.cardinality == MemoryCardinality::SingleEffective;
+        let make_active = match add.make_active {
+            Some(value) => {
+                if value && def.default_status != MemoryStatus::Active {
+                    return Err(MemoryValidationError::MakeActiveLifecycleConflict {
+                        kind: add.kind.clone(),
+                    });
+                }
+                if !value && def.cardinality == MemoryCardinality::SingleEffective {
+                    return Err(MemoryValidationError::MakeActiveSingleEffectiveConflict {
+                        kind: add.kind.clone(),
+                    });
+                }
+                value
+            }
+            None => default_make_active,
+        };
+
+        Ok(MemoryOperationAdd {
+            kind: add.kind.clone(),
+            scope: Some(scope),
+            inject: Some(inject),
+            status: Some(status),
+            text: add.text.clone(),
+            make_active: Some(make_active),
+        })
+    } else {
+        let scope = add.scope.unwrap_or(MemoryScopeDto::Project);
+        let inject = add.inject.unwrap_or(MemoryInjectPolicyDto::Manual);
+        let status = add.status.unwrap_or(MemoryStatusDto::Open);
+        let make_active = add.make_active.unwrap_or(false);
+        Ok(MemoryOperationAdd {
+            kind: add.kind.clone(),
+            scope: Some(scope),
+            inject: Some(inject),
+            status: Some(status),
+            text: add.text.clone(),
+            make_active: Some(make_active),
+        })
+    }
 }
 
 pub fn query_matches_idea_on_demand(user_query: &str) -> bool {
@@ -547,6 +647,88 @@ mod tests {
             validate_text(&text),
             Err(MemoryValidationError::TextTooLong)
         );
+    }
+
+    #[test]
+    fn resolve_add_defaults_rule_from_kind_and_text() {
+        let add = MemoryOperationAdd {
+            kind: "rule".into(),
+            scope: None,
+            inject: None,
+            status: None,
+            text: "no shell auto-exec".into(),
+            make_active: None,
+        };
+        let resolved = resolve_memory_operation_add(&add).expect("resolve");
+        assert_eq!(resolved.scope, Some(MemoryScopeDto::Project));
+        assert_eq!(resolved.inject, Some(MemoryInjectPolicyDto::Pinned));
+        assert_eq!(resolved.status, Some(MemoryStatusDto::Active));
+        assert_eq!(resolved.make_active, Some(false));
+    }
+
+    #[test]
+    fn resolve_add_defaults_unregistered_from_kind_and_text() {
+        let add = MemoryOperationAdd {
+            kind: "custom".into(),
+            scope: None,
+            inject: None,
+            status: None,
+            text: "memo".into(),
+            make_active: None,
+        };
+        let resolved = resolve_memory_operation_add(&add).expect("resolve");
+        assert_eq!(resolved.scope, Some(MemoryScopeDto::Project));
+        assert_eq!(resolved.inject, Some(MemoryInjectPolicyDto::Manual));
+        assert_eq!(resolved.status, Some(MemoryStatusDto::Open));
+        assert_eq!(resolved.make_active, Some(false));
+    }
+
+    #[test]
+    fn resolve_add_honors_unregistered_explicit_overrides() {
+        let add = MemoryOperationAdd {
+            kind: "custom".into(),
+            scope: Some(MemoryScopeDto::Global),
+            inject: Some(MemoryInjectPolicyDto::Never),
+            status: Some(MemoryStatusDto::Active),
+            text: "memo".into(),
+            make_active: Some(false),
+        };
+        let resolved = resolve_memory_operation_add(&add).expect("resolve");
+        assert_eq!(resolved.scope, Some(MemoryScopeDto::Global));
+        assert_eq!(resolved.inject, Some(MemoryInjectPolicyDto::Never));
+        assert_eq!(resolved.status, Some(MemoryStatusDto::Active));
+    }
+
+    #[test]
+    fn resolve_add_rejects_registered_kind_mismatch() {
+        let add = MemoryOperationAdd {
+            kind: "goal".into(),
+            scope: Some(MemoryScopeDto::Session),
+            inject: None,
+            status: None,
+            text: "x".into(),
+            make_active: None,
+        };
+        assert!(matches!(
+            resolve_memory_operation_add(&add),
+            Err(MemoryValidationError::StandardKindMismatch { kind }) if kind == "goal"
+        ));
+    }
+
+    #[test]
+    fn resolve_add_rejects_make_active_false_for_single_effective() {
+        let add = MemoryOperationAdd {
+            kind: "goal".into(),
+            scope: None,
+            inject: None,
+            status: None,
+            text: "x".into(),
+            make_active: Some(false),
+        };
+        assert!(matches!(
+            resolve_memory_operation_add(&add),
+            Err(MemoryValidationError::MakeActiveSingleEffectiveConflict { kind }) if kind == "goal"
+        ));
     }
 
     #[test]

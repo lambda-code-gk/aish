@@ -266,10 +266,32 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                     let kind = &add.kind;
                     validate_kind(kind)?;
                     validate_text(&add.text)?;
+                    let scope_dto = add.scope.ok_or_else(|| {
+                        ContextualMemoryStoreError::Validation(
+                            MemoryValidationError::UnregisteredKindMissingFields {
+                                kind: kind.clone(),
+                            },
+                        )
+                    })?;
+                    let inject_dto = add.inject.ok_or_else(|| {
+                        ContextualMemoryStoreError::Validation(
+                            MemoryValidationError::UnregisteredKindMissingFields {
+                                kind: kind.clone(),
+                            },
+                        )
+                    })?;
+                    let status_dto = add.status.ok_or_else(|| {
+                        ContextualMemoryStoreError::Validation(
+                            MemoryValidationError::UnregisteredKindMissingFields {
+                                kind: kind.clone(),
+                            },
+                        )
+                    })?;
+                    let make_active = add.make_active.unwrap_or(false);
                     if builtin_memory_kind_registry().is_registered(kind) {
-                        validate_standard_kind_operation(kind, add.scope, add.inject, add.status)?;
+                        validate_standard_kind_operation(kind, scope_dto, inject_dto, status_dto)?;
                     }
-                    let scope = MemoryScope::try_from(add.scope).map_err(|_| {
+                    let scope = MemoryScope::try_from(scope_dto).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "scope".into(),
                         ))
@@ -279,24 +301,24 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                             MemoryValidationError::MissingCwdForProjectScope,
                         ));
                     }
-                    let inject = MemoryInjectPolicy::try_from(add.inject).map_err(|_| {
+                    let inject = MemoryInjectPolicy::try_from(inject_dto).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "inject".into(),
                         ))
                     })?;
-                    let client_status = MemoryStatus::try_from(add.status).map_err(|_| {
+                    let client_status = MemoryStatus::try_from(status_dto).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
                             "status".into(),
                         ))
                     })?;
-                    let final_status = if add.make_active {
+                    let final_status = if make_active {
                         MemoryStatus::Active
                     } else {
                         client_status
                     };
 
                     let mut affected = Vec::new();
-                    if add.make_active {
+                    if make_active {
                         let mut entries = self.load_entries(memory_space_id, session_id)?;
                         for entry in entries.iter_mut() {
                             if entry.kind == *kind
@@ -764,11 +786,11 @@ mod tests {
     fn goal_add(text: &str) -> MemoryOperationDto {
         MemoryOperationDto::Add(MemoryOperationAdd {
             kind: STANDARD_KIND_GOAL.into(),
-            scope: MemoryScopeDto::Project,
-            inject: MemoryInjectPolicyDto::Pinned,
-            status: MemoryStatusDto::Active,
+            scope: Some(MemoryScopeDto::Project),
+            inject: Some(MemoryInjectPolicyDto::Pinned),
+            status: Some(MemoryStatusDto::Active),
             text: text.into(),
-            make_active: true,
+            make_active: Some(true),
         })
     }
 
@@ -803,11 +825,11 @@ mod tests {
     fn now_add(text: &str) -> MemoryOperationDto {
         MemoryOperationDto::Add(MemoryOperationAdd {
             kind: STANDARD_KIND_NOW.into(),
-            scope: MemoryScopeDto::Session,
-            inject: MemoryInjectPolicyDto::Pinned,
-            status: MemoryStatusDto::Active,
+            scope: Some(MemoryScopeDto::Session),
+            inject: Some(MemoryInjectPolicyDto::Pinned),
+            status: Some(MemoryStatusDto::Active),
             text: text.into(),
-            make_active: true,
+            make_active: Some(true),
         })
     }
 

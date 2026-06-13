@@ -305,6 +305,11 @@ pub enum MemCommand {
         #[command(flatten)]
         options: MemoryCliOptions,
     },
+    /// List registered memory kinds from AIBE registry
+    Kinds {
+        #[command(flatten)]
+        options: MemoryCliOptions,
+    },
 }
 
 #[derive(Subcommand)]

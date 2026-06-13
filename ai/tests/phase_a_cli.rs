@@ -8,8 +8,9 @@ use std::process::Command;
 use std::thread::{self, JoinHandle};
 
 use aibe_protocol::{
-    AgentTurnStatus, ClientRequest, ClientResponse, MemoryApplyStatus, MemoryOperationDto,
-    MemoryQueryStatus, MemoryScopeDto, ProtocolMessageOut,
+    AgentTurnStatus, ClientRequest, ClientResponse, MemoryApplyStatus, MemoryInjectPolicyDto,
+    MemoryKindDefinitionDto, MemoryOperationDto, MemoryQueryStatus, MemoryScopeDto,
+    MemoryStatusDto, ProtocolMessageOut,
 };
 use serde_json::Value;
 
@@ -505,8 +506,8 @@ fn goal_set_sends_memory_apply() {
                 operation,
                 MemoryOperationDto::Add(add)
                     if add.kind == "goal"
-                        && add.scope == MemoryScopeDto::Project
-                        && add.make_active
+                        && add.scope == Some(MemoryScopeDto::Project)
+                        && add.make_active == Some(true)
             ));
             ClientResponse::MemoryApplyResult {
                 id: "m1".to_string(),
@@ -663,4 +664,110 @@ fn mem_add_goal_shows_standard_kind_hint() {
         stderr.contains("goal is a standard memory kind; use `ai goal set ...`"),
         "stderr: {stderr}"
     );
+}
+
+fn mock_builtin_kind(id: &str, priority: u32) -> MemoryKindDefinitionDto {
+    MemoryKindDefinitionDto {
+        id: id.to_string(),
+        description: format!("{id} description"),
+        default_scope: MemoryScopeDto::Project,
+        default_inject: MemoryInjectPolicyDto::Pinned,
+        default_status: MemoryStatusDto::Active,
+        lifecycle: "active_archive".into(),
+        cardinality: "multiple".into(),
+        clear_from: MemoryStatusDto::Active,
+        clear_to: MemoryStatusDto::Archived,
+        auto_inject: true,
+        on_demand: false,
+        priority,
+        keywords: vec![],
+        max_entries: Some(8),
+        aliases: vec![id.to_string()],
+        builtin: true,
+        dedicated_cli: None,
+    }
+}
+
+#[test]
+fn mem_kinds_lists_registered_kinds_from_aibe() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryKindList(body) => {
+            assert!(!body.session_id.is_empty());
+            ClientResponse::MemoryKindListResult {
+                id: "k1".to_string(),
+                status: MemoryQueryStatus::Ok,
+                kinds: vec![
+                    mock_builtin_kind("goal", 10),
+                    mock_builtin_kind("now", 20),
+                    mock_builtin_kind("rule", 30),
+                    mock_builtin_kind("decision", 60),
+                    mock_builtin_kind("idea", 80),
+                    mock_builtin_kind("note", 100),
+                ],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["mem", "kinds", "--no-start"])
+        .output()
+        .expect("run ai mem kinds");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for kind in ["goal", "now", "rule", "decision", "idea", "note"] {
+        assert!(stdout.contains(kind), "stdout missing {kind}: {stdout}");
+    }
+}
+
+#[test]
+fn mem_add_custom_sends_kind_and_text_only() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryApply(body) => {
+            assert!(matches!(
+                body.operation,
+                MemoryOperationDto::Add(add)
+                    if add.kind == "custom"
+                        && add.text == "memo text"
+                        && add.scope.is_none()
+                        && add.inject.is_none()
+                        && add.status.is_none()
+                        && add.make_active.is_none()
+            ));
+            ClientResponse::MemoryApplyResult {
+                id: "m1".to_string(),
+                status: MemoryApplyStatus::Ok,
+                entries: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["mem", "add", "custom", "memo", "text", "--no-start"])
+        .output()
+        .expect("run ai mem add custom");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("mem add custom: memo text"));
 }

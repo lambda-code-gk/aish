@@ -27,22 +27,22 @@ fn ctx<'a>(
 fn goal_op(text: &str) -> MemoryOperationDto {
     MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "goal".into(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::Pinned,
-        status: MemoryStatusDto::Active,
+        scope: Some(MemoryScopeDto::Project),
+        inject: Some(MemoryInjectPolicyDto::Pinned),
+        status: Some(MemoryStatusDto::Active),
         text: text.into(),
-        make_active: true,
+        make_active: Some(true),
     })
 }
 
 fn now_op(text: &str) -> MemoryOperationDto {
     MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "now".into(),
-        scope: MemoryScopeDto::Session,
-        inject: MemoryInjectPolicyDto::Pinned,
-        status: MemoryStatusDto::Active,
+        scope: Some(MemoryScopeDto::Session),
+        inject: Some(MemoryInjectPolicyDto::Pinned),
+        status: Some(MemoryStatusDto::Active),
         text: text.into(),
-        make_active: true,
+        make_active: Some(true),
     })
 }
 
@@ -56,11 +56,11 @@ fn resolve_for_prompt_injects_goal_now_not_idea_on_normal_query() {
     store.apply(&c, &now_op("wire protocol"), 2).expect("now");
     let idea = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "idea".into(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::OnDemand,
-        status: MemoryStatusDto::Open,
+        scope: Some(MemoryScopeDto::Project),
+        inject: Some(MemoryInjectPolicyDto::OnDemand),
+        status: Some(MemoryStatusDto::Open),
         text: "later idea".into(),
-        make_active: false,
+        make_active: Some(false),
     });
     store.apply(&c, &idea, 3).expect("idea");
 
@@ -80,11 +80,11 @@ fn resolve_for_prompt_includes_idea_on_mvp_query() {
     let c = ctx("sess", "ctx_a", &cwd);
     let idea = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "idea".into(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::OnDemand,
-        status: MemoryStatusDto::Open,
+        scope: Some(MemoryScopeDto::Project),
+        inject: Some(MemoryInjectPolicyDto::OnDemand),
+        status: Some(MemoryStatusDto::Open),
         text: "card idea".into(),
-        make_active: false,
+        make_active: Some(false),
     });
     store.apply(&c, &idea, 1).expect("idea");
 
@@ -346,11 +346,11 @@ fn mem_clear_unknown_kind_archives_open_entries() {
     let c = ctx("sess", "ctx_a", &cwd);
     let add = MemoryOperationDto::Add(MemoryOperationAdd {
         kind: "note".into(),
-        scope: MemoryScopeDto::Project,
-        inject: MemoryInjectPolicyDto::Manual,
-        status: MemoryStatusDto::Open,
+        scope: Some(MemoryScopeDto::Project),
+        inject: Some(MemoryInjectPolicyDto::Manual),
+        status: Some(MemoryStatusDto::Open),
         text: "open note".into(),
-        make_active: false,
+        make_active: Some(false),
     });
     store.apply(&c, &add, 1).expect("add");
     let clear = MemoryOperationDto::ClearKind(MemoryOperationClearKind {
@@ -394,4 +394,101 @@ fn long_prompt_block_keeps_footer_and_truncates_goal_body() {
     assert!(block.content.contains("[goal]"));
     assert!(!block.content.contains("[now]"));
     assert!(block.content.len() <= MEMORY_PROMPT_BUDGET_BYTES);
+}
+
+#[test]
+fn memory_apply_rule_with_kind_and_text_only() {
+    let dir = tempdir().expect("tempdir");
+    let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
+    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let service = MemoryService::new(Arc::new(store), Arc::new(resolver));
+    let cwd = std::env::current_dir().expect("cwd");
+    let op = MemoryOperationDto::Add(MemoryOperationAdd {
+        kind: "rule".into(),
+        scope: None,
+        inject: None,
+        status: None,
+        text: "idea は通常クエリへ常時注入しない".into(),
+        make_active: None,
+    });
+    let response = service.apply(
+        "r1".into(),
+        "sess-a".into(),
+        &MemoryContext {
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            memory_space_id: Some("ctx_a".into()),
+        },
+        op,
+    );
+    match response {
+        aibe_protocol::ClientResponse::MemoryApplyResult { entries, .. } => {
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].kind, "rule");
+            assert_eq!(entries[0].scope, MemoryScopeDto::Project);
+            assert_eq!(entries[0].inject, MemoryInjectPolicyDto::Pinned);
+            assert_eq!(entries[0].status, MemoryStatusDto::Active);
+        }
+        other => panic!("expected apply ok: {other:?}"),
+    }
+}
+
+#[test]
+fn memory_kind_list_returns_builtin_kinds() {
+    let dir = tempdir().expect("tempdir");
+    let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
+    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let service = MemoryService::new(Arc::new(store), Arc::new(resolver));
+    let response = service.kind_list(
+        "k1".into(),
+        "sess-a".into(),
+        &MemoryContext {
+            cwd: None,
+            memory_space_id: Some("ctx_a".into()),
+        },
+    );
+    match response {
+        aibe_protocol::ClientResponse::MemoryKindListResult { kinds, .. } => {
+            assert_eq!(kinds.len(), 6);
+            assert_eq!(kinds[0].id, "goal");
+            assert_eq!(kinds[2].id, "rule");
+            assert!(kinds.iter().any(|k| k.id == "decision"));
+        }
+        other => panic!("expected kind list: {other:?}"),
+    }
+}
+
+#[test]
+fn memory_apply_unregistered_kind_with_kind_and_text_only() {
+    let dir = tempdir().expect("tempdir");
+    let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
+    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let service = MemoryService::new(Arc::new(store), Arc::new(resolver));
+    let cwd = std::env::current_dir().expect("cwd");
+    let op = MemoryOperationDto::Add(MemoryOperationAdd {
+        kind: "custom".into(),
+        scope: None,
+        inject: None,
+        status: None,
+        text: "custom memo".into(),
+        make_active: None,
+    });
+    let response = service.apply(
+        "c2".into(),
+        "sess-a".into(),
+        &MemoryContext {
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            memory_space_id: Some("ctx_a".into()),
+        },
+        op,
+    );
+    match response {
+        aibe_protocol::ClientResponse::MemoryApplyResult { entries, .. } => {
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].kind, "custom");
+            assert_eq!(entries[0].scope, MemoryScopeDto::Project);
+            assert_eq!(entries[0].inject, MemoryInjectPolicyDto::Manual);
+            assert_eq!(entries[0].status, MemoryStatusDto::Open);
+        }
+        other => panic!("expected apply ok: {other:?}"),
+    }
 }

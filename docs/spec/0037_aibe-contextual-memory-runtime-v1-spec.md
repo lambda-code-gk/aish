@@ -791,13 +791,14 @@ Behavior:
   * client が指定した値が registry と矛盾する場合は error
 * unregistered kind:
 
-  * explicit `scope/inject/status` が指定されていれば許可
-  * omitted field がある場合は error
+  * omitted `scope/inject/status/make_active` は server 既定で補完する（`project` / `manual` / `open` / `make_active=false`）
+  * client が explicit 値を指定した場合はその値を使用する
 * `make_active`:
 
   * `SingleEffective` kind では default `true`
   * `Multiple` kind では default `false`
   * client 指定がある場合は respect するが、lifecycle と矛盾する場合は error
+  * **設計判断（確定）**: `SingleEffective` kind で client が明示 `make_active=false` を送った場合は error とする（同一 kind+scope に active が複数残る cardinality 破壊を防ぐ）。dedicated CLI（`ai goal set` / `ai now set`）は `make_active=true` 固定のため日常経路では発生しない
 
 互換性:
 
@@ -1453,7 +1454,7 @@ cargo test --workspace
 
 * `MemoryOperationAdd` の optional 化
 * registered kind defaulting
-* unregistered kind validation
+* unregistered kind server defaulting（`project` / `manual` / `open`）
 * `MemoryKindList` RPC
 * `ai mem kinds`
 
@@ -1567,7 +1568,7 @@ cargo test --workspace
 追加・維持:
 
 * `MemoryOperationAdd` accepts omitted scope/inject/status for registered kind
-* `MemoryOperationAdd` rejects omitted scope/inject/status for unregistered kind
+* `MemoryOperationAdd` applies server defaults for unregistered kind when omitted
 * unknown fields are rejected
 * `MemoryKindList` roundtrip
 * `MemoryRecipeRun` roundtrip（`MemoryRecipeProposalDto` 含む）

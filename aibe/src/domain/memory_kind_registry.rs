@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use aibe_protocol::{MemoryInjectPolicyDto, MemoryScopeDto, MemoryStatusDto};
+use aibe_protocol::{
+    MemoryInjectPolicyDto, MemoryKindDefinitionDto, MemoryScopeDto, MemoryStatusDto,
+};
 
 use super::contextual_memory::{
     MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
@@ -160,11 +162,56 @@ impl MemoryKindRegistry {
             .map(|d| d.stale)
             .unwrap_or(MemoryStalePolicy::None)
     }
+
+    pub fn list_definitions(&self) -> Vec<&MemoryKindDefinition> {
+        let mut defs: Vec<_> = self.kinds.values().collect();
+        defs.sort_by_key(|d| d.prompt.priority);
+        defs
+    }
 }
 
 pub fn builtin_memory_kind_registry() -> &'static MemoryKindRegistry {
     static REGISTRY: OnceLock<MemoryKindRegistry> = OnceLock::new();
     REGISTRY.get_or_init(MemoryKindRegistry::builtin)
+}
+
+impl From<&MemoryKindDefinition> for MemoryKindDefinitionDto {
+    fn from(def: &MemoryKindDefinition) -> Self {
+        Self {
+            id: def.id.clone(),
+            description: def.description.clone(),
+            default_scope: MemoryScopeDto::from(def.default_scope),
+            default_inject: MemoryInjectPolicyDto::from(def.default_inject),
+            default_status: MemoryStatusDto::from(def.default_status),
+            lifecycle: lifecycle_to_wire(def.lifecycle),
+            cardinality: cardinality_to_wire(def.cardinality),
+            clear_from: MemoryStatusDto::from(def.clear_from),
+            clear_to: MemoryStatusDto::from(def.clear_to),
+            auto_inject: def.prompt.auto_inject,
+            on_demand: def.prompt.on_demand,
+            priority: def.prompt.priority,
+            keywords: def.prompt.keywords.clone(),
+            max_entries: def.prompt.max_entries,
+            aliases: def.aliases.clone(),
+            builtin: def.builtin,
+            dedicated_cli: def.dedicated_cli.clone(),
+        }
+    }
+}
+
+fn lifecycle_to_wire(lifecycle: MemoryLifecycle) -> String {
+    match lifecycle {
+        MemoryLifecycle::ActiveInactive => "active_inactive".into(),
+        MemoryLifecycle::OpenArchive => "open_archive".into(),
+        MemoryLifecycle::ActiveArchive => "active_archive".into(),
+    }
+}
+
+fn cardinality_to_wire(cardinality: MemoryCardinality) -> String {
+    match cardinality {
+        MemoryCardinality::SingleEffective => "single_effective".into(),
+        MemoryCardinality::Multiple => "multiple".into(),
+    }
 }
 
 fn goal_definition() -> MemoryKindDefinition {

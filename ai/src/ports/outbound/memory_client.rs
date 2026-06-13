@@ -18,4 +18,10 @@ pub trait MemoryClient: Send + Sync {
         context: &MemoryContext,
         query: MemoryQueryDto,
     ) -> Result<ClientResponse, AgentError>;
+
+    fn memory_kind_list(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+    ) -> Result<ClientResponse, AgentError>;
 }

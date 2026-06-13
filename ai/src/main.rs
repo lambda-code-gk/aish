@@ -915,6 +915,7 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         | ClientRequest::CancelTurn { id, .. } => Ok(id.clone()),
         ClientRequest::MemoryApply(body) => Ok(body.id.clone()),
         ClientRequest::MemoryQuery(body) => Ok(body.id.clone()),
+        ClientRequest::MemoryKindList(body) => Ok(body.id.clone()),
     }
 }
 
@@ -1029,7 +1030,8 @@ fn exit_code_for_response(
         | ClientResponse::RouteTurnResult { .. }
         | ClientResponse::ShellExecApprovalPrompt { .. }
         | ClientResponse::MemoryApplyResult { .. }
-        | ClientResponse::MemoryQueryResult { .. } => ExitCode::SUCCESS,
+        | ClientResponse::MemoryQueryResult { .. }
+        | ClientResponse::MemoryKindListResult { .. } => ExitCode::SUCCESS,
     }
 }
 
@@ -1620,6 +1622,7 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
         MemCommand::Clear { kind, options } => run_memory_command(options, |client, ctx| {
             memory_cli::run_mem_clear(client, ctx, &kind)
         }),
+        MemCommand::Kinds { options } => run_memory_command(options, memory_cli::run_mem_kinds),
     }
 }
 

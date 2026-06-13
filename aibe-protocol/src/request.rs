@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{MemoryApplyRequestBody, MemoryQueryRequestBody};
+use crate::memory::{MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody};
 
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +46,8 @@ pub enum ClientRequest {
     MemoryApply(MemoryApplyRequestBody),
     /// contextual memory の読み取り。
     MemoryQuery(MemoryQueryRequestBody),
+    /// memory kind registry の一覧。
+    MemoryKindList(MemoryKindListRequestBody),
 }
 
 /// `shell_exec` 承認の provenance。
@@ -305,11 +307,11 @@ mod tests {
             },
             operation: MemoryOperationDto::Add(MemoryOperationAdd {
                 kind: "goal".into(),
-                scope: MemoryScopeDto::Project,
-                inject: MemoryInjectPolicyDto::Pinned,
-                status: MemoryStatusDto::Active,
+                scope: Some(MemoryScopeDto::Project),
+                inject: Some(MemoryInjectPolicyDto::Pinned),
+                status: Some(MemoryStatusDto::Active),
                 text: "ship it".into(),
-                make_active: true,
+                make_active: Some(true),
             }),
         });
         let json = serde_json::to_string(&req).expect("serialize");
@@ -420,5 +422,29 @@ mod tests {
             "query": {}
         }"#;
         assert!(serde_json::from_str::<ClientRequest>(json).is_err());
+    }
+
+    #[test]
+    fn memory_kind_list_request_roundtrip() {
+        use crate::memory::{MemoryContext, MemoryKindListRequestBody};
+
+        let req = ClientRequest::MemoryKindList(MemoryKindListRequestBody {
+            id: "k1".into(),
+            session_id: "sess-1".into(),
+            context: MemoryContext {
+                cwd: Some("/tmp/proj".into()),
+                memory_space_id: Some("ctx_a".into()),
+            },
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""type":"memory_kind_list""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::MemoryKindList(body) => {
+                assert_eq!(body.id, "k1");
+                assert_eq!(body.session_id, "sess-1");
+            }
+            _ => panic!("expected memory_kind_list"),
+        }
     }
 }

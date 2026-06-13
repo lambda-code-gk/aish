@@ -80,12 +80,48 @@ pub struct MemoryEntryDto {
 #[serde(deny_unknown_fields)]
 pub struct MemoryOperationAdd {
     pub kind: String,
-    pub scope: MemoryScopeDto,
-    pub inject: MemoryInjectPolicyDto,
-    pub status: MemoryStatusDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<MemoryScopeDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inject: Option<MemoryInjectPolicyDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<MemoryStatusDto>,
     pub text: String,
-    #[serde(default)]
-    pub make_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub make_active: Option<bool>,
+}
+
+/// `ClientRequest::MemoryKindList` の payload。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryKindListRequestBody {
+    pub id: String,
+    pub session_id: String,
+    pub context: MemoryContext,
+}
+
+/// registry kind 定義の wire DTO。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryKindDefinitionDto {
+    pub id: String,
+    pub description: String,
+    pub default_scope: MemoryScopeDto,
+    pub default_inject: MemoryInjectPolicyDto,
+    pub default_status: MemoryStatusDto,
+    pub lifecycle: String,
+    pub cardinality: String,
+    pub clear_from: MemoryStatusDto,
+    pub clear_to: MemoryStatusDto,
+    pub auto_inject: bool,
+    pub on_demand: bool,
+    pub priority: u32,
+    pub keywords: Vec<String>,
+    pub max_entries: Option<u32>,
+    pub aliases: Vec<String>,
+    pub builtin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedicated_cli: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +196,64 @@ mod tests {
     fn memory_operation_rejects_unknown_fields() {
         let json = r#"{"op":"add","kind":"goal","scope":"project","inject":"pinned","status":"active","text":"x","unknown":true}"#;
         assert!(serde_json::from_str::<MemoryOperationDto>(json).is_err());
+    }
+
+    #[test]
+    fn memory_operation_add_accepts_omitted_fields_for_registered_kind() {
+        let json = r#"{"op":"add","kind":"rule","text":"no shell auto-exec"}"#;
+        let op: MemoryOperationDto = serde_json::from_str(json).expect("deserialize");
+        match op {
+            MemoryOperationDto::Add(add) => {
+                assert_eq!(add.kind, "rule");
+                assert_eq!(add.text, "no shell auto-exec");
+                assert!(add.scope.is_none());
+                assert!(add.inject.is_none());
+                assert!(add.status.is_none());
+                assert!(add.make_active.is_none());
+            }
+            _ => panic!("expected add"),
+        }
+    }
+
+    #[test]
+    fn memory_kind_definition_dto_roundtrip() {
+        let dto = MemoryKindDefinitionDto {
+            id: "goal".into(),
+            description: "作業の最終目的".into(),
+            default_scope: MemoryScopeDto::Project,
+            default_inject: MemoryInjectPolicyDto::Pinned,
+            default_status: MemoryStatusDto::Active,
+            lifecycle: "active_inactive".into(),
+            cardinality: "single_effective".into(),
+            clear_from: MemoryStatusDto::Active,
+            clear_to: MemoryStatusDto::Inactive,
+            auto_inject: true,
+            on_demand: false,
+            priority: 10,
+            keywords: vec![],
+            max_entries: Some(1),
+            aliases: vec!["goal".into()],
+            builtin: true,
+            dedicated_cli: Some("ai goal set".into()),
+        };
+        let json = serde_json::to_string(&dto).expect("serialize");
+        let back: MemoryKindDefinitionDto = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.id, "goal");
+        assert_eq!(back.priority, 10);
+    }
+
+    #[test]
+    fn memory_kind_list_roundtrip() {
+        let req = serde_json::json!({
+            "type": "memory_kind_list",
+            "id": "k1",
+            "session_id": "sess-1",
+            "context": { "cwd": "/tmp/proj", "memory_space_id": "ctx_a" }
+        });
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back["type"], "memory_kind_list");
+        assert_eq!(back["session_id"], "sess-1");
     }
 
     #[test]

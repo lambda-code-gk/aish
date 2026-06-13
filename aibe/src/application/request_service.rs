@@ -154,6 +154,13 @@ impl RequestService {
                 );
                 service.query(body.id, body.session_id, &body.context, body.query)
             }
+            ClientRequest::MemoryKindList(body) => {
+                let service = MemoryService::new(
+                    Arc::clone(&self.memory_store),
+                    Arc::clone(&self.memory_space_resolver),
+                );
+                service.kind_list(body.id, body.session_id, &body.context)
+            }
             ClientRequest::AgentTurn {
                 id,
                 messages,

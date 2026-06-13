@@ -293,12 +293,12 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
             stdout: None,
             stderr: Vec::new(),
         },
-        ClientResponse::MemoryApplyResult { .. } | ClientResponse::MemoryQueryResult { .. } => {
-            PresenterOutput {
-                stdout: None,
-                stderr: Vec::new(),
-            }
-        }
+        ClientResponse::MemoryApplyResult { .. }
+        | ClientResponse::MemoryQueryResult { .. }
+        | ClientResponse::MemoryKindListResult { .. } => PresenterOutput {
+            stdout: None,
+            stderr: Vec::new(),
+        },
     }
 }
 
@@ -542,6 +542,20 @@ impl ResponseView {
             },
             ClientResponse::MemoryQueryResult { id, .. } => Self {
                 response_type: "memory_query_result".to_string(),
+                id: id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::MemoryKindListResult { id, .. } => Self {
+                response_type: "memory_kind_list_result".to_string(),
                 id: id.clone(),
                 status: Some("ok".to_string()),
                 assistant_message: None,

@@ -11,8 +11,9 @@ use aibe_client::{
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use crate::domain::classify_shell_exec_tier;
 use aibe_protocol::{
-    ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext, MemoryOperationDto,
-    MemoryQueryDto, MemoryQueryRequestBody, ProtocolMessage,
+    ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext,
+    MemoryKindListRequestBody, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
+    ProtocolMessage,
 };
 
 use crate::domain::AskRequest;
@@ -99,6 +100,14 @@ impl AibeUnixClient {
         self.send_memory_request(memory_query_request(session_id, context, query))
     }
 
+    pub fn memory_kind_list(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_kind_list_request(session_id, context))
+    }
+
     fn send_memory_request(&self, request: ClientRequest) -> Result<ClientResponse, AgentError> {
         transport_memory_request(self.socket_path(), request).map_err(map_client_error)
     }
@@ -166,6 +175,14 @@ impl MemoryClient for AibeUnixClient {
     ) -> Result<ClientResponse, AgentError> {
         self.send_memory_request(memory_query_request(session_id, context, query))
     }
+
+    fn memory_kind_list(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(memory_kind_list_request(session_id, context))
+    }
 }
 
 fn memory_apply_request(
@@ -191,6 +208,14 @@ fn memory_query_request(
         session_id: session_id.to_string(),
         context: context.clone(),
         query,
+    })
+}
+
+fn memory_kind_list_request(session_id: &str, context: &MemoryContext) -> ClientRequest {
+    ClientRequest::MemoryKindList(MemoryKindListRequestBody {
+        id: correlation_id(),
+        session_id: session_id.to_string(),
+        context: context.clone(),
     })
 }
 
