@@ -1,5 +1,8 @@
 # aish
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lambda-code-gk/aish)
+
+
 シェル操作に LLM を組み込む、**Unix 向け** Rust ワークスペースです。シェル I/O の記録（**aish**）、エージェント基盤（**aibe**）、クライアント（**ai**）を分離し、API キーと LLM 呼び出しを aibe に集約します。
 
 > **ステータス**: 個人開発中。API とプロトコルは進化中です。将来 OSS 公開を想定していますが、現時点では破壊的変更があり得ます。
