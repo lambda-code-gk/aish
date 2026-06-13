@@ -8,11 +8,11 @@ use aibe_protocol::{
 };
 
 use crate::domain::{
-    change_kind_for_operation, publish_memory_changes, resolve_memory_operation_add,
-    MemoryValidationError,
+    change_kind_for_operation, publish_memory_changes, required_capability_for_memory_operation,
+    resolve_memory_operation_add, Capability, MemoryValidationError,
 };
 use crate::ports::outbound::{
-    ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
+    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
     MemorySubscriptionBroker,
 };
 
@@ -20,6 +20,7 @@ pub struct MemoryService {
     store: std::sync::Arc<dyn ContextualMemoryStore>,
     resolver: std::sync::Arc<dyn MemorySpaceResolver>,
     broker: Option<std::sync::Arc<dyn MemorySubscriptionBroker>>,
+    capability_policy: std::sync::Arc<dyn CapabilityPolicy>,
 }
 
 impl MemoryService {
@@ -27,11 +28,12 @@ impl MemoryService {
         store: std::sync::Arc<dyn ContextualMemoryStore>,
         resolver: std::sync::Arc<dyn MemorySpaceResolver>,
     ) -> Self {
-        Self {
+        Self::with_capability_policy(
             store,
             resolver,
-            broker: None,
-        }
+            None,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
     }
 
     pub fn with_broker(
@@ -39,10 +41,25 @@ impl MemoryService {
         resolver: std::sync::Arc<dyn MemorySpaceResolver>,
         broker: std::sync::Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
+        Self::with_capability_policy(
+            store,
+            resolver,
+            Some(broker),
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
+    }
+
+    pub fn with_capability_policy(
+        store: std::sync::Arc<dyn ContextualMemoryStore>,
+        resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+        broker: Option<std::sync::Arc<dyn MemorySubscriptionBroker>>,
+        capability_policy: std::sync::Arc<dyn CapabilityPolicy>,
+    ) -> Self {
         Self {
             store,
             resolver,
-            broker: Some(broker),
+            broker,
+            capability_policy,
         }
     }
 
@@ -60,6 +77,10 @@ impl MemoryService {
             Ok(op) => op,
             Err(e) => return map_validation_error(id, e),
         };
+        let required = required_capability_for_memory_operation(&operation);
+        if let Err(denied) = self.capability_policy.require(required) {
+            return capability_denied(id, denied);
+        }
         if let Err(msg) = validate_cwd_for_operation(context, &operation) {
             return invalid(id, msg);
         }
@@ -101,6 +122,9 @@ impl MemoryService {
     ) -> ClientResponse {
         if let Err(msg) = validate_session_id(&session_id) {
             return invalid(id, msg);
+        }
+        if let Err(denied) = self.capability_policy.require(Capability::MemoryRead) {
+            return capability_denied(id, denied);
         }
         if let Err(msg) = validate_cwd_for_query(context, &query) {
             return invalid(id, msg);
@@ -148,6 +172,9 @@ impl MemoryService {
     ) -> ClientResponse {
         if let Err(msg) = validate_session_id(&session_id) {
             return invalid(id, msg);
+        }
+        if let Err(denied) = self.capability_policy.require(Capability::MemoryRead) {
+            return capability_denied(id, denied);
         }
         let _ = context;
         let kinds = crate::domain::builtin_memory_kind_registry()
@@ -226,6 +253,13 @@ fn map_validation_error(id: String, err: MemoryValidationError) -> ClientRespons
 
 fn invalid(id: String, message: &str) -> ClientResponse {
     ClientResponse::error(id, ErrorCode::InvalidRequest, message)
+}
+
+fn capability_denied(
+    id: String,
+    denied: crate::ports::outbound::CapabilityDenied,
+) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, denied.message())
 }
 
 fn current_time_ms() -> u64 {

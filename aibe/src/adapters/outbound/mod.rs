@@ -1,3 +1,4 @@
+mod capability_policy;
 mod contextual_memory_store;
 mod conversation_store;
 mod env_config;
@@ -16,6 +17,7 @@ pub mod tools;
 pub use crate::ports::outbound::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStoreError,
 };
+pub use capability_policy::StaticCapabilityPolicy;
 pub use contextual_memory_store::{EmptyContextualMemoryStore, FilesystemContextualMemoryStore};
 pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;

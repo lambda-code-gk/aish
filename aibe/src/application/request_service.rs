@@ -10,9 +10,9 @@ use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    ContextualMemoryStore, ConversationStore, MemorySpaceResolver, MemorySubscriptionBroker,
-    ProfileRegistry, RouterConfig, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig,
-    TurnCancellation, TurnEventSink,
+    CapabilityPolicy, ContextualMemoryStore, ConversationStore, MemorySpaceResolver,
+    MemorySubscriptionBroker, ProfileRegistry, RouterConfig, ShellExecApprovalGate,
+    ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::{
     ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody, ProtocolMessage,
@@ -34,6 +34,7 @@ pub struct RequestService {
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
+    capability_policy: Arc<dyn CapabilityPolicy>,
 }
 
 impl RequestService {
@@ -49,7 +50,34 @@ impl RequestService {
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
         memory_broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
-        Self::new_with_turns(
+        Self::new_with_capability_policy(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            router_profile,
+            conversation_store,
+            memory_store,
+            memory_space_resolver,
+            memory_broker,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_capability_policy(
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+    ) -> Self {
+        Self::new_with_turns_and_capability_policy(
             profile_registry,
             tool_registry,
             tools_config,
@@ -60,6 +88,7 @@ impl RequestService {
             memory_store,
             memory_space_resolver,
             memory_broker,
+            capability_policy,
         )
     }
 
@@ -76,6 +105,35 @@ impl RequestService {
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
         memory_broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
+        Self::new_with_turns_and_capability_policy(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            active_turns,
+            router_profile,
+            conversation_store,
+            memory_store,
+            memory_space_resolver,
+            memory_broker,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_turns_and_capability_policy(
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+    ) -> Self {
         Self {
             profile_registry,
             tool_registry,
@@ -87,6 +145,7 @@ impl RequestService {
             memory_store,
             memory_space_resolver,
             memory_broker,
+            capability_policy,
         }
     }
 
@@ -150,34 +209,40 @@ impl RequestService {
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
             ClientRequest::MemoryApply(body) => {
-                let service = MemoryService::with_broker(
+                let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
-                    Arc::clone(&self.memory_broker),
+                    Some(Arc::clone(&self.memory_broker)),
+                    Arc::clone(&self.capability_policy),
                 );
                 service.apply(body.id, body.session_id, &body.context, body.operation)
             }
             ClientRequest::MemoryQuery(body) => {
-                let service = MemoryService::new(
+                let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    None,
+                    Arc::clone(&self.capability_policy),
                 );
                 service.query(body.id, body.session_id, &body.context, body.query)
             }
             ClientRequest::MemoryKindList(body) => {
-                let service = MemoryService::new(
+                let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    None,
+                    Arc::clone(&self.capability_policy),
                 );
                 service.kind_list(body.id, body.session_id, &body.context)
             }
             ClientRequest::MemoryRecipeRun(body) => {
                 let service =
-                    crate::application::memory_recipe_service::MemoryRecipeService::with_broker(
+                    crate::application::memory_recipe_service::MemoryRecipeService::with_capability_policy(
                         Arc::clone(&self.memory_store),
                         Arc::clone(&self.memory_space_resolver),
                         self.profile_registry.clone(),
-                        Arc::clone(&self.memory_broker),
+                        Some(Arc::clone(&self.memory_broker)),
+                        Arc::clone(&self.capability_policy),
                     );
                 service
                     .run(
@@ -247,13 +312,14 @@ impl RequestService {
                     Arc::clone(&self.tool_registry),
                     self.tools_config.clone(),
                 );
-                let agent_turn = AgentTurnService::new(
+                let agent_turn = AgentTurnService::with_capability_policy(
                     Arc::clone(llm),
                     executor,
                     Arc::clone(&self.terminator),
                     termination_capability,
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    Arc::clone(&self.capability_policy),
                 );
                 let turn_id = id.clone();
                 if let Some(cancel) = cancellation.clone() {
@@ -331,9 +397,10 @@ impl RequestService {
     ) -> anyhow::Result<()> {
         use crate::application::memory_subscribe_service::MemorySubscribeService;
 
-        let service = MemorySubscribeService::new(
+        let service = MemorySubscribeService::with_capability_policy(
             Arc::clone(&self.memory_broker),
             Arc::clone(&self.memory_space_resolver),
+            Arc::clone(&self.capability_policy),
         );
         let (response, subscription) = service.begin(body.clone());
         MemorySubscribeService::write_response_line(&writer, &response).await?;

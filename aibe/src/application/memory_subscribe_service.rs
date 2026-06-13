@@ -10,12 +10,15 @@ use aibe_protocol::{
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::domain::MemorySubscriptionFilter;
-use crate::ports::outbound::{MemorySpaceResolver, MemorySubscription, MemorySubscriptionBroker};
+use crate::domain::{Capability, MemorySubscriptionFilter};
+use crate::ports::outbound::{
+    CapabilityPolicy, MemorySpaceResolver, MemorySubscription, MemorySubscriptionBroker,
+};
 
 pub struct MemorySubscribeService {
     broker: Arc<dyn MemorySubscriptionBroker>,
     resolver: Arc<dyn MemorySpaceResolver>,
+    capability_policy: Arc<dyn CapabilityPolicy>,
 }
 
 impl MemorySubscribeService {
@@ -23,7 +26,23 @@ impl MemorySubscribeService {
         broker: Arc<dyn MemorySubscriptionBroker>,
         resolver: Arc<dyn MemorySpaceResolver>,
     ) -> Self {
-        Self { broker, resolver }
+        Self::with_capability_policy(
+            broker,
+            resolver,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
+    }
+
+    pub fn with_capability_policy(
+        broker: Arc<dyn MemorySubscriptionBroker>,
+        resolver: Arc<dyn MemorySpaceResolver>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+    ) -> Self {
+        Self {
+            broker,
+            resolver,
+            capability_policy,
+        }
     }
 
     pub fn begin(
@@ -32,6 +51,9 @@ impl MemorySubscribeService {
     ) -> (ClientResponse, Option<MemorySubscription>) {
         if let Err(msg) = validate_session_id(&body.session_id) {
             return (invalid(body.id, msg), None);
+        }
+        if let Err(denied) = self.capability_policy.require(Capability::MemorySubscribe) {
+            return (capability_denied(body.id, denied), None);
         }
         let cwd_path = body.context.cwd.as_deref().map(Path::new);
         let store_ctx =
@@ -140,4 +162,11 @@ fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
 
 fn invalid(id: String, message: &str) -> ClientResponse {
     ClientResponse::error(id, ErrorCode::InvalidRequest, message)
+}
+
+fn capability_denied(
+    id: String,
+    denied: crate::ports::outbound::CapabilityDenied,
+) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, denied.message())
 }

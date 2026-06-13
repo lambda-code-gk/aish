@@ -1,3 +1,4 @@
+pub mod capability_policy;
 pub mod command_policy;
 pub mod config;
 pub mod contextual_memory_store;
@@ -13,6 +14,7 @@ pub mod tool_round_terminator;
 pub mod tools;
 pub mod turn_events;
 
+pub use capability_policy::{CapabilityDenied, CapabilityPolicy};
 pub use command_policy::CommandPolicy;
 pub use config::{
     default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,

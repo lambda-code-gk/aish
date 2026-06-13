@@ -7,8 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::domain::Capability;
 use crate::domain::ClientCwd;
-use crate::ports::outbound::ShellExecApprovalGate;
+use crate::ports::outbound::{CapabilityDenied, CapabilityPolicy, ShellExecApprovalGate};
 
 /// 1 回の `agent_turn` に紐づく実行コンテキスト。
 #[derive(Clone)]
@@ -17,6 +18,7 @@ pub struct ToolExecutionContext {
     client_cwd: ClientCwd,
     turn_id: String,
     approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+    capability_policy: Option<Arc<dyn CapabilityPolicy>>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -25,6 +27,10 @@ impl std::fmt::Debug for ToolExecutionContext {
             .field("client_cwd", &self.client_cwd)
             .field("turn_id", &self.turn_id)
             .field("approval_gate", &self.approval_gate.is_some())
+            .field(
+                "capability_policy",
+                &self.capability_policy.as_ref().map(|p| p.profile_name()),
+            )
             .finish()
     }
 }
@@ -34,6 +40,8 @@ impl PartialEq for ToolExecutionContext {
         self.client_cwd == other.client_cwd
             && self.turn_id == other.turn_id
             && self.approval_gate.is_some() == other.approval_gate.is_some()
+            && self.capability_policy.as_ref().map(|p| p.profile_name())
+                == other.capability_policy.as_ref().map(|p| p.profile_name())
     }
 }
 
@@ -45,6 +53,7 @@ impl ToolExecutionContext {
             client_cwd,
             turn_id: String::new(),
             approval_gate: None,
+            capability_policy: None,
         }
     }
 
@@ -56,6 +65,26 @@ impl ToolExecutionContext {
     pub fn with_approval_gate(mut self, gate: Arc<dyn ShellExecApprovalGate>) -> Self {
         self.approval_gate = Some(gate);
         self
+    }
+
+    pub fn with_capability_policy(mut self, policy: Arc<dyn CapabilityPolicy>) -> Self {
+        self.capability_policy = Some(policy);
+        self
+    }
+
+    pub fn capability_policy(&self) -> Option<&Arc<dyn CapabilityPolicy>> {
+        self.capability_policy.as_ref()
+    }
+
+    /// capability check（policy 未設定時は fail-closed）。
+    pub fn require_capability(&self, capability: Capability) -> Result<(), CapabilityDenied> {
+        match self.capability_policy.as_ref() {
+            Some(policy) => policy.require(capability),
+            None => Err(CapabilityDenied {
+                capability,
+                profile: "missing_policy".into(),
+            }),
+        }
     }
 
     pub fn turn_id(&self) -> &str {

@@ -6,8 +6,8 @@ use std::sync::Arc;
 use crate::application::tool_defs::definitions_for;
 use crate::application::tool_round::rejected::rejected_tool_result;
 use crate::domain::{
-    is_known_tool, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName, ToolRiskClass,
-    GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+    is_known_tool, Capability, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName,
+    ToolRiskClass, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
 };
 use crate::ports::outbound::{
     LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig, TurnCancellation,
@@ -185,7 +185,32 @@ impl ToolRoundExecutor {
                         format!("model requested disallowed tool: {}", tc.name),
                     )
                 } else if let Some(executor) = self.registry.get(&name) {
-                    if let Some(cancel) = cancellation {
+                    if name.as_str() == SHELL_EXEC {
+                        if let Err(denied) = tool_ctx.require_capability(Capability::ShellExecute) {
+                            rejected_tool_result(tc, "capability_denied", denied.message())
+                        } else if let Some(cancel) = cancellation {
+                            tokio::select! {
+                                res = executor.execute(
+                                    &tc.id,
+                                    &tc.arguments,
+                                    self.tools_config.exec_timeout_ms,
+                                    tool_ctx,
+                                ) => res,
+                                _ = cancel.wait() => {
+                                    return Ok(RoundOutcome::Cancelled { executed });
+                                }
+                            }
+                        } else {
+                            executor
+                                .execute(
+                                    &tc.id,
+                                    &tc.arguments,
+                                    self.tools_config.exec_timeout_ms,
+                                    tool_ctx,
+                                )
+                                .await
+                        }
+                    } else if let Some(cancel) = cancellation {
                         tokio::select! {
                             res = executor.execute(
                                 &tc.id,

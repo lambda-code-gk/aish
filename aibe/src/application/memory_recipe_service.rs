@@ -10,11 +10,12 @@ use aibe_protocol::{
 
 use crate::domain::{
     build_clarify_goal_messages, builtin_memory_kind_registry, collect_clarify_goal_materials,
-    parse_and_validate_recipe_output, publish_memory_changes, MemoryRecipeError,
+    parse_and_validate_recipe_output, publish_memory_changes,
+    required_capabilities_for_memory_operations, Capability, MemoryRecipeError,
     RECIPE_CLARIFY_GOAL,
 };
 use crate::ports::outbound::{
-    ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
+    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
     MemorySubscriptionBroker, ProfileRegistry,
 };
 
@@ -23,6 +24,7 @@ pub struct MemoryRecipeService {
     resolver: Arc<dyn MemorySpaceResolver>,
     profile_registry: ProfileRegistry,
     broker: Option<Arc<dyn MemorySubscriptionBroker>>,
+    capability_policy: Arc<dyn CapabilityPolicy>,
 }
 
 impl MemoryRecipeService {
@@ -31,12 +33,13 @@ impl MemoryRecipeService {
         resolver: Arc<dyn MemorySpaceResolver>,
         profile_registry: ProfileRegistry,
     ) -> Self {
-        Self {
+        Self::with_capability_policy(
             store,
             resolver,
             profile_registry,
-            broker: None,
-        }
+            None,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
     }
 
     pub fn with_broker(
@@ -45,11 +48,28 @@ impl MemoryRecipeService {
         profile_registry: ProfileRegistry,
         broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
+        Self::with_capability_policy(
+            store,
+            resolver,
+            profile_registry,
+            Some(broker),
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
+    }
+
+    pub fn with_capability_policy(
+        store: Arc<dyn ContextualMemoryStore>,
+        resolver: Arc<dyn MemorySpaceResolver>,
+        profile_registry: ProfileRegistry,
+        broker: Option<Arc<dyn MemorySubscriptionBroker>>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+    ) -> Self {
         Self {
             store,
             resolver,
             profile_registry,
-            broker: Some(broker),
+            broker,
+            capability_policy,
         }
     }
 
@@ -64,6 +84,12 @@ impl MemoryRecipeService {
     ) -> ClientResponse {
         if let Err(msg) = validate_session_id(&session_id) {
             return invalid(id, msg);
+        }
+        if let Err(denied) = self.capability_policy.require(Capability::MemoryRecipeRun) {
+            return capability_denied(id, denied);
+        }
+        if let Err(denied) = self.capability_policy.require(Capability::MemoryRead) {
+            return capability_denied(id, denied);
         }
         if context.cwd.as_deref().is_none_or(str::is_empty) {
             return invalid(id, "cwd is required for memory recipes");
@@ -133,6 +159,14 @@ impl MemoryRecipeService {
             };
         }
 
+        for cap in required_capabilities_for_memory_operations(
+            validated.proposals.iter().map(|p| &p.operation),
+        ) {
+            if let Err(denied) = self.capability_policy.require(cap) {
+                return capability_denied(id, denied);
+            }
+        }
+
         let now_ms = current_time_ms();
         let mut applied_entries = Vec::new();
         let mut applied_domain_entries = Vec::new();
@@ -183,6 +217,13 @@ fn map_recipe_error(id: String, err: MemoryRecipeError) -> ClientResponse {
 
 fn invalid(id: String, message: &str) -> ClientResponse {
     ClientResponse::error(id, ErrorCode::InvalidRequest, message)
+}
+
+fn capability_denied(
+    id: String,
+    denied: crate::ports::outbound::CapabilityDenied,
+) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, denied.message())
 }
 
 fn current_time_ms() -> u64 {

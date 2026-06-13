@@ -5,11 +5,11 @@ use std::sync::Arc;
 use crate::application::llm_error::client_response_for_llm_error;
 use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
-use crate::domain::{AgentTurnContext, ChatMessage, ToolName};
+use crate::domain::{AgentTurnContext, Capability, ChatMessage, ToolName, SHELL_EXEC};
 use crate::ports::outbound::{
-    ContextualMemoryStore, LlmProvider, MemorySpaceResolver, ShellExecApprovalGate,
-    TerminationCapability, ToolExecutionContext, ToolRoundTerminator, TurnCancellation,
-    TurnEventSink,
+    CapabilityPolicy, ContextualMemoryStore, LlmProvider, MemorySpaceResolver,
+    ShellExecApprovalGate, TerminationCapability, ToolExecutionContext, ToolRoundTerminator,
+    TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES;
 use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase};
@@ -23,6 +23,7 @@ pub struct AgentTurnService {
     termination_capability: TerminationCapability,
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+    capability_policy: Arc<dyn CapabilityPolicy>,
 }
 
 impl AgentTurnService {
@@ -34,6 +35,26 @@ impl AgentTurnService {
         memory_store: Arc<dyn ContextualMemoryStore>,
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     ) -> Self {
+        Self::with_capability_policy(
+            llm,
+            executor,
+            terminator,
+            termination_capability,
+            memory_store,
+            memory_space_resolver,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        )
+    }
+
+    pub fn with_capability_policy(
+        llm: Arc<dyn LlmProvider>,
+        executor: ToolRoundExecutor,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        termination_capability: TerminationCapability,
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+    ) -> Self {
         Self {
             llm,
             executor,
@@ -41,6 +62,7 @@ impl AgentTurnService {
             termination_capability,
             memory_store,
             memory_space_resolver,
+            capability_policy,
         }
     }
 
@@ -75,6 +97,15 @@ impl AgentTurnService {
             );
         }
 
+        if let Err(denied) = self.capability_policy.require(Capability::AgentAsk) {
+            return ClientResponse::error(id, ErrorCode::InvalidRequest, denied.message());
+        }
+        if tools.iter().any(|t| t.as_str() == SHELL_EXEC) {
+            if let Err(denied) = self.capability_policy.require(Capability::ShellPropose) {
+                return ClientResponse::error(id, ErrorCode::InvalidRequest, denied.message());
+            }
+        }
+
         let conversation = prepare_turn_messages(
             messages,
             &context,
@@ -103,7 +134,8 @@ impl AgentTurnService {
                 .clone()
                 .expect("validate_tools_enabled ensures cwd"),
         )
-        .with_turn_id(id.clone());
+        .with_turn_id(id.clone())
+        .with_capability_policy(Arc::clone(&self.capability_policy));
         if let Some(gate) = approval_gate {
             tool_ctx = tool_ctx.with_approval_gate(gate);
         }

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 
-use crate::domain::{ExecutedToolCall, ShellExecApprovalOutcome, ToolName, ToolResult};
+use crate::domain::{Capability, ExecutedToolCall, ShellExecApprovalOutcome, ToolName, ToolResult};
 use crate::ports::outbound::{
     CommandPolicy, ExternalCommandConfig, ShellExecApprovalMode, ToolExecutionContext, ToolExecutor,
 };
@@ -77,6 +77,24 @@ impl ToolExecutor for ShellExecTool {
     ) -> (ExecutedToolCall, ToolResult) {
         let id = tool_call_id.to_string();
         let args_value = arguments.clone();
+
+        if let Err(denied) = ctx.require_capability(Capability::ShellExecute) {
+            let msg = denied.message();
+            return (
+                ExecutedToolCall::err(
+                    id.clone(),
+                    self.name(),
+                    args_value,
+                    "capability_denied",
+                    &msg,
+                ),
+                ToolResult {
+                    tool_call_id: id,
+                    content: msg,
+                    is_error: true,
+                },
+            );
+        }
 
         if !self.policy.shell_exec_enabled() {
             let msg = "shell_exec is disabled in server config";
@@ -386,10 +404,16 @@ mod tests {
     use super::*;
     use crate::adapters::outbound::tools::subprocess::{run_subprocess, ShellRunOutcome};
     use crate::adapters::outbound::tools::ConfigAllowlistPolicy;
+    use crate::adapters::outbound::StaticCapabilityPolicy;
     use crate::domain::{ClientCwd, ToolApprovalState};
-    use crate::ports::outbound::{ShellExecApprovalMode, ShellExecConfig};
+    use crate::ports::outbound::{ShellExecApprovalMode, ShellExecConfig, ToolExecutionContext};
     use serde_json::json;
     use tempfile::tempdir;
+
+    fn shell_ctx(client_cwd: ClientCwd) -> ToolExecutionContext {
+        ToolExecutionContext::new(client_cwd)
+            .with_capability_policy(StaticCapabilityPolicy::local_full())
+    }
 
     fn process_reaped(pid: u32) -> bool {
         if pid == 0 {
@@ -417,8 +441,7 @@ mod tests {
             ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
-        let ctx =
-            ToolExecutionContext::new(ClientCwd::new(client_sub).expect("absolute client cwd"));
+        let ctx = shell_ctx(ClientCwd::new(client_sub).expect("absolute client cwd"));
         let args = json!({ "command": "cat", "args": ["note.txt"] });
 
         let (_record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
@@ -482,9 +505,8 @@ mod tests {
             ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
-        let ctx = ToolExecutionContext::new(
-            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
-        );
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"));
         let args = json!({ "command": "echo", "args": ["hi"] });
 
         let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
@@ -507,9 +529,8 @@ mod tests {
             ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
-        let ctx = ToolExecutionContext::new(
-            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
-        );
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"));
         let args = json!({ "command": "echo", "args": ["hi"] });
 
         let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
@@ -552,11 +573,10 @@ mod tests {
             ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
-        let ctx = ToolExecutionContext::new(
-            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
-        )
-        .with_turn_id("turn-1")
-        .with_approval_gate(Arc::new(DenyGate));
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"))
+                .with_turn_id("turn-1")
+                .with_approval_gate(Arc::new(DenyGate));
         let args = json!({ "command": "echo", "args": ["hi"] });
 
         let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
@@ -585,9 +605,8 @@ mod tests {
             timeout_secs: 30,
         }];
         let tool = ShellExecTool::new(policy, 4096, external_commands);
-        let ctx = ToolExecutionContext::new(
-            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
-        );
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"));
         let args = json!({ "command": "echo", "args": ["hi"] });
 
         let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
@@ -607,9 +626,8 @@ mod tests {
             ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
-        let ctx = ToolExecutionContext::new(
-            ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"),
-        );
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"));
         let args = json!({ "command": "sleep", "args": ["5"] });
 
         let (record, result) = tool.execute("tc1", &args, 100, &ctx).await;

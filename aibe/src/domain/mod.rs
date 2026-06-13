@@ -1,6 +1,7 @@
 //! ドメインモデル（外部 I/O に依存しない）。
 
 mod agent_turn_context;
+mod capability;
 mod client_cwd;
 mod contextual_memory;
 mod llm_step;
@@ -15,6 +16,10 @@ mod tool;
 mod tool_execution_summary;
 
 pub use agent_turn_context::{AgentTurnContext, ContextError};
+pub use capability::{
+    required_capabilities_for_memory_operations, required_capability_for_memory_operation,
+    Capability,
+};
 pub use client_cwd::{ClientCwd, ClientCwdError};
 pub use contextual_memory::{
     format_memory_block, is_standard_kind, query_matches_idea_on_demand,
