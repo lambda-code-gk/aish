@@ -10,9 +10,9 @@ use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    CapabilityPolicy, ContextualMemoryStore, ConversationStore, MemorySpaceResolver,
-    MemorySubscriptionBroker, ProfileRegistry, RouterConfig, ShellExecApprovalGate,
-    ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
+    CapabilityPolicy, ContextualMemoryStore, ConversationStore, MemoryKindRegistryLoader,
+    MemorySpaceResolver, MemorySubscriptionBroker, ProfileRegistry, RouterConfig,
+    ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::{
     ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody, ProtocolMessage,
@@ -33,6 +33,7 @@ pub struct RequestService {
     conversation_store: Arc<dyn ConversationStore>,
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+    memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
     capability_policy: Arc<dyn CapabilityPolicy>,
 }
@@ -89,6 +90,37 @@ impl RequestService {
             memory_space_resolver,
             memory_broker,
             capability_policy,
+            crate::adapters::outbound::shared_builtin_loader(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_capability_policy_and_registry_loader(
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+        memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    ) -> Self {
+        Self::new_with_turns_and_capability_policy(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            Arc::new(Mutex::new(HashMap::new())),
+            router_profile,
+            conversation_store,
+            memory_store,
+            memory_space_resolver,
+            memory_broker,
+            capability_policy,
+            memory_kind_registry_loader,
         )
     }
 
@@ -117,6 +149,37 @@ impl RequestService {
             memory_space_resolver,
             memory_broker,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+            crate::adapters::outbound::shared_builtin_loader(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_turns_and_registry_loader(
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
+        memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    ) -> Self {
+        Self::new_with_turns_and_capability_policy(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            active_turns,
+            router_profile,
+            conversation_store,
+            memory_store,
+            memory_space_resolver,
+            memory_broker,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+            memory_kind_registry_loader,
         )
     }
 
@@ -133,6 +196,7 @@ impl RequestService {
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
         memory_broker: Arc<dyn MemorySubscriptionBroker>,
         capability_policy: Arc<dyn CapabilityPolicy>,
+        memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
     ) -> Self {
         Self {
             profile_registry,
@@ -144,6 +208,7 @@ impl RequestService {
             conversation_store,
             memory_store,
             memory_space_resolver,
+            memory_kind_registry_loader,
             memory_broker,
             capability_policy,
         }
@@ -212,6 +277,7 @@ impl RequestService {
                 let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    Arc::clone(&self.memory_kind_registry_loader),
                     Some(Arc::clone(&self.memory_broker)),
                     Arc::clone(&self.capability_policy),
                 );
@@ -221,6 +287,7 @@ impl RequestService {
                 let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    Arc::clone(&self.memory_kind_registry_loader),
                     None,
                     Arc::clone(&self.capability_policy),
                 );
@@ -230,6 +297,7 @@ impl RequestService {
                 let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
+                    Arc::clone(&self.memory_kind_registry_loader),
                     None,
                     Arc::clone(&self.capability_policy),
                 );
@@ -240,6 +308,7 @@ impl RequestService {
                     crate::application::memory_recipe_service::MemoryRecipeService::with_capability_policy(
                         Arc::clone(&self.memory_store),
                         Arc::clone(&self.memory_space_resolver),
+                        Arc::clone(&self.memory_kind_registry_loader),
                         self.profile_registry.clone(),
                         Some(Arc::clone(&self.memory_broker)),
                         Arc::clone(&self.capability_policy),

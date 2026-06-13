@@ -458,6 +458,17 @@ mod tests {
                 content: String::new(),
             })
         }
+
+        fn resolve_for_prompt_explicit(
+            &self,
+            _ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
+            _user_query: &str,
+            _budget_bytes: usize,
+        ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
+            Ok(MemoryBlock {
+                content: String::new(),
+            })
+        }
     }
 
     struct NoopMemorySpaceResolver;
@@ -514,6 +525,17 @@ mod tests {
         }
 
         fn resolve_for_prompt(
+            &self,
+            ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
+            _user_query: &str,
+            _budget_bytes: usize,
+        ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
+            Ok(MemoryBlock {
+                content: format!("[memory from {}]", ctx.memory_space_id),
+            })
+        }
+
+        fn resolve_for_prompt_explicit(
             &self,
             ctx: &crate::ports::outbound::MemoryStoreContext<'_>,
             _user_query: &str,

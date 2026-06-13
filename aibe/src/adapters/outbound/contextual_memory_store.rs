@@ -4,20 +4,21 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use aibe_protocol::{
     is_valid_session_id, legacy_session_memory_space_id, MemoryOperationDto, MemoryQueryDto,
     MemoryScopeDto, MemoryStatusDto,
 };
 
-use crate::domain::builtin_memory_kind_registry;
+use crate::adapters::outbound::FilesystemMemoryKindRegistryLoader;
 use crate::domain::resolve_entries_for_prompt;
 use crate::domain::{
     validate_kind, validate_standard_kind_operation, validate_text, MemoryBlock, MemoryEntry,
     MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError, ProjectKeyError,
 };
 use crate::ports::outbound::{
-    ContextualMemoryStore, ContextualMemoryStoreError, MemoryStoreContext,
+    ContextualMemoryStore, ContextualMemoryStoreError, MemoryKindRegistryLoader, MemoryStoreContext,
 };
 
 /// テスト・既存経路向けの no-op store（常に空）。
@@ -52,16 +53,46 @@ impl ContextualMemoryStore for EmptyContextualMemoryStore {
             content: String::new(),
         })
     }
+
+    fn resolve_for_prompt_explicit(
+        &self,
+        _ctx: &MemoryStoreContext<'_>,
+        _user_query: &str,
+        _budget_bytes: usize,
+    ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
+        Ok(MemoryBlock {
+            content: String::new(),
+        })
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FilesystemContextualMemoryStore {
     aibe_root: PathBuf,
+    registry_loader: Arc<dyn MemoryKindRegistryLoader>,
 }
 
 impl FilesystemContextualMemoryStore {
     pub fn new(aibe_root: PathBuf) -> Self {
-        Self { aibe_root }
+        let loader = Arc::new(FilesystemMemoryKindRegistryLoader::new(aibe_root.clone()));
+        Self {
+            aibe_root,
+            registry_loader: loader,
+        }
+    }
+
+    pub fn with_registry_loader(
+        aibe_root: PathBuf,
+        registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    ) -> Self {
+        Self {
+            aibe_root,
+            registry_loader,
+        }
+    }
+
+    pub fn registry_loader(&self) -> Arc<dyn MemoryKindRegistryLoader> {
+        Arc::clone(&self.registry_loader)
     }
 
     pub fn with_aibe_root(aibe_root: PathBuf) -> Self {
@@ -257,6 +288,10 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
         let project_key = Self::project_key_from_cwd(ctx.cwd)?;
         let memory_space_id = ctx.memory_space_id.as_str();
         let session_id = ctx.session_id;
+        let registry = self
+            .registry_loader
+            .load_strict(memory_space_id)
+            .map_err(ContextualMemoryStoreError::Registry)?;
         self.with_space_lock(memory_space_id, || {
             // 書き込み時は legacy space でも new layout へ seed し、
             // append 後に legacy data が見えなくなる分裂を防ぐ。
@@ -288,8 +323,10 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                         )
                     })?;
                     let make_active = add.make_active.unwrap_or(false);
-                    if builtin_memory_kind_registry().is_registered(kind) {
-                        validate_standard_kind_operation(kind, scope_dto, inject_dto, status_dto)?;
+                    if registry.is_registered(kind) {
+                        validate_standard_kind_operation(
+                            &registry, kind, scope_dto, inject_dto, status_dto,
+                        )?;
                     }
                     let scope = MemoryScope::try_from(scope_dto).map_err(|_| {
                         ContextualMemoryStoreError::Validation(MemoryValidationError::InvalidKind(
@@ -393,8 +430,7 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                             MemoryValidationError::MissingCwdForProjectScope,
                         ));
                     }
-                    let (from_status, to_status) =
-                        builtin_memory_kind_registry().clear_transition(kind);
+                    let (from_status, to_status) = registry.clear_transition(kind);
                     let mut entries = self.load_entries(memory_space_id, session_id)?;
                     let mut affected = Vec::new();
                     for entry in entries.iter_mut() {
@@ -483,17 +519,47 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
         user_query: &str,
         budget_bytes: usize,
     ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
+        self.resolve_for_prompt_inner(ctx, user_query, budget_bytes, false)
+    }
+
+    fn resolve_for_prompt_explicit(
+        &self,
+        ctx: &MemoryStoreContext<'_>,
+        user_query: &str,
+        budget_bytes: usize,
+    ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
+        self.resolve_for_prompt_inner(ctx, user_query, budget_bytes, true)
+    }
+}
+
+impl FilesystemContextualMemoryStore {
+    fn resolve_for_prompt_inner(
+        &self,
+        ctx: &MemoryStoreContext<'_>,
+        user_query: &str,
+        budget_bytes: usize,
+        strict_registry: bool,
+    ) -> Result<MemoryBlock, ContextualMemoryStoreError> {
         if ctx.session_id.is_empty() {
             return Ok(MemoryBlock {
                 content: String::new(),
             });
         }
         let project_key = Self::project_key_from_cwd(ctx.cwd)?;
+        let registry = if strict_registry {
+            self.registry_loader
+                .load_strict(ctx.memory_space_id.as_str())
+                .map_err(ContextualMemoryStoreError::Registry)?
+        } else {
+            self.registry_loader
+                .load_best_effort(ctx.memory_space_id.as_str())
+        };
         let entries = self.with_space_lock(ctx.memory_space_id.as_str(), || {
             self.load_entries(ctx.memory_space_id.as_str(), ctx.session_id)
         })?;
         Ok(resolve_entries_for_prompt(
             &entries,
+            &registry,
             project_key.as_deref(),
             ctx.session_id,
             user_query,

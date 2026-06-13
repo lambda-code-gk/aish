@@ -4,6 +4,7 @@ pub mod config;
 pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod llm;
+pub mod memory_kind_registry_loader;
 pub mod memory_space_resolver;
 pub mod memory_subscription_broker;
 pub mod shell_exec_approval;
@@ -32,6 +33,7 @@ pub use conversation_store::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStore, ConversationStoreError,
 };
 pub use llm::{LlmError, LlmProvider};
+pub use memory_kind_registry_loader::MemoryKindRegistryLoader;
 pub use memory_space_resolver::MemorySpaceResolver;
 pub use memory_subscription_broker::{MemorySubscription, MemorySubscriptionBroker};
 pub use shell_exec_approval::ShellExecApprovalGate;

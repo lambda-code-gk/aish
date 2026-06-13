@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::{
-    FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver, ScriptedMockLlm,
+    shared_builtin_loader, FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
+    ScriptedMockLlm,
 };
 use aibe::application::memory_recipe_service::MemoryRecipeService;
 use aibe::domain::LlmStepResult;
@@ -100,6 +101,7 @@ fn recipe_service(store: Arc<dyn ContextualMemoryStore>, llm_json: &str) -> Memo
     MemoryRecipeService::new(
         store,
         Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only()),
     )
 }

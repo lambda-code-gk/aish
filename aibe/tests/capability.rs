@@ -5,8 +5,8 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
-    MockLlm, StaticCapabilityPolicy,
+    shared_builtin_loader, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
+    InProcessMemorySubscriptionBroker, MockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::memory_service::MemoryService;
 use aibe::application::memory_subscribe_service::MemorySubscribeService;
@@ -54,6 +54,7 @@ fn memory_service_with_policy(
     MemoryService::with_capability_policy(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
         None,
         policy,
     )
@@ -181,6 +182,7 @@ fn memory_archive_required_for_archive_operation() {
     let full_service = MemoryService::with_capability_policy(
         store.clone(),
         resolver.clone(),
+        shared_builtin_loader(),
         None,
         StaticCapabilityPolicy::local_full(),
     );
@@ -206,6 +208,7 @@ fn memory_archive_required_for_archive_operation() {
     let read_only_service = MemoryService::with_capability_policy(
         store.clone(),
         resolver.clone(),
+        shared_builtin_loader(),
         None,
         StaticCapabilityPolicy::memory_read_only(),
     );
@@ -457,6 +460,7 @@ async fn memory_recipe_run_requires_memory_recipe_run_capability() {
         aibe::application::memory_recipe_service::MemoryRecipeService::with_capability_policy(
             store,
             Arc::new(FilesystemMemorySpaceResolver),
+            shared_builtin_loader(),
             profile_registry,
             None,
             Arc::new(StaticCapabilityPolicy::new(
@@ -498,6 +502,7 @@ async fn memory_recipe_run_requires_memory_read() {
         aibe::application::memory_recipe_service::MemoryRecipeService::with_capability_policy(
             store,
             Arc::new(FilesystemMemorySpaceResolver),
+            shared_builtin_loader(),
             profile_registry,
             None,
             Arc::new(StaticCapabilityPolicy::new(

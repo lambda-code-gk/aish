@@ -35,25 +35,29 @@ pub async fn run(
     let conversation_store: Arc<dyn ConversationStore> = Arc::new(
         FilesystemConversationStore::new(conversation_store_root.clone()),
     );
-    let memory_store: Arc<dyn crate::ports::outbound::ContextualMemoryStore> = Arc::new(
-        FilesystemContextualMemoryStore::with_conversation_root(conversation_store_root),
-    );
+    let memory_store_impl =
+        FilesystemContextualMemoryStore::with_conversation_root(conversation_store_root.clone());
+    let memory_kind_registry_loader = memory_store_impl.registry_loader();
+    let memory_store: Arc<dyn crate::ports::outbound::ContextualMemoryStore> =
+        Arc::new(memory_store_impl);
     let memory_space_resolver: Arc<dyn crate::ports::outbound::MemorySpaceResolver> =
         Arc::new(FilesystemMemorySpaceResolver);
     let memory_broker: Arc<dyn crate::ports::outbound::MemorySubscriptionBroker> =
         Arc::new(InProcessMemorySubscriptionBroker::new());
-    let handler: Arc<dyn ClientRequestHandler> = Arc::new(RequestService::new_with_turns(
-        profile_registry,
-        tool_registry,
-        tools_config,
-        terminator,
-        Arc::clone(&active_turns),
-        router_profile,
-        conversation_store,
-        memory_store,
-        memory_space_resolver,
-        memory_broker,
-    ));
+    let handler: Arc<dyn ClientRequestHandler> =
+        Arc::new(RequestService::new_with_turns_and_registry_loader(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            Arc::clone(&active_turns),
+            router_profile,
+            conversation_store,
+            memory_store,
+            memory_space_resolver,
+            memory_broker,
+            memory_kind_registry_loader,
+        ));
 
     unix_socket_server::run(socket_path, handler).await
 }

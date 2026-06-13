@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::{
-    FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
+    shared_builtin_loader, FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
     InProcessMemorySubscriptionBroker,
 };
 use aibe::application::memory_service::MemoryService;
@@ -94,9 +94,9 @@ fn broker_unregisters_on_drop() {
 #[test]
 fn memory_apply_publishes_event() {
     let dir = tempdir().expect("tempdir");
-    let store: Arc<dyn aibe::ports::outbound::ContextualMemoryStore> = Arc::new(
-        FilesystemContextualMemoryStore::new(dir.path().to_path_buf()),
-    );
+    let store_impl = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
+    let loader = store_impl.registry_loader();
+    let store: Arc<dyn aibe::ports::outbound::ContextualMemoryStore> = Arc::new(store_impl);
     let broker: Arc<dyn MemorySubscriptionBroker> =
         Arc::new(InProcessMemorySubscriptionBroker::new());
     let resolver: Arc<dyn aibe::ports::outbound::MemorySpaceResolver> =
@@ -104,6 +104,7 @@ fn memory_apply_publishes_event() {
     let service = MemoryService::with_broker(
         Arc::clone(&store),
         Arc::clone(&resolver),
+        loader,
         Arc::clone(&broker),
     );
     let mut sub = broker.subscribe("ctx_sub".into(), MemorySubscriptionFilter::default());

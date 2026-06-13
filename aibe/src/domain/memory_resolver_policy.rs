@@ -92,6 +92,7 @@ impl MemoryResolverPolicy {
 
         let block = format_memory_block_with_budget(
             &selected,
+            input.registry,
             Some(input.current_session_id),
             input.budget_bytes,
         );

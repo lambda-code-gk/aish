@@ -1,4 +1,4 @@
-//! Memory kind 定義の正本（built-in registry）。
+//! Memory kind 定義の正本（built-in registry + user-defined merge）。
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -6,10 +6,51 @@ use std::sync::OnceLock;
 use aibe_protocol::{
     MemoryInjectPolicyDto, MemoryKindDefinitionDto, MemoryScopeDto, MemoryStatusDto,
 };
+use thiserror::Error;
 
 use super::contextual_memory::{
-    MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
+    validate_kind, MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
 };
+
+/// `kinds.toml` から読み込んだ 1 kind 分の override（未指定フィールドは `None`）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KindOverride {
+    pub description: Option<String>,
+    pub default_scope: Option<MemoryScope>,
+    pub default_inject: Option<MemoryInjectPolicy>,
+    pub default_status: Option<MemoryStatus>,
+    pub lifecycle: Option<MemoryLifecycle>,
+    pub cardinality: Option<MemoryCardinality>,
+    pub clear_from: Option<MemoryStatus>,
+    pub clear_to: Option<MemoryStatus>,
+    pub prompt: Option<PromptOverride>,
+    pub stale: Option<MemoryStalePolicy>,
+    pub dedicated_cli: Option<Option<String>>,
+    pub aliases: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PromptOverride {
+    pub auto_inject: Option<bool>,
+    pub on_demand: Option<bool>,
+    pub priority: Option<u32>,
+    pub keywords: Option<Vec<String>>,
+    pub max_entries: Option<Option<u32>>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum MemoryKindRegistryError {
+    #[error("kind registry io: {0}")]
+    Io(String),
+    #[error("kind registry parse: {0}")]
+    Parse(String),
+    #[error("kind registry override forbidden for builtin kind {kind}: {reason}")]
+    BuiltinOverrideForbidden { kind: String, reason: String },
+    #[error("kind registry custom kind {kind} missing required field: {field}")]
+    CustomKindMissingField { kind: String, field: String },
+    #[error("kind registry duplicate kind id: {0}")]
+    DuplicateKindId(String),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLifecycle {
@@ -185,6 +226,288 @@ impl MemoryKindRegistry {
         defs.sort_by_key(|d| d.prompt.priority);
         defs
     }
+
+    /// built-in を複製した registry（filesystem override merge の起点）。
+    pub fn from_builtin() -> Self {
+        Self::builtin()
+    }
+
+    /// server / memory-space-local の override を後勝ちで merge する。
+    pub fn merge_overrides(
+        &mut self,
+        overrides: &HashMap<String, KindOverride>,
+    ) -> Result<(), MemoryKindRegistryError> {
+        for (id, ov) in overrides {
+            validate_kind(id).map_err(|e| MemoryKindRegistryError::Parse(e.to_string()))?;
+            if let Some(existing) = self.kinds.get(id) {
+                if existing.builtin {
+                    self.apply_builtin_override(id, ov)?;
+                } else {
+                    self.apply_custom_override(id, ov)?;
+                }
+            } else {
+                self.insert_custom_kind(id, ov)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_builtin_override(
+        &mut self,
+        id: &str,
+        ov: &KindOverride,
+    ) -> Result<(), MemoryKindRegistryError> {
+        let base = self.kinds.get(id).expect("builtin kind").clone();
+        validate_builtin_override(&base, ov)?;
+        let def = self.kinds.get_mut(id).expect("builtin kind");
+        if let Some(description) = &ov.description {
+            def.description = description.clone();
+        }
+        if let Some(aliases) = &ov.aliases {
+            def.aliases = aliases.clone();
+        }
+        if let Some(stale) = ov.stale {
+            def.stale = stale;
+        }
+        if let Some(prompt_ov) = &ov.prompt {
+            apply_builtin_prompt_override(&mut def.prompt, prompt_ov);
+        }
+        Ok(())
+    }
+
+    fn apply_custom_override(
+        &mut self,
+        id: &str,
+        ov: &KindOverride,
+    ) -> Result<(), MemoryKindRegistryError> {
+        let base = self.kinds.get(id).expect("custom kind").clone();
+        let merged = merge_kind_definition(&base, ov);
+        self.kinds.insert(id.to_string(), merged);
+        Ok(())
+    }
+
+    fn insert_custom_kind(
+        &mut self,
+        id: &str,
+        ov: &KindOverride,
+    ) -> Result<(), MemoryKindRegistryError> {
+        let def = kind_from_override(id, ov)?;
+        if self.kinds.contains_key(id) {
+            return Err(MemoryKindRegistryError::DuplicateKindId(id.to_string()));
+        }
+        self.kinds.insert(id.to_string(), def);
+        Ok(())
+    }
+}
+
+fn apply_builtin_prompt_override(prompt: &mut MemoryPromptPolicy, ov: &PromptOverride) {
+    if let Some(priority) = ov.priority {
+        prompt.priority = priority;
+    }
+    if let Some(keywords) = &ov.keywords {
+        prompt.keywords = keywords.clone();
+    }
+    if let Some(max_entries) = ov.max_entries {
+        prompt.max_entries = max_entries;
+    }
+}
+
+fn apply_prompt_override(prompt: &mut MemoryPromptPolicy, ov: &PromptOverride) {
+    if let Some(auto_inject) = ov.auto_inject {
+        prompt.auto_inject = auto_inject;
+    }
+    if let Some(on_demand) = ov.on_demand {
+        prompt.on_demand = on_demand;
+    }
+    if let Some(priority) = ov.priority {
+        prompt.priority = priority;
+    }
+    if let Some(keywords) = &ov.keywords {
+        prompt.keywords = keywords.clone();
+    }
+    if let Some(max_entries) = ov.max_entries {
+        prompt.max_entries = max_entries;
+    }
+}
+
+fn merge_kind_definition(base: &MemoryKindDefinition, ov: &KindOverride) -> MemoryKindDefinition {
+    let mut def = base.clone();
+    if let Some(description) = &ov.description {
+        def.description = description.clone();
+    }
+    if let Some(scope) = ov.default_scope {
+        def.default_scope = scope;
+    }
+    if let Some(inject) = ov.default_inject {
+        def.default_inject = inject;
+    }
+    if let Some(status) = ov.default_status {
+        def.default_status = status;
+    }
+    if let Some(lifecycle) = ov.lifecycle {
+        def.lifecycle = lifecycle;
+    }
+    if let Some(cardinality) = ov.cardinality {
+        def.cardinality = cardinality;
+    }
+    if let Some(clear_from) = ov.clear_from {
+        def.clear_from = clear_from;
+    }
+    if let Some(clear_to) = ov.clear_to {
+        def.clear_to = clear_to;
+    }
+    if let Some(stale) = ov.stale {
+        def.stale = stale;
+    }
+    if let Some(dedicated_cli) = &ov.dedicated_cli {
+        def.dedicated_cli = dedicated_cli.clone();
+    }
+    if let Some(aliases) = &ov.aliases {
+        def.aliases = aliases.clone();
+    }
+    if let Some(prompt_ov) = &ov.prompt {
+        apply_prompt_override(&mut def.prompt, prompt_ov);
+    }
+    def
+}
+
+fn kind_from_override(
+    id: &str,
+    ov: &KindOverride,
+) -> Result<MemoryKindDefinition, MemoryKindRegistryError> {
+    macro_rules! require {
+        ($field:expr, $name:literal) => {
+            $field.ok_or_else(|| MemoryKindRegistryError::CustomKindMissingField {
+                kind: id.to_string(),
+                field: $name.to_string(),
+            })?
+        };
+    }
+    let description = require!(ov.description.clone(), "description");
+    let default_scope = require!(ov.default_scope, "default_scope");
+    let default_inject = require!(ov.default_inject, "default_inject");
+    let default_status = require!(ov.default_status, "default_status");
+    let lifecycle = require!(ov.lifecycle, "lifecycle");
+    let cardinality = require!(ov.cardinality, "cardinality");
+    let clear_from = require!(ov.clear_from, "clear_from");
+    let clear_to = require!(ov.clear_to, "clear_to");
+    let prompt = ov
+        .prompt
+        .as_ref()
+        .map(|p| MemoryPromptPolicy {
+            auto_inject: p.auto_inject.unwrap_or(false),
+            on_demand: p.on_demand.unwrap_or(false),
+            priority: p.priority.unwrap_or(100),
+            keywords: p.keywords.clone().unwrap_or_default(),
+            max_entries: p.max_entries.unwrap_or(Some(0)),
+        })
+        .unwrap_or(MemoryPromptPolicy {
+            auto_inject: false,
+            on_demand: false,
+            priority: 100,
+            keywords: vec![],
+            max_entries: Some(0),
+        });
+    Ok(MemoryKindDefinition {
+        id: id.to_string(),
+        description,
+        default_scope,
+        default_inject,
+        default_status,
+        lifecycle,
+        cardinality,
+        clear_from,
+        clear_to,
+        prompt,
+        stale: ov.stale.unwrap_or(MemoryStalePolicy::None),
+        builtin: false,
+        dedicated_cli: ov.dedicated_cli.clone().unwrap_or(None),
+        aliases: ov.aliases.clone().unwrap_or_default(),
+    })
+}
+
+fn validate_builtin_override(
+    base: &MemoryKindDefinition,
+    ov: &KindOverride,
+) -> Result<(), MemoryKindRegistryError> {
+    let forbidden = |reason: &str| MemoryKindRegistryError::BuiltinOverrideForbidden {
+        kind: base.id.clone(),
+        reason: reason.to_string(),
+    };
+    if let Some(scope) = ov.default_scope {
+        if scope != base.default_scope {
+            return Err(forbidden(
+                "default_scope cannot be changed for builtin kind",
+            ));
+        }
+    }
+    if let Some(inject) = ov.default_inject {
+        if inject != base.default_inject {
+            return Err(forbidden(
+                "default_inject cannot be changed for builtin kind",
+            ));
+        }
+    }
+    if let Some(status) = ov.default_status {
+        if status != base.default_status {
+            return Err(forbidden(
+                "default_status cannot be changed for builtin kind",
+            ));
+        }
+    }
+    if let Some(lifecycle) = ov.lifecycle {
+        if lifecycle != base.lifecycle {
+            return Err(forbidden("lifecycle cannot be changed for builtin kind"));
+        }
+    }
+    if let Some(cardinality) = ov.cardinality {
+        if cardinality != base.cardinality {
+            return Err(forbidden("cardinality cannot be changed for builtin kind"));
+        }
+    }
+    if let Some(clear_from) = ov.clear_from {
+        if clear_from != base.clear_from {
+            return Err(forbidden("clear_from cannot be changed for builtin kind"));
+        }
+    }
+    if let Some(clear_to) = ov.clear_to {
+        if clear_to != base.clear_to {
+            return Err(forbidden("clear_to cannot be changed for builtin kind"));
+        }
+    }
+    if base.id == "goal" && ov.cardinality == Some(MemoryCardinality::Multiple) {
+        return Err(forbidden("goal cannot be multiple"));
+    }
+    if base.id == "now" && ov.default_scope == Some(MemoryScope::Project) {
+        return Err(forbidden("now cannot be project scope"));
+    }
+    if base.id == "idea" {
+        let auto_inject = ov
+            .prompt
+            .as_ref()
+            .and_then(|p| p.auto_inject)
+            .unwrap_or(base.prompt.auto_inject);
+        let inject = ov.default_inject.unwrap_or(base.default_inject);
+        if auto_inject && inject == MemoryInjectPolicy::Pinned {
+            return Err(forbidden("idea cannot be pinned auto-inject"));
+        }
+        if ov.default_inject == Some(MemoryInjectPolicy::Pinned) && base.prompt.auto_inject {
+            return Err(forbidden("idea cannot be pinned auto-inject"));
+        }
+    }
+    if let Some(prompt_ov) = &ov.prompt {
+        if prompt_ov.auto_inject.is_some() {
+            return Err(forbidden(
+                "prompt.auto_inject cannot be changed for builtin kind",
+            ));
+        }
+        if prompt_ov.on_demand.is_some() {
+            return Err(forbidden(
+                "prompt.on_demand cannot be changed for builtin kind",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn builtin_memory_kind_registry() -> &'static MemoryKindRegistry {
@@ -565,5 +888,169 @@ mod tests {
                 MemoryStatusDto::Active,
             )
             .is_ok());
+    }
+
+    #[test]
+    fn builtin_override_allows_aliases_and_priority() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "goal".into(),
+            KindOverride {
+                description: Some("team goal".into()),
+                aliases: Some(vec!["goal".into(), "チーム目標".into()]),
+                prompt: Some(PromptOverride {
+                    priority: Some(5),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        reg.merge_overrides(&overrides).expect("merge");
+        let def = reg.get("goal").unwrap();
+        assert_eq!(def.description, "team goal");
+        assert_eq!(def.prompt.priority, 5);
+        assert!(def.aliases.contains(&"チーム目標".into()));
+    }
+
+    #[test]
+    fn builtin_override_rejects_goal_multiple() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "goal".into(),
+            KindOverride {
+                cardinality: Some(MemoryCardinality::Multiple),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(
+            reg.merge_overrides(&overrides),
+            Err(MemoryKindRegistryError::BuiltinOverrideForbidden { kind, .. }) if kind == "goal"
+        ));
+    }
+
+    #[test]
+    fn builtin_override_rejects_idea_pinned_auto_inject() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "idea".into(),
+            KindOverride {
+                default_inject: Some(MemoryInjectPolicy::Pinned),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(
+            reg.merge_overrides(&overrides),
+            Err(MemoryKindRegistryError::BuiltinOverrideForbidden { kind, .. }) if kind == "idea"
+        ));
+    }
+
+    #[test]
+    fn builtin_override_rejects_prompt_auto_inject_change() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "goal".into(),
+            KindOverride {
+                prompt: Some(PromptOverride {
+                    auto_inject: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(
+            reg.merge_overrides(&overrides),
+            Err(MemoryKindRegistryError::BuiltinOverrideForbidden { kind, .. }) if kind == "goal"
+        ));
+    }
+
+    #[test]
+    fn builtin_override_rejects_prompt_on_demand_change() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "idea".into(),
+            KindOverride {
+                prompt: Some(PromptOverride {
+                    on_demand: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(
+            reg.merge_overrides(&overrides),
+            Err(MemoryKindRegistryError::BuiltinOverrideForbidden { kind, .. }) if kind == "idea"
+        ));
+    }
+
+    #[test]
+    fn builtin_override_allows_keywords_and_priority() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "idea".into(),
+            KindOverride {
+                prompt: Some(PromptOverride {
+                    priority: Some(70),
+                    keywords: Some(vec!["custom-kw".into()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        reg.merge_overrides(&overrides).expect("merge");
+        let def = reg.get("idea").unwrap();
+        assert_eq!(def.prompt.priority, 70);
+        assert!(def.prompt.keywords.contains(&"custom-kw".into()));
+        assert!(!def.prompt.auto_inject);
+        assert!(def.prompt.on_demand);
+    }
+
+    #[test]
+    fn merge_rejects_invalid_kind_id() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "bad kind".into(),
+            KindOverride {
+                description: Some("x".into()),
+                default_scope: Some(MemoryScope::Project),
+                default_inject: Some(MemoryInjectPolicy::Manual),
+                default_status: Some(MemoryStatus::Open),
+                lifecycle: Some(MemoryLifecycle::OpenArchive),
+                cardinality: Some(MemoryCardinality::Multiple),
+                clear_from: Some(MemoryStatus::Open),
+                clear_to: Some(MemoryStatus::Archived),
+                ..Default::default()
+            },
+        );
+        assert!(reg.merge_overrides(&overrides).is_err());
+    }
+
+    #[test]
+    fn custom_kind_from_toml_override() {
+        let mut reg = registry();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "checklist".into(),
+            KindOverride {
+                description: Some("チェックリスト".into()),
+                default_scope: Some(MemoryScope::Project),
+                default_inject: Some(MemoryInjectPolicy::Manual),
+                default_status: Some(MemoryStatus::Open),
+                lifecycle: Some(MemoryLifecycle::OpenArchive),
+                cardinality: Some(MemoryCardinality::Multiple),
+                clear_from: Some(MemoryStatus::Open),
+                clear_to: Some(MemoryStatus::Archived),
+                aliases: Some(vec!["checklist".into()]),
+                ..Default::default()
+            },
+        );
+        reg.merge_overrides(&overrides).expect("merge");
+        assert!(reg.is_registered("checklist"));
     }
 }

@@ -9,19 +9,19 @@ use aibe_protocol::{
 };
 
 use crate::domain::{
-    build_clarify_goal_messages, builtin_memory_kind_registry, collect_clarify_goal_materials,
-    parse_and_validate_recipe_output, publish_memory_changes,
-    required_capabilities_for_memory_operations, Capability, MemoryRecipeError,
-    RECIPE_CLARIFY_GOAL,
+    build_clarify_goal_messages, collect_clarify_goal_materials, parse_and_validate_recipe_output,
+    publish_memory_changes, required_capabilities_for_memory_operations, Capability,
+    MemoryKindRegistryError, MemoryRecipeError, RECIPE_CLARIFY_GOAL,
 };
 use crate::ports::outbound::{
-    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
-    MemorySubscriptionBroker, ProfileRegistry,
+    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemoryKindRegistryLoader,
+    MemorySpaceResolver, MemorySubscriptionBroker, ProfileRegistry,
 };
 
 pub struct MemoryRecipeService {
     store: Arc<dyn ContextualMemoryStore>,
     resolver: Arc<dyn MemorySpaceResolver>,
+    registry_loader: Arc<dyn MemoryKindRegistryLoader>,
     profile_registry: ProfileRegistry,
     broker: Option<Arc<dyn MemorySubscriptionBroker>>,
     capability_policy: Arc<dyn CapabilityPolicy>,
@@ -31,11 +31,13 @@ impl MemoryRecipeService {
     pub fn new(
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
+        registry_loader: Arc<dyn MemoryKindRegistryLoader>,
         profile_registry: ProfileRegistry,
     ) -> Self {
         Self::with_capability_policy(
             store,
             resolver,
+            registry_loader,
             profile_registry,
             None,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
@@ -45,12 +47,14 @@ impl MemoryRecipeService {
     pub fn with_broker(
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
+        registry_loader: Arc<dyn MemoryKindRegistryLoader>,
         profile_registry: ProfileRegistry,
         broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
         Self::with_capability_policy(
             store,
             resolver,
+            registry_loader,
             profile_registry,
             Some(broker),
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
@@ -60,6 +64,7 @@ impl MemoryRecipeService {
     pub fn with_capability_policy(
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
+        registry_loader: Arc<dyn MemoryKindRegistryLoader>,
         profile_registry: ProfileRegistry,
         broker: Option<Arc<dyn MemorySubscriptionBroker>>,
         capability_policy: Arc<dyn CapabilityPolicy>,
@@ -67,6 +72,7 @@ impl MemoryRecipeService {
         Self {
             store,
             resolver,
+            registry_loader,
             profile_registry,
             broker,
             capability_policy,
@@ -134,8 +140,14 @@ impl MemoryRecipeService {
             }
         };
 
-        let registry = builtin_memory_kind_registry();
-        let validated = match parse_and_validate_recipe_output(&assistant.content, registry) {
+        let registry = match self
+            .registry_loader
+            .load_strict(store_ctx.memory_space_id.as_str())
+        {
+            Ok(registry) => registry,
+            Err(e) => return map_registry_error(id, e),
+        };
+        let validated = match parse_and_validate_recipe_output(&assistant.content, &registry) {
             Ok(v) => v,
             Err(e) => return map_recipe_error(id, e),
         };
@@ -205,6 +217,10 @@ fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
     } else {
         Err("invalid session_id")
     }
+}
+
+fn map_registry_error(id: String, err: MemoryKindRegistryError) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, err.to_string())
 }
 
 fn map_store_error(id: String, err: ContextualMemoryStoreError) -> ClientResponse {

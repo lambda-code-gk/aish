@@ -30,8 +30,9 @@ pub use contextual_memory::{
 };
 pub use llm_step::LlmStepResult;
 pub use memory_kind_registry::{
-    builtin_memory_kind_registry, MemoryCardinality, MemoryKindDefinition, MemoryKindRegistry,
-    MemoryLifecycle, MemoryPromptPolicy, MemoryStalePolicy,
+    builtin_memory_kind_registry, KindOverride, MemoryCardinality, MemoryKindDefinition,
+    MemoryKindRegistry, MemoryKindRegistryError, MemoryLifecycle, MemoryPromptPolicy,
+    MemoryStalePolicy, PromptOverride,
 };
 pub use memory_recipe::{
     build_clarify_goal_messages, collect_clarify_goal_materials, parse_and_validate_recipe_output,

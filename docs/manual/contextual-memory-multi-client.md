@@ -174,7 +174,7 @@ shell 承認（`shell_exec_approval`、tier、pattern auto-approve）は **Shell
 初期応答:
 
 ```json
-{"type":"memory_subscribe_result","id":"…","status":"subscribed","memory_space_id":"ctx_team_a"}
+{"type":"memory_subscribe_result","id":"…","status":"ok","memory_space_id":"ctx_team_a"}
 ```
 
 通知例:
@@ -184,6 +184,22 @@ shell 承認（`shell_exec_approval`、tier、pattern auto-approve）は **Shell
 ```
 
 CLI `ai` は v1 では subscribe UI を持たない。TUI / IDE クライアントが専用接続で購読する想定。
+
+## CLI recipe apply semantics（`ai mem run clarify-goal --apply`）
+
+`ai mem run clarify-goal --apply` は **2 段階**で store を更新する（0037 §8.5）。
+
+1. `MemoryRecipeRun(apply=false)` で LLM 提案（`summary` / `proposals[]`）を取得する
+2. CLI が対話確認（`Apply proposed memory operations? [y/N]`）後、各 `proposal.operation` を **`MemoryApply` として個別送信**する
+
+この経路はサーバ側 `MemoryRecipeRun(apply=true)` とは異なる。
+
+| 経路 | store 更新 | subscription `change` |
+|------|-----------|------------------------|
+| `MemoryRecipeRun(apply=true)` | サーバが一括 apply | まとめて `recipe_applied` |
+| CLI `--apply`（proposal → 個別 `MemoryApply`） | クライアントが複数回 apply | 各 operation に応じて `added` / `status_changed` 等（`recipe_applied` ではない） |
+
+仕様上問題ない。subscribe クライアントは **最終的な memory state** を見ればよく、apply 経路の差はイベント種別の違いにとどまる。CLI `--apply` は非対話 stdin では fail-closed（確認不能のため apply しない）。
 
 ## 関連ドキュメント
 

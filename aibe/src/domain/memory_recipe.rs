@@ -298,7 +298,7 @@ fn parse_proposal_item(
                     add.kind
                 ))
             })?;
-            let resolved = resolve_memory_operation_add(add)?;
+            let resolved = resolve_memory_operation_add(add, registry)?;
             let operation = MemoryOperationDto::Add(resolved);
             let rationale = obj
                 .get("rationale")

@@ -23,6 +23,8 @@ pub enum ContextualMemoryStoreError {
     Io(String),
     #[error("entry not found: {0}")]
     NotFound(String),
+    #[error("kind registry: {0}")]
+    Registry(#[from] crate::domain::MemoryKindRegistryError),
 }
 
 pub trait ContextualMemoryStore: Send + Sync {
@@ -40,6 +42,14 @@ pub trait ContextualMemoryStore: Send + Sync {
     ) -> Result<Vec<MemoryEntry>, ContextualMemoryStoreError>;
 
     fn resolve_for_prompt(
+        &self,
+        ctx: &MemoryStoreContext<'_>,
+        user_query: &str,
+        budget_bytes: usize,
+    ) -> Result<MemoryBlock, ContextualMemoryStoreError>;
+
+    /// explicit memory RPC 用。registry parse 失敗時は error（AgentTurn は `resolve_for_prompt` の best-effort を使う）。
+    fn resolve_for_prompt_explicit(
         &self,
         ctx: &MemoryStoreContext<'_>,
         user_query: &str,

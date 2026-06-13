@@ -9,16 +9,17 @@ use aibe_protocol::{
 
 use crate::domain::{
     change_kind_for_operation, publish_memory_changes, required_capability_for_memory_operation,
-    resolve_memory_operation_add, Capability, MemoryValidationError,
+    resolve_memory_operation_add, Capability, MemoryKindRegistryError, MemoryValidationError,
 };
 use crate::ports::outbound::{
-    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemorySpaceResolver,
-    MemorySubscriptionBroker,
+    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemoryKindRegistryLoader,
+    MemorySpaceResolver, MemorySubscriptionBroker,
 };
 
 pub struct MemoryService {
     store: std::sync::Arc<dyn ContextualMemoryStore>,
     resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+    registry_loader: std::sync::Arc<dyn MemoryKindRegistryLoader>,
     broker: Option<std::sync::Arc<dyn MemorySubscriptionBroker>>,
     capability_policy: std::sync::Arc<dyn CapabilityPolicy>,
 }
@@ -27,10 +28,12 @@ impl MemoryService {
     pub fn new(
         store: std::sync::Arc<dyn ContextualMemoryStore>,
         resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+        registry_loader: std::sync::Arc<dyn MemoryKindRegistryLoader>,
     ) -> Self {
         Self::with_capability_policy(
             store,
             resolver,
+            registry_loader,
             None,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
         )
@@ -39,11 +42,13 @@ impl MemoryService {
     pub fn with_broker(
         store: std::sync::Arc<dyn ContextualMemoryStore>,
         resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+        registry_loader: std::sync::Arc<dyn MemoryKindRegistryLoader>,
         broker: std::sync::Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
         Self::with_capability_policy(
             store,
             resolver,
+            registry_loader,
             Some(broker),
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
         )
@@ -52,12 +57,14 @@ impl MemoryService {
     pub fn with_capability_policy(
         store: std::sync::Arc<dyn ContextualMemoryStore>,
         resolver: std::sync::Arc<dyn MemorySpaceResolver>,
+        registry_loader: std::sync::Arc<dyn MemoryKindRegistryLoader>,
         broker: Option<std::sync::Arc<dyn MemorySubscriptionBroker>>,
         capability_policy: std::sync::Arc<dyn CapabilityPolicy>,
     ) -> Self {
         Self {
             store,
             resolver,
+            registry_loader,
             broker,
             capability_policy,
         }
@@ -73,10 +80,6 @@ impl MemoryService {
         if let Err(msg) = validate_session_id(&session_id) {
             return invalid(id, msg);
         }
-        let operation = match normalize_operation(operation) {
-            Ok(op) => op,
-            Err(e) => return map_validation_error(id, e),
-        };
         let required = required_capability_for_memory_operation(&operation);
         if let Err(denied) = self.capability_policy.require(required) {
             return capability_denied(id, denied);
@@ -91,6 +94,17 @@ impl MemoryService {
         {
             Ok(ctx) => ctx,
             Err(e) => return map_store_error(id, e),
+        };
+        let registry = match self
+            .registry_loader
+            .load_strict(store_ctx.memory_space_id.as_str())
+        {
+            Ok(registry) => registry,
+            Err(e) => return map_registry_error(id, e),
+        };
+        let operation = match normalize_operation(operation, &registry) {
+            Ok(op) => op,
+            Err(e) => return map_validation_error(id, e),
         };
         let now_ms = current_time_ms();
         match self.store.apply(&store_ctx, &operation, now_ms) {
@@ -141,15 +155,18 @@ impl MemoryService {
             Ok(entries) => {
                 let prompt_block = if query.include_prompt_block {
                     let user_query = query.user_query.as_deref().unwrap_or("");
-                    self.store
-                        .resolve_for_prompt(
-                            &store_ctx,
-                            user_query,
-                            aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES,
-                        )
-                        .ok()
-                        .map(|b| b.content)
-                        .filter(|s| !s.is_empty())
+                    match self.store.resolve_for_prompt_explicit(
+                        &store_ctx,
+                        user_query,
+                        aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES,
+                    ) {
+                        Ok(block) if !block.content.is_empty() => Some(block.content),
+                        Ok(_) => None,
+                        Err(ContextualMemoryStoreError::Registry(e)) => {
+                            return map_registry_error(id, e)
+                        }
+                        Err(e) => return map_store_error(id, e),
+                    }
                 } else {
                     None
                 };
@@ -176,8 +193,22 @@ impl MemoryService {
         if let Err(denied) = self.capability_policy.require(Capability::MemoryRead) {
             return capability_denied(id, denied);
         }
-        let _ = context;
-        let kinds = crate::domain::builtin_memory_kind_registry()
+        let cwd_path = context.cwd.as_deref().map(Path::new);
+        let store_ctx = match self
+            .resolver
+            .resolve_store_context(&session_id, context, cwd_path)
+        {
+            Ok(ctx) => ctx,
+            Err(e) => return map_store_error(id, e),
+        };
+        let registry = match self
+            .registry_loader
+            .load_strict(store_ctx.memory_space_id.as_str())
+        {
+            Ok(registry) => registry,
+            Err(e) => return map_registry_error(id, e),
+        };
+        let kinds = registry
             .list_definitions()
             .into_iter()
             .map(MemoryKindDefinitionDto::from)
@@ -200,10 +231,11 @@ fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
 
 fn normalize_operation(
     operation: MemoryOperationDto,
+    registry: &crate::domain::MemoryKindRegistry,
 ) -> Result<MemoryOperationDto, MemoryValidationError> {
     match operation {
         MemoryOperationDto::Add(add) => {
-            let resolved = resolve_memory_operation_add(&add)?;
+            let resolved = resolve_memory_operation_add(&add, registry)?;
             Ok(MemoryOperationDto::Add(resolved))
         }
         other => Ok(other),
@@ -235,6 +267,10 @@ fn validate_cwd_for_query(
         return Err("cwd is required for project-scoped memory");
     }
     Ok(())
+}
+
+fn map_registry_error(id: String, err: MemoryKindRegistryError) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, err.to_string())
 }
 
 fn map_store_error(id: String, err: ContextualMemoryStoreError) -> ClientResponse {
