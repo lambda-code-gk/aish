@@ -209,7 +209,8 @@ pub fn format_memory_block_with_budget(
         return String::new();
     }
     let footer_len = MEMORY_BLOCK_FOOTER.len();
-    let marker_overhead = MEMORY_BLOCK_TRUNCATION_MARKER.len() + 1 + footer_len;
+    let marker_with_newline_len = MEMORY_BLOCK_TRUNCATION_MARKER.len() + 1;
+    let marker_overhead = marker_with_newline_len + footer_len;
     let mut out = String::from(MEMORY_BLOCK_HEADER);
     if out.len() + footer_len > budget {
         return String::new();
@@ -247,11 +248,14 @@ pub fn format_memory_block_with_budget(
         break;
     }
 
-    if truncated {
+    let marker_with_newline_len = MEMORY_BLOCK_TRUNCATION_MARKER.len() + 1;
+    if truncated && out.len() + marker_with_newline_len + footer_len <= budget {
         out.push_str(MEMORY_BLOCK_TRUNCATION_MARKER);
         out.push('\n');
     }
-    out.push_str(MEMORY_BLOCK_FOOTER);
+    if out.len() + footer_len <= budget {
+        out.push_str(MEMORY_BLOCK_FOOTER);
+    }
     out
 }
 
@@ -607,5 +611,53 @@ mod tests {
         assert!(block.ends_with(MEMORY_BLOCK_FOOTER));
         assert!(block.len() <= 400);
         assert!(!block.contains(&long_text));
+    }
+
+    #[test]
+    fn prompt_block_tiny_budget_keeps_footer_without_marker() {
+        let footer_len = MEMORY_BLOCK_FOOTER.len();
+        let header_len = MEMORY_BLOCK_HEADER.len();
+        let marker_with_newline_len = MEMORY_BLOCK_TRUNCATION_MARKER.len() + 1;
+        // header + footer は入るが header + marker + footer は入らない budget
+        let budget = header_len + footer_len;
+        assert!(budget < header_len + marker_with_newline_len + footer_len);
+
+        let entries = vec![sample_entry(
+            STANDARD_KIND_GOAL,
+            MemoryStatus::Active,
+            "goal text that cannot fit in this tiny budget",
+        )];
+        let block = format_memory_block_with_budget(&entries, Some("s1"), budget);
+        assert!(
+            block.len() <= budget,
+            "block len {} > budget {}",
+            block.len(),
+            budget
+        );
+        assert!(block.ends_with(MEMORY_BLOCK_FOOTER));
+        assert!(!block.contains(MEMORY_BLOCK_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn prompt_block_includes_marker_only_when_room() {
+        let footer_len = MEMORY_BLOCK_FOOTER.len();
+        let header_len = MEMORY_BLOCK_HEADER.len();
+        let marker_with_newline_len = MEMORY_BLOCK_TRUNCATION_MARKER.len() + 1;
+        let budget_with_marker = header_len + marker_with_newline_len + footer_len + 20;
+
+        let long_text = "z".repeat(200);
+        let entries = vec![
+            sample_entry(STANDARD_KIND_GOAL, MemoryStatus::Active, &long_text),
+            sample_entry(STANDARD_KIND_NOW, MemoryStatus::Active, "now"),
+        ];
+        let block = format_memory_block_with_budget(&entries, Some("s1"), budget_with_marker);
+        assert!(
+            block.len() <= budget_with_marker,
+            "block len {} > budget {}",
+            block.len(),
+            budget_with_marker
+        );
+        assert!(block.ends_with(MEMORY_BLOCK_FOOTER));
+        assert!(block.contains(MEMORY_BLOCK_TRUNCATION_MARKER));
     }
 }
