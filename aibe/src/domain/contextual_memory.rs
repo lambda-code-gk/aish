@@ -4,6 +4,9 @@ use aibe_protocol::{
     MemoryEntryDto, MemoryInjectPolicyDto, MemoryScopeDto, MemoryStatusDto, MEMORY_TEXT_MAX_BYTES,
 };
 
+use super::memory_kind_registry::{
+    builtin_memory_kind_registry, MemoryCardinality, MemoryStalePolicy,
+};
 use super::memory_space::{now_freshness, MemoryFreshness};
 use thiserror::Error;
 
@@ -131,10 +134,7 @@ pub fn validate_text(text: &str) -> Result<(), MemoryValidationError> {
 }
 
 pub fn is_standard_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        STANDARD_KIND_GOAL | STANDARD_KIND_NOW | STANDARD_KIND_IDEA
-    )
+    builtin_memory_kind_registry().has_dedicated_cli(kind)
 }
 
 pub fn validate_standard_kind_operation(
@@ -143,50 +143,11 @@ pub fn validate_standard_kind_operation(
     inject: MemoryInjectPolicyDto,
     status: MemoryStatusDto,
 ) -> Result<(), MemoryValidationError> {
-    let ok = match kind {
-        STANDARD_KIND_GOAL => {
-            scope == MemoryScopeDto::Project
-                && inject == MemoryInjectPolicyDto::Pinned
-                && status == MemoryStatusDto::Active
-        }
-        STANDARD_KIND_NOW => {
-            scope == MemoryScopeDto::Session
-                && inject == MemoryInjectPolicyDto::Pinned
-                && status == MemoryStatusDto::Active
-        }
-        STANDARD_KIND_IDEA => {
-            scope == MemoryScopeDto::Project
-                && inject == MemoryInjectPolicyDto::OnDemand
-                && status == MemoryStatusDto::Open
-        }
-        _ => return Ok(()),
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(MemoryValidationError::StandardKindMismatch {
-            kind: kind.to_string(),
-        })
-    }
+    builtin_memory_kind_registry().validate_operation(kind, scope, inject, status)
 }
 
 pub fn query_matches_idea_on_demand(user_query: &str) -> bool {
-    let lower = user_query.to_lowercase();
-    const KEYWORDS: &[&str] = &[
-        "idea",
-        "ideas",
-        "アイデア",
-        "発想",
-        "ゴール",
-        "goal",
-        "整理",
-        "候補",
-        "mvp",
-        "未整理",
-        "記憶",
-        "memory",
-    ];
-    KEYWORDS.iter().any(|kw| lower.contains(kw))
+    builtin_memory_kind_registry().query_matches_on_demand(STANDARD_KIND_IDEA, user_query)
 }
 
 pub const MEMORY_BLOCK_HEADER: &str = "[aibe contextual memory]\n\
@@ -293,7 +254,8 @@ fn format_entry_header<'a>(
         section.push_str(&format!("[{}]\n", entry.kind));
         *current_kind = Some(entry.kind.as_str());
     }
-    if entry.kind == STANDARD_KIND_NOW {
+    if builtin_memory_kind_registry().stale_policy(&entry.kind) == MemoryStalePolicy::SessionChanged
+    {
         if let Some(sess) = current_session_id {
             if now_freshness(&entry.last_session_id, sess) == MemoryFreshness::Stale {
                 section.push_str("(stale — last updated in another session)\n");
@@ -307,7 +269,7 @@ fn format_entry_body_truncated(entry: &MemoryEntry, max_bytes: usize) -> String 
     if max_bytes == 0 {
         return String::new();
     }
-    let prefix = if entry.kind == STANDARD_KIND_IDEA {
+    let prefix = if builtin_memory_kind_registry().is_list_format_kind(&entry.kind) {
         "- "
     } else {
         ""
@@ -339,7 +301,7 @@ fn format_entry_section<'a>(
     current_kind: &mut Option<&'a str>,
 ) -> String {
     let header = format_entry_header(entry, current_session_id, current_kind);
-    let body = if entry.kind == STANDARD_KIND_IDEA {
+    let body = if builtin_memory_kind_registry().is_list_format_kind(&entry.kind) {
         format!("- {}\n", entry.text)
     } else {
         format!("{}\n", entry.text)
@@ -354,28 +316,42 @@ pub fn resolve_entries_for_prompt(
     user_query: &str,
     budget: usize,
 ) -> MemoryBlock {
+    let registry = builtin_memory_kind_registry();
     let mut selected = Vec::new();
 
-    if let Some(goal) = find_active_pinned(all, STANDARD_KIND_GOAL, project_key) {
-        selected.push(goal.clone());
-    }
-    if let Some(now) = find_active_pinned(all, STANDARD_KIND_NOW, None) {
-        selected.push(now.clone());
+    for def in registry.pinned_auto_inject_definitions() {
+        let scope_key = if def.default_scope == MemoryScope::Project {
+            project_key
+        } else {
+            None
+        };
+        selected.extend(collect_pinned_entries(
+            all,
+            &def.id,
+            scope_key,
+            def.cardinality,
+            def.prompt.max_entries,
+        ));
     }
 
-    if query_matches_idea_on_demand(user_query) {
-        let mut ideas: Vec<&MemoryEntry> = all
+    for def in registry.on_demand_definitions() {
+        if !registry.query_matches_on_demand(&def.id, user_query) {
+            continue;
+        }
+        let expected_status = def.default_status;
+        let mut entries: Vec<&MemoryEntry> = all
             .iter()
             .filter(|e| {
-                e.kind == STANDARD_KIND_IDEA
-                    && e.status == MemoryStatus::Open
-                    && e.inject == MemoryInjectPolicy::OnDemand
+                e.kind == def.id
+                    && e.status == expected_status
+                    && e.inject == def.default_inject
                     && matches_scope(e, project_key)
             })
             .collect();
-        ideas.sort_by_key(|e| std::cmp::Reverse(e.updated_at_ms));
-        for idea in ideas {
-            selected.push((*idea).clone());
+        entries.sort_by_key(|e| std::cmp::Reverse(e.updated_at_ms));
+        let limit = max_entries_limit(def.prompt.max_entries);
+        for entry in entries.into_iter().take(limit) {
+            selected.push((*entry).clone());
         }
     }
 
@@ -383,19 +359,40 @@ pub fn resolve_entries_for_prompt(
     MemoryBlock { content: block }
 }
 
-fn find_active_pinned<'a>(
-    all: &'a [MemoryEntry],
+fn max_entries_limit(max_entries: Option<u32>) -> usize {
+    match max_entries {
+        None | Some(0) => usize::MAX,
+        Some(n) => n as usize,
+    }
+}
+
+fn collect_pinned_entries(
+    all: &[MemoryEntry],
     kind: &str,
     project_key: Option<&str>,
-) -> Option<&'a MemoryEntry> {
-    all.iter()
+    cardinality: MemoryCardinality,
+    max_entries: Option<u32>,
+) -> Vec<MemoryEntry> {
+    let mut matched: Vec<&MemoryEntry> = all
+        .iter()
         .filter(|e| {
             e.kind == kind
                 && e.status == MemoryStatus::Active
                 && e.inject == MemoryInjectPolicy::Pinned
                 && matches_scope(e, project_key)
         })
-        .max_by_key(|e| e.updated_at_ms)
+        .collect();
+    matched.sort_by_key(|e| std::cmp::Reverse(e.updated_at_ms));
+
+    let limit = match cardinality {
+        MemoryCardinality::SingleEffective => 1,
+        MemoryCardinality::Multiple => max_entries_limit(max_entries),
+    };
+    matched
+        .into_iter()
+        .take(limit)
+        .map(|e| (*e).clone())
+        .collect()
 }
 
 fn matches_scope(entry: &MemoryEntry, project_key: Option<&str>) -> bool {
@@ -505,22 +502,18 @@ mod tests {
     use aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES;
 
     fn sample_entry(kind: &str, status: MemoryStatus, text: &str) -> MemoryEntry {
+        let registry = builtin_memory_kind_registry();
+        let def = registry.get(kind);
         MemoryEntry {
             id: format!("mem_{kind}"),
             memory_space_id: "ctx_a".into(),
             created_session_id: "s1".into(),
             last_session_id: "s1".into(),
             kind: kind.into(),
-            scope: if kind == STANDARD_KIND_NOW {
-                MemoryScope::Session
-            } else {
-                MemoryScope::Project
-            },
-            inject: if kind == STANDARD_KIND_IDEA {
-                MemoryInjectPolicy::OnDemand
-            } else {
-                MemoryInjectPolicy::Pinned
-            },
+            scope: def.map(|d| d.default_scope).unwrap_or(MemoryScope::Project),
+            inject: def
+                .map(|d| d.default_inject)
+                .unwrap_or(MemoryInjectPolicy::Pinned),
             status,
             text: text.into(),
             project_key: if kind == STANDARD_KIND_NOW {
@@ -554,6 +547,29 @@ mod tests {
             validate_text(&text),
             Err(MemoryValidationError::TextTooLong)
         );
+    }
+
+    #[test]
+    fn normal_query_includes_rule() {
+        let mut rule = sample_entry("rule", MemoryStatus::Active, "no fat aish");
+        rule.inject = MemoryInjectPolicy::Pinned;
+        let entries = vec![
+            sample_entry(STANDARD_KIND_GOAL, MemoryStatus::Active, "g"),
+            sample_entry(STANDARD_KIND_NOW, MemoryStatus::Active, "n"),
+            rule,
+            sample_entry(STANDARD_KIND_IDEA, MemoryStatus::Open, "i"),
+        ];
+        let block = resolve_entries_for_prompt(
+            &entries,
+            Some("/proj"),
+            "s1",
+            "fix rust error",
+            MEMORY_PROMPT_BUDGET_BYTES,
+        );
+        assert!(block.content.contains("[goal]"));
+        assert!(block.content.contains("[now]"));
+        assert!(block.content.contains("[rule]"));
+        assert!(!block.content.contains("[idea]"));
     }
 
     #[test]

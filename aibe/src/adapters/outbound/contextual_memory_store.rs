@@ -10,11 +10,11 @@ use aibe_protocol::{
     MemoryScopeDto, MemoryStatusDto,
 };
 
+use crate::domain::builtin_memory_kind_registry;
 use crate::domain::resolve_entries_for_prompt;
 use crate::domain::{
-    is_standard_kind, validate_kind, validate_standard_kind_operation, validate_text, MemoryBlock,
-    MemoryEntry, MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError,
-    ProjectKeyError, STANDARD_KIND_GOAL, STANDARD_KIND_NOW,
+    validate_kind, validate_standard_kind_operation, validate_text, MemoryBlock, MemoryEntry,
+    MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError, ProjectKeyError,
 };
 use crate::ports::outbound::{
     ContextualMemoryStore, ContextualMemoryStoreError, MemoryStoreContext,
@@ -266,7 +266,7 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                     let kind = &add.kind;
                     validate_kind(kind)?;
                     validate_text(&add.text)?;
-                    if is_standard_kind(kind) {
+                    if builtin_memory_kind_registry().is_registered(kind) {
                         validate_standard_kind_operation(kind, add.scope, add.inject, add.status)?;
                     }
                     let scope = MemoryScope::try_from(add.scope).map_err(|_| {
@@ -371,7 +371,8 @@ impl ContextualMemoryStore for FilesystemContextualMemoryStore {
                             MemoryValidationError::MissingCwdForProjectScope,
                         ));
                     }
-                    let (from_status, to_status) = clear_kind_status_transition(kind);
+                    let (from_status, to_status) =
+                        builtin_memory_kind_registry().clear_transition(kind);
                     let mut entries = self.load_entries(memory_space_id, session_id)?;
                     let mut affected = Vec::new();
                     for entry in entries.iter_mut() {
@@ -529,13 +530,6 @@ fn filter_entry(entry: &MemoryEntry, query: &MemoryQueryDto, project_key: Option
         &entry.project_key,
         &project_key.map(String::from),
     )
-}
-
-fn clear_kind_status_transition(kind: &str) -> (MemoryStatus, MemoryStatus) {
-    match kind {
-        STANDARD_KIND_GOAL | STANDARD_KIND_NOW => (MemoryStatus::Active, MemoryStatus::Inactive),
-        _ => (MemoryStatus::Open, MemoryStatus::Archived),
-    }
 }
 
 fn scope_matches_project_key(

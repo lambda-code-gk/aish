@@ -4,6 +4,7 @@ mod agent_turn_context;
 mod client_cwd;
 mod contextual_memory;
 mod llm_step;
+mod memory_kind_registry;
 mod memory_space;
 mod message;
 mod shell_log_tail;
@@ -19,6 +20,10 @@ pub use contextual_memory::{
     ProjectKey, ProjectKeyError, STANDARD_KIND_GOAL, STANDARD_KIND_IDEA, STANDARD_KIND_NOW,
 };
 pub use llm_step::LlmStepResult;
+pub use memory_kind_registry::{
+    builtin_memory_kind_registry, MemoryCardinality, MemoryKindDefinition, MemoryKindRegistry,
+    MemoryLifecycle, MemoryPromptPolicy, MemoryStalePolicy,
+};
 pub use memory_space::{
     now_freshness, resolve_memory_space, MemoryFreshness, MemorySpaceId, MemorySpaceResolution,
     MemorySpaceSource,
