@@ -129,6 +129,13 @@ pub struct ShellExecConfig {
     pub enabled: bool,
     pub allowed_commands: Vec<String>,
     pub approval: ShellExecApprovalMode,
+    pub auto_approve_patterns: ShellExecAutoApprovePatterns,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShellExecAutoApprovePatterns {
+    pub read_only: Vec<String>,
+    pub mutating: Vec<String>,
 }
 
 impl Default for ShellExecConfig {
@@ -137,6 +144,7 @@ impl Default for ShellExecConfig {
             enabled: true,
             allowed_commands: vec![],
             approval: ShellExecApprovalMode::Ask,
+            auto_approve_patterns: ShellExecAutoApprovePatterns::default(),
         }
     }
 }
@@ -167,6 +175,7 @@ impl Default for ToolsConfig {
                 enabled: true,
                 allowed_commands: vec![],
                 approval: ShellExecApprovalMode::Ask,
+                auto_approve_patterns: ShellExecAutoApprovePatterns::default(),
             },
             read_file: ReadFileConfig {
                 allowed_roots: vec![PathBuf::from(".")],

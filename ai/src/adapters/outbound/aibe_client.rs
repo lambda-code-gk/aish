@@ -5,10 +5,11 @@ use std::path::Path;
 use aibe_client::{
     agent_turn as transport_agent_turn, agent_turn_with_events,
     memory_request as transport_memory_request, route_turn as transport_route_turn,
-    send_cancel_request, AgentTurnProgressEvent, ClientError,
+    send_cancel_request, AgentTurnProgressEvent, ClientError, ShellExecApprovalDecision,
 };
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
+use crate::domain::classify_shell_exec_tier;
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext, MemoryOperationDto,
     MemoryQueryDto, MemoryQueryRequestBody, ProtocolMessage,
@@ -64,7 +65,7 @@ impl AibeUnixClient {
         request: ClientRequest,
         on_progress: impl FnMut(AgentTurnProgressEvent),
         on_stream: impl FnMut(String),
-        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> bool,
+        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
     ) -> Result<ClientResponse, AgentError> {
         agent_turn_with_events(
             self.socket_path(),
@@ -107,7 +108,7 @@ impl AibeUnixClient {
         request: &AskRequest,
         on_progress: impl FnMut(AgentTurnProgressEvent),
         on_stream: impl FnMut(String),
-        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> bool,
+        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
     ) -> Result<ClientResponse, AgentError> {
         self.agent_turn_request_stream(
             Self::to_client_request(request),
@@ -135,8 +136,15 @@ impl AibeUnixClient {
 impl AgentClient for AibeUnixClient {
     fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
         let wire = Self::to_client_request(request);
-        transport_agent_turn(self.socket_path(), wire, prompt_shell_exec_approval)
-            .map_err(map_client_error)
+        transport_agent_turn(self.socket_path(), wire, |prompt| {
+            let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
+            let decision = prompt_shell_exec_approval(prompt, tier, false);
+            ShellExecApprovalDecision {
+                approved: decision.approved,
+                approval_origin: decision.approval_origin,
+            }
+        })
+        .map_err(map_client_error)
     }
 }
 

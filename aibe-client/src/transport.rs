@@ -5,7 +5,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
-use aibe_protocol::{ClientRequest, ClientResponse, ProgressPhase};
+use aibe_protocol::{ClientRequest, ClientResponse, ProgressPhase, ShellExecApprovalOrigin};
 
 use crate::unix_connect::connect_unix_stream;
 
@@ -20,6 +20,12 @@ pub struct ShellExecApprovalPrompt {
     pub tool_call_id: String,
     pub command: String,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellExecApprovalDecision {
+    pub approved: bool,
+    pub approval_origin: ShellExecApprovalOrigin,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -123,7 +129,7 @@ pub fn agent_turn_with_events_on_stream(
     request: ClientRequest,
     mut on_progress: impl FnMut(AgentTurnProgressEvent),
     mut on_stream: impl FnMut(String),
-    mut on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+    mut on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
 ) -> Result<ClientResponse, ClientError> {
     let mut writer = stream;
     let mut reader = BufReader::new(writer.try_clone().map_err(ClientError::Connect)?);
@@ -144,7 +150,7 @@ pub fn agent_turn_with_events_on_stream(
                 command,
                 args,
             } => {
-                let approved = on_approval(ShellExecApprovalPrompt {
+                let decision = on_approval(ShellExecApprovalPrompt {
                     prompt_id: id.clone(),
                     turn_id: turn_id.clone(),
                     tool_call_id: tool_call_id.clone(),
@@ -157,7 +163,8 @@ pub fn agent_turn_with_events_on_stream(
                         id,
                         turn_id,
                         tool_call_id,
-                        approved,
+                        approved: decision.approved,
+                        approval_origin: decision.approval_origin,
                     },
                 )
                 .map_err(ClientError::Connect)?;
@@ -173,7 +180,7 @@ pub fn agent_turn_with_events(
     request: ClientRequest,
     on_progress: impl FnMut(AgentTurnProgressEvent),
     on_stream: impl FnMut(String),
-    on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
 ) -> Result<ClientResponse, ClientError> {
     let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
     agent_turn_with_events_on_stream(stream, request, on_progress, on_stream, on_approval)
@@ -182,7 +189,7 @@ pub fn agent_turn_with_events(
 pub fn agent_turn_on_stream(
     stream: UnixStream,
     request: ClientRequest,
-    on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
 ) -> Result<ClientResponse, ClientError> {
     agent_turn_with_events_on_stream(stream, request, |_| {}, |_| {}, on_approval)
 }
@@ -191,7 +198,7 @@ pub fn agent_turn_on_stream(
 pub fn agent_turn(
     socket_path: &std::path::Path,
     request: ClientRequest,
-    on_approval: impl FnMut(ShellExecApprovalPrompt) -> bool,
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
 ) -> Result<ClientResponse, ClientError> {
     let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
     agent_turn_on_stream(stream, request, on_approval)

@@ -10,6 +10,7 @@ mod output_format;
 mod progress;
 mod reports;
 mod request_context;
+mod shell_exec_approval;
 mod shell_log;
 mod terminal_display;
 mod terminal_size;
@@ -34,6 +35,13 @@ pub use output_format::{
 pub use progress::{format_progress_label, resolve_progress};
 pub use reports::{DiagnosticsReport, DryRunReport, FilterMetadata};
 pub use request_context::RequestContextInput;
+pub use shell_exec_approval::{
+    canonical_shell_exec_invocation, classify_shell_exec_tier, command_shell_exec_key,
+    exact_shell_exec_key, match_shell_exec_auto_approve_pattern,
+    parse_shell_exec_auto_approve_patterns, shell_exec_approval_origin_for_choice,
+    ShellExecApprovalChoice, ShellExecApprovalDecision, ShellExecAutoApprovePatternSet,
+    ShellExecRememberScope, ShellExecSessionState, ShellExecTier,
+};
 pub use shell_log::{
     validate_session_id, ShellLogChoice, ShellLogResolveError, AI_ASK_LOG_SESSION,
 };

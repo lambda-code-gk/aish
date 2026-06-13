@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 
+use aibe_client::ShellExecApprovalDecision;
+
 /// 実行直前の yes/no 応答。`ask` モードでのみ使用する。
 #[async_trait]
 pub trait ShellExecApprovalGate: Send + Sync {
@@ -10,5 +12,5 @@ pub trait ShellExecApprovalGate: Send + Sync {
         tool_call_id: &str,
         command: &str,
         args: &[String],
-    ) -> bool;
+    ) -> Option<ShellExecApprovalDecision>;
 }

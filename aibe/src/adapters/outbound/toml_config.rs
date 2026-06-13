@@ -457,6 +457,20 @@ fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
                     }
                 }
             }
+            if let Some(patterns) = shell.auto_approve_patterns.as_ref() {
+                tools.shell_exec.auto_approve_patterns.read_only = patterns
+                    .read_only
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .collect();
+                tools.shell_exec.auto_approve_patterns.mutating = patterns
+                    .mutating
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .collect();
+            }
         }
         if let Some(rf) = t.read_file.as_ref() {
             if let Some(roots) = rf.allowed_roots.clone() {
@@ -580,6 +594,15 @@ struct ShellExecSection {
     enabled: Option<bool>,
     allowed_commands: Option<Vec<String>>,
     shell_exec_approval: Option<String>,
+    auto_approve_patterns: Option<AutoApprovePatternsSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutoApprovePatternsSection {
+    #[serde(default)]
+    read_only: Vec<String>,
+    #[serde(default)]
+    mutating: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

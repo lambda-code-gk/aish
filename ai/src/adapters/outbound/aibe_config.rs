@@ -11,6 +11,13 @@ const DEFAULT_AIBE_CONFIG: &str = ".config/aibe/config.toml";
 pub struct AibeShellExecApproval {
     pub mode: Option<String>,
     pub source: String,
+    pub auto_approve_patterns: AibeShellExecAutoApprovePatterns,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AibeShellExecAutoApprovePatterns {
+    pub read_only: Vec<String>,
+    pub mutating: Vec<String>,
 }
 
 pub fn load_shell_exec_approval() -> AibeShellExecApproval {
@@ -25,6 +32,7 @@ fn load_shell_exec_approval_from_path(path: &PathBuf) -> AibeShellExecApproval {
             return AibeShellExecApproval {
                 mode: None,
                 source: "aibe_config:missing".to_string(),
+                auto_approve_patterns: AibeShellExecAutoApprovePatterns::default(),
             };
         }
     };
@@ -32,14 +40,20 @@ fn load_shell_exec_approval_from_path(path: &PathBuf) -> AibeShellExecApproval {
         return AibeShellExecApproval {
             mode: None,
             source: "aibe_config:invalid".to_string(),
+            auto_approve_patterns: AibeShellExecAutoApprovePatterns::default(),
         };
     };
-    let mode = file
-        .tools
-        .and_then(|tools| tools.shell_exec.and_then(|shell| shell.shell_exec_approval));
+    let shell = file.tools.and_then(|tools| tools.shell_exec);
+    let mode = shell
+        .as_ref()
+        .and_then(|shell| shell.shell_exec_approval.clone());
     AibeShellExecApproval {
         mode,
         source: "aibe_config".to_string(),
+        auto_approve_patterns: shell
+            .and_then(|shell| shell.auto_approve_patterns)
+            .map(Into::into)
+            .unwrap_or_default(),
     }
 }
 
@@ -64,6 +78,32 @@ struct ToolsSection {
 #[derive(Debug, Deserialize)]
 struct ShellExecSection {
     shell_exec_approval: Option<String>,
+    auto_approve_patterns: Option<AutoApprovePatternsSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AutoApprovePatternsSection {
+    #[serde(default)]
+    read_only: Vec<String>,
+    #[serde(default)]
+    mutating: Vec<String>,
+}
+
+impl From<AutoApprovePatternsSection> for AibeShellExecAutoApprovePatterns {
+    fn from(value: AutoApprovePatternsSection) -> Self {
+        Self {
+            read_only: value
+                .read_only
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect(),
+            mutating: value
+                .mutating
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -87,5 +127,25 @@ shell_exec_approval = "ask"
         let loaded = load_shell_exec_approval_from_path(&path);
         assert_eq!(loaded.mode.as_deref(), Some("ask"));
         assert_eq!(loaded.source, "aibe_config");
+    }
+
+    #[test]
+    fn reads_auto_approve_patterns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&path).expect("create");
+        write!(
+            f,
+            r#"
+[tools.shell_exec]
+[tools.shell_exec.auto_approve_patterns]
+read_only = ["^git status$"]
+mutating = ["^cargo test"]
+"#
+        )
+        .expect("write");
+        let loaded = load_shell_exec_approval_from_path(&path);
+        assert_eq!(loaded.auto_approve_patterns.read_only.len(), 1);
+        assert_eq!(loaded.auto_approve_patterns.mutating.len(), 1);
     }
 }

@@ -40,11 +40,27 @@ pub enum ClientRequest {
         turn_id: String,
         tool_call_id: String,
         approved: bool,
+        approval_origin: ShellExecApprovalOrigin,
     },
     /// contextual memory の書き込み。
     MemoryApply(MemoryApplyRequestBody),
     /// contextual memory の読み取り。
     MemoryQuery(MemoryQueryRequestBody),
+}
+
+/// `shell_exec` 承認の provenance。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellExecApprovalOrigin {
+    UiYes,
+    UiNo,
+    UiAlwaysThisSessionExactInvocation,
+    UiCommandOnly,
+    SessionAllowed,
+    SessionCacheExactInvocation,
+    SessionCacheCommandName,
+    PatternReadOnly,
+    PatternMutating,
 }
 
 /// プロトコル上のメッセージ（serde 用）。
@@ -235,6 +251,28 @@ mod tests {
             }
             _ => panic!("expected route_turn"),
         }
+    }
+
+    #[test]
+    fn shell_exec_approval_roundtrip_with_origin() {
+        let req = ClientRequest::ShellExecApproval {
+            id: "p1".into(),
+            turn_id: "t1".into(),
+            tool_call_id: "c1".into(),
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::UiAlwaysThisSessionExactInvocation,
+        };
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains(r#""approval_origin":"ui_always_this_session_exact_invocation""#));
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(
+            back,
+            ClientRequest::ShellExecApproval {
+                approved: true,
+                approval_origin: ShellExecApprovalOrigin::UiAlwaysThisSessionExactInvocation,
+                ..
+            }
+        ));
     }
 
     #[test]

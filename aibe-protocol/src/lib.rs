@@ -21,7 +21,7 @@ pub use memory_space::{
     is_valid_memory_space_id, is_valid_session_id, legacy_session_memory_space_id,
     project_memory_space_id,
 };
-pub use request::{ClientRequest, ProtocolMessage, RequestContext};
+pub use request::{ClientRequest, ProtocolMessage, RequestContext, ShellExecApprovalOrigin};
 pub use request::{RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession};
 pub use response::{
     AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase, ProtocolMessageOut, RouteKind,

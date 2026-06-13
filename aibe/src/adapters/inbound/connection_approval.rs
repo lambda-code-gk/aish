@@ -10,6 +10,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
+use aibe_client::ShellExecApprovalDecision;
 use aibe_protocol::{ClientRequest, ClientResponse};
 
 use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
@@ -49,7 +50,7 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
         tool_call_id: &str,
         command: &str,
         args: &[String],
-    ) -> bool {
+    ) -> Option<ShellExecApprovalDecision> {
         let seq = PROMPT_SEQ.fetch_add(1, Ordering::Relaxed);
         let prompt_id = format!("shell-exec-approval-{seq}");
         let prompt = ClientResponse::ShellExecApprovalPrompt {
@@ -69,21 +70,21 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
                 .await;
         }
         if write_response(&self.writer, &prompt).await.is_err() {
-            return false;
+            return None;
         }
 
         loop {
             if let Some(cancel) = &self.cancellation {
                 if cancel.is_cancelled() {
-                    return false;
+                    return None;
                 }
             }
             let line = {
                 let mut lines = self.lines.lock().await;
                 match timeout(Duration::from_millis(100), lines.next_line()).await {
                     Ok(Ok(Some(l))) => l,
-                    Ok(Ok(None)) => return false,
-                    Ok(Err(_)) => return false,
+                    Ok(Ok(None)) => return None,
+                    Ok(Err(_)) => return None,
                     Err(_) => continue,
                 }
             };
@@ -92,13 +93,20 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
                 turn_id,
                 tool_call_id: tc_id,
                 approved,
+                approval_origin,
                 ..
             }) = serde_json::from_str::<ClientRequest>(line.trim())
             else {
-                return false;
+                return None;
             };
 
-            return id == prompt_id && turn_id == self.turn_id && tc_id == tool_call_id && approved;
+            if id == prompt_id && turn_id == self.turn_id && tc_id == tool_call_id {
+                return Some(ShellExecApprovalDecision {
+                    approved,
+                    approval_origin,
+                });
+            }
+            return None;
         }
     }
 }

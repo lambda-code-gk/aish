@@ -6,9 +6,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::thread;
 
-use aibe_client::{agent_turn_on_stream, ShellExecApprovalPrompt};
+use aibe_client::{agent_turn_on_stream, ShellExecApprovalDecision, ShellExecApprovalPrompt};
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessage, ProtocolMessageOut,
+    ShellExecApprovalOrigin,
 };
 
 const PROMPT_ID: &str = "approval-prompt-1";
@@ -47,6 +48,7 @@ fn run_mock_server(mut server: UnixStream, expect_approved: bool) {
         turn_id,
         tool_call_id,
         approved,
+        approval_origin,
     } = approval
     else {
         panic!("expected shell_exec_approval");
@@ -55,6 +57,14 @@ fn run_mock_server(mut server: UnixStream, expect_approved: bool) {
     assert_eq!(turn_id, TURN_ID);
     assert_eq!(tool_call_id, TOOL_CALL_ID);
     assert_eq!(approved, expect_approved);
+    assert_eq!(
+        approval_origin,
+        if expect_approved {
+            ShellExecApprovalOrigin::UiYes
+        } else {
+            ShellExecApprovalOrigin::UiNo
+        }
+    );
 
     let final_resp = ClientResponse::AgentTurnResult {
         id: TURN_ID.into(),
@@ -100,7 +110,10 @@ fn agent_turn_approval_roundtrip_approved() {
         assert_eq!(p.tool_call_id, TOOL_CALL_ID);
         assert_eq!(p.command, COMMAND);
         assert_eq!(p.args, ARGS);
-        true
+        ShellExecApprovalDecision {
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::UiYes,
+        }
     })
     .expect("agent_turn");
 
@@ -122,7 +135,10 @@ fn agent_turn_approval_roundtrip_denied() {
     let resp = agent_turn_on_stream(
         client,
         agent_turn_request(),
-        |_p: ShellExecApprovalPrompt| false,
+        |_p: ShellExecApprovalPrompt| ShellExecApprovalDecision {
+            approved: false,
+            approval_origin: ShellExecApprovalOrigin::UiNo,
+        },
     )
     .expect("agent_turn");
 

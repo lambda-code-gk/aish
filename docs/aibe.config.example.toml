@@ -84,6 +84,11 @@ allowed_commands = ["ls", "git", "cargo", "echo"]
 # 外部コマンドを使うなら、ここに `codex` / `claude` / ラッパースクリプト名を追加する
 # shell_exec_approval = "ask"   # never | ask | always（既定 ask）
 
+# session 許可後のみ評価。destructive tier には適用しない（0036）。
+[tools.shell_exec.auto_approve_patterns]
+read_only = ["^git status$", "^git diff$"]
+mutating = ["^cargo test$", "^cargo check$"]
+
 [tools.read_file]
 allowed_roots = [".", "~/projects"]
 

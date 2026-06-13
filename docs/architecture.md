@@ -30,7 +30,7 @@ flowchart LR
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
 | **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `route_turn` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
 | **aibe** | `route_turn`、会話継続、ツール、プロバイダ呼び出し、conversation store、**contextual memory store**、Unix socket サーバ | LLM API へ（設定に従う） |
-| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。`AI_SESSION_ID` を解決して `route_turn` を要求し、aish ログをコンテキストに使う。`goal` / `now` / `idea` / `mem` は `MemoryApply` / `MemoryQuery` の薄い CLI。**memory の正本は持たない**。`chat` はクライアント側 transcript を保持し、`AgentTurnResult` 成功時のみ user/assistant を追記する。`shell_exec` 実行前承認 UI（stderr・stdin TTY 判定・表示 escape）は **ai** の責務（transport は `aibe-client`） | aibe デーモンのみ（LLM 直叩き禁止） |
+| **ai** | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。`shell_exec` 承認 UX（`y/n/a/c`、tier 分類、session cache、`--yes-exec`、`[tools.shell_exec.auto_approve_patterns]`）は **ai** の責務。wire 上は `ShellExecApproval.approval_origin` で provenance を aibe に渡す（0036）。transport は `aibe-client` | aibe デーモンのみ（LLM 直叩き禁止） |
 
 ## 依存ルール
 
@@ -392,7 +392,8 @@ aish          →  （aibe への path 依存禁止）
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
 - `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。**このとき `context.cwd`（絶対パス）は必須**。未送信・相対パスは `invalid_request` で拒否する。
 - `[tools] max_rounds` は **1 以上**。`config.toml` で `0` は設定読み込みエラー。プログラム上 `ToolsConfig { max_rounds: 0 }` のみ `effective_max_rounds()` で 1 に補正（`docs/done/0007_agent-turn-loop-modularization-spec.md`）。
-- 組み込みツール: safe tools は `read_file` / `list_dir` / `grep` / `git_diff` / `git_status`。`shell_exec` は危険操作として `@exec` か literal 指定でのみ許可する（`@full` には含めない）。`shell_exec` は設定 `allowed_commands` のみ実行し、subprocess cwd は `context.cwd`。`[tools.shell_exec] shell_exec_approval = "never" | "ask" | "always"`（既定 `ask`）で実行前 yes/no（同一 Unix 接続上の `shell_exec_approval_prompt` / `shell_exec_approval` 往復）。外部コマンド（`shell_exec` / `git_*`）は timeout 時に子プロセスを kill して明示 reap（共通 `run_subprocess`）。
+- 組み込みツール: safe tools は `read_file` / `list_dir` / `grep` / `git_diff` / `git_status`。`shell_exec` は危険操作として `@exec` か literal 指定でのみ許可する（`@full` には含めない）。`shell_exec` は設定 `allowed_commands` のみ実行し、subprocess cwd は `context.cwd`。`[tools.shell_exec] shell_exec_approval = "never" | "ask" | "always"`（既定 `ask`）で実行前の承認を制御する。`ask` では `ai` が `y / n / a / c` の UI を出し、`read_only` / `mutating` / `destructive` の tier と session 許可、`[tools.shell_exec.auto_approve_patterns]` を見て自動承認する。`never` は最上位拒否で `--yes-exec` でも越えない。外部コマンド（`shell_exec` / `git_*`）は timeout 時に子プロセスを kill して明示 reap（共通 `run_subprocess`）。
+- `approval_origin` を `ClientRequest::ShellExecApproval` に追加し、`aibe` 側は `approval_source` を再構成して監査に残す。
 - `list_dir` / `grep` は `[tools.explore]` の件数・走査上限で timeout 前のメモリ・I/O を抑制する（`docs/aibe.config.example.toml`）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
 - ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/done/0001_aibe-tool-agent-loop-spec.md`。

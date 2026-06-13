@@ -15,6 +15,7 @@ use crate::domain::{ExecutedToolCall, ShellExecApprovalOutcome, ToolName, ToolRe
 use crate::ports::outbound::{
     CommandPolicy, ExternalCommandConfig, ShellExecApprovalMode, ToolExecutionContext, ToolExecutor,
 };
+use aibe_protocol::ShellExecApprovalOrigin;
 
 use super::subprocess::{run_subprocess, ShellRunOutcome};
 use super::tool_output::limit_tool_output;
@@ -146,6 +147,7 @@ impl ToolExecutor for ShellExecTool {
                 self.policy.shell_exec_approval_mode(),
                 ShellExecApprovalOutcome::NotApplicable,
                 None,
+                None,
             );
         }
 
@@ -153,6 +155,8 @@ impl ToolExecutor for ShellExecTool {
             .match_external_command(&parsed.command)
             .map(|entry| entry.name.as_str());
         let approval_mode = self.policy.shell_exec_approval_mode();
+        let mut approval_origin: Option<ShellExecApprovalOrigin> = None;
+        let mut approval_outcome: Option<ShellExecApprovalOutcome> = None;
         match approval_mode {
             ShellExecApprovalMode::Never => {
                 let msg = "shell_exec rejected by shell_exec_approval=never";
@@ -172,6 +176,7 @@ impl ToolExecutor for ShellExecTool {
                     approval_mode,
                     ShellExecApprovalOutcome::PolicyNever,
                     external_name,
+                    None,
                 );
             }
             ShellExecApprovalMode::Ask => {
@@ -193,12 +198,35 @@ impl ToolExecutor for ShellExecTool {
                         approval_mode,
                         ShellExecApprovalOutcome::ApprovalUnavailable,
                         external_name,
+                        None,
                     );
                 };
-                if !gate
+                let Some(decision) = gate
                     .request_shell_exec_approval(&id, &parsed.command, &parsed.args)
                     .await
-                {
+                else {
+                    let msg = "shell_exec approval required but no interactive client connected";
+                    return finish_shell_exec(
+                        ExecutedToolCall::err(
+                            id.clone(),
+                            self.name(),
+                            args_value,
+                            "approval_unavailable",
+                            msg,
+                        ),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: msg.to_string(),
+                            is_error: true,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::ApprovalUnavailable,
+                        external_name,
+                        None,
+                    );
+                };
+                approval_origin = Some(decision.approval_origin);
+                if !decision.approved {
                     let msg = "shell_exec rejected by user";
                     return finish_shell_exec(
                         ExecutedToolCall::err(
@@ -216,14 +244,27 @@ impl ToolExecutor for ShellExecTool {
                         approval_mode,
                         ShellExecApprovalOutcome::UserDenied,
                         external_name,
+                        approval_origin,
                     );
                 }
+                approval_outcome = Some(match decision.approval_origin {
+                    ShellExecApprovalOrigin::SessionAllowed
+                    | ShellExecApprovalOrigin::SessionCacheExactInvocation
+                    | ShellExecApprovalOrigin::SessionCacheCommandName => {
+                        ShellExecApprovalOutcome::AutoApprovedSession
+                    }
+                    ShellExecApprovalOrigin::PatternReadOnly
+                    | ShellExecApprovalOrigin::PatternMutating => {
+                        ShellExecApprovalOutcome::AutoApprovedPattern
+                    }
+                    _ => ShellExecApprovalOutcome::UserApproved,
+                });
             }
             ShellExecApprovalMode::Always => {}
         }
 
         let external_command = self.match_external_command(&parsed.command);
-        let exec_outcome = exec_outcome_for_mode(approval_mode);
+        let exec_outcome = approval_outcome.unwrap_or_else(|| exec_outcome_for_mode(approval_mode));
         let cmd = build_command(&parsed, ctx.base_dir());
         let effective_timeout_ms = external_command
             .map(|entry| entry.timeout_secs.saturating_mul(1000))
@@ -253,6 +294,7 @@ impl ToolExecutor for ShellExecTool {
                         approval_mode,
                         exec_outcome,
                         external_name,
+                        approval_origin,
                     )
                 } else {
                     finish_shell_exec(
@@ -271,6 +313,7 @@ impl ToolExecutor for ShellExecTool {
                         approval_mode,
                         exec_outcome,
                         external_name,
+                        approval_origin,
                     )
                 }
             }
@@ -286,6 +329,7 @@ impl ToolExecutor for ShellExecTool {
                     approval_mode,
                     exec_outcome,
                     external_name,
+                    approval_origin,
                 )
             }
             ShellRunOutcome::Failed(msg) => finish_shell_exec(
@@ -304,6 +348,7 @@ impl ToolExecutor for ShellExecTool {
                 approval_mode,
                 exec_outcome,
                 external_name,
+                approval_origin,
             ),
         }
     }
@@ -323,9 +368,15 @@ fn finish_shell_exec(
     approval_mode: ShellExecApprovalMode,
     outcome: ShellExecApprovalOutcome,
     external_command: Option<&str>,
+    approval_origin: Option<ShellExecApprovalOrigin>,
 ) -> (ExecutedToolCall, ToolResult) {
     (
-        record.with_shell_exec_audit(approval_mode.as_str(), outcome, external_command),
+        record.with_shell_exec_audit(
+            approval_mode.as_str(),
+            outcome,
+            approval_origin,
+            external_command,
+        ),
         result,
     )
 }
@@ -363,6 +414,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec!["cat".into()],
             approval: ShellExecApprovalMode::Always,
+            ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx =
@@ -427,6 +479,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Never,
+            ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
@@ -451,6 +504,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
@@ -471,6 +525,8 @@ mod tests {
         use std::sync::Arc;
 
         use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::ShellExecApprovalOrigin;
 
         struct DenyGate;
 
@@ -481,8 +537,11 @@ mod tests {
                 _tool_call_id: &str,
                 _command: &str,
                 _args: &[String],
-            ) -> bool {
-                false
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: false,
+                    approval_origin: ShellExecApprovalOrigin::UiNo,
+                })
             }
         }
 
@@ -490,6 +549,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(
@@ -515,6 +575,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec!["echo".into()],
             approval: ShellExecApprovalMode::Always,
+            ..Default::default()
         }));
         let external_commands = vec![crate::ports::outbound::ExternalCommandConfig {
             name: "fixture-echo".into(),
@@ -543,6 +604,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec!["sleep".into()],
             approval: ShellExecApprovalMode::Always,
+            ..Default::default()
         }));
         let tool = ShellExecTool::new(policy, 4096, Vec::new());
         let ctx = ToolExecutionContext::new(

@@ -122,6 +122,7 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
         enabled: true,
         allowed_commands: vec!["echo".into()],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -260,6 +261,7 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
         enabled: true,
         allowed_commands: vec!["echo".into()],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -482,6 +484,7 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
         enabled: true,
         allowed_commands: vec!["false".into()],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -529,6 +532,7 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
         enabled: true,
         allowed_commands: vec!["sleep".into()],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
@@ -580,6 +584,7 @@ async fn shell_exec_runs_in_context_cwd() {
         enabled: true,
         allowed_commands: vec!["cat".into()],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc

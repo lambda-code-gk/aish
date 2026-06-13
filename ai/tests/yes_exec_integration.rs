@@ -9,7 +9,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::{self, JoinHandle};
 
-use aibe_protocol::{AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut};
+use ai::adapters::outbound::YesExecCache;
+use ai::domain::{
+    exact_shell_exec_key, ShellExecApprovalChoice, ShellExecRememberScope, ShellExecTier,
+};
+use aibe_protocol::{
+    AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut, ShellExecApprovalOrigin,
+};
 
 const COMMAND: &str = "echo";
 const ARGS: &[&str] = &["hi"];
@@ -73,12 +79,25 @@ fn run_approval_flow(stream: std::os::unix::net::UnixStream, expect_approved: bo
     line.clear();
     reader.read_line(&mut line).expect("read approval");
     let approval: ClientRequest = serde_json::from_str(line.trim()).expect("parse approval");
-    let ClientRequest::ShellExecApproval { approved, .. } = approval else {
+    let ClientRequest::ShellExecApproval {
+        approved,
+        approval_origin,
+        ..
+    } = approval
+    else {
         panic!("expected shell_exec_approval");
     };
     assert_eq!(
         approved, expect_approved,
         "unexpected approval decision from ai client"
+    );
+    assert_eq!(
+        approval_origin,
+        if expect_approved {
+            ShellExecApprovalOrigin::SessionCacheExactInvocation
+        } else {
+            ShellExecApprovalOrigin::UiNo
+        }
     );
 
     let final_resp = ClientResponse::AgentTurnResult {
@@ -135,9 +154,9 @@ history_max_entries = 0
 }
 
 fn seed_yes_exec_cache(history_dir: &Path) {
-    let key = format!(
-        "{COMMAND}\n{}",
-        serde_json::to_string(&ARGS.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()
+    let key = exact_shell_exec_key(
+        COMMAND,
+        &ARGS.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
     );
     let cache_dir = history_dir.join("yes-exec");
     fs::create_dir_all(&cache_dir).expect("cache dir");
@@ -149,8 +168,8 @@ fn seed_yes_exec_cache(history_dir: &Path) {
 }
 
 #[test]
-fn yes_exec_with_seeded_cache_auto_approves_on_non_tty() {
-    let server = ApprovalMockServer::spawn(true);
+fn yes_exec_with_seeded_cache_still_denies_before_session_allow() {
+    let server = ApprovalMockServer::spawn(false);
     let home = tempfile::tempdir().expect("home");
     let history_dir = home.path().join("history");
     fs::create_dir_all(&history_dir).expect("history");
@@ -172,11 +191,8 @@ fn yes_exec_with_seeded_cache_auto_approves_on_non_tty() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !stderr.contains("non-interactive stdin"),
-        "seeded cache must bypass interactive prompt: {stderr}"
-    );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "approved");
+    assert!(stderr.contains("non-interactive stdin"));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "denied");
 }
 
 #[test]
@@ -250,40 +266,51 @@ shell_exec_approval = "never"
 }
 
 #[test]
-fn chat_yes_exec_uses_same_cache_path_as_ask() {
-    let server = ApprovalMockServer::spawn(true);
-    let home = tempfile::tempdir().expect("home");
-    let history_dir = home.path().join("history");
-    fs::create_dir_all(&history_dir).expect("history");
-    seed_yes_exec_cache(&history_dir);
-    let aibe_cfg = write_aibe_config(home.path());
-    let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir, "");
+fn yes_exec_cache_supports_exact_and_command_scopes() {
+    let root = tempfile::tempdir().expect("root");
+    let mut cache = YesExecCache::load(root.path(), Some("sess-1")).expect("load");
+    let args = vec!["hi".to_string()];
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ai"))
-        .env("AI_CONFIG", &ai_cfg)
-        .env("AIBE_CONFIG", &aibe_cfg)
-        .env("HOME", home.path())
-        .args(["chat", "--quiet", "--no-start", "--yes-exec"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn chat");
-
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin")
-        .write_all(b"run echo\n/exit\n")
-        .expect("write stdin");
-    let out = child.wait_with_output().expect("wait");
-
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+    assert_eq!(
+        cache.should_auto_approve(COMMAND, &args, ShellExecTier::ReadOnly),
+        None
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!stderr.contains("non-interactive stdin"));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("approved"));
+    cache
+        .remember_choice(
+            COMMAND,
+            &args,
+            ShellExecTier::ReadOnly,
+            ShellExecApprovalChoice::AlwaysThisSession,
+        )
+        .expect("remember exact");
+    assert_eq!(
+        cache.should_auto_approve(COMMAND, &args, ShellExecTier::ReadOnly),
+        Some(ShellExecRememberScope::ExactInvocation)
+    );
+    assert_eq!(
+        cache.should_auto_approve(COMMAND, &args, ShellExecTier::Mutating),
+        Some(ShellExecRememberScope::ExactInvocation)
+    );
+    assert_eq!(
+        cache.should_auto_approve(COMMAND, &args, ShellExecTier::Destructive),
+        None
+    );
+
+    let mut cache = YesExecCache::load(root.path(), Some("sess-2")).expect("reload");
+    cache
+        .remember_choice(
+            COMMAND,
+            &args,
+            ShellExecTier::Mutating,
+            ShellExecApprovalChoice::CommandOnly,
+        )
+        .expect("remember command");
+    assert_eq!(
+        cache.should_auto_approve(COMMAND, &args, ShellExecTier::Mutating),
+        Some(ShellExecRememberScope::CommandName)
+    );
+    assert_eq!(
+        cache.should_auto_approve(COMMAND, &args, ShellExecTier::Destructive),
+        None
+    );
 }

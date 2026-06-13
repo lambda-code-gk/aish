@@ -71,6 +71,7 @@ mod tests {
             enabled: true,
             allowed_commands: allowed.iter().map(|s| (*s).to_string()).collect(),
             approval: ShellExecApprovalMode::Always,
+            ..Default::default()
         })
     }
 
@@ -95,6 +96,7 @@ mod tests {
             enabled: true,
             allowed_commands: vec![],
             approval: ShellExecApprovalMode::Always,
+            ..Default::default()
         });
         assert!(!p.is_command_allowed("ls"));
     }

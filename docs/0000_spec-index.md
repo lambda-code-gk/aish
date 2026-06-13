@@ -27,6 +27,7 @@
 | 0033 | [0033_ai-structured-output-stream-fix-spec.md](spec/0033_ai-structured-output-stream-fix-spec.md) | 設計確定 | `ai` structured output と streaming の衝突解消 |
 | 0034 | [0034_aibe-contextual-memory-spec.md](spec/0034_aibe-contextual-memory-spec.md) | 設計確定 | AIBE Contextual Memory MVP（`goal` / `now` / `idea`） |
 | 0035 | [0035_aibe-memory-identity-split-spec.md](spec/0035_aibe-memory-identity-split-spec.md) | 設計確定 | AIBE Memory Identity Split（`AI_SESSION_ID` / `memory_space_id` 分離） |
+| 0036 | [0036_shell-exec-approval-ux-spec.md](spec/0036_shell-exec-approval-ux-spec.md) | 設計確定 | `shell_exec` 承認 UX 拡張（`y/n/a/c`、tier、pattern auto-approve） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -71,5 +72,6 @@
 | 0033 | [0033_ai-structured-output-stream-fix-implementation-spec.md](done/0033_ai-structured-output-stream-fix-implementation-spec.md) | 実装済み | `ai` structured output と streaming の衝突解消（設計: [0033](spec/0033_ai-structured-output-stream-fix-spec.md)） |
 | 0034 | [0034_aibe-contextual-memory-implementation-spec.md](done/0034_aibe-contextual-memory-implementation-spec.md) | 実装済み | AIBE Contextual Memory MVP（設計: [0034](spec/0034_aibe-contextual-memory-spec.md)） |
 | 0035 | [0035_aibe-memory-identity-split-implementation-spec.md](done/0035_aibe-memory-identity-split-implementation-spec.md) | 実装済み | AIBE Memory Identity Split（設計: [0035](spec/0035_aibe-memory-identity-split-spec.md)） |
+| 0036 | [0036_shell-exec-approval-ux-implementation-spec.md](done/0036_shell-exec-approval-ux-implementation-spec.md) | 実装済み | `shell_exec` 承認 UX 拡張（設計: [0036](spec/0036_shell-exec-approval-ux-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::ShellExecApprovalOrigin;
+
 /// 実行済みツール呼び出しの成否。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +39,10 @@ pub enum ShellExecApprovalOutcome {
     NotApplicable,
     /// `always` による自動実行。
     AutoApproved,
+    /// session 許可・cache による自動実行（read-only tier 等）。
+    AutoApprovedSession,
+    /// pattern 一致による自動実行。
+    AutoApprovedPattern,
     /// `ask` でユーザーが承認した後の実行（または実行失敗）。
     UserApproved,
     /// `ask` でユーザーが拒否。
@@ -141,6 +147,7 @@ impl ExecutedToolCall {
         mut self,
         approval_mode: &str,
         outcome: ShellExecApprovalOutcome,
+        approval_origin: Option<ShellExecApprovalOrigin>,
         external_command: Option<&str>,
     ) -> Self {
         self.risk_class = Some(ToolRiskClass::DangerousShell);
@@ -149,7 +156,6 @@ impl ExecutedToolCall {
         if let Some(name) = external_command {
             approval_source.push_str(&format!(";external_command={name}"));
         }
-        self.approval_source = Some(approval_source);
         match outcome {
             ShellExecApprovalOutcome::PolicyNever => {
                 self.approval_state = Some(ToolApprovalState::NotRequired);
@@ -171,6 +177,14 @@ impl ExecutedToolCall {
                     "rejected_or_failed".into()
                 });
             }
+            ShellExecApprovalOutcome::AutoApprovedSession => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("auto_approved_session".into());
+            }
+            ShellExecApprovalOutcome::AutoApprovedPattern => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("auto_approved_pattern".into());
+            }
             ShellExecApprovalOutcome::UserApproved => {
                 self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
                 self.decision = Some(if self.status == ExecutedToolStatus::Ok {
@@ -188,7 +202,28 @@ impl ExecutedToolCall {
                 self.decision = Some("approval_unavailable".into());
             }
         }
+        if let Some(origin) = approval_origin {
+            approval_source.push(';');
+            approval_source.push_str(approval_origin_audit_suffix(origin));
+        }
+        self.approval_source = Some(approval_source);
         self
+    }
+}
+
+fn approval_origin_audit_suffix(origin: ShellExecApprovalOrigin) -> &'static str {
+    match origin {
+        ShellExecApprovalOrigin::UiYes => "ui=y",
+        ShellExecApprovalOrigin::UiNo => "ui=n",
+        ShellExecApprovalOrigin::UiAlwaysThisSessionExactInvocation => {
+            "ui=a;scope=exact_invocation"
+        }
+        ShellExecApprovalOrigin::UiCommandOnly => "ui=c;scope=command_name",
+        ShellExecApprovalOrigin::SessionAllowed
+        | ShellExecApprovalOrigin::SessionCacheExactInvocation
+        | ShellExecApprovalOrigin::SessionCacheCommandName => "cache=session",
+        ShellExecApprovalOrigin::PatternReadOnly => "pattern=read_only",
+        ShellExecApprovalOrigin::PatternMutating => "pattern=mutating",
     }
 }
 
@@ -221,12 +256,57 @@ mod tests {
             "approval_unavailable",
             "no gate",
         )
-        .with_shell_exec_audit("ask", ShellExecApprovalOutcome::ApprovalUnavailable, None);
+        .with_shell_exec_audit(
+            "ask",
+            ShellExecApprovalOutcome::ApprovalUnavailable,
+            None,
+            None,
+        );
         assert_eq!(tc.approval_state, Some(ToolApprovalState::NotRequired));
         assert_eq!(tc.decision.as_deref(), Some("approval_unavailable"));
         assert_eq!(
             tc.approval_source.as_deref(),
             Some("shell_exec_approval=ask")
+        );
+    }
+
+    #[test]
+    fn shell_exec_audit_uses_approval_origin() {
+        let tc = ExecutedToolCall::ok(
+            "c4".into(),
+            ToolName::shell_exec().to_string(),
+            serde_json::json!({"command": "echo"}),
+            "hi".into(),
+        )
+        .with_shell_exec_audit(
+            "ask",
+            ShellExecApprovalOutcome::UserApproved,
+            Some(ShellExecApprovalOrigin::UiCommandOnly),
+            None,
+        );
+        assert_eq!(
+            tc.approval_source.as_deref(),
+            Some("shell_exec_approval=ask;ui=c;scope=command_name")
+        );
+    }
+
+    #[test]
+    fn shell_exec_audit_keeps_external_command_with_origin() {
+        let tc = ExecutedToolCall::ok(
+            "c5".into(),
+            ToolName::shell_exec().to_string(),
+            serde_json::json!({"command": "echo"}),
+            "hi".into(),
+        )
+        .with_shell_exec_audit(
+            "ask",
+            ShellExecApprovalOutcome::UserApproved,
+            Some(ShellExecApprovalOrigin::UiYes),
+            Some("fixture-echo"),
+        );
+        assert_eq!(
+            tc.approval_source.as_deref(),
+            Some("shell_exec_approval=ask;external_command=fixture-echo;ui=y")
         );
     }
 

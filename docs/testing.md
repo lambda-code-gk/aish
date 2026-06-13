@@ -41,7 +41,9 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 |----------|------|------------|
 | **aibe-protocol** | `ClientRequest` / `ClientResponse` / `ToolName` の serde（crate 内 `#[cfg(test)]`） | — |
 | **aibe-client** | socket 往復の契約固定（`route_turn` / `agent_turn` 承認 prompt → approval → final、TTY 非依存） | `transport.rs`、`tests/agent_turn_approval.rs`、`tests/route_turn.rs`、`client_ping.rs`、`ensure_running_*.rs` |
-| **ai** | 承認 UI: 非対話 stdin fail-closed、制御文字 escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`（`#[cfg(test)]`） |
+| **ai** | 承認 UI: `y/n/a/c`、tier、非対話 fail-closed、escape 表示 | `adapters/outbound/shell_exec_approval_ui.rs`、`domain/shell_exec_approval.rs`（`#[cfg(test)]`） |
+| **ai** | `--yes-exec` / session cache / legacy cache 互換 | `adapters/outbound/yes_exec_cache.rs`、`tests/yes_exec_integration.rs` |
+| **ai** | `shell_exec` 承認 UX の tier / pattern / choice 正本 | `tests/shell_exec_approval_ux.rs` |
 | **aish** | セッション prune 順序・CLI 引数 | `session_store.rs`、`tests/session_cli.rs` |
 | **ai** | `--session` hex 検証・presenter / allowlist / output filter | `adapters/outbound/shell_log_resolver.rs`、`output_filter.rs`、`stdout_presenter.rs`、`ask_integration.rs` |
 | **ai** | local history / retry / rerun / preset / log-tail / chat transcript / smart entry / exit codes / yes-exec / history GC | `application/history.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`tests/yes_exec_integration.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
@@ -98,7 +100,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 
 - **client / server の役割**: `ai` 側テストは allowlist 解決と起動時表示。`aibe` 側テストは実行時拒否とループ継続。client の warning だけに依存しないことは `aibe` の拒否テストで追う。
 - **補完対象**: `shell_exec` が allowlist に含まれた場合の承認済み通過経路は、現状の統合テストだけでは十分に固定されていない。追加する場合は 0018 とは別の指示書で扱う。
-- **0023**: `ai` は `shell_exec_approval_ui` の unit で TTY/escape を固定。`aibe-client/tests/agent_turn_approval.rs` で transport 往復を固定。pipe への `printf y` は [manual/ai-ask-tools.md](manual/ai-ask-tools.md) B3c で手動確認。
+- **0023 / 0036**: `ai` は `shell_exec_approval_ui` と `domain/shell_exec_approval` の unit で TTY/escape/tier/pattern を固定。`aibe-client/tests/agent_turn_approval.rs` で `approval_origin` 往復を固定。`ai/tests/shell_exec_approval_ux.rs` と `yes_exec_integration.rs` で cache / non-TTY を検証。pipe への `printf y` は [manual/ai-ask-tools.md](manual/ai-ask-tools.md) B3c で手動確認。
 - **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる。
 
 ### 0035 memory identity split の検証観点

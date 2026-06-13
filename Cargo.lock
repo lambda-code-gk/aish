@@ -22,6 +22,7 @@ dependencies = [
  "clap_complete",
  "ctrlc",
  "libc",
+ "regex",
  "rustyline",
  "serde",
  "serde_json",

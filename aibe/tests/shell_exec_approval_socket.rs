@@ -40,6 +40,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
         enabled: true,
         allowed_commands: vec!["echo".into()],
         approval: ShellExecApprovalMode::Ask,
+        ..Default::default()
     };
 
     let socket_for_server = socket_path.clone();
@@ -96,7 +97,8 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
         "id": id,
         "turn_id": turn_id,
         "tool_call_id": tool_call_id,
-        "approved": false
+        "approved": false,
+        "approval_origin": "ui_no"
     });
     write_line(&mut writer, &denial.to_string()).await;
 
@@ -105,6 +107,140 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
     assert!(result_line.contains("user denied shell_exec"));
     assert!(result_line.contains(r#""decision":"rejected_by_user""#));
     assert!(result_line.contains(r#""error":"approval_denied""#));
+    assert!(result_line.contains(r#""approval_source":"shell_exec_approval=ask;ui=n""#));
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn shell_exec_session_allowed_audit_over_socket() {
+    run_approval_audit_case(
+        "session_allowed",
+        "echo",
+        json!({"command": "echo", "args": ["hi"]}),
+        true,
+        "session_allowed",
+        "auto_approved_session",
+        "shell_exec_approval=ask;cache=session",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn shell_exec_pattern_read_only_audit_over_socket() {
+    run_approval_audit_case(
+        "pattern_read_only",
+        "echo",
+        json!({"command": "echo", "args": ["hi"]}),
+        true,
+        "pattern_read_only",
+        "auto_approved_pattern",
+        "shell_exec_approval=ask;pattern=read_only",
+    )
+    .await;
+}
+
+async fn run_approval_audit_case(
+    turn_id: &str,
+    allowed_command: &str,
+    tool_args: serde_json::Value,
+    approved: bool,
+    approval_origin: &str,
+    expected_decision: &str,
+    expected_approval_source: &str,
+) {
+    let dir = tempdir().expect("tempdir");
+    let socket_path = dir.path().join("approval.sock");
+
+    let steps = vec![
+        LlmStepResult::with_tool_calls(
+            "",
+            vec![ToolCall {
+                id: "call_exec".into(),
+                name: SHELL_EXEC.to_string(),
+                arguments: tool_args,
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::text_only("done"),
+    ];
+    let llm = Arc::new(ScriptedMockLlm::new(steps));
+    let mut tools_cfg = ToolsConfig::default();
+    tools_cfg.shell_exec = ShellExecConfig {
+        enabled: true,
+        allowed_commands: vec![allowed_command.into()],
+        approval: ShellExecApprovalMode::Ask,
+        ..Default::default()
+    };
+
+    let socket_for_server = socket_path.clone();
+    let cfg = tools_cfg.clone();
+    let profile_registry =
+        ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
+    let server = tokio::spawn(async move {
+        server::run(
+            socket_for_server,
+            profile_registry,
+            cfg,
+            Vec::new(),
+            "default".to_string(),
+            dir.path().join("conversations"),
+        )
+        .await
+        .expect("server");
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let stream = UnixStream::connect(&socket_path).await.expect("connect");
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+
+    let cwd = std::env::current_dir().expect("cwd");
+    let req = serde_json::json!({
+        "type": "agent_turn",
+        "id": turn_id,
+        "messages": [{"role": "user", "content": "run shell"}],
+        "tools": ["shell_exec"],
+        "context": {"cwd": cwd.to_string_lossy()}
+    });
+    write_line(&mut writer, &req.to_string()).await;
+
+    let prompt_line = read_until_shell_exec_prompt(&mut lines).await;
+    let prompt: ClientResponse = serde_json::from_str(prompt_line.trim()).expect("prompt json");
+    let ClientResponse::ShellExecApprovalPrompt {
+        id,
+        turn_id: prompt_turn_id,
+        tool_call_id,
+        ..
+    } = prompt
+    else {
+        panic!("expected shell_exec_approval_prompt, got {prompt_line}");
+    };
+
+    let approval = serde_json::json!({
+        "type": "shell_exec_approval",
+        "id": id,
+        "turn_id": prompt_turn_id,
+        "tool_call_id": tool_call_id,
+        "approved": approved,
+        "approval_origin": approval_origin
+    });
+    write_line(&mut writer, &approval.to_string()).await;
+
+    let result_line = read_until_agent_turn_result(&mut lines).await;
+    assert!(result_line.contains(r#""type":"agent_turn_result""#));
+    assert!(
+        result_line.contains(&format!(r#""decision":"{expected_decision}""#)),
+        "result: {result_line}"
+    );
+    assert!(
+        result_line.contains(&format!(
+            r#""approval_source":"{expected_approval_source}""#
+        )),
+        "result: {result_line}"
+    );
 
     server.abort();
     let _ = server.await;

@@ -40,6 +40,7 @@ async fn external_command_runs_via_shell_exec() {
         enabled: true,
         allowed_commands: vec!["echo".into()],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
     let external_commands = vec![ExternalCommandConfig {
         name: "fixture-echo".into(),
@@ -145,6 +146,7 @@ async fn external_command_not_in_allowlist_is_denied() {
         enabled: true,
         allowed_commands: vec![],
         approval: ShellExecApprovalMode::Always,
+        ..Default::default()
     };
 
     let socket_for_server = socket_path.clone();

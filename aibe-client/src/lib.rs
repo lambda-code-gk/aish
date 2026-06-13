@@ -16,7 +16,7 @@ pub use transport::{
     agent_turn, agent_turn_on_stream, agent_turn_with_events, memory_request,
     memory_request_on_stream, read_response_line, route_turn, route_turn_on_stream,
     send_cancel_request, send_request, AgentTurnProgressEvent, ClientError,
-    ShellExecApprovalPrompt,
+    ShellExecApprovalDecision, ShellExecApprovalPrompt,
 };
 
 use unix_connect::connect_unix_stream;

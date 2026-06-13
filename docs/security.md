@@ -24,6 +24,7 @@
 - `[[external_commands]]` は `shell_exec` のテンプレートであり、AISH のポリシー外の CLI を明示登録するためのもの。
 - `risk_class` は `DangerousShell` のまま扱う。`approval_state` は既存の `shell_exec_approval` に従う。
 - `shell_exec_approval` の最終解決は CLI > preset > `AIBE_CONFIG`（`[tools.shell_exec].shell_exec_approval`）の順で、`--yes-exec` は実効 mode が `ask` の場合にのみ有効にする。`never` をクライアント側で上書きしてはいけない。
+- `ai` 側の `shell_exec` 承認は `y / n / a / c` を使い、`approval_origin` で provenance を `aibe` に渡す。`session_shell_allowed=false` の間は cache / pattern の自動承認を許さない。
 - AISH は CLI の内部 sandbox / login / tool catalog / thread を検証しない。ユーザー責任で管理する。
 
 ## 秘密情報
@@ -113,12 +114,13 @@
 | 区分 | ツール例 | 許可の考え方 |
 |------|----------|--------------|
 | **safe** | `read_file`, `list_dir`, `grep`, `git_diff`, `git_status` | `@read-only` / `@full` で既定有効。読み取り目的で `shell_exec` を使わない |
-| **dangerous** | `shell_exec` | `@exec` または literal 指定が **明示** された場合のみ。それ以外は aibe が拒否する。実行前承認は aibe 設定 `[tools.shell_exec] shell_exec_approval`（`never` / `ask` / `always`、既定 `ask`）。`ask` は同一 Unix 接続上で `command` / `args` を表示して yes/no（非対話 stdin は fail-closed） |
+| **dangerous** | `shell_exec` | `@exec` または literal 指定が **明示** された場合のみ。それ以外は aibe が拒否する。実行前承認は aibe 設定 `[tools.shell_exec] shell_exec_approval`（`never` / `ask` / `always`、既定 `ask`）。`ask` は tier（read_only / mutating / destructive）と session 許可に応じて prompt または自動承認（0036） |
 | **将来（未実装）** | `write_file`, `replace_file`, `apply_patch` | 導入時は dry-run → approval → execute の順を前提にする（現リポジトリに当該ツールはない） |
 
-- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示。`shell_exec` 有効時は warning。`shell_exec_approval=ask` では実行直前 yes/no も **stderr**（`Execute? [y/N]`）。stdin が TTY でない場合は **読む前に拒否**（`stdin.is_terminal()`）。`command` / `args` は `escape_default` 相当で表示し、ANSI / 制御文字の見た目偽装を防ぐ（0023）。
+- **client 側（`ai`）**: 起動時に有効ツールを `stderr` で表示。`shell_exec` 有効時は warning。`shell_exec_approval=ask` では実行直前に **stderr** で `Execute? [y/n/a/c]`（0036）。`y` は今回のみ、`a` は同一 invocation を session 内記憶、`c` は command 名（同一 tier 内）を session 内記憶。`read_only` tier は session 許可後に自動承認可。`destructive` tier は毎回 prompt。`--yes-exec` は session 限定 cache を有効化（`ask` のみ、`never` は越えない）。stdin が TTY でない場合は **読む前に拒否**。`session_shell_allowed=false` の間は cache / pattern を使わない。`command` / `args` は escape 表示（0023）。
 - **server 側（`aibe`）**: allowlist 外・`shell_exec_approval=never`・ユーザー拒否は tool result（`status=error`）で LLM に返し turn 継続可能。client warning の有無に依存しない。
-- **監査**: `tool_calls` に `risk_class` / `approval_state` / `approval_source`（例: `shell_exec_approval=ask`）/ `decision` を載せる（0020）。
+- **監査**: `tool_calls` に `risk_class` / `approval_state` / `approval_source` / `decision` を載せる。`ShellExecApproval` wire の `approval_origin` を server が `approval_source` に再構成する（0036）。
+- **pattern auto-approve**: `[tools.shell_exec.auto_approve_patterns]` は session 許可後のみ評価。`destructive` tier には適用しない。正規化失敗時は fail-closed。
 
 ### `ai` の表示メタデータ
 
