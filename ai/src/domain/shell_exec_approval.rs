@@ -362,9 +362,6 @@ mod tests {
         session.remember_command(command_shell_exec_key("git", ShellExecTier::Mutating));
 
         assert!(session.has_command(&command_shell_exec_key("git", ShellExecTier::Mutating)));
-        assert!(!session.has_command(&command_shell_exec_key(
-            "git",
-            ShellExecTier::Destructive,
-        )));
+        assert!(!session.has_command(&command_shell_exec_key("git", ShellExecTier::Destructive,)));
     }
 }

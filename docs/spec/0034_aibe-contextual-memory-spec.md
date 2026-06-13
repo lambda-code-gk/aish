@@ -3,7 +3,11 @@
 > **種別**: 設計書（`docs/spec/`）  
 > **状態**: 設計確定  
 > **起票**: 2026-06-11  
-> **関連**: [architecture.md](../architecture.md)、[testing.md](../testing.md)、[0035_aibe-memory-identity-split-spec.md](0035_aibe-memory-identity-split-spec.md)、[0030_ai-smart-entry-spec.md](0030_ai-smart-entry-spec.md)、[0019_aish-session-log-integration-spec.md](../done/0019_aish-session-log-integration-spec.md)、[0005_request-context-domain-spec.md](../done/0005_request-context-domain-spec.md)、[0017_aibe-protocol-client-split-spec.md](../done/0017_aibe-protocol-client-split-spec.md)
+> **関連**: [architecture.md](../architecture.md)、[testing.md](../testing.md)、[0035_aibe-memory-identity-split-spec.md](0035_aibe-memory-identity-split-spec.md)、[0037_aibe-contextual-memory-runtime-v1-spec.md](0037_aibe-contextual-memory-runtime-v1-spec.md)、[0030_ai-smart-entry-spec.md](0030_ai-smart-entry-spec.md)、[0019_aish-session-log-integration-spec.md](../done/0019_aish-session-log-integration-spec.md)、[0005_request-context-domain-spec.md](../done/0005_request-context-domain-spec.md)、[0017_aibe-protocol-client-split-spec.md](../done/0017_aibe-protocol-client-split-spec.md)
+
+### 0.1 0037 との関係
+
+本書は **MVP 設計書** として残す（履歴・背景参照用）。[0037](0037_aibe-contextual-memory-runtime-v1-spec.md) が **Contextual Memory Runtime v1 の正式正本** である。本書と 0037 が矛盾する場合は **0037 を優先**する。
 
 ## 目的
 
@@ -209,7 +213,8 @@ MemoryApply {
   id: string,
   session_id: string,
   context: {
-    cwd: absolute_path
+    cwd: absolute_path | null,
+    memory_space_id: string | null
   },
   operation: MemoryOperationDto
 }
@@ -271,7 +276,7 @@ MemoryEntryDto {
 - `now set` は session-scoped entry を upsert し、`kind=now` / `scope=session` / `inject=pinned` / `status=active` / `make_active=true` を使う
 - `idea add` は project-scoped entry を追記し、`kind=idea` / `scope=project` / `inject=on_demand` / `status=open` を既定とする。`make_active=false` とし、既存の open を変更しない
 - `ai mem add` で unknown kind を使う場合のみ、クライアント指定の `scope` / `inject` / `status` を許可する
-- `Add` の優先順位は `make_active=true` > `status` である。`make_active=true` のときはサーバが active/inactive の最終状態を決定し、同一 `session_id` + `kind` + `scope` + `project_key`（該当時）の `status=active` entry をすべて `inactive` にする `status_changed` event を記録した上で、新しい entry を `active` で append する。replay 後、同一 `(session, kind, scope, project_key)` に `active` は最大 1 件となる。`make_active=false` のときのみクライアント指定 `status` を採用する
+- `Add` の優先順位は `make_active=true` > `status` である。`make_active=true` のときはサーバが active/inactive の最終状態を決定し、同一 `memory_space_id` 内の `kind` + `scope` + `project_key`（該当時）の `status=active` entry をすべて `inactive` にする `status_changed` event を記録した上で、新しい entry を `active` で append する。replay 後、同一 memory space 内の `(kind, scope, project_key)` に `active` は最大 1 件となる。`make_active=false` のときのみクライアント指定 `status` を採用する
 - `goal clear` / `now clear` / `idea clear` は `op: "clear_kind"` で wire できる
 - `ai mem clear` は `op: "clear_kind"` で wire でき、必要なら `kind` / `scope` を明示して同じ wire に寄せられる
 - 個別 entry を version 付きで無効化したい場合は `op: "archive"` を使う。`expected_version` が指定された場合は、`id` に一致する entry の `version` が一致したときだけ archive を適用する楽観ロックとして扱う
@@ -319,7 +324,8 @@ MemoryQuery {
   id: string,
   session_id: string,
   context: {
-    cwd: absolute_path
+    cwd: absolute_path | null,
+    memory_space_id: string | null
   },
   query: MemoryQueryDto
 }

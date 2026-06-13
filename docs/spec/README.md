@@ -11,4 +11,4 @@ Codex が作成する **設計書**（境界・方針・スキーマ案・非目
 
 一覧: [0000_spec-index.md](../0000_spec-index.md)
 
-直近の大きな設計: [0037_aibe-contextual-memory-runtime-v1-spec.md](0037_aibe-contextual-memory-runtime-v1-spec.md)（0034/0035 MVP の正式版。Phase 0〜7 で段階実装）。
+直近の大きな設計: [0037_aibe-contextual-memory-runtime-v1-spec.md](0037_aibe-contextual-memory-runtime-v1-spec.md)（0034/0035 MVP の正式版。Phase 0 完了、Phase 1〜7 は未着手）。

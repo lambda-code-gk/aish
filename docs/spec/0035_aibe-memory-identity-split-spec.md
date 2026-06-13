@@ -3,7 +3,11 @@
 > **種別**: 設計書（`docs/spec/`）  
 > **状態**: 設計確定  
 > **起票**: 2026-06-12  
-> **関連**: [architecture.md](../architecture.md)、[testing.md](../testing.md)、[0034_aibe-contextual-memory-spec.md](0034_aibe-contextual-memory-spec.md)、[0030_ai-smart-entry-spec.md](0030_ai-smart-entry-spec.md)、[0019_aish-session-log-integration-spec.md](../done/0019_aish-session-log-integration-spec.md)
+> **関連**: [architecture.md](../architecture.md)、[testing.md](../testing.md)、[0034_aibe-contextual-memory-spec.md](0034_aibe-contextual-memory-spec.md)、[0037_aibe-contextual-memory-runtime-v1-spec.md](0037_aibe-contextual-memory-runtime-v1-spec.md)、[0030_ai-smart-entry-spec.md](0030_ai-smart-entry-spec.md)、[0019_aish-session-log-integration-spec.md](../done/0019_aish-session-log-integration-spec.md)
+
+### 0.1 0037 との関係
+
+本書は **MVP 設計書** として残す（履歴・背景参照用）。[0037](0037_aibe-contextual-memory-runtime-v1-spec.md) が **Contextual Memory Runtime v1 の正式正本** である。本書と 0037 が矛盾する場合は **0037 を優先**する。
 
 ## 目的
 
@@ -133,13 +137,14 @@ wall-clock TTL は将来拡張とする。
 
 ```text
 MemoryContext {
-  cwd: absolute_path,
+  cwd: absolute_path | null,
   memory_space_id: string | null
 }
 ```
 
 - `session_id` は request body レベルに残す
-- `cwd` は常に送る。project-backed id の導出と path-safe 検証に必要であり、`null` は許容しない
+- `cwd` は任意。project scope の apply/query では cwd 必須。session / global scope の apply/query では cwd なし可
+- cwd が無い AgentTurn / 旧 request では server-side fallback により legacy session space を使う
 - `memory_space_id` は nullable にする
 - unknown field は引き続き reject する
 
@@ -156,7 +161,7 @@ MemoryEntry {
   kind: string,
   scope: "project" | "session" | "global",
   inject: "pinned" | "on_demand" | "manual" | "never",
-  status: "active" | "inactive" | "archived",
+  status: "active" | "inactive" | "open" | "archived",
   text: string,
   project_key: string | null,
   created_at_ms: u64,
@@ -164,6 +169,8 @@ MemoryEntry {
   version: u64
 }
 ```
+
+- `open`: 未整理・未処理の memory（`idea` の既定 status）
 
 `created_session_id` は entry を最初に作った runtime session、`last_session_id` は最後に更新した runtime session を表す。  
 `session_id` を owner として再利用しないことで、provenance と ownership を分離する。
@@ -321,7 +328,7 @@ replay は `memory_space_id` ごとに current state を導出する。
 3. cwd から導出した project-backed id
 4. `legacy_session_<session_id>`
 
-`cwd` は project-backed id の生成に必要なので、引き続き送る。  
+`cwd` は project-backed id の生成に使うが、**常に必須ではない**。project scope の apply/query では cwd 必須。session / global scope では cwd なし可。  
 `aibe` はサーバ env `AIBE_CONTEXT_ID` を読まず、request 明示 ID > cwd project > legacy session のみで fallback する。
 
 ### display

@@ -2,6 +2,8 @@
 
 `ai goal` / `ai now` / `ai idea` / `ai mem` / `ai context` と、`AgentTurn` への自動注入を確認する。
 
+設計正本: [spec/0037_aibe-contextual-memory-runtime-v1-spec.md](../spec/0037_aibe-contextual-memory-runtime-v1-spec.md)（MVP 背景: [0034](../spec/0034_aibe-contextual-memory-spec.md) / [0035](../spec/0035_aibe-memory-identity-split-spec.md)）。
+
 ## 前提
 
 ```bash
@@ -32,3 +34,4 @@ export PATH="$PWD/target/debug:$PATH"
 - 0034 以前の `conversations/<AI_SESSION_ID>/memory/events.jsonl` は read-through / lazy copy で互換（破壊しない）。
 - `aish` は変更なし。`ai` は memory をローカル正本として保持しない（`[context] current` の名前のみ config に保存）。
 - memory は system instruction ではなく user-maintained context block として注入される。
+- `idea` は通常クエリへ常時注入されない（on-demand のみ）。`goal` / `now` のみが通常 turn で自動注入される。
