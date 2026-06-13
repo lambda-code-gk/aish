@@ -107,6 +107,7 @@
 - legacy data の lazy copy は元の session store を上書きしない
 - API キー・トークンなど機密を memory に保存しない運用とする（自動 secret 検出は MVP 外）
 - `--dry-run` 等で memory 全文を不用意に露出しない（`ai` memory コマンドは意図的な表示のみ）
+- **capability 分離（0037 Phase 6）**: memory 操作（read/write/archive/recipe/subscribe）と shell execute は AIBE application boundary で別 capability。shell 承認 UI とは独立。v1 は local runtime のみで **remote authentication / token issue は未実装**。将来 mobile profile は shell execute を持たない設計（[manual/contextual-memory-multi-client.md](manual/contextual-memory-multi-client.md)）
 
 ### safe tools / dangerous tools
 

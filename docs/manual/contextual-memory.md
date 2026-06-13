@@ -2,7 +2,8 @@
 
 `ai goal` / `ai now` / `ai idea` / `ai mem` / `ai context` と、`AgentTurn` への自動注入を確認する。Phase 2 以降は `ai mem kinds` と registry defaulting による `ai mem add rule|decision|note` も対象。
 
-設計正本: [spec/0037_aibe-contextual-memory-runtime-v1-spec.md](../spec/0037_aibe-contextual-memory-runtime-v1-spec.md)（MVP 背景: [0034](../spec/0034_aibe-contextual-memory-spec.md) / [0035](../spec/0035_aibe-memory-identity-split-spec.md)）。
+設計正本: [spec/0037_aibe-contextual-memory-runtime-v1-spec.md](../spec/0037_aibe-contextual-memory-runtime-v1-spec.md)（MVP 背景: [0034](../spec/0034_aibe-contextual-memory-spec.md) / [0035](../spec/0035_aibe-memory-identity-split-spec.md)）。  
+multi-client / capability / subscribe: [contextual-memory-multi-client.md](contextual-memory-multi-client.md)。
 
 ## 前提
 
@@ -41,3 +42,4 @@ export PATH="$PWD/target/debug:$PATH"
 - memory は system instruction ではなく user-maintained context block として注入される。
 - `idea` は通常クエリへ常時注入されない（on-demand のみ）。通常 turn では **goal / now / rule**（active）が pinned 注入される。
 - `ai mem add` は `kind + text` のみ送る。scope/inject/status の defaulting は **AIBE server** が行う（`ai` は policy を持たない）。
+- memory 操作権限と shell 実行権限は AIBE 側 capability boundary で分離される（v1 既定 `local_full`）。subscribe は専用接続・in-process broker（reconnect/replay 非対象）。詳細は [contextual-memory-multi-client.md](contextual-memory-multi-client.md)。

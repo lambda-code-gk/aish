@@ -81,5 +81,6 @@
 | 0037 | [0037-phase4-memory-recipe-implementation-spec.md](done/0037-phase4-memory-recipe-implementation-spec.md) | 実装済み（Phase 4） | Contextual Memory Runtime v1 Phase 4 — MemoryRecipe（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 | 0037 | [0037-phase5-memory-subscribe-implementation-spec.md](done/0037-phase5-memory-subscribe-implementation-spec.md) | 実装済み（Phase 5） | Contextual Memory Runtime v1 Phase 5 — MemorySubscribe（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 | 0037 | [0037-phase6-capability-model-implementation-spec.md](done/0037-phase6-capability-model-implementation-spec.md) | 実装済み（Phase 6） | Contextual Memory Runtime v1 Phase 6 — Capability model（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
+| 0037 | [0037-phase7-multi-client-readiness-docs-implementation-spec.md](done/0037-phase7-multi-client-readiness-docs-implementation-spec.md) | 実装済み（Phase 7） | Contextual Memory Runtime v1 Phase 7 — Multi-client readiness docs（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。
