@@ -8,6 +8,7 @@ use aibe_protocol::{
 use super::memory_kind_registry::{
     builtin_memory_kind_registry, MemoryCardinality, MemoryStalePolicy,
 };
+use super::memory_resolver_policy::{MemoryResolveInput, MemoryResolverPolicy};
 use super::memory_space::{now_freshness, MemoryFreshness};
 use thiserror::Error;
 
@@ -417,93 +418,14 @@ pub fn resolve_entries_for_prompt(
     budget: usize,
 ) -> MemoryBlock {
     let registry = builtin_memory_kind_registry();
-    let mut selected = Vec::new();
-
-    for def in registry.pinned_auto_inject_definitions() {
-        let scope_key = if def.default_scope == MemoryScope::Project {
-            project_key
-        } else {
-            None
-        };
-        selected.extend(collect_pinned_entries(
-            all,
-            &def.id,
-            scope_key,
-            def.cardinality,
-            def.prompt.max_entries,
-        ));
-    }
-
-    for def in registry.on_demand_definitions() {
-        if !registry.query_matches_on_demand(&def.id, user_query) {
-            continue;
-        }
-        let expected_status = def.default_status;
-        let mut entries: Vec<&MemoryEntry> = all
-            .iter()
-            .filter(|e| {
-                e.kind == def.id
-                    && e.status == expected_status
-                    && e.inject == def.default_inject
-                    && matches_scope(e, project_key)
-            })
-            .collect();
-        entries.sort_by_key(|e| std::cmp::Reverse(e.updated_at_ms));
-        let limit = max_entries_limit(def.prompt.max_entries);
-        for entry in entries.into_iter().take(limit) {
-            selected.push((*entry).clone());
-        }
-    }
-
-    let block = format_memory_block_with_budget(&selected, Some(current_session_id), budget);
-    MemoryBlock { content: block }
-}
-
-fn max_entries_limit(max_entries: Option<u32>) -> usize {
-    match max_entries {
-        None | Some(0) => usize::MAX,
-        Some(n) => n as usize,
-    }
-}
-
-fn collect_pinned_entries(
-    all: &[MemoryEntry],
-    kind: &str,
-    project_key: Option<&str>,
-    cardinality: MemoryCardinality,
-    max_entries: Option<u32>,
-) -> Vec<MemoryEntry> {
-    let mut matched: Vec<&MemoryEntry> = all
-        .iter()
-        .filter(|e| {
-            e.kind == kind
-                && e.status == MemoryStatus::Active
-                && e.inject == MemoryInjectPolicy::Pinned
-                && matches_scope(e, project_key)
-        })
-        .collect();
-    matched.sort_by_key(|e| std::cmp::Reverse(e.updated_at_ms));
-
-    let limit = match cardinality {
-        MemoryCardinality::SingleEffective => 1,
-        MemoryCardinality::Multiple => max_entries_limit(max_entries),
-    };
-    matched
-        .into_iter()
-        .take(limit)
-        .map(|e| (*e).clone())
-        .collect()
-}
-
-fn matches_scope(entry: &MemoryEntry, project_key: Option<&str>) -> bool {
-    match entry.scope {
-        MemoryScope::Session => true,
-        MemoryScope::Project => entry
-            .project_key
-            .as_deref()
-            .is_some_and(|pk| project_key.is_some_and(|want| pk == want)),
-        MemoryScope::Global => true,
-    }
+    MemoryResolverPolicy::resolve(&MemoryResolveInput {
+        entries: all,
+        registry,
+        project_key,
+        current_session_id,
+        user_query,
+        budget_bytes: budget,
+    })
 }
 
 impl MemoryEntry {

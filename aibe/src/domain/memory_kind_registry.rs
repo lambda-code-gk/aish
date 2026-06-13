@@ -142,14 +142,31 @@ impl MemoryKindRegistry {
     }
 
     pub fn query_matches_on_demand(&self, kind: &str, user_query: &str) -> bool {
+        self.kind_explicitly_requested(kind, user_query)
+    }
+
+    /// query が kind id / alias / on_demand keywords のいずれかを含むか。
+    pub fn kind_explicitly_requested(&self, kind: &str, user_query: &str) -> bool {
         let Some(def) = self.get(kind) else {
             return false;
         };
-        if !def.prompt.on_demand {
-            return false;
-        }
         let lower = user_query.to_lowercase();
-        def.prompt.keywords.iter().any(|kw| lower.contains(kw))
+        if lower.contains(&def.id.to_lowercase()) {
+            return true;
+        }
+        for alias in &def.aliases {
+            if lower.contains(&alias.to_lowercase()) {
+                return true;
+            }
+        }
+        if def.prompt.on_demand {
+            for kw in &def.prompt.keywords {
+                if lower.contains(kw) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn is_list_format_kind(&self, kind: &str) -> bool {
@@ -512,6 +529,21 @@ mod tests {
         let reg = registry();
         assert!(reg.query_matches_on_demand("idea", "アイデアを整理して"));
         assert!(!reg.query_matches_on_demand("idea", "fix rust error"));
+    }
+
+    #[test]
+    fn decision_explicit_alias_matches() {
+        let reg = registry();
+        assert!(reg.kind_explicitly_requested("decision", "決定事項を確認"));
+        assert!(reg.kind_explicitly_requested("decision", "方針を確認"));
+        assert!(!reg.kind_explicitly_requested("decision", "fix rust error"));
+    }
+
+    #[test]
+    fn rule_explicit_alias_matches_policy() {
+        let reg = registry();
+        assert!(reg.kind_explicitly_requested("rule", "ルールを確認"));
+        assert!(reg.kind_explicitly_requested("rule", "方針を確認"));
     }
 
     #[test]

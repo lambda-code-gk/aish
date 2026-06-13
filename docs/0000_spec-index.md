@@ -77,5 +77,6 @@
 | 0037 | [0037-phase0-docs-drift-implementation-spec.md](done/0037-phase0-docs-drift-implementation-spec.md) | 実装済み（Phase 0） | Contextual Memory Runtime v1 Phase 0 — docs/spec drift 修正（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 | 0037 | [0037-phase1-builtin-memory-kind-registry-implementation-spec.md](done/0037-phase1-builtin-memory-kind-registry-implementation-spec.md) | 実装済み（Phase 1） | Contextual Memory Runtime v1 Phase 1 — Builtin MemoryKindRegistry（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 | 0037 | [0037-phase2-add-defaulting-memory-kind-list-implementation-spec.md](done/0037-phase2-add-defaulting-memory-kind-list-implementation-spec.md) | 実装済み（Phase 2） | Contextual Memory Runtime v1 Phase 2 — Add defaulting + MemoryKindList RPC（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
+| 0037 | [0037-phase3-resolver-policy-implementation-spec.md](done/0037-phase3-resolver-policy-implementation-spec.md) | 実装済み（Phase 3） | Contextual Memory Runtime v1 Phase 3 — ResolverPolicy（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。
