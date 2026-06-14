@@ -3,7 +3,8 @@
 use std::io::Write;
 
 use aibe_protocol::{
-    AgentTurnStatus, ClientResponse, ExecutedToolCall, ExecutedToolStatus, MAX_TOOL_OUTPUT_BYTES,
+    AgentTurnStatus, ClientResponse, ExecutedToolCall, ExecutedToolStatus, ToolName,
+    MAX_TOOL_OUTPUT_BYTES,
 };
 
 use crate::domain::ToolsStartupLine;
@@ -26,12 +27,19 @@ impl Drop for ProgressGuard<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShellExecRenderOptions {
+    pub silent: bool,
+    pub show_always_mode_summary: bool,
+}
+
 #[derive(Default)]
 pub struct StdoutPresenter {
     output_filter: Option<String>,
     output_format: Option<OutputFormat>,
     quiet: bool,
     progress_spinner: bool,
+    shell_exec_render: ShellExecRenderOptions,
     spinner: StderrSpinner,
 }
 
@@ -58,8 +66,14 @@ impl StdoutPresenter {
             output_format,
             quiet,
             progress_spinner,
+            shell_exec_render: ShellExecRenderOptions::default(),
             spinner: StderrSpinner::default(),
         }
+    }
+
+    pub fn with_shell_exec_render(mut self, options: ShellExecRenderOptions) -> Self {
+        self.shell_exec_render = options;
+        self
     }
 
     pub fn is_quiet(&self) -> bool {
@@ -197,9 +211,14 @@ impl Presenter for StdoutPresenter {
                 verbose_tools,
                 format,
                 self.output_filter.as_deref(),
+                effective_shell_exec_render(self.quiet, self.shell_exec_render),
             )
         } else {
-            render_response(response, verbose_tools)
+            render_response(
+                response,
+                verbose_tools,
+                effective_shell_exec_render(self.quiet, self.shell_exec_render),
+            )
         };
         if let Some(s) = out.stdout.as_deref() {
             if self.output_format.is_some() {
@@ -237,7 +256,21 @@ pub fn format_tools_startup(line: &ToolsStartupLine) -> String {
     }
 }
 
-pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> PresenterOutput {
+fn effective_shell_exec_render(
+    quiet: bool,
+    options: ShellExecRenderOptions,
+) -> ShellExecRenderOptions {
+    ShellExecRenderOptions {
+        silent: quiet || options.silent,
+        show_always_mode_summary: options.show_always_mode_summary,
+    }
+}
+
+pub fn render_response(
+    response: &ClientResponse,
+    verbose_tools: bool,
+    shell_exec_render: ShellExecRenderOptions,
+) -> PresenterOutput {
     match response {
         ClientResponse::AgentTurnResult {
             status,
@@ -255,6 +288,12 @@ pub fn render_response(response: &ClientResponse, verbose_tools: bool) -> Presen
             if verbose_tools {
                 for tc in tool_calls {
                     stderr.push(format_tool_call_line(tc));
+                }
+            } else if shell_exec_render.show_always_mode_summary && !shell_exec_render.silent {
+                for tc in tool_calls {
+                    if let Some(line) = format_shell_exec_executed_summary(tc) {
+                        stderr.push(line);
+                    }
                 }
             }
             let stdout = if assistant_message.content.is_empty() {
@@ -310,8 +349,10 @@ pub fn render_response_structured(
     verbose_tools: bool,
     format: OutputFormat,
     output_filter: Option<&str>,
+    shell_exec_render: ShellExecRenderOptions,
 ) -> PresenterOutput {
-    let mut view = ResponseView::from_response(response, verbose_tools, output_filter);
+    let mut view =
+        ResponseView::from_response(response, verbose_tools, output_filter, shell_exec_render);
     let stdout = match format {
         OutputFormat::Json => serde_json::to_string(&view).ok(),
         OutputFormat::Tsv => Some(view.render_tsv()),
@@ -360,6 +401,7 @@ impl ResponseView {
         response: &ClientResponse,
         verbose_tools: bool,
         output_filter: Option<&str>,
+        shell_exec_render: ShellExecRenderOptions,
     ) -> Self {
         match response {
             ClientResponse::AgentTurnResult {
@@ -408,6 +450,12 @@ impl ResponseView {
                 if verbose_tools {
                     for tc in tool_calls {
                         tool_warnings.push(format_tool_call_line(tc));
+                    }
+                } else if shell_exec_render.show_always_mode_summary && !shell_exec_render.silent {
+                    for tc in tool_calls {
+                        if let Some(line) = format_shell_exec_executed_summary(tc) {
+                            tool_warnings.push(line);
+                        }
                     }
                 }
                 Self {
@@ -753,6 +801,32 @@ pub fn format_tool_call_line(tc: &ExecutedToolCall) -> String {
     line
 }
 
+/// turn 終了時の `shell_exec` 要約（`shell_exec_approval=always` 向け）。
+pub fn format_shell_exec_executed_summary(tc: &ExecutedToolCall) -> Option<String> {
+    if tc.name != ToolName::shell_exec().as_str() {
+        return None;
+    }
+    let command = tc.arguments.get("command")?.as_str()?;
+    let args = tc
+        .arguments
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let status = match tc.status {
+        ExecutedToolStatus::Ok => "ok",
+        ExecutedToolStatus::Error => "error",
+    };
+    Some(format!(
+        "ai: shell_exec executed ({status}): {}",
+        super::shell_exec_approval_ui::format_shell_exec_invocation(command, &args)
+    ))
+}
+
 pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
     if s.len() <= max_bytes {
         return s.to_string();
@@ -806,7 +880,11 @@ mod tests {
 
     #[test]
     fn pong_never_writes_stdout() {
-        let out = render_response(&ClientResponse::Pong { id: "x".into() }, false);
+        let out = render_response(
+            &ClientResponse::Pong { id: "x".into() },
+            false,
+            ShellExecRenderOptions::default(),
+        );
         assert!(out.stdout.is_none());
         assert_eq!(out.stderr, vec!["ai: pong (x)"]);
     }
@@ -824,8 +902,63 @@ mod tests {
                 tool_calls: vec![],
             },
             false,
+            ShellExecRenderOptions::default(),
         );
         assert!(out.stdout.is_none());
+    }
+
+    #[test]
+    fn always_mode_shell_exec_summary_on_stderr() {
+        let out = render_response(
+            &ClientResponse::AgentTurnResult {
+                id: "id".into(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: "done".into(),
+                },
+                tool_calls: vec![ExecutedToolCall::ok(
+                    "c1".into(),
+                    ToolName::shell_exec(),
+                    json!({"command": "git", "args": ["status"]}),
+                    "ok".into(),
+                )],
+            },
+            false,
+            ShellExecRenderOptions {
+                silent: false,
+                show_always_mode_summary: true,
+            },
+        );
+        assert_eq!(out.stdout.as_deref(), Some("done"));
+        assert_eq!(out.stderr.len(), 1);
+        assert!(out.stderr[0].contains("shell_exec executed (ok): git status"));
+    }
+
+    #[test]
+    fn always_mode_shell_exec_summary_respects_silent() {
+        let out = render_response(
+            &ClientResponse::AgentTurnResult {
+                id: "id".into(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: "done".into(),
+                },
+                tool_calls: vec![ExecutedToolCall::ok(
+                    "c1".into(),
+                    ToolName::shell_exec(),
+                    json!({"command": "echo", "args": ["hi"]}),
+                    "ok".into(),
+                )],
+            },
+            false,
+            ShellExecRenderOptions {
+                silent: true,
+                show_always_mode_summary: true,
+            },
+        );
+        assert!(out.stderr.is_empty());
     }
 
     #[test]
@@ -841,6 +974,7 @@ mod tests {
                 tool_calls: vec![],
             },
             false,
+            ShellExecRenderOptions::default(),
         );
         assert_eq!(out.stdout.as_deref(), Some("partial"));
         assert_eq!(out.stderr.len(), 1);
@@ -867,6 +1001,7 @@ mod tests {
                 )],
             },
             true,
+            ShellExecRenderOptions::default(),
         );
         assert_eq!(out.stdout.as_deref(), Some("final"));
         assert_eq!(out.stderr.len(), 1);

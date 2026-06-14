@@ -255,11 +255,13 @@ UI 実装は 1 回の prompt にまとめてもよいが、内部状態は分離
 2. read-only tier は session 許可後に自動承認される
 3. mutating tier は session 許可後でも初回 prompt を維持できる
 4. destructive tier は毎回 prompt される
-5. pattern ベース auto-approve は session 許可後のみ有効である
-6. `--yes-exec` は `never` を越えない
-7. non-TTY は fail-closed である
-8. `ai chat` は session 初回のみ session 許可を要求する
-9. `tool_calls` に `approval_state` / `decision` / `approval_source` が残る
+5. 自動承認時は **stderr** に実行 command の要約行を **既定で** 出す（`--silent-exec` / `--quiet` で抑止）
+6. `shell_exec_approval=always` 時は turn 終了時に実行 command の要約行を stderr に出す（同上、抑止可）
+7. pattern ベース auto-approve は session 許可後のみ有効である
+8. `--yes-exec` は `never` を越えない
+9. non-TTY は fail-closed である
+10. `ai chat` は session 初回のみ session 許可を要求する
+11. `tool_calls` に `approval_state` / `decision` / `approval_source` が残る
 
 ### 変更範囲
 

@@ -32,10 +32,13 @@ pub use memory_recipe_approval_ui::{
 };
 pub use output_filter::{apply_output_filter, format_filter_exit_status, FilterRunOutcome};
 pub use shell_exec_approval_ui::{
-    approval_prompt_stderr_lines, escape_for_shell_exec_approval_display, parse_shell_exec_choice,
-    prompt_shell_exec_approval,
+    approval_prompt_stderr_lines, emit_auto_approved_shell_exec,
+    escape_for_shell_exec_approval_display, format_auto_approved_shell_exec_line,
+    format_shell_exec_invocation, parse_shell_exec_choice, prompt_shell_exec_approval,
 };
 pub use shell_log_resolver::resolve_shell_log_for_ask;
-pub use stdout_presenter::{render_response, StdoutPresenter};
+pub use stdout_presenter::{
+    format_shell_exec_executed_summary, render_response, ShellExecRenderOptions, StdoutPresenter,
+};
 pub use terminal_size::detect_terminal_size;
 pub use yes_exec_cache::YesExecCache;

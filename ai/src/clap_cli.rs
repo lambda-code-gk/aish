@@ -92,6 +92,9 @@ pub struct TurnOptions {
     pub timeout: Option<u64>,
     #[arg(long)]
     pub yes_exec: bool,
+    /// 自動承認された shell_exec の stderr 通知を抑止する
+    #[arg(long)]
+    pub silent_exec: bool,
     /// TTY 向け console hint（端末サイズに応じた system instruction）を有効にする
     #[arg(long, short = 'H', conflicts_with = "no_console_hint")]
     pub console_hint: bool,

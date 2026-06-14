@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use ai::adapters::outbound::{render_response, StdoutPresenter};
+use ai::adapters::outbound::{render_response, ShellExecRenderOptions, StdoutPresenter};
 use ai::application::{plan_ask_launch, Ask, AskRunOptions};
 use ai::domain::{resolve_tools, ConfigToolsTokens, RequestContextInput, ToolsResolveError};
 use ai::ports::outbound::{AgentClient, AgentError, Presenter};
@@ -125,6 +125,7 @@ fn presenter_max_tool_rounds_and_verbose_tools_contract() {
             )],
         },
         true,
+        ShellExecRenderOptions::default(),
     );
     assert_eq!(out.stdout.as_deref(), Some("partial reply"));
     assert!(

@@ -16,6 +16,61 @@ pub fn escape_for_shell_exec_approval_display(s: &str) -> String {
     String::from_utf8_lossy(&escaped).into_owned()
 }
 
+/// `command` と `args` を 1 行の invocation 文字列にする。
+pub fn format_shell_exec_invocation(command: &str, args: &[String]) -> String {
+    let cmd = escape_for_shell_exec_approval_display(command);
+    if args.is_empty() {
+        cmd
+    } else {
+        let escaped: Vec<String> = args
+            .iter()
+            .map(|a| escape_for_shell_exec_approval_display(a))
+            .collect();
+        format!("{cmd} {}", escaped.join(" "))
+    }
+}
+
+fn shell_exec_approval_origin_label(origin: ShellExecApprovalOrigin) -> &'static str {
+    match origin {
+        ShellExecApprovalOrigin::SessionAllowed => "session/read_only",
+        ShellExecApprovalOrigin::SessionCacheExactInvocation => "session-cache/exact",
+        ShellExecApprovalOrigin::SessionCacheCommandName => "session-cache/command",
+        ShellExecApprovalOrigin::PatternReadOnly => "pattern/read_only",
+        ShellExecApprovalOrigin::PatternMutating => "pattern/mutating",
+        _ => "auto",
+    }
+}
+
+/// 自動承認時に stderr へ出す 1 行。
+pub fn format_auto_approved_shell_exec_line(
+    prompt: &ShellExecApprovalPrompt,
+    tier: ShellExecTier,
+    origin: ShellExecApprovalOrigin,
+) -> String {
+    format!(
+        "ai: shell_exec auto-approved ({}, tier={}): {}",
+        shell_exec_approval_origin_label(origin),
+        tier.as_str(),
+        format_shell_exec_invocation(&prompt.command, &prompt.args),
+    )
+}
+
+/// 自動承認時に stderr へ通知する（`silent` なら何も出さない）。
+pub fn emit_auto_approved_shell_exec(
+    prompt: &ShellExecApprovalPrompt,
+    tier: ShellExecTier,
+    origin: ShellExecApprovalOrigin,
+    silent: bool,
+) {
+    if silent {
+        return;
+    }
+    eprintln!(
+        "{}",
+        format_auto_approved_shell_exec_line(prompt, tier, origin)
+    );
+}
+
 pub fn approval_prompt_stderr_lines(
     prompt: &ShellExecApprovalPrompt,
     tier: ShellExecTier,
@@ -184,5 +239,39 @@ mod tests {
             Some(ShellExecApprovalChoice::CommandOnly)
         ));
         assert!(parse_shell_exec_choice("wat").is_none());
+    }
+
+    #[test]
+    fn auto_approved_line_shows_invocation_and_origin() {
+        let prompt = ShellExecApprovalPrompt {
+            prompt_id: "p1".into(),
+            turn_id: "t1".into(),
+            tool_call_id: "c1".into(),
+            command: "git".into(),
+            args: vec!["status".into()],
+        };
+        let line = format_auto_approved_shell_exec_line(
+            &prompt,
+            ShellExecTier::ReadOnly,
+            ShellExecApprovalOrigin::PatternReadOnly,
+        );
+        assert!(line.contains("auto-approved (pattern/read_only, tier=read_only): git status"));
+    }
+
+    #[test]
+    fn emit_auto_approved_respects_silent() {
+        let prompt = ShellExecApprovalPrompt {
+            prompt_id: "p1".into(),
+            turn_id: "t1".into(),
+            tool_call_id: "c1".into(),
+            command: "echo".into(),
+            args: vec!["hi".into()],
+        };
+        emit_auto_approved_shell_exec(
+            &prompt,
+            ShellExecTier::ReadOnly,
+            ShellExecApprovalOrigin::SessionAllowed,
+            true,
+        );
     }
 }

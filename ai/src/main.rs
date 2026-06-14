@@ -16,7 +16,7 @@ use ai::adapters::outbound::toml_config::AiConfig;
 use ai::adapters::outbound::{
     detect_terminal_size, external_command_names, load_shell_exec_approval, read_chat_line,
     resolve_shell_log_for_ask, AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore,
-    StdoutPresenter, YesExecCache,
+    ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli::MemoryCliContext;
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
@@ -163,6 +163,7 @@ struct ResolvedTurnSettings {
     progress_spinner: bool,
     timeout_secs: Option<u64>,
     yes_exec: bool,
+    silent_exec: bool,
     shell_exec_approval: Option<String>,
     console_hint: ConsoleHintReport,
 }
@@ -178,6 +179,21 @@ struct TurnExecutionOutcome {
     response: ClientResponse,
     cancel_source: Option<TurnCancelSource>,
     streamed: bool,
+}
+
+fn auto_approve_shell_exec_decision(
+    prompt: &ShellExecApprovalPrompt,
+    tier: ShellExecTier,
+    origin: aibe_protocol::ShellExecApprovalOrigin,
+    session: &mut ShellExecSessionState,
+    silent: bool,
+) -> ShellExecApprovalDecision {
+    ai::adapters::outbound::emit_auto_approved_shell_exec(prompt, tier, origin, silent);
+    session.allow_session_shell();
+    ShellExecApprovalDecision {
+        approved: true,
+        approval_origin: origin,
+    }
 }
 
 fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
@@ -468,12 +484,21 @@ fn execute_turn(
     })?;
 
     let progress_spinner = settings.progress_spinner;
-    let presenter = Arc::new(StdoutPresenter::with_options(
-        settings.output_filter.clone(),
-        settings.output_format,
-        settings.quiet,
-        progress_spinner,
-    ));
+    let presenter = Arc::new(
+        StdoutPresenter::with_options(
+            settings.output_filter.clone(),
+            settings.output_format,
+            settings.quiet,
+            progress_spinner,
+        )
+        .with_shell_exec_render(ShellExecRenderOptions {
+            silent: settings.silent_exec,
+            show_always_mode_summary: matches!(
+                settings.shell_exec_approval.as_deref(),
+                Some("always")
+            ),
+        }),
+    );
     presenter.show_tools_startup(&plan.resolved_tools.startup);
     presenter.show_external_commands(&external_command_names());
     let tool_names: Vec<String> = plan
@@ -523,6 +548,7 @@ fn execute_turn(
             yes_exec_effective,
             settings.progress,
             settings.timeout_secs,
+            settings.silent_exec || settings.quiet,
             Arc::clone(&shell_exec_state),
         )?
     } else {
@@ -534,6 +560,7 @@ fn execute_turn(
             settings.session_id.clone(),
             yes_exec_effective,
             settings.progress,
+            settings.silent_exec || settings.quiet,
             shell_exec_state,
         )?
     };
@@ -648,6 +675,7 @@ fn run_agent_turn_sync(
     session_id: Option<String>,
     yes_exec: bool,
     progress: bool,
+    silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
@@ -659,6 +687,7 @@ fn run_agent_turn_sync(
         yes_exec,
         progress,
         None,
+        silent_shell_exec,
         shell_exec_state,
     )
 }
@@ -673,6 +702,7 @@ fn run_agent_turn_async(
     yes_exec: bool,
     progress: bool,
     timeout_secs: Option<u64>,
+    silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
@@ -684,6 +714,7 @@ fn run_agent_turn_async(
         yes_exec,
         progress,
         timeout_secs,
+        silent_shell_exec,
         shell_exec_state,
     )
 }
@@ -698,6 +729,7 @@ fn run_agent_turn_core(
     yes_exec: bool,
     progress: bool,
     timeout_secs: Option<u64>,
+    silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let turn_id = request_turn_id(&request)?;
@@ -714,6 +746,7 @@ fn run_agent_turn_core(
     let turn_id_thread = turn_id.clone();
     let streamed_thread = Arc::clone(&streamed);
     let shell_exec_state_thread = Arc::clone(&shell_exec_state);
+    let silent_shell_exec_thread = silent_shell_exec;
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
         aibe_shell_exec.auto_approve_patterns.read_only,
@@ -760,37 +793,42 @@ fn run_agent_turn_core(
                             if let Some(scope) =
                                 cache.should_auto_approve(&prompt.command, &prompt.args, tier)
                             {
-                                session.allow_session_shell();
-                                return ShellExecApprovalDecision {
-                                    approved: true,
-                                    approval_origin: match scope {
-                                        ai::domain::ShellExecRememberScope::ExactInvocation => {
-                                            aibe_protocol::ShellExecApprovalOrigin::SessionCacheExactInvocation
-                                        }
-                                        ai::domain::ShellExecRememberScope::CommandName => {
-                                            aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName
-                                        }
-                                    },
+                                let origin = match scope {
+                                    ai::domain::ShellExecRememberScope::ExactInvocation => {
+                                        aibe_protocol::ShellExecApprovalOrigin::SessionCacheExactInvocation
+                                    }
+                                    ai::domain::ShellExecRememberScope::CommandName => {
+                                        aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName
+                                    }
                                 };
+                                return auto_approve_shell_exec_decision(
+                                    &prompt,
+                                    tier,
+                                    origin,
+                                    &mut session,
+                                    silent_shell_exec_thread,
+                                );
                             }
                         }
                         let exact_key = ai::domain::exact_shell_exec_key(&prompt.command, &prompt.args);
                         if session.has_exact(&exact_key) {
-                            session.allow_session_shell();
-                            return ShellExecApprovalDecision {
-                                approved: true,
-                                approval_origin:
-                                    aibe_protocol::ShellExecApprovalOrigin::SessionCacheExactInvocation,
-                            };
+                            return auto_approve_shell_exec_decision(
+                                &prompt,
+                                tier,
+                                aibe_protocol::ShellExecApprovalOrigin::SessionCacheExactInvocation,
+                                &mut session,
+                                silent_shell_exec_thread,
+                            );
                         }
                         let command_key = ai::domain::command_shell_exec_key(&prompt.command, tier);
                         if session.has_command(&command_key) {
-                            session.allow_session_shell();
-                            return ShellExecApprovalDecision {
-                                approved: true,
-                                approval_origin:
-                                    aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName,
-                            };
+                            return auto_approve_shell_exec_decision(
+                                &prompt,
+                                tier,
+                                aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName,
+                                &mut session,
+                                silent_shell_exec_thread,
+                            );
                         }
                         if let Some(patterns) = auto_patterns.as_ref() {
                             if let Some((_, origin)) =
@@ -800,19 +838,23 @@ fn run_agent_turn_core(
                                     patterns,
                                 )
                             {
-                                session.allow_session_shell();
-                                return ShellExecApprovalDecision {
-                                    approved: true,
-                                    approval_origin: origin,
-                                };
+                                return auto_approve_shell_exec_decision(
+                                    &prompt,
+                                    tier,
+                                    origin,
+                                    &mut session,
+                                    silent_shell_exec_thread,
+                                );
                             }
                         }
                         if tier == ShellExecTier::ReadOnly {
-                            session.allow_session_shell();
-                            return ShellExecApprovalDecision {
-                                approved: true,
-                                approval_origin: aibe_protocol::ShellExecApprovalOrigin::SessionAllowed,
-                            };
+                            return auto_approve_shell_exec_decision(
+                                &prompt,
+                                tier,
+                                aibe_protocol::ShellExecApprovalOrigin::SessionAllowed,
+                                &mut session,
+                                silent_shell_exec_thread,
+                            );
                         }
                     }
                 }
@@ -1455,6 +1497,7 @@ fn resolve_turn_settings(
         progress_spinner,
         timeout_secs: turn.timeout,
         yes_exec: turn.yes_exec,
+        silent_exec: turn.silent_exec,
         shell_exec_approval,
         console_hint,
     })
@@ -2118,6 +2161,7 @@ mod cli_tests {
             progress_spinner: false,
             timeout_secs: None,
             yes_exec: true,
+            silent_exec: false,
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
         };
