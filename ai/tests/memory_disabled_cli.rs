@@ -82,3 +82,68 @@ enabled = false
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn context_current_fails_when_memory_disabled_in_config() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let config_path = home.path().join("config.toml");
+    fs::write(
+        &config_path,
+        r#"
+[memory]
+enabled = false
+"#,
+    )
+    .expect("write config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("HOME", home.path())
+        .env("AI_CONFIG", &config_path)
+        .env("AI_SESSION_ID", "mem-disabled-context")
+        .args(["context", "current"])
+        .output()
+        .expect("run ai context current");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "context current should fail when memory disabled, stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("contextual memory is disabled"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn memory_disabled_via_env_overrides_config_enabled() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let config_path = home.path().join("config.toml");
+    fs::write(
+        &config_path,
+        r#"
+[memory]
+enabled = true
+"#,
+    )
+    .expect("write config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("HOME", home.path())
+        .env("AI_CONFIG", &config_path)
+        .env("AI_MEMORY_ENABLED", "0")
+        .env("AI_SESSION_ID", "mem-env-disabled")
+        .args(["goal", "set", "--no-start", "ship memory"])
+        .output()
+        .expect("run ai goal set");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "goal set should fail when AI_MEMORY_ENABLED=0, stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("contextual memory is disabled"),
+        "stderr={stderr}"
+    );
+}

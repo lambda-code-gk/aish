@@ -454,6 +454,31 @@ console_hints = true
     }
 
     #[test]
+    fn env_memory_enabled_overrides_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[memory]
+enabled = true
+"#,
+        )
+        .expect("write");
+
+        unsafe {
+            std::env::set_var("AI_CONFIG", &path);
+            std::env::set_var("AI_MEMORY_ENABLED", "0");
+        }
+        let cfg = AiConfig::load();
+        unsafe {
+            std::env::remove_var("AI_CONFIG");
+            std::env::remove_var("AI_MEMORY_ENABLED");
+        }
+        assert!(!cfg.memory_enabled);
+    }
+
+    #[test]
     fn env_filter_overrides_config_filter() {
         unsafe {
             std::env::set_var("AI_FILTER", "sed 's/a/b/'");

@@ -1040,6 +1040,29 @@ enabled = false
     }
 
     #[test]
+    fn env_memory_enabled_overrides_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[memory]
+enabled = true
+"#,
+        )
+        .expect("write");
+
+        unsafe {
+            std::env::set_var("AIBE_MEMORY_ENABLED", "0");
+        }
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        unsafe {
+            std::env::remove_var("AIBE_MEMORY_ENABLED");
+        }
+        assert!(!cfg.memory.enabled);
+    }
+
+    #[test]
     fn rejects_external_command_not_in_allowlist() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("config.toml");

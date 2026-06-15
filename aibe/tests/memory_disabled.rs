@@ -12,8 +12,9 @@ use aibe::application::memory_runtime::MEMORY_DISABLED_MESSAGE;
 use aibe::application::RequestService;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe_protocol::{
-    ClientRequest, ClientResponse, MemoryContext, MemoryOperationAdd, MemoryOperationDto,
-    MemoryQueryDto, MemoryQueryRequestBody, ProtocolMessage, RequestContext,
+    ClientRequest, ClientResponse, MemoryContext, MemoryKindListRequestBody, MemoryOperationAdd,
+    MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody, MemoryRecipeRunRequestBody,
+    ProtocolMessage, RequestContext,
 };
 
 fn memory_disabled_service() -> RequestService {
@@ -143,4 +144,108 @@ async fn agent_turn_skips_memory_injection_when_disabled() {
         }
         other => panic!("expected agent turn: {other:?}"),
     }
+}
+
+fn memory_context() -> MemoryContext {
+    MemoryContext {
+        cwd: None,
+        memory_space_id: None,
+    }
+}
+
+fn assert_memory_disabled_error(resp: ClientResponse) {
+    match resp {
+        ClientResponse::Error { message, .. } => {
+            assert!(message.contains(MEMORY_DISABLED_MESSAGE));
+        }
+        other => panic!("expected error: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn memory_kind_list_rejected_when_disabled() {
+    let service = memory_disabled_service();
+    let resp = service
+        .handle(
+            ClientRequest::MemoryKindList(MemoryKindListRequestBody {
+                id: "kl1".into(),
+                session_id: session_id(),
+                context: memory_context(),
+            }),
+            None,
+        )
+        .await;
+    assert_memory_disabled_error(resp);
+}
+
+#[tokio::test]
+async fn memory_recipe_run_rejected_when_disabled() {
+    let service = memory_disabled_service();
+    let resp = service
+        .handle(
+            ClientRequest::MemoryRecipeRun(MemoryRecipeRunRequestBody {
+                id: "r1".into(),
+                session_id: session_id(),
+                context: memory_context(),
+                recipe: "goal".into(),
+                apply: false,
+                user_instruction: None,
+            }),
+            None,
+        )
+        .await;
+    assert_memory_disabled_error(resp);
+}
+
+#[tokio::test]
+async fn server_starts_with_broken_kinds_toml_when_memory_disabled() {
+    use std::io::Write;
+    use std::time::Duration;
+
+    use aibe::application::server;
+    use aibe::ports::outbound::TerminationCapability;
+    use aibe::ports::outbound::{MemoryConfig, ProfileRegistry, ToolsConfig};
+    use tempfile::tempdir;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    let dir = tempdir().expect("tempdir");
+    let store_root = dir.path().join("data");
+    std::fs::create_dir_all(&store_root).expect("mkdir");
+    let kinds_path = dir.path().join("memory/kinds.toml");
+    std::fs::create_dir_all(kinds_path.parent().unwrap()).expect("mkdir memory");
+    let mut f = std::fs::File::create(&kinds_path).expect("create kinds.toml");
+    f.write_all(b"not valid toml [[[\n")
+        .expect("write broken toml");
+
+    let socket_path = dir.path().join("aibe.sock");
+    let socket_for_server = socket_path.clone();
+    let llm = Arc::new(MockLlm::new());
+    let profile_registry =
+        ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
+    let server = tokio::spawn(async move {
+        server::run(
+            socket_for_server,
+            profile_registry,
+            ToolsConfig::default(),
+            Vec::new(),
+            "default".to_string(),
+            store_root,
+            MemoryConfig { enabled: false },
+        )
+        .await
+        .expect("server should start with memory disabled despite broken kinds.toml");
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let stream = UnixStream::connect(&socket_path).await.expect("connect");
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+    let req = r#"{"type":"ping","id":"p1"}"#;
+    writer.write_all(req.as_bytes()).await.expect("write");
+    writer.write_all(b"\n").await.expect("newline");
+    let line = lines.next_line().await.expect("read").expect("line");
+    assert!(line.contains(r#""type":"pong""#), "pong: {line}");
+
+    server.abort();
 }
