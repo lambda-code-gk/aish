@@ -9,19 +9,20 @@ use aibe_protocol::{
 };
 
 use crate::domain::{
-    build_clarify_goal_messages, collect_clarify_goal_materials, parse_and_validate_recipe_output,
+    build_recipe_messages, collect_recipe_materials, parse_and_validate_recipe_output,
     publish_memory_changes, required_capabilities_for_memory_operations, Capability,
-    MemoryKindRegistryError, MemoryRecipeError, RECIPE_CLARIFY_GOAL,
+    MemoryKindRegistryError, MemoryRecipeError, MemoryRecipeRegistryError,
 };
 use crate::ports::outbound::{
     CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemoryKindRegistryLoader,
-    MemorySpaceResolver, MemorySubscriptionBroker, ProfileRegistry,
+    MemoryRecipeRegistryLoader, MemorySpaceResolver, MemorySubscriptionBroker, ProfileRegistry,
 };
 
 pub struct MemoryRecipeService {
     store: Arc<dyn ContextualMemoryStore>,
     resolver: Arc<dyn MemorySpaceResolver>,
     registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
     profile_registry: ProfileRegistry,
     broker: Option<Arc<dyn MemorySubscriptionBroker>>,
     capability_policy: Arc<dyn CapabilityPolicy>,
@@ -32,12 +33,14 @@ impl MemoryRecipeService {
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
         registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
         profile_registry: ProfileRegistry,
     ) -> Self {
         Self::with_capability_policy(
             store,
             resolver,
             registry_loader,
+            recipe_registry_loader,
             profile_registry,
             None,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
@@ -48,6 +51,7 @@ impl MemoryRecipeService {
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
         registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
         profile_registry: ProfileRegistry,
         broker: Arc<dyn MemorySubscriptionBroker>,
     ) -> Self {
@@ -55,6 +59,7 @@ impl MemoryRecipeService {
             store,
             resolver,
             registry_loader,
+            recipe_registry_loader,
             profile_registry,
             Some(broker),
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
@@ -65,6 +70,7 @@ impl MemoryRecipeService {
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
         registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
         profile_registry: ProfileRegistry,
         broker: Option<Arc<dyn MemorySubscriptionBroker>>,
         capability_policy: Arc<dyn CapabilityPolicy>,
@@ -73,6 +79,7 @@ impl MemoryRecipeService {
             store,
             resolver,
             registry_loader,
+            recipe_registry_loader,
             profile_registry,
             broker,
             capability_policy,
@@ -109,22 +116,30 @@ impl MemoryRecipeService {
             Err(e) => return map_store_error(id, e),
         };
 
-        if recipe != RECIPE_CLARIFY_GOAL {
-            return invalid(id, &format!("unknown recipe: {recipe}"));
-        }
+        let recipe_registry = match self.recipe_registry_loader.load_strict() {
+            Ok(registry) => registry,
+            Err(e) => return map_recipe_registry_error(id, e),
+        };
+        let recipe_def = match recipe_registry.get(recipe) {
+            Some(def) => def.clone(),
+            None => return invalid(id, &format!("unknown recipe: {recipe}")),
+        };
 
-        let materials = match collect_clarify_goal_materials(self.store.as_ref(), &store_ctx) {
+        let materials = match collect_recipe_materials(self.store.as_ref(), &store_ctx, &recipe_def)
+        {
             Ok(m) => m,
             Err(e) => return map_recipe_error(id, e),
         };
 
-        let (system, user) = build_clarify_goal_messages(&materials, user_instruction.as_deref());
+        let (system, user) =
+            build_recipe_messages(&recipe_def, &materials, user_instruction.as_deref());
         let messages = vec![
             crate::domain::ChatMessage::system(system),
             crate::domain::ChatMessage::user(user),
         ];
 
-        let (llm, _capability) = match self.profile_registry.resolve(None) {
+        let profile_name = recipe_def.llm_profile.as_deref();
+        let (llm, _capability) = match self.profile_registry.resolve(profile_name) {
             Ok(pair) => pair,
             Err(msg) => return invalid(id, &msg),
         };
@@ -147,7 +162,11 @@ impl MemoryRecipeService {
             Ok(registry) => registry,
             Err(e) => return map_registry_error(id, e),
         };
-        let validated = match parse_and_validate_recipe_output(&assistant.content, &registry) {
+        let validated = match parse_and_validate_recipe_output(
+            &assistant.content,
+            &registry,
+            &recipe_def.output.allow_operations,
+        ) {
             Ok(v) => v,
             Err(e) => return map_recipe_error(id, e),
         };
@@ -217,6 +236,10 @@ fn validate_session_id(session_id: &str) -> Result<(), &'static str> {
     } else {
         Err("invalid session_id")
     }
+}
+
+fn map_recipe_registry_error(id: String, err: MemoryRecipeRegistryError) -> ClientResponse {
+    ClientResponse::error(id, ErrorCode::InvalidRequest, err.to_string())
 }
 
 fn map_registry_error(id: String, err: MemoryKindRegistryError) -> ClientResponse {

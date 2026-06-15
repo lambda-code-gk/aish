@@ -7,6 +7,7 @@ mod contextual_memory;
 mod llm_step;
 mod memory_kind_registry;
 mod memory_recipe;
+mod memory_recipe_registry;
 mod memory_resolver_policy;
 mod memory_space;
 mod memory_subscription;
@@ -29,15 +30,20 @@ pub use contextual_memory::{
     STANDARD_KIND_GOAL, STANDARD_KIND_IDEA, STANDARD_KIND_NOW,
 };
 pub use llm_step::LlmStepResult;
+pub(crate) use memory_kind_registry::parse_kinds_toml_str;
 pub use memory_kind_registry::{
-    builtin_memory_kind_registry, KindOverride, MemoryCardinality, MemoryKindDefinition,
-    MemoryKindRegistry, MemoryKindRegistryError, MemoryLifecycle, MemoryPromptPolicy,
-    MemoryStalePolicy, PromptOverride,
+    baseline_memory_kind_registry, builtin_memory_kind_registry, KindOverride, MemoryCardinality,
+    MemoryKindDefinition, MemoryKindRegistry, MemoryKindRegistryError, MemoryLifecycle,
+    MemoryPromptPolicy, MemoryStalePolicy, PromptOverride,
 };
 pub use memory_recipe::{
-    build_clarify_goal_messages, collect_clarify_goal_materials, parse_and_validate_recipe_output,
-    ClarifyGoalMaterials, MemoryRecipeError, ValidatedRecipeOutput, ValidatedRecipeProposal,
-    RECIPE_CLARIFY_GOAL,
+    build_recipe_messages, collect_recipe_materials, parse_and_validate_recipe_output,
+    MemoryRecipeError, RecipeMaterialValue, RecipeMaterials, ValidatedRecipeOutput,
+    ValidatedRecipeProposal,
+};
+pub use memory_recipe_registry::{
+    baseline_memory_recipe_registry, MemoryRecipeDefinition, MemoryRecipeRegistry,
+    MemoryRecipeRegistryError, RecipeMaterialQuery, RecipeOutputContract,
 };
 pub use memory_resolver_policy::{MemoryResolveInput, MemoryResolverPolicy};
 pub use memory_space::{

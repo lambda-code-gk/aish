@@ -14,8 +14,8 @@ use crate::adapters::outbound::{
 };
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
-    FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
-    InProcessMemorySubscriptionBroker,
+    FilesystemContextualMemoryStore, FilesystemMemoryRecipeRegistryLoader,
+    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
 };
 use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
@@ -51,15 +51,21 @@ pub async fn run(
             let memory_space_resolver = Arc::new(FilesystemMemorySpaceResolver);
             let memory_broker: Arc<dyn crate::ports::outbound::MemorySubscriptionBroker> =
                 Arc::new(InProcessMemorySubscriptionBroker::new());
-            let memory_store_impl = FilesystemContextualMemoryStore::with_conversation_root(
-                conversation_store_root.clone(),
-            );
+            let memory_store_impl =
+                FilesystemContextualMemoryStore::with_conversation_root_and_config(
+                    conversation_store_root.clone(),
+                    memory_config.clone(),
+                );
             let loader = memory_store_impl.registry_loader();
+            let recipe_loader = Arc::new(FilesystemMemoryRecipeRegistryLoader::new(
+                memory_config.clone(),
+            ));
             contextual_pack_arc(
                 Arc::new(memory_store_impl)
                     as Arc<dyn crate::ports::outbound::ContextualMemoryStore>,
                 memory_space_resolver,
                 loader,
+                recipe_loader,
                 memory_broker,
                 Arc::clone(&capability_policy),
                 profile_registry.clone(),

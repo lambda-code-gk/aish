@@ -5,6 +5,7 @@ pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod llm;
 pub mod memory_kind_registry_loader;
+pub mod memory_recipe_registry_loader;
 pub mod memory_space_resolver;
 pub mod memory_subscription_broker;
 pub mod rpc_extension;
@@ -36,6 +37,7 @@ pub use conversation_store::{
 };
 pub use llm::{LlmError, LlmProvider};
 pub use memory_kind_registry_loader::MemoryKindRegistryLoader;
+pub use memory_recipe_registry_loader::MemoryRecipeRegistryLoader;
 pub use memory_space_resolver::MemorySpaceResolver;
 pub use memory_subscription_broker::{MemorySubscription, MemorySubscriptionBroker};
 pub use rpc_extension::RpcExtension;

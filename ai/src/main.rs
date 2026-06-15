@@ -985,6 +985,16 @@ fn cli_progress_explicit(turn: &TurnOptions) -> Option<bool> {
 }
 
 /// turn 用の `memory_space_id` を解決する（best-effort。失敗時は aibe 側の解決に任せる）。
+#[cfg(not(feature = "memory"))]
+fn resolve_turn_memory_space_id(
+    _cfg: &AiConfig,
+    _client_cwd: Option<&Path>,
+    _ai_session_id: &str,
+) -> Option<String> {
+    None
+}
+
+#[cfg(feature = "memory")]
 fn resolve_turn_memory_space_id(
     cfg: &AiConfig,
     client_cwd: Option<&Path>,
@@ -1738,7 +1748,7 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
             options,
         } => {
             if recipe != "clarify-goal" {
-                anyhow::bail!("unknown recipe: {recipe} (supported: clarify-goal)");
+                anyhow::bail!("unknown recipe: {recipe}");
             }
             run_memory_command_without_policy(options, |client, ctx| {
                 memory_cli::run_mem_recipe_clarify_goal(

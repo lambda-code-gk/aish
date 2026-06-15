@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::{
-    shared_builtin_loader, EmptyContextualMemoryStore, InProcessMemorySubscriptionBroker, MockLlm,
-    StaticCapabilityPolicy,
+    shared_baseline_recipe_loader, shared_builtin_loader, EmptyContextualMemoryStore,
+    InProcessMemorySubscriptionBroker, MockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::contextual_pack_arc;
 use aibe::domain::{AgentTurnContext, ChatMessage, MemoryBlock};
@@ -93,6 +93,7 @@ fn turn_hook(store: Arc<dyn ContextualMemoryStore>) -> Arc<dyn TurnHook> {
         store,
         Arc::new(NoopMemorySpaceResolver),
         shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         ProfileRegistry::single(

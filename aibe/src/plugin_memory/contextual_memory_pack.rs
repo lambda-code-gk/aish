@@ -8,9 +8,9 @@ use super::memory_service::MemoryService;
 use super::memory_subscribe_service::MemorySubscribeService;
 use crate::domain::{AgentTurnContext, ChatMessage, MessageRole};
 use crate::ports::outbound::{
-    CapabilityPolicy, ContextualMemoryStore, MemoryKindRegistryLoader, MemorySpaceResolver,
-    MemorySubscription, MemorySubscriptionBroker, ProfileRegistry, RpcExtension, TurnHook,
-    TurnHookError,
+    CapabilityPolicy, ContextualMemoryStore, MemoryKindRegistryLoader, MemoryRecipeRegistryLoader,
+    MemorySpaceResolver, MemorySubscription, MemorySubscriptionBroker, ProfileRegistry,
+    RpcExtension, TurnHook, TurnHookError,
 };
 use aibe_protocol::{
     ClientResponse, MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
@@ -22,6 +22,7 @@ pub struct ContextualMemoryPack {
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    memory_recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
     capability_policy: Arc<dyn CapabilityPolicy>,
     profile_registry: ProfileRegistry,
@@ -33,6 +34,7 @@ impl ContextualMemoryPack {
         memory_store: Arc<dyn ContextualMemoryStore>,
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
         memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        memory_recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
         memory_broker: Arc<dyn MemorySubscriptionBroker>,
         capability_policy: Arc<dyn CapabilityPolicy>,
         profile_registry: ProfileRegistry,
@@ -41,6 +43,7 @@ impl ContextualMemoryPack {
             memory_store,
             memory_space_resolver,
             memory_kind_registry_loader,
+            memory_recipe_registry_loader,
             memory_broker,
             capability_policy,
             profile_registry,
@@ -130,6 +133,7 @@ impl RpcExtension for ContextualMemoryPack {
             Arc::clone(&self.memory_store),
             Arc::clone(&self.memory_space_resolver),
             Arc::clone(&self.memory_kind_registry_loader),
+            Arc::clone(&self.memory_recipe_registry_loader),
             self.profile_registry.clone(),
             Some(Arc::clone(&self.memory_broker)),
             Arc::clone(&self.capability_policy),
@@ -164,6 +168,7 @@ pub fn contextual_pack_arc(
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    memory_recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
     capability_policy: Arc<dyn CapabilityPolicy>,
     profile_registry: ProfileRegistry,
@@ -172,6 +177,7 @@ pub fn contextual_pack_arc(
         memory_store,
         memory_space_resolver,
         memory_kind_registry_loader,
+        memory_recipe_registry_loader,
         memory_broker,
         capability_policy,
         profile_registry,

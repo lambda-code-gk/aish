@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::{
-    shared_builtin_loader, FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
-    ScriptedMockLlm,
+    shared_baseline_recipe_loader, shared_builtin_loader, FilesystemContextualMemoryStore,
+    FilesystemMemorySpaceResolver, ScriptedMockLlm,
 };
 use aibe::application::memory_recipe_service::MemoryRecipeService;
 use aibe::domain::LlmStepResult;
@@ -103,6 +103,7 @@ fn recipe_service(store: Arc<dyn ContextualMemoryStore>, llm_json: &str) -> Memo
         store,
         Arc::new(FilesystemMemorySpaceResolver),
         shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only()),
     )
 }
@@ -315,7 +316,7 @@ async fn non_add_operation_in_proposal_returns_error() {
         .await;
     match response {
         aibe_protocol::ClientResponse::Error { message, .. } => {
-            assert!(message.contains("only add"));
+            assert!(message.contains("add"));
         }
         other => panic!("expected error: {other:?}"),
     }
@@ -323,10 +324,10 @@ async fn non_add_operation_in_proposal_returns_error() {
 
 #[test]
 fn recipe_never_accepts_shell_exec_in_llm_output() {
-    use aibe::domain::{builtin_memory_kind_registry, parse_and_validate_recipe_output};
-    let registry = builtin_memory_kind_registry();
+    use aibe::domain::{baseline_memory_kind_registry, parse_and_validate_recipe_output};
+    let registry = baseline_memory_kind_registry();
     let raw = r#"{"summary":"x","proposals":[{"operation":{"op":"add","kind":"goal","text":"t"},"rationale":"n"}]}"#;
-    let out = parse_and_validate_recipe_output(raw, registry).expect("valid");
+    let out = parse_and_validate_recipe_output(raw, registry, &["add".into()]).expect("valid");
     for p in &out.proposals {
         assert!(matches!(p.operation, MemoryOperationDto::Add(_)));
     }

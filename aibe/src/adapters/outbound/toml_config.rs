@@ -67,7 +67,7 @@ impl ConfigLoader for TomlConfig {
         let tools = parse_tools(file_cfg.as_ref())?;
         let external_commands = parse_external_commands(file_cfg.as_ref());
         validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
-        let memory = parse_memory(file_cfg.as_ref());
+        let memory = parse_memory(file_cfg.as_ref(), &self.path);
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         Ok(AppConfig {
             socket_path,
@@ -547,11 +547,14 @@ fn expand_home(path: String) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn parse_memory(file: Option<&FileConfig>) -> MemoryConfig {
+fn parse_memory(file: Option<&FileConfig>, config_path: &std::path::Path) -> MemoryConfig {
+    let config_dir = config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let config_dir = fs::canonicalize(config_dir).unwrap_or_else(|_| config_dir.to_path_buf());
     let mut memory = file
         .and_then(|c| c.memory.as_ref())
-        .and_then(|m| m.enabled)
-        .map(|enabled| MemoryConfig { enabled })
+        .map(|section| parse_memory_section(section, &config_dir))
         .unwrap_or_default();
     if let Ok(raw) = std::env::var("AIBE_MEMORY_ENABLED") {
         if let Some(enabled) = parse_bool_env(&raw) {
@@ -559,6 +562,33 @@ fn parse_memory(file: Option<&FileConfig>) -> MemoryConfig {
         }
     }
     memory
+}
+
+fn parse_memory_section(section: &MemorySection, config_dir: &std::path::Path) -> MemoryConfig {
+    MemoryConfig {
+        enabled: section.enabled.unwrap_or(true),
+        kind_files: section.kind_files.as_ref().map(|paths| {
+            paths
+                .iter()
+                .map(|p| resolve_memory_path(p, config_dir))
+                .collect()
+        }),
+        recipe_files: section.recipe_files.as_ref().map(|paths| {
+            paths
+                .iter()
+                .map(|p| resolve_memory_path(p, config_dir))
+                .collect()
+        }),
+    }
+}
+
+fn resolve_memory_path(path: &str, config_dir: &std::path::Path) -> PathBuf {
+    let expanded = expand_home(path.to_string());
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        config_dir.join(expanded)
+    }
 }
 
 fn parse_bool_env(raw: &str) -> Option<bool> {
@@ -583,6 +613,10 @@ struct FileConfig {
 #[derive(Debug, Deserialize)]
 struct MemorySection {
     enabled: Option<bool>,
+    #[serde(default)]
+    kind_files: Option<Vec<String>>,
+    #[serde(default)]
+    recipe_files: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -697,6 +731,33 @@ termination_strategy = "conversation_replay"
         assert_eq!(
             cfg.tools.termination_strategy,
             TerminationStrategy::ConversationReplay
+        );
+    }
+
+    #[test]
+    fn memory_paths_are_resolved_against_config_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("nested");
+        fs::create_dir_all(&config_dir).expect("mkdir");
+        let path = config_dir.join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[memory]
+kind_files = ["memory/packs/aish-memory/kinds.toml"]
+recipe_files = ["memory/packs/aish-memory/recipes/clarify-goal.toml"]
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        let kind_files = cfg.memory.kind_files.expect("kind_files");
+        let recipe_files = cfg.memory.recipe_files.expect("recipe_files");
+        assert!(kind_files[0].is_absolute());
+        assert!(recipe_files[0].is_absolute());
+        assert!(kind_files[0].ends_with("nested/memory/packs/aish-memory/kinds.toml"));
+        assert!(
+            recipe_files[0].ends_with("nested/memory/packs/aish-memory/recipes/clarify-goal.toml")
         );
     }
 

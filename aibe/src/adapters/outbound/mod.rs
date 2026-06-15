@@ -3,6 +3,7 @@ mod contextual_memory_store;
 mod conversation_store;
 mod env_config;
 mod filesystem_memory_kind_registry;
+mod filesystem_memory_recipe_registry;
 mod gemini;
 mod in_process_memory_subscription_broker;
 mod llm_backend;
@@ -23,7 +24,11 @@ pub use contextual_memory_store::{EmptyContextualMemoryStore, FilesystemContextu
 pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;
 pub use filesystem_memory_kind_registry::{
-    shared_builtin_loader, BuiltinMemoryKindRegistryLoader, FilesystemMemoryKindRegistryLoader,
+    shared_baseline_loader, shared_builtin_loader, BaselineMemoryKindRegistryLoader,
+    FilesystemMemoryKindRegistryLoader,
+};
+pub use filesystem_memory_recipe_registry::{
+    shared_baseline_recipe_loader, FilesystemMemoryRecipeRegistryLoader,
 };
 pub use gemini::GeminiLlm;
 pub use in_process_memory_subscription_broker::InProcessMemorySubscriptionBroker;

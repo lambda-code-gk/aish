@@ -268,11 +268,11 @@ mod tests {
     use crate::domain::contextual_memory::{
         STANDARD_KIND_GOAL, STANDARD_KIND_IDEA, STANDARD_KIND_NOW,
     };
-    use crate::domain::memory_kind_registry::builtin_memory_kind_registry;
+    use crate::domain::memory_kind_registry::baseline_memory_kind_registry;
     use aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES;
 
     fn sample_entry(kind: &str, status: MemoryStatus, text: &str) -> MemoryEntry {
-        let registry = builtin_memory_kind_registry();
+        let registry = baseline_memory_kind_registry();
         let def = registry.get(kind);
         MemoryEntry {
             id: format!("mem_{kind}_{text}"),
@@ -298,7 +298,7 @@ mod tests {
     }
 
     fn resolve(entries: &[MemoryEntry], query: &str) -> MemoryBlock {
-        let registry = builtin_memory_kind_registry();
+        let registry = baseline_memory_kind_registry();
         MemoryResolverPolicy::resolve(&MemoryResolveInput {
             entries,
             registry,
@@ -414,7 +414,7 @@ mod tests {
             updated_at_ms: 1,
             version: 1,
         };
-        let registry = builtin_memory_kind_registry();
+        let registry = baseline_memory_kind_registry();
         let block = MemoryResolverPolicy::resolve(&MemoryResolveInput {
             entries: std::slice::from_ref(&entry),
             registry,
@@ -483,7 +483,7 @@ mod tests {
             MemoryStatus::Active,
             "goal text that cannot fit",
         )];
-        let registry = builtin_memory_kind_registry();
+        let registry = baseline_memory_kind_registry();
         let block = MemoryResolverPolicy::resolve(&MemoryResolveInput {
             entries: &entries,
             registry,

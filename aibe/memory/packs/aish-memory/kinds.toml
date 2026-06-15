@@ -1,0 +1,116 @@
+[kinds.goal]
+description = "作業の最終目的"
+default_scope = "project"
+default_inject = "pinned"
+default_status = "active"
+lifecycle = "active_inactive"
+cardinality = "single_effective"
+clear_from = "active"
+clear_to = "inactive"
+stale = "none"
+dedicated_cli = "ai goal set"
+aliases = ["goal", "目的", "ゴール", "最終目的"]
+
+[kinds.goal.prompt]
+auto_inject = true
+on_demand = false
+priority = 10
+keywords = []
+max_entries = 1
+
+[kinds.now]
+description = "現在の焦点"
+default_scope = "session"
+default_inject = "pinned"
+default_status = "active"
+lifecycle = "active_inactive"
+cardinality = "single_effective"
+clear_from = "active"
+clear_to = "inactive"
+stale = "session_changed"
+dedicated_cli = "ai now set"
+aliases = ["now", "focus", "現在", "焦点", "今やること"]
+
+[kinds.now.prompt]
+auto_inject = true
+on_demand = false
+priority = 20
+keywords = []
+max_entries = 1
+
+[kinds.rule]
+description = "ユーザーが明示した作業ルール"
+default_scope = "project"
+default_inject = "pinned"
+default_status = "active"
+lifecycle = "active_archive"
+cardinality = "multiple"
+clear_from = "active"
+clear_to = "archived"
+stale = "none"
+aliases = ["rule", "rules", "ルール", "制約", "方針"]
+
+[kinds.rule.prompt]
+auto_inject = true
+on_demand = false
+priority = 30
+keywords = []
+max_entries = 8
+
+[kinds.decision]
+description = "決定済み事項"
+default_scope = "project"
+default_inject = "on_demand"
+default_status = "active"
+lifecycle = "active_archive"
+cardinality = "multiple"
+clear_from = "active"
+clear_to = "archived"
+stale = "none"
+aliases = ["decision", "decisions", "決定", "決定事項", "採用", "方針"]
+
+[kinds.decision.prompt]
+auto_inject = false
+on_demand = true
+priority = 60
+keywords = []
+max_entries = 8
+
+[kinds.idea]
+description = "未整理のアイデア"
+default_scope = "project"
+default_inject = "on_demand"
+default_status = "open"
+lifecycle = "open_archive"
+cardinality = "multiple"
+clear_from = "open"
+clear_to = "archived"
+stale = "none"
+dedicated_cli = "ai idea add"
+aliases = ["idea", "ideas", "アイデア", "発想", "候補", "未整理"]
+
+[kinds.idea.prompt]
+auto_inject = false
+on_demand = true
+priority = 80
+keywords = ["idea", "ideas", "アイデア", "発想", "ゴール", "goal", "整理", "候補", "mvp", "未整理", "記憶", "memory"]
+max_entries = 12
+
+[kinds.note]
+description = "汎用メモ"
+default_scope = "project"
+default_inject = "manual"
+default_status = "open"
+lifecycle = "open_archive"
+cardinality = "multiple"
+clear_from = "open"
+clear_to = "archived"
+stale = "none"
+aliases = ["note", "memo", "メモ", "ノート"]
+
+[kinds.note.prompt]
+auto_inject = false
+on_demand = false
+priority = 100
+keywords = []
+max_entries = 0

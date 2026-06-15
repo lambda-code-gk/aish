@@ -35,14 +35,33 @@ pub struct ExternalCommandConfig {
 pub const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS: u64 = 1800;
 
 /// contextual memory ランタイムの有効/無効（Phase A: basic profile 切替）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `kind_files` / `recipe_files` が `None` のときは互換モード（baseline pack + 従来 override）。
+/// `Some(vec![])` を明示したときだけ pack を無効化する。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryConfig {
     pub enabled: bool,
+    pub kind_files: Option<Vec<PathBuf>>,
+    pub recipe_files: Option<Vec<PathBuf>>,
 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            kind_files: None,
+            recipe_files: None,
+        }
+    }
+}
+
+impl MemoryConfig {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            kind_files: None,
+            recipe_files: None,
+        }
     }
 }
 

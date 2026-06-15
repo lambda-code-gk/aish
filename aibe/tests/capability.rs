@@ -6,9 +6,9 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    shared_builtin_loader, ConversationStore, EmptyContextualMemoryStore,
-    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, MockLlm,
-    StaticCapabilityPolicy,
+    shared_baseline_recipe_loader, shared_builtin_loader, ConversationStore,
+    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
+    MockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::memory_service::MemoryService;
 use aibe::application::memory_subscribe_service::MemorySubscribeService;
@@ -39,6 +39,7 @@ fn request_service_with_policy(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
         shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         Arc::clone(&policy),
         profile_registry.clone(),
@@ -340,6 +341,7 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
         shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         Arc::clone(&policy),
         profile_registry.clone(),
@@ -416,6 +418,7 @@ async fn memory_only_profile_denies_shell_execute() {
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
         shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         Arc::clone(&policy),
         profile_registry.clone(),
@@ -486,6 +489,7 @@ async fn memory_recipe_run_requires_memory_recipe_run_capability() {
             store,
             Arc::new(FilesystemMemorySpaceResolver),
             shared_builtin_loader(),
+            shared_baseline_recipe_loader(),
             profile_registry,
             None,
             Arc::new(StaticCapabilityPolicy::new(
@@ -528,6 +532,7 @@ async fn memory_recipe_run_requires_memory_read() {
             store,
             Arc::new(FilesystemMemorySpaceResolver),
             shared_builtin_loader(),
+            shared_baseline_recipe_loader(),
             profile_registry,
             None,
             Arc::new(StaticCapabilityPolicy::new(

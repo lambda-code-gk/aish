@@ -228,7 +228,7 @@ async fn server_starts_with_broken_kinds_toml_when_memory_disabled() {
             Vec::new(),
             "default".to_string(),
             store_root,
-            MemoryConfig { enabled: false },
+            MemoryConfig::disabled(),
         )
         .await
         .expect("server should start with memory disabled despite broken kinds.toml");

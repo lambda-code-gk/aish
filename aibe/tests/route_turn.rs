@@ -6,9 +6,9 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    shared_builtin_loader, ConversationStore, EmptyContextualMemoryStore,
-    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, ScriptedMockLlm,
-    StaticCapabilityPolicy,
+    shared_baseline_recipe_loader, shared_builtin_loader, ConversationStore,
+    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
+    ScriptedMockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
@@ -40,6 +40,7 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
         shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),

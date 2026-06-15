@@ -18,7 +18,8 @@ use crate::domain::{
     MemoryInjectPolicy, MemoryScope, MemoryStatus, MemoryValidationError, ProjectKeyError,
 };
 use crate::ports::outbound::{
-    ContextualMemoryStore, ContextualMemoryStoreError, MemoryKindRegistryLoader, MemoryStoreContext,
+    ContextualMemoryStore, ContextualMemoryStoreError, MemoryConfig, MemoryKindRegistryLoader,
+    MemoryStoreContext,
 };
 
 /// テスト・既存経路向けの no-op store（常に空）。
@@ -74,7 +75,14 @@ pub struct FilesystemContextualMemoryStore {
 
 impl FilesystemContextualMemoryStore {
     pub fn new(aibe_root: PathBuf) -> Self {
-        let loader = Arc::new(FilesystemMemoryKindRegistryLoader::new(aibe_root.clone()));
+        Self::with_memory_config(aibe_root, MemoryConfig::default())
+    }
+
+    pub fn with_memory_config(aibe_root: PathBuf, memory_config: MemoryConfig) -> Self {
+        let loader = Arc::new(FilesystemMemoryKindRegistryLoader::with_memory_config(
+            aibe_root.clone(),
+            memory_config,
+        ));
         Self {
             aibe_root,
             registry_loader: loader,
@@ -100,11 +108,18 @@ impl FilesystemContextualMemoryStore {
     }
 
     pub fn with_conversation_root(conversation_root: PathBuf) -> Self {
+        Self::with_conversation_root_and_config(conversation_root, MemoryConfig::default())
+    }
+
+    pub fn with_conversation_root_and_config(
+        conversation_root: PathBuf,
+        memory_config: MemoryConfig,
+    ) -> Self {
         let aibe_root = conversation_root
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or(conversation_root);
-        Self::new(aibe_root)
+        Self::with_memory_config(aibe_root, memory_config)
     }
 
     fn spaces_root(&self) -> PathBuf {

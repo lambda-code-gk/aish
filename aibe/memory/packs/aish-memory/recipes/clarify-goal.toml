@@ -1,0 +1,40 @@
+id = "clarify-goal"
+description = "Turn open ideas into a clarified goal set"
+llm_profile = "default"
+prompt_md = "clarify-goal.md"
+
+[materials.open_query]
+kind = "idea"
+scope = "project"
+status = "open"
+
+[materials.goal_query]
+kind = "goal"
+scope = "project"
+status = "active"
+active_only = true
+limit = 1
+
+[materials.now_query]
+kind = "now"
+scope = "session"
+status = "active"
+active_only = true
+limit = 1
+
+[materials.rule_query]
+kind = "rule"
+scope = "project"
+status = "active"
+active_only = true
+
+[materials.decision_query]
+kind = "decision"
+scope = "project"
+status = "active"
+active_only = true
+
+[output]
+format = "json"
+summary_required = true
+allow_operations = ["add"]

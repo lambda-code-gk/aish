@@ -1,4 +1,4 @@
-//! Memory kind 定義の正本（built-in registry + user-defined merge）。
+//! Memory kind 定義の正本（TOML pack + user-defined merge）。
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use aibe_protocol::{
     MemoryInjectPolicyDto, MemoryKindDefinitionDto, MemoryScopeDto, MemoryStatusDto,
 };
+use serde::Deserialize;
 use thiserror::Error;
 
 use super::contextual_memory::{
@@ -104,20 +105,60 @@ pub struct MemoryKindRegistry {
 }
 
 impl MemoryKindRegistry {
-    pub fn builtin() -> Self {
-        let defs = [
-            goal_definition(),
-            now_definition(),
-            rule_definition(),
-            decision_definition(),
-            idea_definition(),
-            note_definition(),
-        ];
-        let mut kinds = HashMap::new();
-        for def in defs {
-            kinds.insert(def.id.clone(), def);
+    pub fn empty() -> Self {
+        Self {
+            kinds: HashMap::new(),
         }
-        Self { kinds }
+    }
+
+    /// AISH baseline pack の kinds.toml パス（crate 同梱）。
+    pub fn baseline_pack_kinds_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("memory/packs/aish-memory/kinds.toml")
+    }
+
+    /// override map から registry を構築する（TOML 読み込みの共通入口）。
+    pub fn from_overrides(
+        overrides: &HashMap<String, KindOverride>,
+        mark_builtin: bool,
+    ) -> Result<Self, MemoryKindRegistryError> {
+        let mut kinds = HashMap::new();
+        for (id, ov) in overrides {
+            validate_kind(id).map_err(|e| MemoryKindRegistryError::Parse(e.to_string()))?;
+            let mut def = kind_from_override(id, ov)?;
+            def.builtin = mark_builtin;
+            kinds.insert(id.clone(), def);
+        }
+        Ok(Self { kinds })
+    }
+
+    /// TOML 文字列から full definition を読み込む。
+    pub fn load_from_str(
+        raw: &str,
+        source: &str,
+        mark_builtin: bool,
+    ) -> Result<Self, MemoryKindRegistryError> {
+        let overrides = parse_kinds_toml_str(raw, source)?;
+        Self::from_overrides(&overrides, mark_builtin)
+    }
+
+    /// 同梱 baseline pack を読み込む（compile-time embed、I/O なし）。
+    pub fn baseline() -> Result<Self, MemoryKindRegistryError> {
+        const BASELINE_KINDS_TOML: &str = include_str!("../../memory/packs/aish-memory/kinds.toml");
+        Self::load_from_str(BASELINE_KINDS_TOML, "aish-memory/kinds.toml", true)
+    }
+
+    /// 他 registry の kind を後勝ちで取り込む。
+    pub fn merge(&mut self, other: Self) {
+        for (id, def) in other.kinds {
+            self.kinds.insert(id, def);
+        }
+    }
+
+    pub fn merge_registry(&mut self, other: &Self) {
+        for (id, def) in &other.kinds {
+            self.kinds.insert(id.clone(), def.clone());
+        }
     }
 
     pub fn get(&self, kind: &str) -> Option<&MemoryKindDefinition> {
@@ -227,9 +268,9 @@ impl MemoryKindRegistry {
         defs
     }
 
-    /// built-in を複製した registry（filesystem override merge の起点）。
+    /// baseline AISH pack を読み込んだ registry（テスト・prompt 解決のフォールバック用）。
     pub fn from_builtin() -> Self {
-        Self::builtin()
+        Self::baseline().expect("baseline AISH memory pack must load")
     }
 
     /// server / memory-space-local の override を後勝ちで merge する。
@@ -426,6 +467,174 @@ fn kind_from_override(
     })
 }
 
+#[derive(Debug, Deserialize)]
+struct KindsTomlRoot {
+    #[serde(default)]
+    kinds: HashMap<String, KindTomlEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct KindTomlEntry {
+    description: Option<String>,
+    default_scope: Option<String>,
+    default_inject: Option<String>,
+    default_status: Option<String>,
+    lifecycle: Option<String>,
+    cardinality: Option<String>,
+    clear_from: Option<String>,
+    clear_to: Option<String>,
+    stale: Option<String>,
+    dedicated_cli: Option<String>,
+    #[serde(default)]
+    aliases: Vec<String>,
+    prompt: Option<PromptTomlEntry>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PromptTomlEntry {
+    auto_inject: Option<bool>,
+    on_demand: Option<bool>,
+    priority: Option<u32>,
+    #[serde(default)]
+    keywords: Vec<String>,
+    max_entries: Option<u32>,
+}
+
+pub(crate) fn parse_kinds_toml_str(
+    raw: &str,
+    source: &str,
+) -> Result<HashMap<String, KindOverride>, MemoryKindRegistryError> {
+    let root: KindsTomlRoot = toml::from_str(raw)
+        .map_err(|e| MemoryKindRegistryError::Parse(format!("{source}: {e}")))?;
+    let mut out = HashMap::new();
+    for (id, entry) in root.kinds {
+        out.insert(id, entry_to_override(&entry)?);
+    }
+    Ok(out)
+}
+
+fn entry_to_override(entry: &KindTomlEntry) -> Result<KindOverride, MemoryKindRegistryError> {
+    let aliases = if entry.aliases.is_empty() {
+        None
+    } else {
+        Some(entry.aliases.clone())
+    };
+    let prompt = entry.prompt.as_ref().map(|p| {
+        let keywords = if p.keywords.is_empty() {
+            None
+        } else {
+            Some(p.keywords.clone())
+        };
+        PromptOverride {
+            auto_inject: p.auto_inject,
+            on_demand: p.on_demand,
+            priority: p.priority,
+            keywords,
+            max_entries: p.max_entries.map(Some),
+        }
+    });
+    Ok(KindOverride {
+        description: entry.description.clone(),
+        default_scope: entry
+            .default_scope
+            .as_deref()
+            .map(parse_scope)
+            .transpose()?,
+        default_inject: entry
+            .default_inject
+            .as_deref()
+            .map(parse_inject)
+            .transpose()?,
+        default_status: entry
+            .default_status
+            .as_deref()
+            .map(parse_status)
+            .transpose()?,
+        lifecycle: entry
+            .lifecycle
+            .as_deref()
+            .map(parse_lifecycle)
+            .transpose()?,
+        cardinality: entry
+            .cardinality
+            .as_deref()
+            .map(parse_cardinality)
+            .transpose()?,
+        clear_from: entry.clear_from.as_deref().map(parse_status).transpose()?,
+        clear_to: entry.clear_to.as_deref().map(parse_status).transpose()?,
+        prompt,
+        stale: entry.stale.as_deref().map(parse_stale).transpose()?,
+        dedicated_cli: entry.dedicated_cli.as_ref().map(|s| Some(s.clone())),
+        aliases,
+    })
+}
+
+fn parse_scope(raw: &str) -> Result<MemoryScope, MemoryKindRegistryError> {
+    match raw {
+        "session" => Ok(MemoryScope::Session),
+        "project" => Ok(MemoryScope::Project),
+        "global" => Ok(MemoryScope::Global),
+        _ => Err(MemoryKindRegistryError::Parse(format!(
+            "unknown default_scope: {raw}"
+        ))),
+    }
+}
+
+fn parse_inject(raw: &str) -> Result<MemoryInjectPolicy, MemoryKindRegistryError> {
+    match raw {
+        "pinned" => Ok(MemoryInjectPolicy::Pinned),
+        "on_demand" => Ok(MemoryInjectPolicy::OnDemand),
+        "manual" => Ok(MemoryInjectPolicy::Manual),
+        "never" => Ok(MemoryInjectPolicy::Never),
+        _ => Err(MemoryKindRegistryError::Parse(format!(
+            "unknown default_inject: {raw}"
+        ))),
+    }
+}
+
+fn parse_status(raw: &str) -> Result<MemoryStatus, MemoryKindRegistryError> {
+    match raw {
+        "active" => Ok(MemoryStatus::Active),
+        "inactive" => Ok(MemoryStatus::Inactive),
+        "open" => Ok(MemoryStatus::Open),
+        "archived" => Ok(MemoryStatus::Archived),
+        _ => Err(MemoryKindRegistryError::Parse(format!(
+            "unknown status: {raw}"
+        ))),
+    }
+}
+
+fn parse_lifecycle(raw: &str) -> Result<MemoryLifecycle, MemoryKindRegistryError> {
+    match raw {
+        "active_inactive" => Ok(MemoryLifecycle::ActiveInactive),
+        "open_archive" => Ok(MemoryLifecycle::OpenArchive),
+        "active_archive" => Ok(MemoryLifecycle::ActiveArchive),
+        _ => Err(MemoryKindRegistryError::Parse(format!(
+            "unknown lifecycle: {raw}"
+        ))),
+    }
+}
+
+fn parse_cardinality(raw: &str) -> Result<MemoryCardinality, MemoryKindRegistryError> {
+    match raw {
+        "single_effective" => Ok(MemoryCardinality::SingleEffective),
+        "multiple" => Ok(MemoryCardinality::Multiple),
+        _ => Err(MemoryKindRegistryError::Parse(format!(
+            "unknown cardinality: {raw}"
+        ))),
+    }
+}
+
+fn parse_stale(raw: &str) -> Result<MemoryStalePolicy, MemoryKindRegistryError> {
+    match raw {
+        "none" => Ok(MemoryStalePolicy::None),
+        "session_changed" => Ok(MemoryStalePolicy::SessionChanged),
+        _ => Err(MemoryKindRegistryError::Parse(format!(
+            "unknown stale: {raw}"
+        ))),
+    }
+}
+
 fn validate_builtin_override(
     base: &MemoryKindDefinition,
     ov: &KindOverride,
@@ -510,9 +719,14 @@ fn validate_builtin_override(
     Ok(())
 }
 
-pub fn builtin_memory_kind_registry() -> &'static MemoryKindRegistry {
+pub fn baseline_memory_kind_registry() -> &'static MemoryKindRegistry {
     static REGISTRY: OnceLock<MemoryKindRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(MemoryKindRegistry::builtin)
+    REGISTRY.get_or_init(|| MemoryKindRegistry::baseline().expect("baseline AISH memory pack"))
+}
+
+/// 後方互換 alias（0039 以前の呼び出し元向け）。
+pub fn builtin_memory_kind_registry() -> &'static MemoryKindRegistry {
+    baseline_memory_kind_registry()
 }
 
 impl From<&MemoryKindDefinition> for MemoryKindDefinitionDto {
@@ -554,206 +768,12 @@ fn cardinality_to_wire(cardinality: MemoryCardinality) -> String {
     }
 }
 
-fn goal_definition() -> MemoryKindDefinition {
-    MemoryKindDefinition {
-        id: "goal".into(),
-        description: "作業の最終目的".into(),
-        default_scope: MemoryScope::Project,
-        default_inject: MemoryInjectPolicy::Pinned,
-        default_status: MemoryStatus::Active,
-        lifecycle: MemoryLifecycle::ActiveInactive,
-        cardinality: MemoryCardinality::SingleEffective,
-        clear_from: MemoryStatus::Active,
-        clear_to: MemoryStatus::Inactive,
-        prompt: MemoryPromptPolicy {
-            auto_inject: true,
-            on_demand: false,
-            priority: 10,
-            keywords: vec![],
-            max_entries: Some(1),
-        },
-        stale: MemoryStalePolicy::None,
-        builtin: true,
-        dedicated_cli: Some("ai goal set".into()),
-        aliases: vec![
-            "goal".into(),
-            "目的".into(),
-            "ゴール".into(),
-            "最終目的".into(),
-        ],
-    }
-}
-
-fn now_definition() -> MemoryKindDefinition {
-    MemoryKindDefinition {
-        id: "now".into(),
-        description: "現在の焦点".into(),
-        default_scope: MemoryScope::Session,
-        default_inject: MemoryInjectPolicy::Pinned,
-        default_status: MemoryStatus::Active,
-        lifecycle: MemoryLifecycle::ActiveInactive,
-        cardinality: MemoryCardinality::SingleEffective,
-        clear_from: MemoryStatus::Active,
-        clear_to: MemoryStatus::Inactive,
-        prompt: MemoryPromptPolicy {
-            auto_inject: true,
-            on_demand: false,
-            priority: 20,
-            keywords: vec![],
-            max_entries: Some(1),
-        },
-        stale: MemoryStalePolicy::SessionChanged,
-        builtin: true,
-        dedicated_cli: Some("ai now set".into()),
-        aliases: vec![
-            "now".into(),
-            "focus".into(),
-            "現在".into(),
-            "焦点".into(),
-            "今やること".into(),
-        ],
-    }
-}
-
-fn rule_definition() -> MemoryKindDefinition {
-    MemoryKindDefinition {
-        id: "rule".into(),
-        description: "ユーザーが明示した作業ルール".into(),
-        default_scope: MemoryScope::Project,
-        default_inject: MemoryInjectPolicy::Pinned,
-        default_status: MemoryStatus::Active,
-        lifecycle: MemoryLifecycle::ActiveArchive,
-        cardinality: MemoryCardinality::Multiple,
-        clear_from: MemoryStatus::Active,
-        clear_to: MemoryStatus::Archived,
-        prompt: MemoryPromptPolicy {
-            auto_inject: true,
-            on_demand: false,
-            priority: 30,
-            keywords: vec![],
-            max_entries: Some(8),
-        },
-        stale: MemoryStalePolicy::None,
-        builtin: true,
-        dedicated_cli: None,
-        aliases: vec![
-            "rule".into(),
-            "rules".into(),
-            "ルール".into(),
-            "制約".into(),
-            "方針".into(),
-        ],
-    }
-}
-
-fn decision_definition() -> MemoryKindDefinition {
-    MemoryKindDefinition {
-        id: "decision".into(),
-        description: "決定済み事項".into(),
-        default_scope: MemoryScope::Project,
-        default_inject: MemoryInjectPolicy::OnDemand,
-        default_status: MemoryStatus::Active,
-        lifecycle: MemoryLifecycle::ActiveArchive,
-        cardinality: MemoryCardinality::Multiple,
-        clear_from: MemoryStatus::Active,
-        clear_to: MemoryStatus::Archived,
-        prompt: MemoryPromptPolicy {
-            auto_inject: false,
-            on_demand: true,
-            priority: 60,
-            keywords: vec![],
-            max_entries: Some(8),
-        },
-        stale: MemoryStalePolicy::None,
-        builtin: true,
-        dedicated_cli: None,
-        aliases: vec![
-            "decision".into(),
-            "decisions".into(),
-            "決定".into(),
-            "決定事項".into(),
-            "採用".into(),
-            "方針".into(),
-        ],
-    }
-}
-
-fn idea_definition() -> MemoryKindDefinition {
-    MemoryKindDefinition {
-        id: "idea".into(),
-        description: "未整理のアイデア".into(),
-        default_scope: MemoryScope::Project,
-        default_inject: MemoryInjectPolicy::OnDemand,
-        default_status: MemoryStatus::Open,
-        lifecycle: MemoryLifecycle::OpenArchive,
-        cardinality: MemoryCardinality::Multiple,
-        clear_from: MemoryStatus::Open,
-        clear_to: MemoryStatus::Archived,
-        prompt: MemoryPromptPolicy {
-            auto_inject: false,
-            on_demand: true,
-            priority: 80,
-            keywords: vec![
-                "idea".into(),
-                "ideas".into(),
-                "アイデア".into(),
-                "発想".into(),
-                "ゴール".into(),
-                "goal".into(),
-                "整理".into(),
-                "候補".into(),
-                "mvp".into(),
-                "未整理".into(),
-                "記憶".into(),
-                "memory".into(),
-            ],
-            max_entries: Some(12),
-        },
-        stale: MemoryStalePolicy::None,
-        builtin: true,
-        dedicated_cli: Some("ai idea add".into()),
-        aliases: vec![
-            "idea".into(),
-            "ideas".into(),
-            "アイデア".into(),
-            "発想".into(),
-            "候補".into(),
-            "未整理".into(),
-        ],
-    }
-}
-
-fn note_definition() -> MemoryKindDefinition {
-    MemoryKindDefinition {
-        id: "note".into(),
-        description: "汎用メモ".into(),
-        default_scope: MemoryScope::Project,
-        default_inject: MemoryInjectPolicy::Manual,
-        default_status: MemoryStatus::Open,
-        lifecycle: MemoryLifecycle::OpenArchive,
-        cardinality: MemoryCardinality::Multiple,
-        clear_from: MemoryStatus::Open,
-        clear_to: MemoryStatus::Archived,
-        prompt: MemoryPromptPolicy {
-            auto_inject: false,
-            on_demand: false,
-            priority: 100,
-            keywords: vec![],
-            max_entries: Some(0),
-        },
-        stale: MemoryStalePolicy::None,
-        builtin: true,
-        dedicated_cli: None,
-        aliases: vec!["note".into(), "memo".into(), "メモ".into(), "ノート".into()],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn registry() -> MemoryKindRegistry {
-        MemoryKindRegistry::builtin()
+        MemoryKindRegistry::baseline().expect("baseline pack")
     }
 
     #[test]

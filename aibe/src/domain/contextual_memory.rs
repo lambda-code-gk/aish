@@ -6,7 +6,7 @@ use aibe_protocol::{
 };
 
 use super::memory_kind_registry::{
-    builtin_memory_kind_registry, MemoryCardinality, MemoryKindRegistry, MemoryStalePolicy,
+    baseline_memory_kind_registry, MemoryCardinality, MemoryKindRegistry, MemoryStalePolicy,
 };
 use super::memory_resolver_policy::{MemoryResolveInput, MemoryResolverPolicy};
 use super::memory_space::{now_freshness, MemoryFreshness};
@@ -144,7 +144,7 @@ pub fn validate_text(text: &str) -> Result<(), MemoryValidationError> {
 }
 
 pub fn is_standard_kind(kind: &str) -> bool {
-    builtin_memory_kind_registry().has_dedicated_cli(kind)
+    baseline_memory_kind_registry().has_dedicated_cli(kind)
 }
 
 pub fn validate_standard_kind_operation(
@@ -249,7 +249,7 @@ pub fn resolve_memory_operation_add(
 }
 
 pub fn query_matches_idea_on_demand(user_query: &str) -> bool {
-    builtin_memory_kind_registry().query_matches_on_demand(STANDARD_KIND_IDEA, user_query)
+    baseline_memory_kind_registry().query_matches_on_demand(STANDARD_KIND_IDEA, user_query)
 }
 
 pub const MEMORY_BLOCK_HEADER: &str = "[aibe contextual memory]\n\
@@ -534,15 +534,15 @@ impl TryFrom<MemoryStatusDto> for MemoryStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::builtin_memory_kind_registry;
+    use crate::domain::baseline_memory_kind_registry;
     use aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES;
 
     fn registry() -> &'static MemoryKindRegistry {
-        builtin_memory_kind_registry()
+        baseline_memory_kind_registry()
     }
 
     fn sample_entry(kind: &str, status: MemoryStatus, text: &str) -> MemoryEntry {
-        let registry = builtin_memory_kind_registry();
+        let registry = baseline_memory_kind_registry();
         let def = registry.get(kind);
         MemoryEntry {
             id: format!("mem_{kind}"),
