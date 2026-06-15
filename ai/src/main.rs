@@ -19,6 +19,7 @@ use ai::adapters::outbound::{
     ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli::MemoryCliContext;
+use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
     build_response_summary, build_summary, ensure_aibe_if_needed, list_history, memory_cli,
@@ -1546,10 +1547,17 @@ fn join_words(parts: Vec<String>) -> String {
     parts.join(" ")
 }
 
-fn prepare_memory_context(options: &MemoryCliOptions) -> anyhow::Result<MemoryCliContext> {
+fn require_memory_enabled() -> anyhow::Result<AiConfig> {
     let cfg = AiConfig::load();
     cfg.ensure_memory_enabled().map_err(anyhow::Error::msg)?;
-    let socket_path = options.socket.clone().unwrap_or(cfg.socket_path);
+    Ok(cfg)
+}
+
+fn prepare_memory_context(
+    options: &MemoryCliOptions,
+    cfg: &AiConfig,
+) -> anyhow::Result<MemoryCliContext> {
+    let socket_path = options.socket.clone().unwrap_or(cfg.socket_path.clone());
     if !options.no_start {
         ensure_running(&socket_path).map_err(|e| anyhow::anyhow!(e))?;
     }
@@ -1580,8 +1588,7 @@ fn prepare_memory_context(options: &MemoryCliOptions) -> anyhow::Result<MemoryCl
 }
 
 fn run_context(command: ContextCommand) -> anyhow::Result<ExitCode> {
-    let cfg = AiConfig::load();
-    cfg.ensure_memory_enabled().map_err(anyhow::Error::msg)?;
+    let cfg = require_memory_enabled()?;
     let cwd = std::env::current_dir()?;
     let canonical_cwd = cwd
         .canonicalize()
@@ -1618,9 +1625,24 @@ fn run_context(command: ContextCommand) -> anyhow::Result<ExitCode> {
 
 fn run_memory_command(
     options: MemoryCliOptions,
+    action: impl FnOnce(&MemoryCliPack<'_>) -> Result<String, AgentError>,
+) -> anyhow::Result<ExitCode> {
+    let cfg = require_memory_enabled()?;
+    let ctx = prepare_memory_context(&options, &cfg)?;
+    let client = AibeUnixClient::new(&ctx.socket_path);
+    let policy = load_command_policy(&client, &ctx).map_err(|e| anyhow::anyhow!(e))?;
+    let pack = MemoryCliPack::new(&client, &ctx, &policy);
+    let out = action(&pack).map_err(|e| anyhow::anyhow!(e))?;
+    println!("{out}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_memory_command_without_policy(
+    options: MemoryCliOptions,
     action: impl FnOnce(&dyn MemoryClient, &MemoryCliContext) -> Result<String, AgentError>,
 ) -> anyhow::Result<ExitCode> {
-    let ctx = prepare_memory_context(&options)?;
+    let cfg = require_memory_enabled()?;
+    let ctx = prepare_memory_context(&options, &cfg)?;
     let client = AibeUnixClient::new(&ctx.socket_path);
     let out = action(&client, &ctx).map_err(|e| anyhow::anyhow!(e))?;
     println!("{out}");
@@ -1629,31 +1651,46 @@ fn run_memory_command(
 
 fn run_goal(command: GoalCommand) -> anyhow::Result<ExitCode> {
     match command {
-        GoalCommand::Set { text, options } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_goal_set(client, ctx, &join_words(text))
+        GoalCommand::Set { text, options } => run_memory_command(options, |pack| {
+            let joined = join_words(text);
+            memory_cli::run_dedicated_set(pack, "goal", &joined, &format!("goal set: {joined}"))
         }),
-        GoalCommand::Show { options } => run_memory_command(options, memory_cli::run_goal_show),
-        GoalCommand::Clear { options } => run_memory_command(options, memory_cli::run_goal_clear),
+        GoalCommand::Show { options } => {
+            run_memory_command(options, |pack| memory_cli::run_dedicated_show(pack, "goal"))
+        }
+        GoalCommand::Clear { options } => run_memory_command(options, |pack| {
+            memory_cli::run_dedicated_clear(pack, "goal", "goal cleared")
+        }),
     }
 }
 
 fn run_now(command: NowCommand) -> anyhow::Result<ExitCode> {
     match command {
-        NowCommand::Set { text, options } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_now_set(client, ctx, &join_words(text))
+        NowCommand::Set { text, options } => run_memory_command(options, |pack| {
+            let joined = join_words(text);
+            memory_cli::run_dedicated_set(pack, "now", &joined, &format!("now set: {joined}"))
         }),
-        NowCommand::Show { options } => run_memory_command(options, memory_cli::run_now_show),
-        NowCommand::Clear { options } => run_memory_command(options, memory_cli::run_now_clear),
+        NowCommand::Show { options } => {
+            run_memory_command(options, |pack| memory_cli::run_dedicated_show(pack, "now"))
+        }
+        NowCommand::Clear { options } => run_memory_command(options, |pack| {
+            memory_cli::run_dedicated_clear(pack, "now", "now cleared")
+        }),
     }
 }
 
 fn run_idea(command: IdeaCommand) -> anyhow::Result<ExitCode> {
     match command {
-        IdeaCommand::Add { text, options } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_idea_add(client, ctx, &join_words(text))
+        IdeaCommand::Add { text, options } => run_memory_command(options, |pack| {
+            let joined = join_words(text);
+            memory_cli::run_dedicated_set(pack, "idea", &joined, &format!("idea added: {joined}"))
         }),
-        IdeaCommand::List { options } => run_memory_command(options, memory_cli::run_idea_list),
-        IdeaCommand::Clear { options } => run_memory_command(options, memory_cli::run_idea_clear),
+        IdeaCommand::List { options } => {
+            run_memory_command(options, |pack| memory_cli::run_dedicated_list(pack, "idea"))
+        }
+        IdeaCommand::Clear { options } => run_memory_command(options, |pack| {
+            memory_cli::run_dedicated_clear(pack, "idea", "idea cleared")
+        }),
     }
 }
 
@@ -1663,19 +1700,25 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
             kind,
             text,
             options,
-        } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_mem_add(client, ctx, &kind, &join_words(text))
+        } => run_memory_command(options, |pack| {
+            memory_cli::run_mem_add(pack, &kind, &join_words(text))
         }),
-        MemCommand::List { kind, options } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_mem_list(client, ctx, kind.as_deref())
+        MemCommand::List { kind, options } => {
+            run_memory_command_without_policy(options, |client, ctx| {
+                memory_cli::run_mem_list(client, ctx, kind.as_deref())
+            })
+        }
+        MemCommand::Show { query, options } => {
+            run_memory_command_without_policy(options, |client, ctx| {
+                memory_cli::run_mem_show(client, ctx, query.as_deref())
+            })
+        }
+        MemCommand::Clear { kind, options } => {
+            run_memory_command(options, |pack| memory_cli::run_mem_clear(pack, &kind))
+        }
+        MemCommand::Kinds { options } => run_memory_command(options, |pack| {
+            memory_cli::run_mem_kinds(pack.policy, pack.ctx.format)
         }),
-        MemCommand::Show { query, options } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_mem_show(client, ctx, query.as_deref())
-        }),
-        MemCommand::Clear { kind, options } => run_memory_command(options, |client, ctx| {
-            memory_cli::run_mem_clear(client, ctx, &kind)
-        }),
-        MemCommand::Kinds { options } => run_memory_command(options, memory_cli::run_mem_kinds),
         MemCommand::Run {
             recipe,
             apply,
@@ -1685,7 +1728,7 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
             if recipe != "clarify-goal" {
                 anyhow::bail!("unknown recipe: {recipe} (supported: clarify-goal)");
             }
-            run_memory_command(options, |client, ctx| {
+            run_memory_command_without_policy(options, |client, ctx| {
                 memory_cli::run_mem_recipe_clarify_goal(
                     client,
                     ctx,

@@ -2,6 +2,8 @@ mod ask;
 mod ask_launch;
 mod history;
 pub mod memory_cli;
+pub mod memory_cli_pack;
+pub mod memory_command_policy;
 pub mod memory_space;
 mod turn_cancel;
 

@@ -49,6 +49,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **ai** | local history / retry / rerun / preset / log-tail / chat transcript / smart entry / exit codes / yes-exec / history GC | `application/history.rs`、`adapters/outbound/local_history.rs`、`tests/history_cli.rs`、`tests/ux_gap_closure.rs`、`tests/yes_exec_integration.rs`、`src/main.rs`、`tests/phase_a_cli.rs` |
 | **aibe** | assistant streaming forward | `tests/agent_turn_streaming.rs`、`adapters/outbound/scripted_mock_llm.rs` |
 | **aibe** | contextual memory pack 境界（0038 Phase B） | `application/basic_memory_pack.rs`（unit）、`tests/memory_pack_turn_hook.rs`、`tests/memory_disabled.rs`（basic 拒否回帰）、`tests/contextual_memory.rs` / `tests/memory_subscribe.rs`（contextual 回帰） |
+| **ai** | contextual memory CLI policy pack（0038 Phase C） | `application/memory_command_policy.rs` / `memory_cli_pack.rs`（unit）、`application/memory_cli.rs`（unit）、`tests/phase_a_cli.rs`（`mem add` / `mem kinds` / 専用 CLI 回帰）、`tests/memory_disabled_cli.rs`（disabled gate 回帰） |
 | **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |
 
 ## テスト種別

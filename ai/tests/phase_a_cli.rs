@@ -54,6 +54,48 @@ impl MockSocketServer {
         Self::spawn_multi(move |req| vec![responder(req)])
     }
 
+    fn spawn_loop(
+        expected_sessions: usize,
+        responder: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
+    ) -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket_path = dir.path().join("aibe.sock");
+        let _ = fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("bind");
+        let responder = std::sync::Arc::new(responder);
+        let handle = thread::spawn(move || {
+            let mut handled = 0usize;
+            while handled < expected_sessions {
+                let Ok((stream, _)) = listener.accept() else {
+                    break;
+                };
+                let responder = std::sync::Arc::clone(&responder);
+                let mut writer = stream.try_clone().expect("clone");
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                line.clear();
+                if reader.read_line(&mut line).is_err() {
+                    continue;
+                }
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse request");
+                let response = responder(req);
+                let payload = serde_json::to_string(&response).expect("serialize response");
+                writeln!(writer, "{payload}").expect("write response");
+                writer.flush().expect("flush response");
+                handled += 1;
+            }
+        });
+
+        Self {
+            handle: Some(handle),
+            _dir: dir,
+            socket_path,
+        }
+    }
+
     fn ask_with_streaming(
         expected_message: &'static str,
         stream_chunks: &'static [&'static str],
@@ -93,7 +135,9 @@ impl MockSocketServer {
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).expect("bind");
         let handle = thread::spawn(move || {
-            let (stream, _) = listener.accept().expect("accept");
+            let Ok((stream, _)) = listener.accept() else {
+                return;
+            };
             let mut writer = stream.try_clone().expect("clone");
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
@@ -497,7 +541,7 @@ fn no_console_hint_skips_system_instruction_on_agent_turn() {
 
 #[test]
 fn goal_set_sends_memory_apply() {
-    let server = MockSocketServer::spawn(|req| match req {
+    let server = with_kind_list(2, |req| match req {
         ClientRequest::MemoryApply(body) => {
             assert!(!body.session_id.is_empty());
             assert!(body.context.cwd.is_some());
@@ -575,7 +619,7 @@ fn agent_turn_sends_memory_space_id_from_env_context() {
 
 #[test]
 fn goal_set_sends_env_context_as_memory_space_id() {
-    let server = MockSocketServer::spawn(|req| match req {
+    let server = with_kind_list(2, |req| match req {
         ClientRequest::MemoryApply(body) => {
             assert_eq!(body.context.memory_space_id.as_deref(), Some("ctx_goal"));
             ClientResponse::MemoryApplyResult {
@@ -645,8 +689,8 @@ fn mem_show_requests_prompt_block() {
 
 #[test]
 fn mem_add_goal_shows_standard_kind_hint() {
-    let server = MockSocketServer::spawn(|_req| {
-        panic!("mem add goal must not reach aibe");
+    let server = with_kind_list(1, |req| {
+        panic!("mem add goal must not reach handler after kind list: {req:?}");
     });
     let home = tempfile::tempdir().expect("home");
     let cfg = write_ai_config(&server.socket_path, &home);
@@ -668,12 +712,29 @@ fn mem_add_goal_shows_standard_kind_hint() {
 }
 
 fn mock_builtin_kind(id: &str, priority: u32) -> MemoryKindDefinitionDto {
+    let (default_scope, default_inject, default_status) = match id {
+        "now" => (
+            MemoryScopeDto::Session,
+            MemoryInjectPolicyDto::Pinned,
+            MemoryStatusDto::Active,
+        ),
+        "idea" => (
+            MemoryScopeDto::Project,
+            MemoryInjectPolicyDto::OnDemand,
+            MemoryStatusDto::Open,
+        ),
+        _ => (
+            MemoryScopeDto::Project,
+            MemoryInjectPolicyDto::Pinned,
+            MemoryStatusDto::Active,
+        ),
+    };
     MemoryKindDefinitionDto {
         id: id.to_string(),
         description: format!("{id} description"),
-        default_scope: MemoryScopeDto::Project,
-        default_inject: MemoryInjectPolicyDto::Pinned,
-        default_status: MemoryStatusDto::Active,
+        default_scope,
+        default_inject,
+        default_status,
         lifecycle: "active_archive".into(),
         cardinality: "multiple".into(),
         clear_from: MemoryStatusDto::Active,
@@ -685,30 +746,47 @@ fn mock_builtin_kind(id: &str, priority: u32) -> MemoryKindDefinitionDto {
         max_entries: Some(8),
         aliases: vec![id.to_string()],
         builtin: true,
-        dedicated_cli: None,
+        dedicated_cli: dedicated_cli_for_kind(id),
     }
+}
+
+fn dedicated_cli_for_kind(id: &str) -> Option<String> {
+    match id {
+        "goal" => Some("ai goal set".into()),
+        "now" => Some("ai now set".into()),
+        "idea" => Some("ai idea add".into()),
+        _ => None,
+    }
+}
+
+fn mock_kind_list_response() -> ClientResponse {
+    ClientResponse::MemoryKindListResult {
+        id: "kinds".to_string(),
+        status: MemoryQueryStatus::Ok,
+        kinds: vec![
+            mock_builtin_kind("goal", 10),
+            mock_builtin_kind("now", 20),
+            mock_builtin_kind("rule", 30),
+            mock_builtin_kind("decision", 60),
+            mock_builtin_kind("idea", 80),
+            mock_builtin_kind("note", 100),
+        ],
+    }
+}
+
+fn with_kind_list(
+    expected_sessions: usize,
+    handler: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
+) -> MockSocketServer {
+    MockSocketServer::spawn_loop(expected_sessions, move |req| match req {
+        ClientRequest::MemoryKindList(_) => mock_kind_list_response(),
+        other => handler(other),
+    })
 }
 
 #[test]
 fn mem_kinds_lists_registered_kinds_from_aibe() {
-    let server = MockSocketServer::spawn(|req| match req {
-        ClientRequest::MemoryKindList(body) => {
-            assert!(!body.session_id.is_empty());
-            ClientResponse::MemoryKindListResult {
-                id: "k1".to_string(),
-                status: MemoryQueryStatus::Ok,
-                kinds: vec![
-                    mock_builtin_kind("goal", 10),
-                    mock_builtin_kind("now", 20),
-                    mock_builtin_kind("rule", 30),
-                    mock_builtin_kind("decision", 60),
-                    mock_builtin_kind("idea", 80),
-                    mock_builtin_kind("note", 100),
-                ],
-            }
-        }
-        other => panic!("unexpected request: {other:?}"),
-    });
+    let server = with_kind_list(1, |req| panic!("unexpected request: {req:?}"));
     let home = tempfile::tempdir().expect("home");
     let cfg = write_ai_config(&server.socket_path, &home);
 
@@ -733,7 +811,7 @@ fn mem_kinds_lists_registered_kinds_from_aibe() {
 
 #[test]
 fn mem_add_custom_sends_kind_and_text_only() {
-    let server = MockSocketServer::spawn(|req| match req {
+    let server = with_kind_list(2, |req| match req {
         ClientRequest::MemoryApply(body) => {
             assert!(matches!(
                 body.operation,
