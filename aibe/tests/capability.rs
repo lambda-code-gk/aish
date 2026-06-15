@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! Capability model boundary tests（§15.7）。
 
 use std::sync::Arc;

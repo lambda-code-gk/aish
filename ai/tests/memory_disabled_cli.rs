@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 #![cfg(unix)]
 
 use std::fs;

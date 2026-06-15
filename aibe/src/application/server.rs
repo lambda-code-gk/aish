@@ -10,11 +10,17 @@ use crate::adapters::inbound::unix_socket_server;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
-    ConversationStore as FilesystemConversationStore, FilesystemContextualMemoryStore,
-    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, StaticCapabilityPolicy,
+    ConversationStore as FilesystemConversationStore, StaticCapabilityPolicy,
 };
+#[cfg(feature = "memory")]
+use crate::adapters::outbound::{
+    FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
+    InProcessMemorySubscriptionBroker,
+};
+use crate::application::basic_pack_arc;
+#[cfg(feature = "memory")]
+use crate::application::contextual_pack_arc;
 use crate::application::request_service::RequestService;
-use crate::application::{basic_pack_arc, contextual_pack_arc};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     ConversationStore, ExternalCommandConfig, MemoryConfig, ProfileRegistry, ToolsConfig,
@@ -37,24 +43,32 @@ pub async fn run(
     let conversation_store: Arc<dyn ConversationStore> = Arc::new(
         FilesystemConversationStore::new(conversation_store_root.clone()),
     );
-    let memory_space_resolver = Arc::new(FilesystemMemorySpaceResolver);
-    let memory_broker: Arc<dyn crate::ports::outbound::MemorySubscriptionBroker> =
-        Arc::new(InProcessMemorySubscriptionBroker::new());
     let capability_policy = StaticCapabilityPolicy::local_full();
 
     let (rpc_extension, turn_hook) = if memory_config.enabled {
-        let memory_store_impl = FilesystemContextualMemoryStore::with_conversation_root(
-            conversation_store_root.clone(),
-        );
-        let loader = memory_store_impl.registry_loader();
-        contextual_pack_arc(
-            Arc::new(memory_store_impl) as Arc<dyn crate::ports::outbound::ContextualMemoryStore>,
-            memory_space_resolver,
-            loader,
-            memory_broker,
-            Arc::clone(&capability_policy),
-            profile_registry.clone(),
-        )
+        #[cfg(feature = "memory")]
+        {
+            let memory_space_resolver = Arc::new(FilesystemMemorySpaceResolver);
+            let memory_broker: Arc<dyn crate::ports::outbound::MemorySubscriptionBroker> =
+                Arc::new(InProcessMemorySubscriptionBroker::new());
+            let memory_store_impl = FilesystemContextualMemoryStore::with_conversation_root(
+                conversation_store_root.clone(),
+            );
+            let loader = memory_store_impl.registry_loader();
+            contextual_pack_arc(
+                Arc::new(memory_store_impl)
+                    as Arc<dyn crate::ports::outbound::ContextualMemoryStore>,
+                memory_space_resolver,
+                loader,
+                memory_broker,
+                Arc::clone(&capability_policy),
+                profile_registry.clone(),
+            )
+        }
+        #[cfg(not(feature = "memory"))]
+        {
+            basic_pack_arc()
+        }
     } else {
         basic_pack_arc()
     };

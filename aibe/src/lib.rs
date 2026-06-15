@@ -9,6 +9,9 @@ pub mod daemon;
 pub mod domain;
 pub mod ports;
 
+#[cfg(feature = "memory")]
+pub mod plugin_memory;
+
 /// 常駐サーバのエントリポイント。
 pub fn run() -> ! {
     if let Err(e) = try_run() {

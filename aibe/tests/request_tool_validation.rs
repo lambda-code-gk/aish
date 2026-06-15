@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! `RequestService` の protocol 入口検証（0004: ToolName 変換・0003/0005: cwd 優先・context 正規化）。
 
 use std::sync::Arc;

@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! MemoryRecipe 統合テスト（ScriptedMockLlm）。
 
 use std::sync::Arc;

@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! ContextualMemoryPack TurnHook 注入の回帰。
 
 use std::sync::Arc;

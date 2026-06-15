@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 #![cfg(unix)]
 
 use std::fs;
@@ -58,6 +59,21 @@ impl MockSocketServer {
         expected_sessions: usize,
         responder: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
     ) -> Self {
+        Self::spawn_loop_inner(expected_sessions, false, responder)
+    }
+
+    fn spawn_loop_allow_ping(
+        expected_sessions: usize,
+        responder: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
+    ) -> Self {
+        Self::spawn_loop_inner(expected_sessions, true, responder)
+    }
+
+    fn spawn_loop_inner(
+        expected_sessions: usize,
+        allow_ping: bool,
+        responder: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
+    ) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
@@ -81,11 +97,23 @@ impl MockSocketServer {
                     continue;
                 }
                 let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse request");
-                let response = responder(req);
+                let response = if allow_ping {
+                    match req {
+                        ClientRequest::Ping { .. } => ClientResponse::Pong {
+                            id: "health".to_string(),
+                        },
+                        other => {
+                            handled += 1;
+                            responder(other)
+                        }
+                    }
+                } else {
+                    handled += 1;
+                    responder(req)
+                };
                 let payload = serde_json::to_string(&response).expect("serialize response");
                 writeln!(writer, "{payload}").expect("write response");
                 writer.flush().expect("flush response");
-                handled += 1;
             }
         });
 
@@ -778,7 +806,7 @@ fn with_kind_list(
     expected_sessions: usize,
     handler: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
 ) -> MockSocketServer {
-    MockSocketServer::spawn_loop(expected_sessions, move |req| match req {
+    MockSocketServer::spawn_loop_allow_ping(expected_sessions, move |req| match req {
         ClientRequest::MemoryKindList(_) => mock_kind_list_response(),
         other => handler(other),
     })
@@ -813,16 +841,15 @@ fn mem_kinds_lists_registered_kinds_from_aibe() {
 fn mem_add_custom_sends_kind_and_text_only() {
     let server = with_kind_list(2, |req| match req {
         ClientRequest::MemoryApply(body) => {
-            assert!(matches!(
-                body.operation,
-                MemoryOperationDto::Add(add)
-                    if add.kind == "custom"
-                        && add.text == "memo text"
-                        && add.scope.is_none()
-                        && add.inject.is_none()
-                        && add.status.is_none()
-                        && add.make_active.is_none()
-            ));
+            let MemoryOperationDto::Add(ref add) = body.operation else {
+                panic!("expected add, got {:?}", body.operation);
+            };
+            assert_eq!(add.kind, "custom");
+            assert_eq!(add.text, "memo text");
+            assert!(add.scope.is_none());
+            assert!(add.inject.is_none());
+            assert!(add.status.is_none());
+            assert!(add.make_active.is_none());
             ClientResponse::MemoryApplyResult {
                 id: "m1".to_string(),
                 status: MemoryApplyStatus::Ok,
@@ -838,7 +865,7 @@ fn mem_add_custom_sends_kind_and_text_only() {
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .env("AI_SESSION_ID", "phase-a-memory")
-        .args(["mem", "add", "custom", "memo", "text", "--no-start"])
+        .args(["mem", "add", "--no-start", "custom", "memo", "text"])
         .output()
         .expect("run ai mem add custom");
 

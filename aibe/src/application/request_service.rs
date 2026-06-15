@@ -320,10 +320,12 @@ impl RequestService {
         writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
         lines: Arc<Mutex<crate::ports::inbound::SubscribeConnectionLines>>,
     ) -> anyhow::Result<()> {
-        use crate::application::memory_subscribe_service::MemorySubscribeService;
+        use crate::application::memory_subscribe_transport::{
+            push_memory_subscription_until_disconnect, write_subscribe_response_line,
+        };
 
         let (response, subscription) = self.rpc_extension.memory_subscribe_begin(body.clone());
-        MemorySubscribeService::write_response_line(&writer, &response).await?;
+        write_subscribe_response_line(&writer, &response).await?;
         let Some(subscription) = subscription else {
             return Ok(());
         };
@@ -333,7 +335,7 @@ impl RequestService {
             } => memory_space_id.clone(),
             _ => return Ok(()),
         };
-        MemorySubscribeService::push_until_disconnect(
+        push_memory_subscription_until_disconnect(
             body.id,
             memory_space_id,
             subscription,

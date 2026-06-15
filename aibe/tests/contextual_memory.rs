@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! contextual memory store と prompt 注入の統合テスト。
 
 use aibe::adapters::outbound::{FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver};

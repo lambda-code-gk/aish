@@ -32,10 +32,13 @@
 | 0038 | [0038_contextual-memory-pack-phase-a-spec.md](spec/0038_contextual-memory-pack-phase-a-spec.md) | 設計確定 | Contextual Memory Pack Phase A（`[memory] enabled` による basic 切替） |
 | 0038 | [0038_contextual-memory-pack-phase-b-spec.md](spec/0038_contextual-memory-pack-phase-b-spec.md) | 設計確定 | Contextual Memory Pack Phase B（TurnHook / RpcExtension trait 化、Pack 合成） |
 | 0038 | [0038_contextual-memory-pack-phase-c-spec.md](spec/0038_contextual-memory-pack-phase-c-spec.md) | 設計確定（実装済み） | Contextual Memory Pack Phase C（CLI / built-in kind の pack 移行） |
+| 0038 | [0038_contextual-memory-pack-phase-d-spec.md](spec/0038_contextual-memory-pack-phase-d-spec.md) | 設計確定（実装済み） | Contextual Memory Pack Phase D（`memory` feature / basic build） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
-（なし）
+| 番号 | ファイル | 状態 | 概要 |
+|------|----------|------|------|
+| — | — | — | 進行中の実装指示書なし |
 
 ## 実装済み指示書（docs/done/）
 
@@ -88,5 +91,5 @@
 | 0038 | [0038_contextual-memory-pack-phase-a-implementation-spec.md](done/0038_contextual-memory-pack-phase-a-implementation-spec.md) | 実装済み（Phase A） | Contextual Memory Pack Phase A — `[memory] enabled` による basic 切替（設計: [0038](spec/0038_contextual-memory-pack-phase-a-spec.md)） |
 | 0038 | [0038_contextual-memory-pack-phase-b-implementation-spec.md](done/0038_contextual-memory-pack-phase-b-implementation-spec.md) | 実装済み（Phase B） | Contextual Memory Pack Phase B — TurnHook / RpcExtension trait 化（設計: [0038 Phase B](spec/0038_contextual-memory-pack-phase-b-spec.md)） |
 | 0038 | [0038_contextual-memory-pack-phase-c-implementation-spec.md](done/0038_contextual-memory-pack-phase-c-implementation-spec.md) | 実装済み（Phase C） | Contextual Memory Pack Phase C — CLI / built-in kind pack 移行（設計: [0038 Phase C](spec/0038_contextual-memory-pack-phase-c-spec.md)） |
-
+| 0038 | [0038_contextual-memory-pack-phase-d-implementation-spec.md](done/0038_contextual-memory-pack-phase-d-implementation-spec.md) | 実装済み（Phase D） | Contextual Memory Pack Phase D — `memory` feature / basic build（設計: [0038 Phase D](spec/0038_contextual-memory-pack-phase-d-spec.md)） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

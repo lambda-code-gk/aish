@@ -3,9 +3,9 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::application::memory_recipe_service::MemoryRecipeService;
-use crate::application::memory_service::MemoryService;
-use crate::application::memory_subscribe_service::MemorySubscribeService;
+use super::memory_recipe_service::MemoryRecipeService;
+use super::memory_service::MemoryService;
+use super::memory_subscribe_service::MemorySubscribeService;
 use crate::domain::{AgentTurnContext, ChatMessage, MessageRole};
 use crate::ports::outbound::{
     CapabilityPolicy, ContextualMemoryStore, MemoryKindRegistryLoader, MemorySpaceResolver,

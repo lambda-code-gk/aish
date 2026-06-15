@@ -18,7 +18,7 @@ use ai::adapters::outbound::{
     resolve_shell_log_for_ask, AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore,
     ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
-use ai::application::memory_cli::MemoryCliContext;
+use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
@@ -1548,9 +1548,18 @@ fn join_words(parts: Vec<String>) -> String {
 }
 
 fn require_memory_enabled() -> anyhow::Result<AiConfig> {
-    let cfg = AiConfig::load();
-    cfg.ensure_memory_enabled().map_err(anyhow::Error::msg)?;
-    Ok(cfg)
+    #[cfg(not(feature = "memory"))]
+    {
+        return Err(anyhow::anyhow!(
+            ai::application::memory_stub::MEMORY_FEATURE_DISABLED_MESSAGE
+        ));
+    }
+    #[cfg(feature = "memory")]
+    {
+        let cfg = AiConfig::load();
+        cfg.ensure_memory_enabled().map_err(anyhow::Error::msg)?;
+        Ok(cfg)
+    }
 }
 
 fn prepare_memory_context(
@@ -1583,6 +1592,9 @@ fn prepare_memory_context(
         session_id,
         memory_context,
         cwd,
+        #[cfg(feature = "memory")]
+        format: ai::application::memory_cli_context::to_plugin_format(options.format.into()),
+        #[cfg(not(feature = "memory"))]
         format: options.format.into(),
     })
 }

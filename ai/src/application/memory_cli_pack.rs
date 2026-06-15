@@ -1,45 +1,48 @@
-//! memory CLI の command-policy 境界。
+//! memory CLI pack facade（feature on は plugin へ委譲）。
 
-use aibe_protocol::ClientResponse;
+#[cfg(feature = "memory")]
+pub use crate::plugin_memory::memory_cli_pack::*;
 
-use crate::application::memory_cli::MemoryCliContext;
-use crate::application::memory_command_policy::MemoryCommandPolicy;
-use crate::ports::outbound::{AgentError, MemoryClient};
+#[cfg(not(feature = "memory"))]
+mod stub {
+    use crate::application::memory_cli_context::MemoryCliContext;
+    use crate::ports::outbound::{AgentError, MemoryClient};
 
-/// `MemoryClient` + context + kind policy snapshot を束ねる command 単位の pack。
-pub struct MemoryCliPack<'a> {
-    pub client: &'a dyn MemoryClient,
-    pub ctx: &'a MemoryCliContext,
-    pub policy: &'a MemoryCommandPolicy,
-}
+    use super::super::memory_stub::MEMORY_FEATURE_DISABLED_MESSAGE;
 
-impl<'a> MemoryCliPack<'a> {
-    pub fn new(
-        client: &'a dyn MemoryClient,
-        ctx: &'a MemoryCliContext,
-        policy: &'a MemoryCommandPolicy,
-    ) -> Self {
-        Self {
-            client,
-            ctx,
-            policy,
+    /// feature off 時の policy プレースホルダ。
+    pub struct MemoryCommandPolicy;
+
+    /// feature off 時の pack プレースホルダ。
+    pub struct MemoryCliPack<'a> {
+        pub client: &'a dyn MemoryClient,
+        pub ctx: &'a MemoryCliContext,
+        pub policy: &'a MemoryCommandPolicy,
+    }
+
+    impl<'a> MemoryCliPack<'a> {
+        pub fn new(
+            client: &'a dyn MemoryClient,
+            ctx: &'a MemoryCliContext,
+            policy: &'a MemoryCommandPolicy,
+        ) -> Self {
+            Self {
+                client,
+                ctx,
+                policy,
+            }
         }
+    }
+
+    pub fn load_command_policy(
+        _client: &dyn MemoryClient,
+        _ctx: &MemoryCliContext,
+    ) -> Result<MemoryCommandPolicy, AgentError> {
+        Err(AgentError::Request(
+            MEMORY_FEATURE_DISABLED_MESSAGE.to_string(),
+        ))
     }
 }
 
-/// `memory_kind_list` を 1 回だけ呼び、policy snapshot を構築する。
-pub fn load_command_policy(
-    client: &dyn MemoryClient,
-    ctx: &MemoryCliContext,
-) -> Result<MemoryCommandPolicy, AgentError> {
-    let response = client.memory_kind_list(&ctx.session_id, &ctx.memory_context)?;
-    match response {
-        ClientResponse::MemoryKindListResult { kinds, .. } => {
-            Ok(MemoryCommandPolicy::from_kinds(kinds))
-        }
-        ClientResponse::Error { message, .. } => Err(AgentError::Request(message)),
-        other => Err(AgentError::Request(format!(
-            "unexpected response: {other:?}"
-        ))),
-    }
-}
+#[cfg(not(feature = "memory"))]
+pub use stub::*;

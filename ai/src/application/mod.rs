@@ -2,9 +2,12 @@ mod ask;
 mod ask_launch;
 mod history;
 pub mod memory_cli;
+pub mod memory_cli_context;
 pub mod memory_cli_pack;
 pub mod memory_command_policy;
 pub mod memory_space;
+#[cfg(not(feature = "memory"))]
+pub mod memory_stub;
 mod turn_cancel;
 
 pub use ask::{Ask, AskError, AskOutcome, AskRunOptions};

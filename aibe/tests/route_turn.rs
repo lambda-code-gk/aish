@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! `route_turn` の routing と conversation store 回帰。
 
 use std::sync::Arc;

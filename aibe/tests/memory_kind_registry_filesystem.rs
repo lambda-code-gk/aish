@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! user-defined MemoryKindRegistry（kinds.toml）の統合テスト。
 
 use std::io::Write;

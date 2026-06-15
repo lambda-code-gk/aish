@@ -1,3 +1,4 @@
+#![cfg(feature = "memory")]
 //! MemorySubscribe broker と socket 統合テスト。
 
 #![cfg(unix)]
