@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    terminator::ToolRoundTerminatorOrchestrator, DeltaStreamingMockLlm, EmptyContextualMemoryStore,
-    FilesystemMemorySpaceResolver,
+    terminator::ToolRoundTerminatorOrchestrator, DeltaStreamingMockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::agent_turn::AgentTurnService;
+use aibe::application::basic_pack_arc;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage};
 use aibe::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig, TurnEventSink};
@@ -40,13 +40,14 @@ async fn text_only_turn_forwards_multiple_streaming_deltas() {
     ));
     let registry = build_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
+    let (_, turn_hook) = basic_pack_arc();
     let svc = AgentTurnService::new(
         llm,
         executor,
         terminator,
         TerminationCapability::summary_prompt_only(),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
+        StaticCapabilityPolicy::local_full(),
+        turn_hook,
     );
     let sink = Arc::new(RecordingSink {
         deltas: Mutex::new(Vec::new()),

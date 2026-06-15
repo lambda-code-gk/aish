@@ -4,10 +4,8 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::{
-    shared_builtin_loader, ConversationStore, EmptyContextualMemoryStore,
-    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, MockLlm,
-};
+use aibe::adapters::outbound::{ConversationStore, MockLlm};
+use aibe::application::basic_pack_arc;
 use aibe::application::memory_runtime::MEMORY_DISABLED_MESSAGE;
 use aibe::application::RequestService;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
@@ -26,7 +24,8 @@ fn memory_disabled_service() -> RequestService {
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
     let tool_registry = build_registry(&tools_config, &[]);
-    RequestService::new_with_turns_and_registry_loader_and_memory(
+    let (rpc_extension, turn_hook) = basic_pack_arc();
+    RequestService::new_with_turns_and_packs(
         profile_registry,
         tool_registry,
         tools_config,
@@ -36,11 +35,9 @@ fn memory_disabled_service() -> RequestService {
         Arc::new(ConversationStore::new(
             std::env::temp_dir().join("aibe-test-memory-disabled"),
         )),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
-        Arc::new(InProcessMemorySubscriptionBroker::new()),
-        shared_builtin_loader(),
-        false,
+        aibe::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
     )
 }
 

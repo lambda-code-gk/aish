@@ -6,10 +6,9 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::{
-    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, ScriptedMockLlm,
-};
+use aibe::adapters::outbound::{ScriptedMockLlm, StaticCapabilityPolicy};
 use aibe::application::agent_turn::AgentTurnService;
+use aibe::application::basic_pack_arc;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{
     AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, LlmStepResult, MessageRole,
@@ -34,13 +33,14 @@ fn agent_turn_service(
     ));
     let registry = build_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
+    let (_, turn_hook) = basic_pack_arc();
     AgentTurnService::new(
         llm,
         executor,
         terminator,
         capability,
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
+        StaticCapabilityPolicy::local_full(),
+        turn_hook,
     )
 }
 

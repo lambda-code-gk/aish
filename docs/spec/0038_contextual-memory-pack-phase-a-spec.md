@@ -71,5 +71,5 @@ enabled = false   # 省略時 true
 
 ## 次フェーズ（参考）
 
-- Phase B: TurnHook / RpcExtension trait 化
+- Phase B: [0038_contextual-memory-pack-phase-b-spec.md](0038_contextual-memory-pack-phase-b-spec.md) — TurnHook / RpcExtension trait 化、Pack 合成
 - Phase C: CLI / built-in kind の pack 移行

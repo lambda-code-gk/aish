@@ -30,6 +30,7 @@
 | 0036 | [0036_shell-exec-approval-ux-spec.md](spec/0036_shell-exec-approval-ux-spec.md) | 設計確定 | `shell_exec` 承認 UX 拡張（`y/n/a/c`、tier、pattern auto-approve） |
 | 0037 | [0037_aibe-contextual-memory-runtime-v1-spec.md](spec/0037_aibe-contextual-memory-runtime-v1-spec.md) | 設計確定 | AIBE Contextual Memory Runtime v1（registry / resolver / recipe / subscribe / capability） |
 | 0038 | [0038_contextual-memory-pack-phase-a-spec.md](spec/0038_contextual-memory-pack-phase-a-spec.md) | 設計確定 | Contextual Memory Pack Phase A（`[memory] enabled` による basic 切替） |
+| 0038 | [0038_contextual-memory-pack-phase-b-spec.md](spec/0038_contextual-memory-pack-phase-b-spec.md) | 設計確定 | Contextual Memory Pack Phase B（TurnHook / RpcExtension trait 化、Pack 合成） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -84,5 +85,6 @@
 | 0037 | [0037-phase6-capability-model-implementation-spec.md](done/0037-phase6-capability-model-implementation-spec.md) | 実装済み（Phase 6） | Contextual Memory Runtime v1 Phase 6 — Capability model（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 | 0037 | [0037-phase7-multi-client-readiness-docs-implementation-spec.md](done/0037-phase7-multi-client-readiness-docs-implementation-spec.md) | 実装済み（Phase 7） | Contextual Memory Runtime v1 Phase 7 — Multi-client readiness docs（設計: [0037](spec/0037_aibe-contextual-memory-runtime-v1-spec.md)） |
 | 0038 | [0038_contextual-memory-pack-phase-a-implementation-spec.md](done/0038_contextual-memory-pack-phase-a-implementation-spec.md) | 実装済み（Phase A） | Contextual Memory Pack Phase A — `[memory] enabled` による basic 切替（設計: [0038](spec/0038_contextual-memory-pack-phase-a-spec.md)） |
+| 0038 | [0038_contextual-memory-pack-phase-b-implementation-spec.md](done/0038_contextual-memory-pack-phase-b-implementation-spec.md) | 実装済み（Phase B） | Contextual Memory Pack Phase B — TurnHook / RpcExtension trait 化（設計: [0038 Phase B](spec/0038_contextual-memory-pack-phase-b-spec.md)） |
 
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

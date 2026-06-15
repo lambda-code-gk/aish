@@ -5,12 +5,14 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    shared_builtin_loader, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
-    InProcessMemorySubscriptionBroker, MockLlm, StaticCapabilityPolicy,
+    shared_builtin_loader, ConversationStore, EmptyContextualMemoryStore,
+    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, MockLlm,
+    StaticCapabilityPolicy,
 };
 use aibe::application::memory_service::MemoryService;
 use aibe::application::memory_subscribe_service::MemorySubscribeService;
 use aibe::application::RequestService;
+use aibe::application::{basic_pack_arc, contextual_pack_arc};
 use aibe::domain::{LlmStepResult, ToolCall, SHELL_EXEC};
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe_protocol::{
@@ -32,7 +34,15 @@ fn request_service_with_policy(
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
     let tool_registry = build_registry(&tools_config, &[]);
-    RequestService::new_with_capability_policy(
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        Arc::clone(&policy),
+        profile_registry.clone(),
+    );
+    RequestService::new(
         profile_registry,
         tool_registry,
         tools_config,
@@ -41,10 +51,9 @@ fn request_service_with_policy(
         Arc::new(aibe::adapters::outbound::ConversationStore::new(
             std::env::temp_dir().join("aibe-test-capability"),
         )),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
-        Arc::new(InProcessMemorySubscriptionBroker::new()),
         policy,
+        rpc_extension,
+        turn_hook,
     )
 }
 
@@ -326,7 +335,15 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
     );
     let tool_registry = build_registry(&tools_cfg, &[]);
     let policy = StaticCapabilityPolicy::memory_read_only();
-    let service = RequestService::new_with_capability_policy(
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        Arc::clone(&policy),
+        profile_registry.clone(),
+    );
+    let service = RequestService::new(
         profile_registry,
         tool_registry,
         tools_cfg,
@@ -335,10 +352,9 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
         Arc::new(aibe::adapters::outbound::ConversationStore::new(
             dir.path().join("conversations"),
         )),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
-        Arc::new(InProcessMemorySubscriptionBroker::new()),
         policy,
+        rpc_extension,
+        turn_hook,
     );
 
     let cwd = std::env::current_dir().expect("cwd");
@@ -394,7 +410,16 @@ async fn memory_only_profile_denies_shell_execute() {
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
     let tool_registry = build_registry(&tools_cfg, &[]);
-    let service = RequestService::new_with_capability_policy(
+    let policy = StaticCapabilityPolicy::memory_only();
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        Arc::clone(&policy),
+        profile_registry.clone(),
+    );
+    let service = RequestService::new(
         profile_registry,
         tool_registry,
         tools_cfg,
@@ -403,10 +428,9 @@ async fn memory_only_profile_denies_shell_execute() {
         Arc::new(aibe::adapters::outbound::ConversationStore::new(
             dir.path().join("conversations"),
         )),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
-        Arc::new(InProcessMemorySubscriptionBroker::new()),
-        StaticCapabilityPolicy::memory_only(),
+        policy,
+        rpc_extension,
+        turn_hook,
     );
 
     let cwd = std::env::current_dir().expect("cwd");

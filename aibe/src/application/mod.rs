@@ -1,4 +1,6 @@
 pub mod agent_turn;
+pub mod basic_memory_pack;
+pub mod contextual_memory_pack;
 pub mod llm_error;
 pub mod memory_recipe_service;
 pub mod memory_runtime;
@@ -13,5 +15,7 @@ pub mod tool_round;
 pub mod tool_round_terminator;
 
 pub use crate::ports::outbound::{TurnCancellation, TurnEventSink};
+pub use basic_memory_pack::{basic_pack_arc, BasicPack};
+pub use contextual_memory_pack::{contextual_pack_arc, ContextualMemoryPack};
 pub use request_service::RequestService;
 pub use route_turn::RouteTurnService;

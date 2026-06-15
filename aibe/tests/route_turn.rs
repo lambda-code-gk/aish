@@ -5,9 +5,11 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
-    InProcessMemorySubscriptionBroker, ScriptedMockLlm,
+    shared_builtin_loader, ConversationStore, EmptyContextualMemoryStore,
+    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, ScriptedMockLlm,
+    StaticCapabilityPolicy,
 };
+use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
 use aibe::domain::LlmStepResult;
 use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
@@ -33,6 +35,14 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
     let profile_registry =
         ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
     let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        profile_registry.clone(),
+    );
     RequestService::new(
         profile_registry,
         tool_registry,
@@ -40,9 +50,9 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
         Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
         "fast".to_string(),
         Arc::new(ConversationStore::new(store_root)),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
-        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
     )
 }
 

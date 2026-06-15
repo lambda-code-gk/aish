@@ -5,9 +5,11 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
-    InProcessMemorySubscriptionBroker, MockLlm,
+    shared_builtin_loader, ConversationStore, EmptyContextualMemoryStore,
+    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, MockLlm,
+    StaticCapabilityPolicy,
 };
+use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
@@ -21,6 +23,14 @@ fn service() -> RequestService {
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
     let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        profile_registry.clone(),
+    );
     RequestService::new(
         profile_registry,
         tool_registry,
@@ -30,9 +40,9 @@ fn service() -> RequestService {
         Arc::new(ConversationStore::new(
             std::env::temp_dir().join("aibe-test-conversations"),
         )),
-        Arc::new(EmptyContextualMemoryStore),
-        Arc::new(FilesystemMemorySpaceResolver),
-        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
     )
 }
 

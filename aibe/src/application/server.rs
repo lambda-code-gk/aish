@@ -10,11 +10,11 @@ use crate::adapters::inbound::unix_socket_server;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
-    shared_builtin_loader, ConversationStore as FilesystemConversationStore,
-    EmptyContextualMemoryStore, FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
-    InProcessMemorySubscriptionBroker,
+    ConversationStore as FilesystemConversationStore, FilesystemContextualMemoryStore,
+    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, StaticCapabilityPolicy,
 };
 use crate::application::request_service::RequestService;
+use crate::application::{basic_pack_arc, contextual_pack_arc};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     ConversationStore, ExternalCommandConfig, MemoryConfig, ProfileRegistry, ToolsConfig,
@@ -37,28 +37,30 @@ pub async fn run(
     let conversation_store: Arc<dyn ConversationStore> = Arc::new(
         FilesystemConversationStore::new(conversation_store_root.clone()),
     );
-    let (memory_store, memory_kind_registry_loader) = if memory_config.enabled {
+    let memory_space_resolver = Arc::new(FilesystemMemorySpaceResolver);
+    let memory_broker: Arc<dyn crate::ports::outbound::MemorySubscriptionBroker> =
+        Arc::new(InProcessMemorySubscriptionBroker::new());
+    let capability_policy = StaticCapabilityPolicy::local_full();
+
+    let (rpc_extension, turn_hook) = if memory_config.enabled {
         let memory_store_impl = FilesystemContextualMemoryStore::with_conversation_root(
             conversation_store_root.clone(),
         );
         let loader = memory_store_impl.registry_loader();
-        (
+        contextual_pack_arc(
             Arc::new(memory_store_impl) as Arc<dyn crate::ports::outbound::ContextualMemoryStore>,
+            memory_space_resolver,
             loader,
+            memory_broker,
+            Arc::clone(&capability_policy),
+            profile_registry.clone(),
         )
     } else {
-        (
-            Arc::new(EmptyContextualMemoryStore)
-                as Arc<dyn crate::ports::outbound::ContextualMemoryStore>,
-            shared_builtin_loader(),
-        )
+        basic_pack_arc()
     };
-    let memory_space_resolver: Arc<dyn crate::ports::outbound::MemorySpaceResolver> =
-        Arc::new(FilesystemMemorySpaceResolver);
-    let memory_broker: Arc<dyn crate::ports::outbound::MemorySubscriptionBroker> =
-        Arc::new(InProcessMemorySubscriptionBroker::new());
-    let handler: Arc<dyn ClientRequestHandler> = Arc::new(
-        RequestService::new_with_turns_and_registry_loader_and_memory(
+
+    let handler: Arc<dyn ClientRequestHandler> =
+        Arc::new(RequestService::new_with_turns_and_packs(
             profile_registry,
             tool_registry,
             tools_config,
@@ -66,13 +68,10 @@ pub async fn run(
             Arc::clone(&active_turns),
             router_profile,
             conversation_store,
-            memory_store,
-            memory_space_resolver,
-            memory_broker,
-            memory_kind_registry_loader,
-            memory_config.enabled,
-        ),
-    );
+            Arc::clone(&capability_policy),
+            rpc_extension,
+            turn_hook,
+        ));
 
     unix_socket_server::run(socket_path, handler).await
 }
