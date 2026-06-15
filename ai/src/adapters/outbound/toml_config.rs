@@ -11,10 +11,14 @@ use crate::domain::{tokens_from_config_value, AskToolsConfigRaw, ConfigToolsToke
 
 pub const DEFAULT_HISTORY_MAX_ENTRIES: usize = 500;
 
+pub const MEMORY_DISABLED_MESSAGE: &str =
+    "contextual memory is disabled ([memory] enabled = false in ai config)";
+
 #[derive(Debug, Clone)]
 pub struct AiConfig {
     pub socket_path: PathBuf,
     pub context_current: Option<String>,
+    pub memory_enabled: bool,
     pub ask_tools: ConfigToolsTokens,
     pub ask_default_profile: Option<String>,
     pub ask_filter: Option<String>,
@@ -47,6 +51,7 @@ impl AiConfig {
         let mut cfg = Self {
             socket_path: default_socket_path(),
             context_current: None,
+            memory_enabled: true,
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,
@@ -65,6 +70,11 @@ impl AiConfig {
                     }
                     if let Some(ctx) = file.context {
                         cfg.context_current = ctx.current.filter(|s| !s.is_empty());
+                    }
+                    if let Some(memory) = file.memory {
+                        if let Some(enabled) = memory.enabled {
+                            cfg.memory_enabled = enabled;
+                        }
                     }
                     if let Some(ask) = file.ask {
                         if let Some(tools) = ask.tools {
@@ -97,7 +107,20 @@ impl AiConfig {
         if let Ok(p) = std::env::var("AIBE_SOCKET_PATH") {
             cfg.socket_path = PathBuf::from(p);
         }
+        if let Ok(raw) = std::env::var("AI_MEMORY_ENABLED") {
+            if let Some(enabled) = parse_bool_env(&raw) {
+                cfg.memory_enabled = enabled;
+            }
+        }
         cfg
+    }
+
+    pub fn ensure_memory_enabled(&self) -> Result<(), String> {
+        if self.memory_enabled {
+            Ok(())
+        } else {
+            Err(MEMORY_DISABLED_MESSAGE.to_string())
+        }
     }
 
     fn resolve_path() -> PathBuf {
@@ -157,15 +180,29 @@ fn expand_home(path: String) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     socket_path: Option<String>,
     context: Option<ContextSection>,
+    memory: Option<MemorySection>,
     ask: Option<AskSection>,
     history_dir: Option<String>,
     history_max_entries: Option<usize>,
     log_tail_bytes: Option<usize>,
     presets: Option<HashMap<String, PresetToml>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySection {
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

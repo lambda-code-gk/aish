@@ -989,6 +989,9 @@ fn resolve_turn_memory_space_id(
     client_cwd: Option<&Path>,
     ai_session_id: &str,
 ) -> Option<String> {
+    if !cfg.memory_enabled {
+        return None;
+    }
     let canonical_cwd = client_cwd.and_then(|p| p.canonicalize().ok());
     let project_key = canonical_cwd.as_deref().and_then(|p| {
         ai::adapters::outbound::project_key::canonical_project_key_from_cwd(p)
@@ -1545,6 +1548,7 @@ fn join_words(parts: Vec<String>) -> String {
 
 fn prepare_memory_context(options: &MemoryCliOptions) -> anyhow::Result<MemoryCliContext> {
     let cfg = AiConfig::load();
+    cfg.ensure_memory_enabled().map_err(anyhow::Error::msg)?;
     let socket_path = options.socket.clone().unwrap_or(cfg.socket_path);
     if !options.no_start {
         ensure_running(&socket_path).map_err(|e| anyhow::anyhow!(e))?;
@@ -1577,6 +1581,7 @@ fn prepare_memory_context(options: &MemoryCliOptions) -> anyhow::Result<MemoryCl
 
 fn run_context(command: ContextCommand) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
+    cfg.ensure_memory_enabled().map_err(anyhow::Error::msg)?;
     let cwd = std::env::current_dir()?;
     let canonical_cwd = cwd
         .canonicalize()
@@ -2242,6 +2247,7 @@ mod cli_tests {
         let cfg = AiConfig {
             socket_path: default_socket_path(),
             context_current: None,
+            memory_enabled: true,
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,
@@ -2303,6 +2309,7 @@ mod cli_tests {
         let cfg = AiConfig {
             socket_path: default_socket_path(),
             context_current: None,
+            memory_enabled: true,
             ask_tools: ConfigToolsTokens::default(),
             ask_default_profile: None,
             ask_filter: None,

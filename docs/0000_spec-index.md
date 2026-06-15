@@ -29,6 +29,7 @@
 | 0035 | [0035_aibe-memory-identity-split-spec.md](spec/0035_aibe-memory-identity-split-spec.md) | 設計確定 | AIBE Memory Identity Split（`AI_SESSION_ID` / `memory_space_id` 分離） |
 | 0036 | [0036_shell-exec-approval-ux-spec.md](spec/0036_shell-exec-approval-ux-spec.md) | 設計確定 | `shell_exec` 承認 UX 拡張（`y/n/a/c`、tier、pattern auto-approve） |
 | 0037 | [0037_aibe-contextual-memory-runtime-v1-spec.md](spec/0037_aibe-contextual-memory-runtime-v1-spec.md) | 設計確定 | AIBE Contextual Memory Runtime v1（registry / resolver / recipe / subscribe / capability） |
+| 0038 | [0038_contextual-memory-pack-phase-a-spec.md](spec/0038_contextual-memory-pack-phase-a-spec.md) | 設計確定 | Contextual Memory Pack Phase A（`[memory] enabled` による basic 切替） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 

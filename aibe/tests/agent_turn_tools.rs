@@ -8,7 +8,7 @@ use std::time::Duration;
 use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, READ_FILE};
-use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{MemoryConfig, ProfileRegistry, TerminationCapability, ToolsConfig};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -47,6 +47,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
             Vec::new(),
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");

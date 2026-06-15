@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
-use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{MemoryConfig, ProfileRegistry, TerminationCapability, ToolsConfig};
 use aibe_protocol::{ClientRequest, ClientResponse};
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -33,6 +33,7 @@ async fn ping_and_agent_turn_over_unix_socket() {
             Vec::new(),
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");

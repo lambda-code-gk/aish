@@ -11,7 +11,7 @@ use ai::application::{Ask, AskRunOptions};
 use ai::domain::{resolve_tools, ConfigToolsTokens};
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
-use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{MemoryConfig, ProfileRegistry, TerminationCapability, ToolsConfig};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
@@ -36,6 +36,7 @@ fn ai_ask_reaches_mock_aibe() {
                 Vec::new(),
                 "default".to_string(),
                 dir.path().join("conversations"),
+                MemoryConfig::default(),
             )
             .await
             .expect("server");

@@ -7,6 +7,11 @@ history_max_entries = 500
 log_tail_bytes = 16384
 # AI_SESSION_ID は smart entry が起動時に環境変数から解決する。ここには設定しない。
 
+# contextual memory を無効化（basic ai）。aibe 側 config も合わせること（0038 Phase A）
+# [memory]
+# enabled = false
+# 環境変数 AI_MEMORY_ENABLED=0 でも無効化可
+
 [ask]
 # 文字列でも配列でもよい。CLI --tools があれば上書き（--tools none でこの回のみ []）。
 # キー省略時の既定は []。以下は安全側の例（docs/done/0002_ai-tools-client-spec.md）。

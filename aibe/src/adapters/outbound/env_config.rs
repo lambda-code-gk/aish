@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::ports::outbound::{
     default_conversation_store_root_with_home, AppConfig, ConfigError, ConfigLoader,
-    LlmProfilesConfig, RouterConfig, ToolsConfig,
+    LlmProfilesConfig, MemoryConfig, RouterConfig, ToolsConfig,
 };
 use aibe_client::default_socket_path;
 
@@ -28,7 +28,26 @@ impl EnvConfig {
             llm: LlmProfilesConfig::default_mock(),
             tools: ToolsConfig::default(),
             external_commands: Vec::new(),
+            memory: load_memory_config_from_env(),
         })
+    }
+}
+
+fn load_memory_config_from_env() -> MemoryConfig {
+    let mut memory = MemoryConfig::default();
+    if let Ok(raw) = std::env::var("AIBE_MEMORY_ENABLED") {
+        if let Some(enabled) = parse_bool_env_aibe(&raw) {
+            memory.enabled = enabled;
+        }
+    }
+    memory
+}
+
+fn parse_bool_env_aibe(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }
 

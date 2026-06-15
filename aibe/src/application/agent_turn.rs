@@ -24,6 +24,7 @@ pub struct AgentTurnService {
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
     capability_policy: Arc<dyn CapabilityPolicy>,
+    memory_enabled: bool,
 }
 
 impl AgentTurnService {
@@ -43,9 +44,11 @@ impl AgentTurnService {
             memory_store,
             memory_space_resolver,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+            true,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_capability_policy(
         llm: Arc<dyn LlmProvider>,
         executor: ToolRoundExecutor,
@@ -54,6 +57,7 @@ impl AgentTurnService {
         memory_store: Arc<dyn ContextualMemoryStore>,
         memory_space_resolver: Arc<dyn MemorySpaceResolver>,
         capability_policy: Arc<dyn CapabilityPolicy>,
+        memory_enabled: bool,
     ) -> Self {
         Self {
             llm,
@@ -63,6 +67,7 @@ impl AgentTurnService {
             memory_store,
             memory_space_resolver,
             capability_policy,
+            memory_enabled,
         }
     }
 
@@ -109,6 +114,7 @@ impl AgentTurnService {
         let conversation = prepare_turn_messages(
             messages,
             &context,
+            self.memory_enabled,
             self.memory_store.as_ref(),
             self.memory_space_resolver.as_ref(),
         );
@@ -379,6 +385,7 @@ impl AgentTurnService {
 fn prepare_turn_messages(
     mut messages: Vec<ChatMessage>,
     context: &AgentTurnContext,
+    memory_enabled: bool,
     memory_store: &dyn ContextualMemoryStore,
     memory_space_resolver: &dyn MemorySpaceResolver,
 ) -> Vec<ChatMessage> {
@@ -394,25 +401,27 @@ fn prepare_turn_messages(
         );
         insert_at += 1;
     }
-    if let Some(ref session_id) = context.ai_session_id {
-        let user_query = messages
-            .iter()
-            .rev()
-            .find(|m| m.role == crate::domain::MessageRole::User)
-            .map(|m| m.content.as_str())
-            .unwrap_or("");
-        let cwd = context.client_cwd.as_ref().map(|c| c.as_path());
-        let block = memory_space_resolver
-            .resolve_for_turn(session_id, context.memory_space_id.as_deref(), cwd)
-            .ok()
-            .and_then(|store_ctx| {
-                memory_store
-                    .resolve_for_prompt(&store_ctx, user_query, MEMORY_PROMPT_BUDGET_BYTES)
-                    .ok()
-            });
-        if let Some(block) = block {
-            if !block.content.is_empty() {
-                messages.insert(insert_at, ChatMessage::user(block.content));
+    if memory_enabled {
+        if let Some(ref session_id) = context.ai_session_id {
+            let user_query = messages
+                .iter()
+                .rev()
+                .find(|m| m.role == crate::domain::MessageRole::User)
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
+            let cwd = context.client_cwd.as_ref().map(|c| c.as_path());
+            let block = memory_space_resolver
+                .resolve_for_turn(session_id, context.memory_space_id.as_deref(), cwd)
+                .ok()
+                .and_then(|store_ctx| {
+                    memory_store
+                        .resolve_for_prompt(&store_ctx, user_query, MEMORY_PROMPT_BUDGET_BYTES)
+                        .ok()
+                });
+            if let Some(block) = block {
+                if !block.content.is_empty() {
+                    messages.insert(insert_at, ChatMessage::user(block.content));
+                }
             }
         }
     }
@@ -563,6 +572,7 @@ mod tests {
         let msgs = prepare_turn_messages(
             vec![ChatMessage::user("hi")],
             &ctx,
+            true,
             &EchoSpaceMemoryStore,
             &noop_resolver(),
         );
@@ -577,6 +587,7 @@ mod tests {
         let msgs = prepare_turn_messages(
             vec![ChatMessage::user("hi")],
             &ctx,
+            true,
             &EchoSpaceMemoryStore,
             &noop_resolver(),
         );
@@ -585,11 +596,28 @@ mod tests {
     }
 
     #[test]
+    fn prepare_turn_messages_skips_memory_when_disabled() {
+        let mut ctx = AgentTurnContext::for_text_only(None);
+        ctx.ai_session_id = Some("sess_001".into());
+        ctx.memory_space_id = Some("ctx_a".into());
+        let msgs = prepare_turn_messages(
+            vec![ChatMessage::user("hi")],
+            &ctx,
+            false,
+            &EchoSpaceMemoryStore,
+            &noop_resolver(),
+        );
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hi");
+    }
+
+    #[test]
     fn prepare_turn_messages_skips_empty_normalized_tail() {
         let ctx = AgentTurnContext::for_text_only(None);
         let msgs = prepare_turn_messages(
             vec![ChatMessage::user("hi")],
             &ctx,
+            true,
             &empty_memory(),
             &noop_resolver(),
         );
@@ -604,6 +632,7 @@ mod tests {
         let msgs = prepare_turn_messages(
             vec![ChatMessage::user("hi")],
             &ctx,
+            true,
             &empty_memory(),
             &noop_resolver(),
         );
@@ -620,6 +649,7 @@ mod tests {
         let msgs = prepare_turn_messages(
             vec![ChatMessage::user("hi")],
             &ctx,
+            true,
             &empty_memory(),
             &noop_resolver(),
         );
@@ -637,6 +667,7 @@ mod tests {
         let msgs = prepare_turn_messages(
             vec![ChatMessage::user("hi")],
             &ctx,
+            true,
             &empty_memory(),
             &noop_resolver(),
         );

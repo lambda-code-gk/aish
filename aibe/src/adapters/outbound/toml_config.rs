@@ -10,7 +10,7 @@ use toml::Value;
 use crate::ports::outbound::{
     default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,
     ConfigLoader, ExternalCommandConfig, LlmBackend, LlmGenerationParams, LlmProfile,
-    LlmProfilesConfig, LlmProviderKind, RouterConfig, ToolsConfig,
+    LlmProfilesConfig, LlmProviderKind, MemoryConfig, RouterConfig, ToolsConfig,
     DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
 };
 
@@ -67,6 +67,7 @@ impl ConfigLoader for TomlConfig {
         let tools = parse_tools(file_cfg.as_ref())?;
         let external_commands = parse_external_commands(file_cfg.as_ref());
         validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
+        let memory = parse_memory(file_cfg.as_ref());
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         Ok(AppConfig {
             socket_path,
@@ -75,6 +76,7 @@ impl ConfigLoader for TomlConfig {
             llm,
             tools,
             external_commands,
+            memory,
         })
     }
 }
@@ -545,6 +547,28 @@ fn expand_home(path: String) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn parse_memory(file: Option<&FileConfig>) -> MemoryConfig {
+    let mut memory = file
+        .and_then(|c| c.memory.as_ref())
+        .and_then(|m| m.enabled)
+        .map(|enabled| MemoryConfig { enabled })
+        .unwrap_or_default();
+    if let Ok(raw) = std::env::var("AIBE_MEMORY_ENABLED") {
+        if let Some(enabled) = parse_bool_env(&raw) {
+            memory.enabled = enabled;
+        }
+    }
+    memory
+}
+
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     socket_path: Option<String>,
@@ -553,6 +577,12 @@ struct FileConfig {
     #[serde(default)]
     external_commands: Option<Vec<ExternalCommandSection>>,
     tools: Option<ToolsSection>,
+    memory: Option<MemorySection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySection {
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -990,6 +1020,23 @@ args = ["exec", "{prompt}"]
             cfg.external_commands[0].timeout_secs,
             DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS
         );
+    }
+
+    #[test]
+    fn parses_memory_enabled_false() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[memory]
+enabled = false
+"#,
+        )
+        .expect("write");
+
+        let cfg = TomlConfig::from_path(path).load().expect("load");
+        assert!(!cfg.memory.enabled);
     }
 
     #[test]

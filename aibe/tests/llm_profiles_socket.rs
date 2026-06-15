@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aibe::adapters::outbound::MockLlm;
 use aibe::application::server;
-use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
+use aibe::ports::outbound::{MemoryConfig, ProfileRegistry, TerminationCapability, ToolsConfig};
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -31,6 +31,7 @@ async fn unknown_llm_profile_returns_invalid_request() {
             Vec::new(),
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");

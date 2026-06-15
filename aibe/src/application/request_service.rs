@@ -21,6 +21,7 @@ use aibe_protocol::{
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
+use crate::application::memory_runtime::memory_disabled_response;
 use crate::application::protocol_convert::ProtocolMessageConversionError;
 
 pub struct RequestService {
@@ -36,6 +37,7 @@ pub struct RequestService {
     memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
     capability_policy: Arc<dyn CapabilityPolicy>,
+    memory_enabled: bool,
 }
 
 impl RequestService {
@@ -91,6 +93,7 @@ impl RequestService {
             memory_broker,
             capability_policy,
             crate::adapters::outbound::shared_builtin_loader(),
+            true,
         )
     }
 
@@ -121,6 +124,7 @@ impl RequestService {
             memory_broker,
             capability_policy,
             memory_kind_registry_loader,
+            true,
         )
     }
 
@@ -150,6 +154,7 @@ impl RequestService {
             memory_broker,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
             crate::adapters::outbound::shared_builtin_loader(),
+            true,
         )
     }
 
@@ -180,6 +185,39 @@ impl RequestService {
             memory_broker,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
             memory_kind_registry_loader,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_turns_and_registry_loader_and_memory(
+        profile_registry: ProfileRegistry,
+        tool_registry: Arc<dyn crate::ports::outbound::ToolRegistry>,
+        tools_config: ToolsConfig,
+        terminator: Arc<dyn ToolRoundTerminator>,
+        active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+        router_profile: String,
+        conversation_store: Arc<dyn ConversationStore>,
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
+        memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        memory_enabled: bool,
+    ) -> Self {
+        Self::new_with_turns_and_capability_policy(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            terminator,
+            active_turns,
+            router_profile,
+            conversation_store,
+            memory_store,
+            memory_space_resolver,
+            memory_broker,
+            crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+            memory_kind_registry_loader,
+            memory_enabled,
         )
     }
 
@@ -197,6 +235,7 @@ impl RequestService {
         memory_broker: Arc<dyn MemorySubscriptionBroker>,
         capability_policy: Arc<dyn CapabilityPolicy>,
         memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        memory_enabled: bool,
     ) -> Self {
         Self {
             profile_registry,
@@ -211,6 +250,15 @@ impl RequestService {
             memory_kind_registry_loader,
             memory_broker,
             capability_policy,
+            memory_enabled,
+        }
+    }
+
+    fn memory_disabled_response_if_needed(&self, id: String) -> Option<ClientResponse> {
+        if self.memory_enabled {
+            None
+        } else {
+            Some(memory_disabled_response(id))
         }
     }
 
@@ -274,6 +322,9 @@ impl RequestService {
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
             ClientRequest::MemoryApply(body) => {
+                if let Some(resp) = self.memory_disabled_response_if_needed(body.id.clone()) {
+                    return resp;
+                }
                 let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
@@ -284,6 +335,9 @@ impl RequestService {
                 service.apply(body.id, body.session_id, &body.context, body.operation)
             }
             ClientRequest::MemoryQuery(body) => {
+                if let Some(resp) = self.memory_disabled_response_if_needed(body.id.clone()) {
+                    return resp;
+                }
                 let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
@@ -294,6 +348,9 @@ impl RequestService {
                 service.query(body.id, body.session_id, &body.context, body.query)
             }
             ClientRequest::MemoryKindList(body) => {
+                if let Some(resp) = self.memory_disabled_response_if_needed(body.id.clone()) {
+                    return resp;
+                }
                 let service = MemoryService::with_capability_policy(
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
@@ -304,6 +361,9 @@ impl RequestService {
                 service.kind_list(body.id, body.session_id, &body.context)
             }
             ClientRequest::MemoryRecipeRun(body) => {
+                if let Some(resp) = self.memory_disabled_response_if_needed(body.id.clone()) {
+                    return resp;
+                }
                 let service =
                     crate::application::memory_recipe_service::MemoryRecipeService::with_capability_policy(
                         Arc::clone(&self.memory_store),
@@ -389,6 +449,7 @@ impl RequestService {
                     Arc::clone(&self.memory_store),
                     Arc::clone(&self.memory_space_resolver),
                     Arc::clone(&self.capability_policy),
+                    self.memory_enabled,
                 );
                 let turn_id = id.clone();
                 if let Some(cancel) = cancellation.clone() {
@@ -465,6 +526,12 @@ impl RequestService {
         lines: Arc<Mutex<crate::ports::inbound::SubscribeConnectionLines>>,
     ) -> anyhow::Result<()> {
         use crate::application::memory_subscribe_service::MemorySubscribeService;
+
+        if !self.memory_enabled {
+            let response = memory_disabled_response(body.id);
+            MemorySubscribeService::write_response_line(&writer, &response).await?;
+            return Ok(());
+        }
 
         let service = MemorySubscribeService::with_capability_policy(
             Arc::clone(&self.memory_broker),

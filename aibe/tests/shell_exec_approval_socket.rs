@@ -9,7 +9,8 @@ use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, SHELL_EXEC};
 use aibe::ports::outbound::{
-    ProfileRegistry, ShellExecApprovalMode, ShellExecConfig, TerminationCapability, ToolsConfig,
+    MemoryConfig, ProfileRegistry, ShellExecApprovalMode, ShellExecConfig, TerminationCapability,
+    ToolsConfig,
 };
 use aibe_protocol::ClientResponse;
 use serde_json::json;
@@ -55,6 +56,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
             Vec::new(),
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");
@@ -186,6 +188,7 @@ async fn run_approval_audit_case(
             Vec::new(),
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");

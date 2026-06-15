@@ -34,6 +34,18 @@ pub struct ExternalCommandConfig {
 /// 外部コマンドの `timeout_secs` 既定（30 分）。
 pub const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS: u64 = 1800;
 
+/// contextual memory ランタイムの有効/無効（Phase A: basic profile 切替）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryConfig {
+    pub enabled: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub socket_path: PathBuf,
@@ -42,6 +54,7 @@ pub struct AppConfig {
     pub llm: LlmProfilesConfig,
     pub tools: ToolsConfig,
     pub external_commands: Vec<ExternalCommandConfig>,
+    pub memory: MemoryConfig,
 }
 
 #[derive(Debug, Clone)]

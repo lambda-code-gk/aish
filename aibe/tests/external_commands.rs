@@ -9,7 +9,7 @@ use aibe::adapters::outbound::ScriptedMockLlm;
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, SHELL_EXEC};
 use aibe::ports::outbound::{
-    ExternalCommandConfig, ProfileRegistry, ShellExecApprovalMode, ShellExecConfig,
+    ExternalCommandConfig, MemoryConfig, ProfileRegistry, ShellExecApprovalMode, ShellExecConfig,
     TerminationCapability, ToolsConfig,
 };
 use serde_json::json;
@@ -62,6 +62,7 @@ async fn external_command_runs_via_shell_exec() {
             external_commands,
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");
@@ -161,6 +162,7 @@ async fn external_command_not_in_allowlist_is_denied() {
             Vec::new(),
             "default".to_string(),
             dir.path().join("conversations"),
+            MemoryConfig::default(),
         )
         .await
         .expect("server");

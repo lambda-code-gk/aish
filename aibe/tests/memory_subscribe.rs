@@ -13,7 +13,7 @@ use aibe::application::memory_service::MemoryService;
 use aibe::application::server;
 use aibe::domain::{MemoryChangeEvent, MemorySubscriptionFilter};
 use aibe::ports::outbound::{
-    MemorySubscriptionBroker, ProfileRegistry, TerminationCapability, ToolsConfig,
+    MemoryConfig, MemorySubscriptionBroker, ProfileRegistry, TerminationCapability, ToolsConfig,
 };
 use aibe_protocol::{
     ClientResponse, MemoryChangeKind, MemoryContext, MemoryInjectPolicyDto, MemoryOperationAdd,
@@ -151,6 +151,7 @@ async fn memory_subscribe_receives_apply_over_dedicated_socket() {
             Vec::new(),
             "default".to_string(),
             store_root,
+            MemoryConfig::default(),
         )
         .await
         .expect("server");
@@ -242,6 +243,7 @@ async fn memory_subscribe_rejects_other_rpc_on_same_connection() {
             Vec::new(),
             "default".to_string(),
             store_root,
+            MemoryConfig::default(),
         )
         .await
         .expect("server");

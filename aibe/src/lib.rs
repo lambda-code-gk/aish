@@ -38,5 +38,6 @@ fn try_run() -> anyhow::Result<()> {
         external_commands,
         config.router.profile,
         config.conversation_store_root,
+        config.memory,
     ))
 }
