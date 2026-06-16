@@ -1746,26 +1746,15 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
             apply,
             instruction,
             options,
-        } => {
-            if recipe != "clarify-goal" {
-                anyhow::bail!("unknown recipe: {recipe}");
-            }
-            run_memory_command_without_policy(options, |client, ctx| {
-                memory_cli::run_mem_recipe_clarify_goal(
-                    client,
-                    ctx,
-                    apply,
-                    instruction.as_deref(),
-                    || {
-                        if apply {
-                            ai::adapters::outbound::prompt_memory_recipe_apply()
-                        } else {
-                            false
-                        }
-                    },
-                )
+        } => run_memory_command_without_policy(options, |client, ctx| {
+            memory_cli::run_mem_recipe(client, ctx, &recipe, apply, instruction.as_deref(), || {
+                if apply {
+                    ai::adapters::outbound::prompt_memory_recipe_apply()
+                } else {
+                    false
+                }
             })
-        }
+        }),
     }
 }
 

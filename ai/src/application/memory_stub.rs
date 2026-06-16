@@ -72,9 +72,10 @@ pub fn run_mem_kinds(
     Err(disabled_err())
 }
 
-pub fn run_mem_recipe_clarify_goal<F>(
+pub fn run_mem_recipe<F>(
     _client: &dyn MemoryClient,
     _ctx: &MemoryCliContext,
+    _recipe: &str,
     _apply: bool,
     _user_instruction: Option<&str>,
     _prompt_apply: F,

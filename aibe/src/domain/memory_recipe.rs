@@ -1,7 +1,5 @@
 //! MemoryRecipe domain（材料収集・LLM 出力検証・prompt 生成）。
 
-use std::collections::HashMap;
-
 use aibe_protocol::MemoryOperationDto;
 
 use super::contextual_memory::{resolve_memory_operation_add, MemoryEntry, MemoryValidationError};
@@ -13,7 +11,7 @@ use crate::ports::outbound::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecipeMaterials {
-    pub sections: HashMap<String, RecipeMaterialValue>,
+    pub sections: Vec<(String, RecipeMaterialValue)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +62,7 @@ pub fn collect_recipe_materials(
     ctx: &MemoryStoreContext<'_>,
     recipe: &MemoryRecipeDefinition,
 ) -> Result<RecipeMaterials, MemoryRecipeError> {
-    let mut sections = HashMap::new();
+    let mut sections = Vec::with_capacity(recipe.materials.len());
     for material in &recipe.materials {
         let entries = store.query(ctx, &material.query)?;
         let value = if material.query.limit == Some(1) {
@@ -72,7 +70,7 @@ pub fn collect_recipe_materials(
         } else {
             RecipeMaterialValue::Many(entries)
         };
-        sections.insert(material.name.clone(), value);
+        sections.push((material.name.clone(), value));
     }
     Ok(RecipeMaterials { sections })
 }
@@ -86,8 +84,12 @@ pub fn build_recipe_messages(
     let system = recipe.system_prompt.clone();
     let mut user = String::new();
     for material in &recipe.materials {
-        let title = material_title(&material.name);
-        match materials.sections.get(&material.name) {
+        let title = &material.title;
+        let section = materials
+            .sections
+            .iter()
+            .find_map(|(name, value)| (name == &material.name).then_some(value));
+        match section {
             Some(RecipeMaterialValue::Many(entries)) => {
                 user.push_str(&format_material_section(title, entries));
             }
@@ -105,17 +107,6 @@ pub fn build_recipe_messages(
         user.push('\n');
     }
     (system, user)
-}
-
-fn material_title(name: &str) -> &str {
-    match name {
-        "open_query" => "Open ideas",
-        "goal_query" => "Active goal",
-        "now_query" => "Active now",
-        "rule_query" => "Active rules",
-        "decision_query" => "Active decisions",
-        other => other,
-    }
 }
 
 fn format_material_section(title: &str, entries: &[MemoryEntry]) -> String {
@@ -310,8 +301,7 @@ mod tests {
             .get("clarify-goal")
             .expect("recipe")
             .clone();
-        let mut sections = HashMap::new();
-        sections.insert(
+        let sections = vec![(
             "open_query".into(),
             RecipeMaterialValue::Many(vec![MemoryEntry {
                 id: "i1".into(),
@@ -328,10 +318,11 @@ mod tests {
                 updated_at_ms: 1,
                 version: 1,
             }]),
-        );
+        )];
         let materials = RecipeMaterials { sections };
         let (_system, user) = build_recipe_messages(&recipe, &materials, Some("focus MVP"));
         assert!(user.contains("card idea"));
+        assert!(user.contains("Open ideas"));
         assert!(user.contains("focus MVP"));
     }
 }

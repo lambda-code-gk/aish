@@ -13,6 +13,7 @@ mod memory_space;
 mod memory_subscription;
 mod message;
 mod shell_log_tail;
+pub mod test_support;
 mod tool;
 mod tool_execution_summary;
 
@@ -27,7 +28,6 @@ pub use contextual_memory::{
     resolve_entries_for_prompt, resolve_memory_operation_add, validate_kind,
     validate_standard_kind_operation, validate_text, MemoryBlock, MemoryEntry, MemoryInjectPolicy,
     MemoryScope, MemoryStatus, MemoryValidationError, ProjectKey, ProjectKeyError,
-    STANDARD_KIND_GOAL, STANDARD_KIND_IDEA, STANDARD_KIND_NOW,
 };
 pub use llm_step::LlmStepResult;
 pub(crate) use memory_kind_registry::parse_kinds_toml_str;

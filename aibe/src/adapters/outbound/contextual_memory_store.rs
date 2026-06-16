@@ -837,7 +837,7 @@ fn set_permissions_0700(_path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{STANDARD_KIND_GOAL, STANDARD_KIND_NOW};
+    use crate::domain::test_support::{STANDARD_KIND_GOAL, STANDARD_KIND_NOW};
     use aibe_protocol::{
         MemoryInjectPolicyDto, MemoryOperationAdd, MemoryOperationDto, MemoryScopeDto,
         MemoryStatusDto,

@@ -927,6 +927,42 @@ fn mem_run_clarify_goal_displays_proposals() {
 }
 
 #[test]
+fn mem_run_forwards_arbitrary_recipe_id() {
+    let server = MockSocketServer::spawn(|req| match req {
+        ClientRequest::MemoryRecipeRun(body) => {
+            assert_eq!(body.recipe, "extract-decisions");
+            assert!(!body.apply);
+            ClientResponse::MemoryRecipeRunResult {
+                id: "r2".to_string(),
+                status: MemoryRecipeStatus::Proposed,
+                summary: "ok".to_string(),
+                proposals: vec![],
+                applied_entries: vec![],
+            }
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_SESSION_ID", "phase-a-memory")
+        .args(["mem", "run", "extract-decisions", "--no-start"])
+        .output()
+        .expect("run ai mem run extract-decisions");
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ok"));
+}
+
+#[test]
 fn mem_run_clarify_goal_apply_denied_on_non_interactive_stdin() {
     let server = MockSocketServer::spawn(|req| match req {
         ClientRequest::MemoryRecipeRun(body) => {

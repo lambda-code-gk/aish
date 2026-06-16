@@ -132,10 +132,11 @@ pub fn run_mem_kinds(
     })
 }
 
-/// `ai mem run clarify-goal` — LLM 提案を表示し、任意で apply する。
-pub fn run_mem_recipe_clarify_goal(
+/// `ai mem run <recipe>` — LLM 提案を表示し、任意で apply する。
+pub fn run_mem_recipe(
     client: &dyn MemoryClient,
     ctx: &MemoryCliContext,
+    recipe: &str,
     apply: bool,
     user_instruction: Option<&str>,
     confirm_apply: impl FnOnce() -> bool,
@@ -143,7 +144,7 @@ pub fn run_mem_recipe_clarify_goal(
     let response = client.memory_recipe_run(
         &ctx.session_id,
         &ctx.memory_context,
-        "clarify-goal",
+        recipe,
         false,
         user_instruction.map(str::to_string),
     )?;

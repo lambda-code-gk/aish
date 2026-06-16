@@ -3,32 +3,42 @@ description = "Turn open ideas into a clarified goal set"
 llm_profile = "default"
 prompt_md = "clarify-goal.md"
 
-[materials.open_query]
+[[materials]]
+name = "open_query"
+title = "Open ideas"
 kind = "idea"
 scope = "project"
 status = "open"
 
-[materials.goal_query]
+[[materials]]
+name = "goal_query"
+title = "Active goal"
 kind = "goal"
 scope = "project"
 status = "active"
 active_only = true
 limit = 1
 
-[materials.now_query]
+[[materials]]
+name = "now_query"
+title = "Active now"
 kind = "now"
 scope = "session"
 status = "active"
 active_only = true
 limit = 1
 
-[materials.rule_query]
+[[materials]]
+name = "rule_query"
+title = "Active rules"
 kind = "rule"
 scope = "project"
 status = "active"
 active_only = true
 
-[materials.decision_query]
+[[materials]]
+name = "decision_query"
+title = "Active decisions"
 kind = "decision"
 scope = "project"
 status = "active"

@@ -12,10 +12,6 @@ use super::memory_resolver_policy::{MemoryResolveInput, MemoryResolverPolicy};
 use super::memory_space::{now_freshness, MemoryFreshness};
 use thiserror::Error;
 
-pub const STANDARD_KIND_GOAL: &str = "goal";
-pub const STANDARD_KIND_NOW: &str = "now";
-pub const STANDARD_KIND_IDEA: &str = "idea";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryScope {
@@ -249,7 +245,7 @@ pub fn resolve_memory_operation_add(
 }
 
 pub fn query_matches_idea_on_demand(user_query: &str) -> bool {
-    baseline_memory_kind_registry().query_matches_on_demand(STANDARD_KIND_IDEA, user_query)
+    baseline_memory_kind_registry().query_matches_on_demand("idea", user_query)
 }
 
 pub const MEMORY_BLOCK_HEADER: &str = "[aibe contextual memory]\n\
@@ -535,6 +531,7 @@ impl TryFrom<MemoryStatusDto> for MemoryStatus {
 mod tests {
     use super::*;
     use crate::domain::baseline_memory_kind_registry;
+    use crate::domain::test_support::{STANDARD_KIND_GOAL, STANDARD_KIND_IDEA, STANDARD_KIND_NOW};
     use aibe_protocol::MEMORY_PROMPT_BUDGET_BYTES;
 
     fn registry() -> &'static MemoryKindRegistry {

@@ -313,7 +313,7 @@ pub enum MemCommand {
         #[command(flatten)]
         options: MemoryCliOptions,
     },
-    /// Run a memory recipe (e.g. clarify-goal)
+    /// Run a memory recipe by id
     Run {
         recipe: String,
         /// Apply validated proposals after interactive confirmation

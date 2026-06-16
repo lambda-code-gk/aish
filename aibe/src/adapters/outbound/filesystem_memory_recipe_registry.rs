@@ -132,8 +132,13 @@ description = "custom"
 llm_profile = "default"
 prompt_md = "clarify-goal.md"
 
-[materials]
-goal_query = { kind = "goal", scope = "project", status = "active", limit = 1 }
+[[materials]]
+name = "goal_query"
+title = "Active goal"
+kind = "goal"
+scope = "project"
+status = "active"
+limit = 1
 
 [output]
 format = "json"
@@ -165,8 +170,13 @@ description = "custom"
 llm_profile = "default"
 prompt_md = "clarify-goal.md"
 
-[materials]
-goal_query = { kind = "goal", scope = "project", status = "active", limit = 1 }
+[[materials]]
+name = "goal_query"
+title = "Active goal"
+kind = "goal"
+scope = "project"
+status = "active"
+limit = 1
 
 [output]
 format = "json"
