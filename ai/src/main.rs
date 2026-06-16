@@ -22,9 +22,9 @@ use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
-    build_response_summary, build_summary, ensure_aibe_if_needed, list_history, memory_cli,
-    next_history_id, plan_ask_launch, record_turn, HistoryRecordInput, HistoryReplayInput,
-    TurnCancelGuard,
+    build_response_summary, build_summary, ensure_aibe_if_needed, execute_feature_actions_mvp,
+    list_history, memory_cli, next_history_id, plan_ask_launch, record_turn, HistoryRecordInput,
+    HistoryReplayInput, TurnCancelGuard,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -224,7 +224,27 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         SmartRouteOutcome::disabled()
     };
     let mut effective_turn = args.turn.clone();
+    let mut feature_extra_messages: Vec<ProtocolMessage> = Vec::new();
     if let Some(ref plan) = smart.route_plan {
+        if !plan.feature_actions.is_empty() {
+            let memory_client = AibeUnixClient::new(&base_settings.socket_path);
+            let feature_memory_context = build_feature_memory_context(
+                &cfg,
+                &base_settings.ai_session_id,
+                base_settings.quiet,
+            );
+            let outcome = execute_feature_actions_mvp(
+                &plan.feature_actions,
+                &message.content,
+                feature_memory_context,
+                &base_settings.ai_session_id,
+                effective_turn,
+                &memory_client,
+                base_settings.quiet,
+            );
+            effective_turn = outcome.turn;
+            feature_extra_messages = outcome.extra_messages;
+        }
         effective_turn = apply_route_plan_advisory(effective_turn, plan, &cfg, base_settings.quiet);
     }
     if smart.route_fallback {
@@ -243,10 +263,14 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         settings,
         None,
         None,
-        vec![ProtocolMessage {
-            role: "user".to_string(),
-            content: message.content,
-        }],
+        {
+            let mut messages = feature_extra_messages;
+            messages.push(ProtocolMessage {
+                role: "user".to_string(),
+                content: message.content,
+            });
+            messages
+        },
         conversation_id,
         route_plan_json,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
@@ -1018,6 +1042,46 @@ fn resolve_turn_memory_space_id(
     )
     .ok()
     .map(|resolution| resolution.memory_space_id)
+}
+
+fn build_feature_memory_context(
+    cfg: &AiConfig,
+    ai_session_id: &str,
+    quiet: bool,
+) -> Option<aibe_protocol::MemoryContext> {
+    if !cfg.memory_enabled {
+        return None;
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let canonical_cwd = match cwd.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            if !quiet {
+                eprintln!("ai: smart feature plan: failed to canonicalize cwd: {e}");
+            }
+            return None;
+        }
+    };
+    let project_key =
+        ai::adapters::outbound::project_key::canonical_project_key_from_cwd(&canonical_cwd)
+            .ok()
+            .flatten();
+    let env_context = std::env::var("AIBE_CONTEXT_ID").ok();
+    match ai::application::memory_space::build_memory_context(
+        ai_session_id,
+        &canonical_cwd,
+        project_key.as_deref(),
+        cfg.context_current.as_deref(),
+        env_context.as_deref(),
+    ) {
+        Ok(context) => Some(context),
+        Err(e) => {
+            if !quiet {
+                eprintln!("ai: smart feature plan: failed to build memory context: {e}");
+            }
+            None
+        }
+    }
 }
 
 fn build_request_context(
@@ -2384,6 +2448,7 @@ mod cli_tests {
             require_shell_approval: false,
             log_tail_escalation: false,
             route_reason: "read readme".into(),
+            feature_actions: vec![],
             confidence: None,
         };
         let turn = crate::apply_route_plan_advisory(TurnOptions::default(), &plan, &cfg, true);

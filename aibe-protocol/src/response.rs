@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::executed_tool::ExecutedToolCall;
 use crate::memory::{
     MemoryApplyStatus, MemoryChangeEventDto, MemoryEntryDto, MemoryKindDefinitionDto,
-    MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeStatus, MemorySubscribeStatus,
+    MemoryQueryDto, MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeStatus,
+    MemorySubscribeStatus,
 };
 
 /// NDJSON 1 行のレスポンス。
@@ -130,6 +131,34 @@ pub enum RouteKind {
     ToolAssisted,
 }
 
+/// `route_turn` が返す「機能実行の構造化提案」。
+///
+/// MVP では side effect を持つ action は定義しても実行しない（もしくは承認経路のみ）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FeatureAction {
+    /// contextual memory を read-only に読みにいく提案。
+    MemoryQuery {
+        #[serde(default)]
+        query: MemoryQueryDto,
+    },
+    /// memory recipe を read-only に提案するための提案。
+    ///
+    /// MVP では `apply=false` のみが実行対象。
+    MemoryRecipeRun {
+        recipe_id: String,
+        #[serde(default)]
+        apply: bool,
+    },
+    /// 会話用コンテキストとして log tail bytes を増やす提案。
+    SetLogTailBytes { bytes: u64 },
+    /// 使用する tools の提案（safe 判定は ai 側で再評価）。
+    SetRecommendedTools { tools: Vec<String> },
+    /// 将来拡張で未対応になった action。
+    #[serde(other)]
+    Unsupported,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutePlan {
     pub conversation_id: String,
@@ -141,6 +170,8 @@ pub struct RoutePlan {
     pub recommended_tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_tail_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feature_actions: Vec<FeatureAction>,
     pub require_shell_approval: bool,
     pub log_tail_escalation: bool,
     pub route_reason: String,
@@ -220,6 +251,7 @@ mod tests {
                 recommended_preset: Some("fast".into()),
                 recommended_tools: Some(vec!["read_file".into()]),
                 log_tail_bytes: Some(128),
+                feature_actions: vec![],
                 require_shell_approval: true,
                 log_tail_escalation: false,
                 route_reason: "continue".into(),
@@ -237,6 +269,33 @@ mod tests {
                 assert_eq!(plan.route_kind, RouteKind::Chat);
             }
             _ => panic!("expected route_turn_result"),
+        }
+    }
+
+    #[test]
+    fn route_turn_result_deserializes_without_feature_actions() {
+        let json = r#"{
+            "type":"route_turn_result",
+            "id":"route-1",
+            "status":"ok",
+            "plan":{
+                "conversation_id":"conv-1",
+                "new_conversation":false,
+                "route_kind":"chat",
+                "recommended_preset":"fast",
+                "recommended_tools":["read_file"],
+                "log_tail_bytes":128,
+                "require_shell_approval":true,
+                "log_tail_escalation":false,
+                "route_reason":"continue"
+            }
+        }"#;
+        let back: ClientResponse = serde_json::from_str(json).expect("deserialize");
+        match back {
+            ClientResponse::RouteTurnResult { plan, .. } => {
+                assert!(plan.feature_actions.is_empty());
+            }
+            other => panic!("unexpected response: {other:?}"),
         }
     }
 
@@ -364,7 +423,7 @@ mod tests {
     fn memory_changed_roundtrip() {
         use crate::memory::{
             MemoryChangeEventDto, MemoryChangeKind, MemoryEntryDto, MemoryInjectPolicyDto,
-            MemoryScopeDto, MemoryStatusDto, MemorySubscribeStatus,
+            MemoryScopeDto, MemoryStatusDto,
         };
 
         let resp = ClientResponse::MemoryChanged {

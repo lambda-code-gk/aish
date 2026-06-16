@@ -1,5 +1,6 @@
 mod ask;
 mod ask_launch;
+mod feature_executor;
 mod history;
 pub mod memory_cli;
 pub mod memory_cli_context;
@@ -17,3 +18,5 @@ pub use history::{
     record_turn, HistoryRecordInput, HistoryReplayInput,
 };
 pub use turn_cancel::{clear_turn_cancel, register_turn_cancel, TurnCancelGuard};
+
+pub use feature_executor::{execute_feature_actions_mvp, FeatureExecutionOutcome};

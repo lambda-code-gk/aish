@@ -21,7 +21,7 @@ use aibe_protocol::{
 use tempfile::tempdir;
 
 fn route_response_json() -> String {
-    r#"{"route_kind":"continue","new_conversation":false,"recommended_preset":"fast","recommended_tools":["read_file"],"log_tail_bytes":128,"require_shell_approval":true,"log_tail_escalation":false,"route_reason":"continue using /tmp/secret/log","confidence":0.8}"#
+    r#"{"route_kind":"continue","new_conversation":false,"recommended_preset":"fast","recommended_tools":["read_file"],"log_tail_bytes":128,"feature_actions":[{"type":"memory_query","query":{}}],"require_shell_approval":true,"log_tail_escalation":false,"route_reason":"continue using /tmp/secret/log","confidence":0.8}"#
         .to_string()
 }
 
@@ -113,6 +113,7 @@ async fn route_turn_saves_redacted_plan_and_reuses_latest_conversation() {
     assert_eq!(plan_1.route_kind, RouteKind::Continue);
     assert_eq!(plan_1.recommended_preset.as_deref(), Some("fast"));
     assert!(plan_1.require_shell_approval);
+    assert_eq!(plan_1.feature_actions.len(), 1);
 
     let store = ConversationStore::new(store_root.clone());
     let snapshot = store
@@ -126,6 +127,13 @@ async fn route_turn_saves_redacted_plan_and_reuses_latest_conversation() {
     assert_eq!(
         snapshot.summary.as_deref(),
         Some("user: hello | assistant: world")
+    );
+    assert_eq!(
+        snapshot
+            .route_plan
+            .as_ref()
+            .map(|p| p.feature_actions.len()),
+        Some(1)
     );
     assert!(!snapshot
         .route_plan

@@ -4,10 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use aibe_protocol::{
-    ClientResponse, ErrorCode, RouteKind, RoutePlan, RouteTurnCliOverrides, RouteTurnConversation,
-    RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS,
+    ClientResponse, ErrorCode, FeatureAction, RouteKind, RoutePlan, RouteTurnCliOverrides,
+    RouteTurnConversation, RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS,
 };
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 
 use crate::domain::{ChatMessage, MessageRole};
 use crate::ports::outbound::{
@@ -145,6 +146,8 @@ fn build_route_messages(
              route_kind MUST be exactly one of: one_shot, chat, continue, tool_assisted. \
              recommended_tools MUST use only these names (or []): {}. \
              recommended_preset MUST be null unless cli_overrides.preset is set. \
+             feature_actions MUST be an array (possibly empty) of structured actions. \
+             Do not invent action types. \
              Do not invent preset names or tool names.",
             KNOWN_TOOLS.join(", ")
         ),
@@ -177,6 +180,7 @@ fn build_route_messages(
             "Return JSON with keys conversation_id, new_conversation, route_kind, recommended_preset, recommended_tools, log_tail_bytes, require_shell_approval, log_tail_escalation, route_reason, confidence. \
              route_kind must be one_shot, chat, continue, or tool_assisted. \
              recommended_tools must be a subset of: {}. \
+             feature_actions (optional) must be an array. \
              recommended_preset should usually be null.\n{}",
             KNOWN_TOOLS.join(", "),
             user
@@ -194,6 +198,7 @@ struct RoutePlanDraft {
     log_tail_bytes: Option<u64>,
     require_shell_approval: Option<bool>,
     log_tail_escalation: Option<bool>,
+    feature_actions: Option<JsonValue>,
     route_reason: Option<String>,
     confidence: Option<f32>,
 }
@@ -220,6 +225,22 @@ fn finalize_route_plan(
         .route_reason
         .or_else(|| recent_summary.clone())
         .unwrap_or_else(|| "route unavailable".to_string());
+    let feature_actions = match draft.feature_actions {
+        None => Vec::new(),
+        Some(v) => v
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| serde_json::from_value::<FeatureAction>(item.clone()).ok())
+                    .filter_map(|a| match a {
+                        FeatureAction::Unsupported => None,
+                        FeatureAction::MemoryRecipeRun { apply, .. } if apply => None,
+                        other => Some(other),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    };
     Ok(RoutePlan {
         conversation_id: draft.conversation_id.unwrap_or(conversation_id),
         new_conversation: draft.new_conversation.unwrap_or(new_conversation),
@@ -235,6 +256,7 @@ fn finalize_route_plan(
         log_tail_escalation: draft.log_tail_escalation.unwrap_or(false),
         route_reason: redact_route_reason(&route_reason),
         confidence: draft.confidence,
+        feature_actions,
     })
 }
 
@@ -405,5 +427,37 @@ mod tests {
     fn sanitize_recommended_tools_maps_view_file_to_read_file() {
         let got = sanitize_recommended_tools(Some(vec!["view_file".into()])).expect("tools");
         assert_eq!(got, vec!["read_file".to_string()]);
+    }
+
+    #[test]
+    fn finalize_route_plan_filters_invalid_feature_actions_best_effort() {
+        let draft = RoutePlanDraft {
+            conversation_id: None,
+            new_conversation: None,
+            route_kind: Some("tool_assisted".into()),
+            recommended_preset: None,
+            recommended_tools: None,
+            log_tail_bytes: None,
+            require_shell_approval: None,
+            log_tail_escalation: None,
+            feature_actions: Some(serde_json::json!([
+                { "type": "memory_query" },
+                { "type": "memory_recipe_run", "recipe_id": "recipe-a", "apply": true },
+                { "type": "set_recommended_tools", "tools": ["read_file"] },
+                { "type": "unknown_action", "foo": 1 }
+            ])),
+            route_reason: Some("read repo".into()),
+            confidence: None,
+        };
+        let plan = finalize_route_plan(draft, "conv-1".into(), false, None).expect("finalize");
+        assert_eq!(plan.feature_actions.len(), 2);
+        assert!(matches!(
+            plan.feature_actions[0],
+            FeatureAction::MemoryQuery { .. }
+        ));
+        assert!(matches!(
+            plan.feature_actions[1],
+            FeatureAction::SetRecommendedTools { .. }
+        ));
     }
 }

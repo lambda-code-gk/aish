@@ -35,6 +35,7 @@
 | 0038 | [0038_contextual-memory-pack-phase-d-spec.md](spec/0038_contextual-memory-pack-phase-d-spec.md) | 設計確定（実装済み） | Contextual Memory Pack Phase D（`memory` feature / basic build） |
 | 0039 | [0039_aish-memory-pack-externalization-spec.md](spec/0039_aish-memory-pack-externalization-spec.md) | 設計確定（実装済み） | AISH Memory Pack Externalization（builtin kind / recipe の TOML 外出し） |
 | 0040 | [0040_generic-recipe-cli-aish-name-cleanup-spec.md](spec/0040_generic-recipe-cli-aish-name-cleanup-spec.md) | 設計確定（実装済み） | Generic Recipe CLI / AISH Name Cleanup（recipe CLI 一般化、material 順序・title 正本化） |
+| 0041 | [0041_ai-smart-feature-plan-spec.md](spec/0041_ai-smart-feature-plan-spec.md) | 設計確定（実装済み） | `ai` Smart Feature Plan（`route_turn` / `feature_actions` / approval gate） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -96,4 +97,5 @@
 | 0038 | [0038_contextual-memory-pack-phase-d-implementation-spec.md](done/0038_contextual-memory-pack-phase-d-implementation-spec.md) | 実装済み（Phase D） | Contextual Memory Pack Phase D — `memory` feature / basic build（設計: [0038 Phase D](spec/0038_contextual-memory-pack-phase-d-spec.md)） |
 | 0039 | [0039_aish-memory-pack-externalization-implementation-spec.md](done/0039_aish-memory-pack-externalization-implementation-spec.md) | 実装済み | AISH Memory Pack Externalization — builtin kind / recipe TOML 外出し（設計: [0039](spec/0039_aish-memory-pack-externalization-spec.md)） |
 | 0040 | [0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md](done/0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md) | 実装済み | Generic Recipe CLI / AISH Name Cleanup（設計: [0040](spec/0040_generic-recipe-cli-aish-name-cleanup-spec.md)） |
+| 0041 | [0041_ai-smart-feature-plan-implementation-spec.md](done/0041_ai-smart-feature-plan-implementation-spec.md) | 実装済み | `ai` Smart Feature Plan（設計: [0041](spec/0041_ai-smart-feature-plan-spec.md)） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

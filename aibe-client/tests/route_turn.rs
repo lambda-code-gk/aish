@@ -6,7 +6,9 @@ use std::os::unix::net::UnixListener;
 use std::thread;
 
 use aibe_client::route_turn;
-use aibe_protocol::{ClientRequest, ClientResponse, RouteKind, RoutePlan, RouteTurnStatus};
+use aibe_protocol::{
+    ClientRequest, ClientResponse, FeatureAction, RouteKind, RoutePlan, RouteTurnStatus,
+};
 
 #[test]
 fn route_turn_roundtrip_over_socket() {
@@ -56,6 +58,7 @@ fn route_turn_roundtrip_over_socket() {
                 recommended_preset: Some("fast".into()),
                 recommended_tools: Some(vec!["read_file".into()]),
                 log_tail_bytes: Some(128),
+                feature_actions: vec![FeatureAction::SetLogTailBytes { bytes: 256 }],
                 require_shell_approval: false,
                 log_tail_escalation: false,
                 route_reason: "continue".into(),
@@ -99,6 +102,7 @@ fn route_turn_roundtrip_over_socket() {
             assert_eq!(plan.conversation_id, "conv-1");
             assert_eq!(plan.route_kind, RouteKind::Continue);
             assert_eq!(plan.recommended_tools.as_ref().map(Vec::len), Some(1));
+            assert_eq!(plan.feature_actions.len(), 1);
         }
         other => panic!("unexpected response: {other:?}"),
     }

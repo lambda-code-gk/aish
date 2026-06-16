@@ -27,8 +27,8 @@ pub use memory_space::{
 pub use request::{ClientRequest, ProtocolMessage, RequestContext, ShellExecApprovalOrigin};
 pub use request::{RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession};
 pub use response::{
-    AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase, ProtocolMessageOut, RouteKind,
-    RoutePlan, RouteTurnResult, RouteTurnStatus,
+    AgentTurnStatus, ClientResponse, ErrorCode, FeatureAction, ProgressPhase, ProtocolMessageOut,
+    RouteKind, RoutePlan, RouteTurnResult, RouteTurnStatus,
 };
 pub use tool_name::{
     is_known_tool, parse_tool_names, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS, GREP,

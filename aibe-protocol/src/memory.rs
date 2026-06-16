@@ -176,7 +176,7 @@ pub enum MemoryOperationDto {
     Archive(MemoryOperationArchive),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryQueryDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -397,6 +397,12 @@ mod tests {
         let back: MemoryQueryDto = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.kind.as_deref(), Some("idea"));
         assert_eq!(back.limit, Some(20));
+    }
+
+    #[test]
+    fn memory_query_dto_defaults_when_fields_missing() {
+        let back: MemoryQueryDto = serde_json::from_str("{}").expect("deserialize");
+        assert_eq!(back, MemoryQueryDto::default());
     }
 
     #[test]
