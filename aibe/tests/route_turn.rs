@@ -12,6 +12,7 @@ use aibe::adapters::outbound::{
 };
 use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
+use aibe::domain::FeatureRegistry;
 use aibe::domain::LlmStepResult;
 use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
 use aibe_protocol::{
@@ -55,6 +56,7 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
         StaticCapabilityPolicy::local_full(),
         rpc_extension,
         turn_hook,
+        FeatureRegistry::baseline().expect("baseline features"),
     )
 }
 
@@ -169,4 +171,140 @@ async fn route_turn_saves_redacted_plan_and_reuses_latest_conversation() {
         other => panic!("expected route_turn_result, got {other:?}"),
     };
     assert_ne!(plan_3.conversation_id, plan_1.conversation_id);
+}
+
+#[tokio::test]
+async fn registry_merges_feature_actions_when_query_matches_trigger() {
+    let store_root = tempdir().expect("tempdir").into_path();
+    let tools_config = ToolsConfig::default();
+    let strategy = tools_config.termination_strategy;
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        r#"{"route_kind":"tool_assisted","new_conversation":false,"recommended_tools":[],"feature_actions":[],"route_reason":"inspect"}"#
+            .to_string(),
+    )]));
+    let profile_registry =
+        ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
+    let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        profile_registry.clone(),
+    );
+    let svc = RequestService::new(
+        profile_registry,
+        tool_registry,
+        tools_config,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        "fast".to_string(),
+        Arc::new(ConversationStore::new(store_root)),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::baseline().expect("baseline"),
+    );
+    let resp = svc
+        .handle(
+            ClientRequest::RouteTurn {
+                id: "route-reg".into(),
+                query: "直近のエラーを調べて".into(),
+                cwd: "/tmp/proj".into(),
+                session: RouteTurnSession {
+                    ai_session_id: "session-reg".into(),
+                    aish_session_dir: None,
+                    tty: true,
+                },
+                conversation: RouteTurnConversation {
+                    conversation_id: None,
+                    recent_summary: None,
+                    new_conversation: true,
+                },
+                cli_overrides: RouteTurnCliOverrides::default(),
+            },
+            None,
+        )
+        .await;
+    let plan = match resp {
+        ClientResponse::RouteTurnResult { plan, .. } => plan,
+        other => panic!("expected route_turn_result, got {other:?}"),
+    };
+    use aibe_protocol::FeatureAction;
+    assert!(plan
+        .feature_actions
+        .iter()
+        .any(|a| matches!(a, FeatureAction::SetLogTailBytes { .. })));
+    assert!(plan
+        .feature_actions
+        .iter()
+        .any(|a| matches!(a, FeatureAction::SetRecommendedTools { .. })));
+}
+
+#[tokio::test]
+async fn registry_does_not_duplicate_memory_query_when_llm_already_returned_one() {
+    let store_root = tempdir().expect("tempdir").into_path();
+    let tools_config = ToolsConfig::default();
+    let strategy = tools_config.termination_strategy;
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        r#"{"route_kind":"chat","new_conversation":false,"recommended_tools":[],"feature_actions":[{"type":"memory_query","query":{"include_prompt_block":true,"user_query":"プロジェクトのルール"}}],"route_reason":"memory"}"#
+            .to_string(),
+    )]));
+    let profile_registry =
+        ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
+    let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        profile_registry.clone(),
+    );
+    let svc = RequestService::new(
+        profile_registry,
+        tool_registry,
+        tools_config,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        "fast".to_string(),
+        Arc::new(ConversationStore::new(store_root)),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::baseline().expect("baseline"),
+    );
+    let resp = svc
+        .handle(
+            ClientRequest::RouteTurn {
+                id: "route-dedup".into(),
+                query: "プロジェクトのルールを教えて".into(),
+                cwd: "/tmp/proj".into(),
+                session: RouteTurnSession {
+                    ai_session_id: "session-dedup".into(),
+                    aish_session_dir: None,
+                    tty: true,
+                },
+                conversation: RouteTurnConversation {
+                    conversation_id: None,
+                    recent_summary: None,
+                    new_conversation: true,
+                },
+                cli_overrides: RouteTurnCliOverrides::default(),
+            },
+            None,
+        )
+        .await;
+    let plan = match resp {
+        ClientResponse::RouteTurnResult { plan, .. } => plan,
+        other => panic!("expected route_turn_result, got {other:?}"),
+    };
+    use aibe_protocol::FeatureAction;
+    let memory_queries = plan
+        .feature_actions
+        .iter()
+        .filter(|a| matches!(a, FeatureAction::MemoryQuery { .. }))
+        .count();
+    assert_eq!(memory_queries, 1, "plan: {:?}", plan.feature_actions);
 }

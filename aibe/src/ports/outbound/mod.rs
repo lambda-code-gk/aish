@@ -3,6 +3,7 @@ pub mod command_policy;
 pub mod config;
 pub mod contextual_memory_store;
 pub mod conversation_store;
+pub mod feature_registry_loader;
 pub mod llm;
 pub mod memory_kind_registry_loader;
 pub mod memory_recipe_registry_loader;
@@ -35,6 +36,7 @@ pub use contextual_memory_store::{
 pub use conversation_store::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStore, ConversationStoreError,
 };
+pub use feature_registry_loader::FeatureRegistryLoader;
 pub use llm::{LlmError, LlmProvider};
 pub use memory_kind_registry_loader::MemoryKindRegistryLoader;
 pub use memory_recipe_registry_loader::MemoryRecipeRegistryLoader;

@@ -10,7 +10,8 @@ use crate::adapters::inbound::unix_socket_server;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
-    ConversationStore as FilesystemConversationStore, StaticCapabilityPolicy,
+    ConversationStore as FilesystemConversationStore, FilesystemFeatureRegistryLoader,
+    StaticCapabilityPolicy,
 };
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
@@ -23,7 +24,8 @@ use crate::application::contextual_pack_arc;
 use crate::application::request_service::RequestService;
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    ConversationStore, ExternalCommandConfig, MemoryConfig, ProfileRegistry, ToolsConfig,
+    ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, MemoryConfig, ProfileRegistry,
+    ToolsConfig,
 };
 
 pub async fn run(
@@ -79,6 +81,10 @@ pub async fn run(
         basic_pack_arc()
     };
 
+    let feature_registry = FilesystemFeatureRegistryLoader::new(memory_config.clone())
+        .load()
+        .map_err(|e| anyhow::anyhow!("feature registry: {e}"))?;
+
     let handler: Arc<dyn ClientRequestHandler> =
         Arc::new(RequestService::new_with_turns_and_packs(
             profile_registry,
@@ -91,6 +97,7 @@ pub async fn run(
             Arc::clone(&capability_policy),
             rpc_extension,
             turn_hook,
+            feature_registry,
         ));
 
     unix_socket_server::run(socket_path, handler).await

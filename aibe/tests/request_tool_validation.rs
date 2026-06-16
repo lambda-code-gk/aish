@@ -12,6 +12,7 @@ use aibe::adapters::outbound::{
 };
 use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
+use aibe::domain::FeatureRegistry;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
 
@@ -45,6 +46,7 @@ fn service() -> RequestService {
         StaticCapabilityPolicy::local_full(),
         rpc_extension,
         turn_hook,
+        FeatureRegistry::empty(),
     )
 }
 

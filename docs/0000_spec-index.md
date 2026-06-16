@@ -36,6 +36,7 @@
 | 0039 | [0039_aish-memory-pack-externalization-spec.md](spec/0039_aish-memory-pack-externalization-spec.md) | 設計確定（実装済み） | AISH Memory Pack Externalization（builtin kind / recipe の TOML 外出し） |
 | 0040 | [0040_generic-recipe-cli-aish-name-cleanup-spec.md](spec/0040_generic-recipe-cli-aish-name-cleanup-spec.md) | 設計確定（実装済み） | Generic Recipe CLI / AISH Name Cleanup（recipe CLI 一般化、material 順序・title 正本化） |
 | 0041 | [0041_ai-smart-feature-plan-spec.md](spec/0041_ai-smart-feature-plan-spec.md) | 設計確定（実装済み） | `ai` Smart Feature Plan（`route_turn` / `feature_actions` / approval gate） |
+| 0042 | [0042_configurable-smart-features-spec.md](spec/0042_configurable-smart-features-spec.md) | 設計確定（実装済み） | Configurable Smart Features（`features.toml` / registry / prompt schema） |
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
@@ -98,4 +99,5 @@
 | 0039 | [0039_aish-memory-pack-externalization-implementation-spec.md](done/0039_aish-memory-pack-externalization-implementation-spec.md) | 実装済み | AISH Memory Pack Externalization — builtin kind / recipe TOML 外出し（設計: [0039](spec/0039_aish-memory-pack-externalization-spec.md)） |
 | 0040 | [0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md](done/0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md) | 実装済み | Generic Recipe CLI / AISH Name Cleanup（設計: [0040](spec/0040_generic-recipe-cli-aish-name-cleanup-spec.md)） |
 | 0041 | [0041_ai-smart-feature-plan-implementation-spec.md](done/0041_ai-smart-feature-plan-implementation-spec.md) | 実装済み | `ai` Smart Feature Plan（設計: [0041](spec/0041_ai-smart-feature-plan-spec.md)） |
+| 0042 | [0042_configurable-smart-features-implementation-spec.md](done/0042_configurable-smart-features-implementation-spec.md) | 実装済み | Configurable Smart Features（設計: [0042](spec/0042_configurable-smart-features-spec.md)） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

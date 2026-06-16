@@ -579,6 +579,12 @@ fn parse_memory_section(section: &MemorySection, config_dir: &std::path::Path) -
                 .map(|p| resolve_memory_path(p, config_dir))
                 .collect()
         }),
+        feature_files: section.feature_files.as_ref().map(|paths| {
+            paths
+                .iter()
+                .map(|p| resolve_memory_path(p, config_dir))
+                .collect()
+        }),
     }
 }
 
@@ -617,6 +623,8 @@ struct MemorySection {
     kind_files: Option<Vec<String>>,
     #[serde(default)]
     recipe_files: Option<Vec<String>>,
+    #[serde(default)]
+    feature_files: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

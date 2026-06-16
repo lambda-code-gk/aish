@@ -108,6 +108,7 @@ mod tests {
             enabled: true,
             kind_files: None,
             recipe_files: Some(vec![]),
+            feature_files: None,
         });
         let reg = loader.load_strict().expect("load");
         assert!(reg.get("clarify-goal").is_none());
@@ -151,6 +152,7 @@ allow_operations = ["add"]
             enabled: true,
             kind_files: None,
             recipe_files: Some(vec![good]),
+            feature_files: None,
         });
         let reg = loader.load_strict().expect("load");
         let def = reg.get("clarify-goal").expect("recipe");
@@ -192,6 +194,7 @@ allow_operations = ["add"]
             enabled: true,
             kind_files: None,
             recipe_files: Some(vec![good, bad]),
+            feature_files: None,
         });
         let reg = loader.load_best_effort();
         let def = reg.get("clarify-goal").expect("recipe");

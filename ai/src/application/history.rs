@@ -44,6 +44,7 @@ pub struct HistoryReplayInput {
     pub socket_path: String,
     pub log_tail_bytes: usize,
     pub request_messages: Vec<HistoryMessage>,
+    pub feature_summaries: Vec<HistoryMessage>,
 }
 
 pub fn current_time_ms() -> u64 {
@@ -130,6 +131,7 @@ pub fn record_turn<S: HistoryStore>(
         socket_path: payload.socket_path.clone(),
         log_tail_bytes: payload.log_tail_bytes,
         request_messages: payload.request_messages.clone(),
+        feature_summaries: payload.feature_summaries.clone(),
     };
     store.append(&entry, &payload)?;
     if history_max_entries > 0 {
@@ -267,6 +269,10 @@ mod tests {
                 role: "user".into(),
                 content: "hello".into(),
             }],
+            feature_summaries: vec![HistoryMessage {
+                role: "system".into(),
+                content: "[smart feature: memory_query applied entries=1]".into(),
+            }],
         };
         record_turn(&store, &input, &payload, 500).expect("record");
         let listed = list_history(
@@ -283,5 +289,11 @@ mod tests {
         assert_eq!(listed[0].history_id, history_id);
         assert_eq!(listed[0].conversation_id.as_deref(), Some("conv"));
         assert_eq!(listed[0].shell_exec_approval.as_deref(), Some("ask"));
+        let stored = store.load_payload(&history_id).expect("payload");
+        assert_eq!(stored.request_messages.len(), 1);
+        assert_eq!(stored.feature_summaries.len(), 1);
+        assert!(stored.feature_summaries[0]
+            .content
+            .contains("smart feature"));
     }
 }

@@ -219,43 +219,19 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             &message.content,
             &base_settings,
             &args.turn,
+            RouteTurnHints::default(),
         )
     } else {
         SmartRouteOutcome::disabled()
     };
-    let mut effective_turn = args.turn.clone();
-    let mut feature_extra_messages: Vec<ProtocolMessage> = Vec::new();
-    if let Some(ref plan) = smart.route_plan {
-        if !plan.feature_actions.is_empty() {
-            let memory_client = AibeUnixClient::new(&base_settings.socket_path);
-            let feature_memory_context = build_feature_memory_context(
-                &cfg,
-                &base_settings.ai_session_id,
-                base_settings.quiet,
-            );
-            let outcome = execute_feature_actions_mvp(
-                &plan.feature_actions,
-                &message.content,
-                feature_memory_context,
-                &base_settings.ai_session_id,
-                effective_turn,
-                &memory_client,
-                base_settings.quiet,
-            );
-            effective_turn = outcome.turn;
-            feature_extra_messages = outcome.extra_messages;
-        }
-        effective_turn = apply_route_plan_advisory(effective_turn, plan, &cfg, base_settings.quiet);
-    }
-    if smart.route_fallback {
-        effective_turn.tools = Some("none".to_string());
-    }
-    let settings = resolve_turn_settings(&cfg, &effective_turn)?;
-    let conversation_id = smart.conversation_id;
-    let route_plan_json = smart
-        .route_plan
-        .as_ref()
-        .and_then(|p| serde_json::to_string(p).ok());
+    let prep = apply_smart_route_and_features(
+        &cfg,
+        &message.content,
+        args.turn.clone(),
+        &base_settings,
+        smart,
+    );
+    let settings = resolve_turn_settings(&cfg, &prep.effective_turn)?;
     let response = execute_turn(
         &cfg,
         "ask",
@@ -263,16 +239,10 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         settings,
         None,
         None,
-        {
-            let mut messages = feature_extra_messages;
-            messages.push(ProtocolMessage {
-                role: "user".to_string(),
-                content: message.content,
-            });
-            messages
-        },
-        conversation_id,
-        route_plan_json,
+        prep.agent_messages,
+        prep.feature_summaries,
+        prep.conversation_id,
+        prep.route_plan_json,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
     )?;
     Ok(exit_code_for_response(
@@ -321,6 +291,7 @@ fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
             None,
             None,
             messages,
+            Vec::new(),
             Some(conversation_id.clone()),
             None,
             Arc::clone(&shell_exec_state),
@@ -354,12 +325,43 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     let payload = store
         .load_payload(&history_id)
         .map_err(history_store_to_anyhow)?;
-    let settings = resolve_turn_settings(&cfg, &turn)?;
     let message = ResolvedMessage {
         source: format!("history:{history_id}"),
         content: payload.user_message.clone(),
     };
-    let messages = replay_messages_from_payload(&payload);
+    let base_settings = resolve_turn_settings(&cfg, &turn)?;
+    let (settings, messages, feature_summaries, conversation_id, route_plan_json) =
+        if should_reapply_smart_features(&payload) {
+            let smart = run_smart_route(
+                &base_settings.socket_path,
+                &message.content,
+                &base_settings,
+                &turn,
+                route_turn_hints_from_payload(&payload),
+            );
+            let prep = apply_smart_route_and_features(
+                &cfg,
+                &message.content,
+                turn.clone(),
+                &base_settings,
+                smart,
+            );
+            (
+                resolve_turn_settings(&cfg, &prep.effective_turn)?,
+                prep.agent_messages,
+                prep.feature_summaries,
+                prep.conversation_id,
+                prep.route_plan_json,
+            )
+        } else {
+            (
+                base_settings,
+                replay_messages_from_payload(&payload),
+                Vec::new(),
+                payload.conversation_id.clone(),
+                payload.route_plan.clone(),
+            )
+        };
     let response = execute_turn(
         &cfg,
         "retry",
@@ -368,8 +370,9 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         None,
         None,
         messages,
-        payload.conversation_id.clone(),
-        payload.route_plan.clone(),
+        feature_summaries,
+        conversation_id,
+        route_plan_json,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
     )?;
     Ok(exit_code_for_response(
@@ -410,17 +413,50 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     merged_turn.no_log = true;
     merged_turn.log = None;
     merged_turn.session = None;
-    let messages = replay_messages_from_payload(&payload);
+    let base_settings = resolve_turn_settings(&cfg, &merged_turn)?;
+    let (settings, messages, feature_summaries, conversation_id, route_plan_json) =
+        if should_reapply_smart_features(&payload) {
+            let smart = run_smart_route(
+                &base_settings.socket_path,
+                &message.content,
+                &base_settings,
+                &merged_turn,
+                route_turn_hints_from_payload(&payload),
+            );
+            let prep = apply_smart_route_and_features(
+                &cfg,
+                &message.content,
+                merged_turn.clone(),
+                &base_settings,
+                smart,
+            );
+            (
+                resolve_turn_settings(&cfg, &prep.effective_turn)?,
+                prep.agent_messages,
+                prep.feature_summaries,
+                prep.conversation_id,
+                prep.route_plan_json,
+            )
+        } else {
+            (
+                base_settings,
+                replay_messages_from_payload(&payload),
+                Vec::new(),
+                payload.conversation_id.clone(),
+                payload.route_plan.clone(),
+            )
+        };
     let response = execute_turn(
         &cfg,
         "rerun",
         message.clone(),
-        resolve_turn_settings(&cfg, &merged_turn)?,
+        settings,
         payload.shell_log_tail.clone(),
         payload.client_cwd.map(PathBuf::from),
         messages,
-        payload.conversation_id.clone(),
-        payload.route_plan.clone(),
+        feature_summaries,
+        conversation_id,
+        route_plan_json,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
     )?;
     Ok(exit_code_for_response(
@@ -473,6 +509,7 @@ fn execute_turn(
     shell_log_override: Option<String>,
     client_cwd_override: Option<PathBuf>,
     messages: Vec<ProtocolMessage>,
+    feature_history_summaries: Vec<ProtocolMessage>,
     conversation_id: Option<String>,
     route_plan_json: Option<String>,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
@@ -558,6 +595,7 @@ fn execute_turn(
     );
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
+    let feature_summaries = history_messages_from_protocol(&feature_history_summaries);
     let client_request = request_from_messages(turn_id.clone(), request, messages)?;
 
     let yes_exec_effective =
@@ -673,6 +711,7 @@ fn execute_turn(
         socket_path: settings.socket_path.display().to_string(),
         log_tail_bytes: settings.log_tail_bytes,
         request_messages,
+        feature_summaries,
     };
     let store = LocalHistoryStore::new(cfg.history_dir.clone());
     record_turn(
@@ -1215,13 +1254,84 @@ impl SmartRouteOutcome {
     }
 }
 
+#[derive(Debug)]
+struct SmartFeaturePrep {
+    effective_turn: TurnOptions,
+    agent_messages: Vec<ProtocolMessage>,
+    feature_summaries: Vec<ProtocolMessage>,
+    conversation_id: Option<String>,
+    route_plan_json: Option<String>,
+}
+
+fn should_reapply_smart_features(payload: &HistoryPayload) -> bool {
+    std::io::stdin().is_terminal() && payload_eligible_for_smart_rerun(payload)
+}
+
+fn payload_eligible_for_smart_rerun(payload: &HistoryPayload) -> bool {
+    payload.command == "ask"
+}
+
+fn apply_smart_route_and_features(
+    cfg: &AiConfig,
+    message_content: &str,
+    mut turn: TurnOptions,
+    base_settings: &ResolvedTurnSettings,
+    smart: SmartRouteOutcome,
+) -> SmartFeaturePrep {
+    let mut feature_extra_messages: Vec<ProtocolMessage> = Vec::new();
+    let mut feature_history_summaries: Vec<ProtocolMessage> = Vec::new();
+    if let Some(ref plan) = smart.route_plan {
+        if !plan.feature_actions.is_empty() {
+            let memory_client = AibeUnixClient::new(&base_settings.socket_path);
+            let feature_memory_context = build_feature_memory_context(
+                cfg,
+                &base_settings.ai_session_id,
+                base_settings.quiet,
+            );
+            let outcome = execute_feature_actions_mvp(
+                &plan.feature_actions,
+                message_content,
+                feature_memory_context,
+                &base_settings.ai_session_id,
+                turn,
+                &memory_client,
+                base_settings.quiet,
+            );
+            turn = outcome.turn;
+            feature_extra_messages = outcome.extra_messages;
+            feature_history_summaries = outcome.history_summaries;
+        }
+        turn = apply_route_plan_advisory(turn, plan, cfg, base_settings.quiet);
+    }
+    if smart.route_fallback {
+        turn.tools = Some("none".to_string());
+    }
+    let mut agent_messages = feature_extra_messages;
+    agent_messages.push(ProtocolMessage {
+        role: "user".to_string(),
+        content: message_content.to_string(),
+    });
+    let route_plan_json = smart
+        .route_plan
+        .as_ref()
+        .and_then(|p| serde_json::to_string(p).ok());
+    SmartFeaturePrep {
+        effective_turn: turn,
+        agent_messages,
+        feature_summaries: feature_history_summaries,
+        conversation_id: smart.conversation_id,
+        route_plan_json,
+    }
+}
+
 fn run_smart_route(
     socket_path: &Path,
     query: &str,
     settings: &ResolvedTurnSettings,
     turn: &TurnOptions,
+    hints: RouteTurnHints,
 ) -> SmartRouteOutcome {
-    let request = build_route_turn_request(query, settings, turn);
+    let request = build_route_turn_request(query, settings, turn, hints);
     let client = AibeUnixClient::new(socket_path);
     let plan = match try_route_turn(&client, request.clone()) {
         Ok(plan) => Some(plan),
@@ -1263,10 +1373,22 @@ fn try_route_turn(client: &AibeUnixClient, request: ClientRequest) -> Result<Rou
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct RouteTurnHints {
+    conversation_id: Option<String>,
+}
+
+fn route_turn_hints_from_payload(payload: &HistoryPayload) -> RouteTurnHints {
+    RouteTurnHints {
+        conversation_id: payload.conversation_id.clone(),
+    }
+}
+
 fn build_route_turn_request(
     query: &str,
     settings: &ResolvedTurnSettings,
     turn: &TurnOptions,
+    hints: RouteTurnHints,
 ) -> ClientRequest {
     let cwd = std::env::current_dir()
         .ok()
@@ -1282,9 +1404,9 @@ fn build_route_turn_request(
             tty: true,
         },
         conversation: RouteTurnConversation {
-            conversation_id: None,
+            conversation_id: hints.conversation_id.clone(),
             recent_summary: None,
-            new_conversation: turn.new,
+            new_conversation: hints.conversation_id.is_none() && turn.new,
         },
         cli_overrides: RouteTurnCliOverrides {
             preset: turn.preset.clone(),
@@ -2214,6 +2336,7 @@ mod cli_tests {
                     content: "turn2".into(),
                 },
             ],
+            feature_summaries: vec![],
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
@@ -2240,6 +2363,7 @@ mod cli_tests {
             command: "ask".into(),
             user_message: "hello".into(),
             request_messages: vec![],
+            feature_summaries: vec![],
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
@@ -2256,6 +2380,80 @@ mod cli_tests {
         let messages = crate::replay_messages_from_payload(&payload);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "hello");
+    }
+
+    #[test]
+    fn payload_eligible_for_smart_rerun_only_ask() {
+        let ask = HistoryPayload {
+            history_id: "id".into(),
+            command: "ask".into(),
+            user_message: "q".into(),
+            request_messages: vec![],
+            feature_summaries: vec![],
+            shell_log_tail: None,
+            client_cwd: None,
+            tools: vec![],
+            llm_profile: None,
+            preset: None,
+            session_id: None,
+            ai_session_id: None,
+            conversation_id: None,
+            shell_exec_approval: None,
+            route_plan: None,
+            socket_path: "/tmp/s".into(),
+            log_tail_bytes: 1,
+        };
+        let chat = HistoryPayload {
+            command: "chat".into(),
+            ..ask.clone()
+        };
+        assert!(crate::payload_eligible_for_smart_rerun(&ask));
+        assert!(!crate::payload_eligible_for_smart_rerun(&chat));
+    }
+
+    #[test]
+    fn build_route_turn_request_pins_conversation_for_retry() {
+        let settings = crate::ResolvedTurnSettings {
+            quiet: true,
+            output_format: None,
+            preset_name: None,
+            log_tail_bytes: 64,
+            socket_path: PathBuf::from("/tmp/aibe.sock"),
+            session_id: None,
+            ai_session_id: "session-retry".into(),
+            shell_log_choice: ShellLogChoice::None,
+            output_filter: None,
+            output_filter_meta: FilterMetadata {
+                enabled: false,
+                source: "none".into(),
+                masked: false,
+            },
+            llm_profile: None,
+            ask_tools: ConfigToolsTokens::default(),
+            tools_cli: None,
+            no_start: false,
+            verbose_tools: false,
+            progress: false,
+            progress_spinner: false,
+            timeout_secs: None,
+            yes_exec: false,
+            silent_exec: false,
+            shell_exec_approval: None,
+            console_hint: resolve_console_hints(None, None, None, true, None),
+        };
+        let turn = crate::TurnOptions::default();
+        let hints = crate::RouteTurnHints {
+            conversation_id: Some("conv-original".into()),
+        };
+        let request = crate::build_route_turn_request("retry me", &settings, &turn, hints);
+        let ClientRequest::RouteTurn { conversation, .. } = request else {
+            panic!("expected route_turn");
+        };
+        assert_eq!(
+            conversation.conversation_id.as_deref(),
+            Some("conv-original")
+        );
+        assert!(!conversation.new_conversation);
     }
 
     #[test]
@@ -2297,7 +2495,12 @@ mod cli_tests {
             ..Default::default()
         };
 
-        let request = crate::build_route_turn_request("hello", &settings, &turn);
+        let request = crate::build_route_turn_request(
+            "hello",
+            &settings,
+            &turn,
+            crate::RouteTurnHints::default(),
+        );
         let ClientRequest::RouteTurn {
             query,
             session,

@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::application::agent_turn::AgentTurnService;
 use crate::application::route_turn::RouteTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
-use crate::domain::{parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError};
+use crate::domain::{
+    parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError, FeatureRegistry,
+};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     CapabilityPolicy, ConversationStore, ProfileRegistry, RouterConfig, RpcExtension,
@@ -33,6 +35,7 @@ pub struct RequestService {
     capability_policy: Arc<dyn CapabilityPolicy>,
     rpc_extension: Arc<dyn RpcExtension>,
     turn_hook: Arc<dyn TurnHook>,
+    feature_registry: FeatureRegistry,
 }
 
 impl RequestService {
@@ -48,6 +51,7 @@ impl RequestService {
         capability_policy: Arc<dyn CapabilityPolicy>,
         rpc_extension: Arc<dyn RpcExtension>,
         turn_hook: Arc<dyn TurnHook>,
+        feature_registry: FeatureRegistry,
     ) -> Self {
         Self {
             profile_registry,
@@ -60,6 +64,7 @@ impl RequestService {
             capability_policy,
             rpc_extension,
             turn_hook,
+            feature_registry,
         }
     }
 
@@ -74,6 +79,7 @@ impl RequestService {
         capability_policy: Arc<dyn CapabilityPolicy>,
         rpc_extension: Arc<dyn RpcExtension>,
         turn_hook: Arc<dyn TurnHook>,
+        feature_registry: FeatureRegistry,
     ) -> Self {
         Self::new_with_turns_and_packs(
             profile_registry,
@@ -86,6 +92,7 @@ impl RequestService {
             capability_policy,
             rpc_extension,
             turn_hook,
+            feature_registry,
         )
     }
 
@@ -101,6 +108,7 @@ impl RequestService {
         capability_policy: Arc<dyn CapabilityPolicy>,
         rpc_extension: Arc<dyn RpcExtension>,
         turn_hook: Arc<dyn TurnHook>,
+        feature_registry: FeatureRegistry,
     ) -> Self {
         Self::new_with_turns_and_packs(
             profile_registry,
@@ -113,6 +121,7 @@ impl RequestService {
             capability_policy,
             rpc_extension,
             turn_hook,
+            feature_registry,
         )
     }
 
@@ -148,6 +157,7 @@ impl RequestService {
                         profile: self.router_profile.clone(),
                     },
                     self.conversation_store.clone(),
+                    self.feature_registry.clone(),
                 );
                 route_service
                     .run(id, query, cwd, session, conversation, cli_overrides)

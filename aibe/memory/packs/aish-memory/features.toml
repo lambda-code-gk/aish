@@ -1,0 +1,60 @@
+# AISH baseline smart features (0042).
+# トップレベルキー = feature id。triggers は user query への部分一致。
+
+[inspect_error]
+description = "直近のエラーや失敗原因を調べる"
+triggers = [
+  "エラー",
+  "失敗",
+  "動かない",
+  "原因",
+  "直近のログ",
+  "error",
+  "failed",
+  "failure",
+  "stderr",
+]
+
+[[inspect_error.actions]]
+type = "set_log_tail_bytes"
+bytes = 20480
+
+[[inspect_error.actions]]
+type = "set_recommended_tools"
+tools = ["read_file", "grep", "git_status"]
+
+[clarify_goal]
+description = "作業目的を整理し、goal/now/idea 候補を提案する"
+triggers = [
+  "目的",
+  "ゴール",
+  "何をすべき",
+  "整理したい",
+  "次にやること",
+  "clarify",
+  "goal",
+]
+
+[[clarify_goal.actions]]
+type = "memory_recipe_run"
+recipe_id = "clarify-goal"
+apply = false
+
+[memory_context]
+description = "現在の goal / rule / decision など contextual memory を参照する"
+triggers = [
+  "ルール",
+  "方針",
+  "決めたこと",
+  "覚えて",
+  "前に言った",
+  "context",
+  "memory",
+  "プロジェクト",
+]
+
+[[memory_context.actions]]
+type = "memory_query"
+
+[memory_context.actions.query]
+include_prompt_block = true

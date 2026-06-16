@@ -296,6 +296,7 @@ default_scope = "invalid_scope"
                 enabled: true,
                 kind_files: Some(vec![]),
                 recipe_files: None,
+                feature_files: None,
             },
         );
         let reg = loader.load_strict("ctx_a").expect("load");
@@ -342,6 +343,7 @@ description = "space goal"
                 enabled: true,
                 kind_files: Some(vec![explicit]),
                 recipe_files: None,
+                feature_files: None,
             },
         );
         let reg = loader.load_strict("ctx_a").expect("load");
@@ -375,6 +377,7 @@ clear_to = "inactive"
                 enabled: true,
                 kind_files: Some(vec![good, bad]),
                 recipe_files: None,
+                feature_files: None,
             },
         );
         let reg = loader.load_best_effort("ctx_a");

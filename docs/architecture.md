@@ -137,6 +137,23 @@ aish          →  （aibe への path 依存禁止）
 
 `aibe` は `AI_SESSION_ID` ごとに conversation store を切り、`index.jsonl` には redacted metadata、`conversations/<conversation_id>.json` には full transcript と summary を保存する。
 
+### Smart Feature Plan（0041 + 0042）
+
+`RoutePlan.feature_actions` は構造化された機能提案の配列である。`ai` は `ai ...` 文字列を再帰実行せず、`feature_executor` が action を解釈する。
+
+- **定義**: AISH 固有 feature は `aibe/memory/packs/aish-memory/features.toml`（`[memory] feature_files`、未指定時は baseline pack 互換）。trigger 部分一致で action を展開し、LLM が返した `feature_actions` にマージする。
+- **route_turn プロンプト**: 許可 action type・JSON 形状・使用タイミングを明示する。
+- **自動適用（MVP）**: `memory_query`、`memory_recipe_run { apply: false }`、`set_log_tail_bytes`、`set_recommended_tools`（read-only tool のみ）。
+- **log tail**: `set_log_tail_bytes` は `SHELL_LOG_TAIL_MAX_BYTES` で clamp。超過で turn 全体を失敗させない。
+- **tools 経路の整理**:
+  - `RoutePlan.recommended_tools` — 0030 互換 advisory。`shell_exec` 含みうる（実行時承認あり）。
+  - `FeatureAction::SetRecommendedTools` — smart feature 自動適用。**`shell_exec` は除外**（read-only のみ）。
+- **履歴**: feature executor の memory 本文は `agent_turn` のみへ。local history の `request_messages` は **replay 用 transcript を保持**し、redacted summary は `feature_summaries` に分離する。
+- **retry / rerun**: TTY かつ元 turn が `ask` のとき `route_turn` + feature executor を再実行。non-TTY / `chat` は `request_messages` replay。
+- **memory.enabled=false**: aibe は feature registry をロードする。ai は `memory_query` / `memory_recipe_run` を no-op、`set_log_tail_bytes` / `set_recommended_tools` は適用する。
+
+詳細: [spec/0041](spec/0041_ai-smart-feature-plan-spec.md)、[spec/0042](spec/0042_configurable-smart-features-spec.md)。
+
 ### contextual memory（0034 + 0035 identity split）
 
 - **正本**: `memory_space_id` 単位の JSONL（`memory/spaces/<memory_space_id>/events.jsonl`）。`AI_SESSION_ID` は memory の owner ではない（runtime provenance のみ）。`ai` / `aish` は保存しない。

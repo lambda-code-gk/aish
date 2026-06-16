@@ -8,6 +8,7 @@ use aibe::adapters::outbound::{ConversationStore, MockLlm};
 use aibe::application::basic_pack_arc;
 use aibe::application::memory_runtime::MEMORY_DISABLED_MESSAGE;
 use aibe::application::RequestService;
+use aibe::domain::FeatureRegistry;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryContext, MemoryKindListRequestBody, MemoryOperationAdd,
@@ -38,6 +39,7 @@ fn memory_disabled_service() -> RequestService {
         aibe::adapters::outbound::StaticCapabilityPolicy::local_full(),
         rpc_extension,
         turn_hook,
+        FeatureRegistry::empty(),
     )
 }
 

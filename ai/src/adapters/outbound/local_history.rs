@@ -238,6 +238,7 @@ mod tests {
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 16,
             request_messages: vec![],
+            feature_summaries: vec![],
         };
         store.append(&entry, &payload).expect("append");
         let entries = store.list().expect("list");
@@ -275,6 +276,7 @@ mod tests {
                 command: "ask".into(),
                 user_message: id.into(),
                 request_messages: vec![],
+                feature_summaries: vec![],
                 shell_log_tail: None,
                 client_cwd: None,
                 tools: vec![],

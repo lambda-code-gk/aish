@@ -9,7 +9,7 @@
 use aibe_protocol::{
     ClientResponse, FeatureAction, MemoryContext, MemoryQueryDto, MemoryRecipeProposalDto,
     ProtocolMessage, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
-    SYSTEM_INSTRUCTION_MAX_BYTES,
+    SHELL_LOG_TAIL_MAX_BYTES, SYSTEM_INSTRUCTION_MAX_BYTES,
 };
 
 use crate::clap_cli::TurnOptions;
@@ -19,7 +19,10 @@ use crate::ports::outbound::MemoryClient;
 #[derive(Debug, Clone)]
 pub struct FeatureExecutionOutcome {
     pub turn: TurnOptions,
+    /// agent_turn に渡す system messages（memory 本文を含む）。
     pub extra_messages: Vec<ProtocolMessage>,
+    /// local history に残す短い summary（全文は載せない）。
+    pub history_summaries: Vec<ProtocolMessage>,
 }
 
 /// MVP: `RoutePlan.feature_actions` を安全に解釈して適用する。
@@ -37,6 +40,7 @@ pub fn execute_feature_actions_mvp(
     quiet: bool,
 ) -> FeatureExecutionOutcome {
     let mut extra_messages = Vec::new();
+    let mut history_summaries = Vec::new();
 
     let has_memory_actions = actions.iter().any(|a| {
         matches!(
@@ -56,7 +60,7 @@ pub fn execute_feature_actions_mvp(
                 let Some(ctx) = memory_context.as_ref() else {
                     continue;
                 };
-                let query = apply_query_defaults(query.clone());
+                let query = apply_query_defaults(query.clone(), user_input);
                 match memory_client.memory_query(ai_session_id, ctx, query.clone()) {
                     Ok(ClientResponse::MemoryQueryResult {
                         prompt_block,
@@ -79,6 +83,13 @@ pub fn execute_feature_actions_mvp(
                         extra_messages.push(ProtocolMessage {
                             role: "system".to_string(),
                             content: format!("[contextual memory query]\n{}", content.trim()),
+                        });
+                        history_summaries.push(ProtocolMessage {
+                            role: "system".to_string(),
+                            content: format!(
+                                "[smart feature: memory_query applied entries={}]",
+                                entries.len()
+                            ),
                         });
                     }
                     Ok(other) => {
@@ -120,6 +131,13 @@ pub fn execute_feature_actions_mvp(
                                 "[memory recipe proposal: {recipe_id}]\nsummary: {summary}\nproposals:\n{proposals}"
                             ),
                         });
+                        history_summaries.push(ProtocolMessage {
+                            role: "system".to_string(),
+                            content: format!(
+                                "[smart feature: memory_recipe_run recipe={recipe_id} proposals={}]",
+                                proposals.lines().filter(|l| l.starts_with("- ")).count()
+                            ),
+                        });
                     }
                     Ok(other) => {
                         if !quiet {
@@ -137,7 +155,12 @@ pub fn execute_feature_actions_mvp(
             }
             FeatureAction::SetLogTailBytes { bytes } => {
                 if turn.log_tail.is_none() {
-                    turn.log_tail = Some(*bytes as usize);
+                    let capped = (*bytes as usize).min(SHELL_LOG_TAIL_MAX_BYTES);
+                    turn.log_tail = Some(capped);
+                    history_summaries.push(ProtocolMessage {
+                        role: "system".to_string(),
+                        content: format!("[smart feature: set_log_tail_bytes={capped}]"),
+                    });
                 }
             }
             FeatureAction::SetRecommendedTools { tools } => {
@@ -150,6 +173,15 @@ pub fn execute_feature_actions_mvp(
                 } else {
                     safe_tools.join(",")
                 });
+                if !safe_tools.is_empty() {
+                    history_summaries.push(ProtocolMessage {
+                        role: "system".to_string(),
+                        content: format!(
+                            "[smart feature: set_recommended_tools={}]",
+                            safe_tools.join(",")
+                        ),
+                    });
+                }
             }
             FeatureAction::Unsupported => {
                 // no-op
@@ -160,11 +192,15 @@ pub fn execute_feature_actions_mvp(
     FeatureExecutionOutcome {
         turn,
         extra_messages,
+        history_summaries,
     }
 }
 
-fn apply_query_defaults(mut query: MemoryQueryDto) -> MemoryQueryDto {
+fn apply_query_defaults(mut query: MemoryQueryDto, user_input: &str) -> MemoryQueryDto {
     query.include_prompt_block = true;
+    if query.user_query.is_none() {
+        query.user_query = Some(user_input.to_string());
+    }
     query
 }
 
@@ -300,6 +336,40 @@ mod tests {
                 applied_entries: vec![],
             })
         }
+    }
+
+    #[test]
+    fn set_log_tail_bytes_clamps_to_protocol_max() {
+        let actions = vec![FeatureAction::SetLogTailBytes {
+            bytes: (SHELL_LOG_TAIL_MAX_BYTES as u64) + 1,
+        }];
+        let client = MockMemoryClient;
+        let turn = TurnOptions {
+            quiet: true,
+            format: None,
+            dry_run: false,
+            preset: None,
+            log_tail: None,
+            log: None,
+            no_log: false,
+            session: None,
+            socket: None,
+            no_start: true,
+            tools: None,
+            profile: None,
+            new: false,
+            verbose_tools: false,
+            progress: false,
+            no_progress: false,
+            timeout: None,
+            yes_exec: false,
+            silent_exec: false,
+            console_hint: false,
+            no_console_hint: false,
+        };
+        let out =
+            execute_feature_actions_mvp(&actions, "user", None, "sess_001", turn, &client, true);
+        assert_eq!(out.turn.log_tail, Some(SHELL_LOG_TAIL_MAX_BYTES));
     }
 
     #[test]

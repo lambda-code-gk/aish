@@ -10,7 +10,9 @@ use aibe_protocol::{
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
-use crate::domain::{ChatMessage, MessageRole};
+use crate::domain::{
+    actions_equivalent, feature_action_schema_prompt, ChatMessage, FeatureRegistry, MessageRole,
+};
 use crate::ports::outbound::{
     ConversationStore, ConversationStoreError, LlmError, ProfileRegistry, RouterConfig,
 };
@@ -29,6 +31,7 @@ pub struct RouteTurnService {
     profile_registry: ProfileRegistry,
     router: RouterConfig,
     store: Arc<dyn ConversationStore>,
+    feature_registry: FeatureRegistry,
 }
 
 impl RouteTurnService {
@@ -36,14 +39,27 @@ impl RouteTurnService {
         profile_registry: ProfileRegistry,
         router: RouterConfig,
         store: Arc<dyn ConversationStore>,
+        feature_registry: FeatureRegistry,
     ) -> Self {
         Self {
             profile_registry,
             router,
             store,
+            feature_registry,
         }
     }
 
+    #[cfg(test)]
+    pub fn new_without_features(
+        profile_registry: ProfileRegistry,
+        router: RouterConfig,
+        store: Arc<dyn ConversationStore>,
+    ) -> Self {
+        Self::new(profile_registry, router, store, FeatureRegistry::empty())
+    }
+}
+
+impl RouteTurnService {
     pub async fn run(
         &self,
         id: String,
@@ -100,6 +116,7 @@ impl RouteTurnService {
             &conversation,
             &cli_overrides,
             recent_summary.as_deref(),
+            &self.feature_registry,
         );
         let response = llm
             .complete(&prompt)
@@ -107,12 +124,13 @@ impl RouteTurnService {
             .map_err(|e| RouteTurnError::Provider(llm_error_to_string(e)))?;
         let raw = response.content.trim().to_string();
         let draft = parse_route_plan(&raw)?;
-        let plan = finalize_route_plan(
+        let mut plan = finalize_route_plan(
             draft,
             conversation_id,
             conversation.new_conversation || generated_conversation,
             recent_summary.clone(),
         )?;
+        merge_registry_feature_actions(&mut plan, &query, &self.feature_registry);
         if plan.new_conversation || generated_conversation {
             self.store.ensure_conversation(
                 &session.ai_session_id,
@@ -138,7 +156,10 @@ fn build_route_messages(
     conversation: &RouteTurnConversation,
     cli_overrides: &RouteTurnCliOverrides,
     recent_summary: Option<&str>,
+    feature_registry: &FeatureRegistry,
 ) -> Vec<ChatMessage> {
+    let catalog = feature_registry.catalog_for_prompt();
+    let schema = feature_action_schema_prompt();
     let system = ChatMessage {
         role: MessageRole::System,
         content: format!(
@@ -146,10 +167,12 @@ fn build_route_messages(
              route_kind MUST be exactly one of: one_shot, chat, continue, tool_assisted. \
              recommended_tools MUST use only these names (or []): {}. \
              recommended_preset MUST be null unless cli_overrides.preset is set. \
-             feature_actions MUST be an array (possibly empty) of structured actions. \
-             Do not invent action types. \
-             Do not invent preset names or tool names.",
-            KNOWN_TOOLS.join(", ")
+             feature_actions MUST be a JSON array (use [] when none apply). \
+             Do not invent action types or preset names or tool names.\n\n\
+             {schema}\n\n{catalog}",
+            KNOWN_TOOLS.join(", "),
+            schema = schema,
+            catalog = catalog.trim_end(),
         ),
         tool_call_id: None,
         tool_calls: None,
@@ -177,10 +200,10 @@ fn build_route_messages(
     vec![
         system,
         ChatMessage::user(format!(
-            "Return JSON with keys conversation_id, new_conversation, route_kind, recommended_preset, recommended_tools, log_tail_bytes, require_shell_approval, log_tail_escalation, route_reason, confidence. \
+            "Return JSON with keys conversation_id, new_conversation, route_kind, recommended_preset, recommended_tools, log_tail_bytes, feature_actions, require_shell_approval, log_tail_escalation, route_reason, confidence. \
              route_kind must be one_shot, chat, continue, or tool_assisted. \
              recommended_tools must be a subset of: {}. \
-             feature_actions (optional) must be an array. \
+             feature_actions must be an array (possibly empty) of allowed action objects. \
              recommended_preset should usually be null.\n{}",
             KNOWN_TOOLS.join(", "),
             user
@@ -213,6 +236,18 @@ fn extract_json_object(raw: &str) -> Option<&str> {
     let start = raw.find('{')?;
     let end = raw.rfind('}')?;
     raw.get(start..=end)
+}
+
+fn merge_registry_feature_actions(plan: &mut RoutePlan, query: &str, registry: &FeatureRegistry) {
+    for action in registry.match_query(query) {
+        if !plan
+            .feature_actions
+            .iter()
+            .any(|existing| actions_equivalent(existing, &action))
+        {
+            plan.feature_actions.push(action);
+        }
+    }
 }
 
 fn finalize_route_plan(

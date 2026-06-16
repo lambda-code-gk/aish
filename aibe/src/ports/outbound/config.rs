@@ -43,6 +43,8 @@ pub struct MemoryConfig {
     pub enabled: bool,
     pub kind_files: Option<Vec<PathBuf>>,
     pub recipe_files: Option<Vec<PathBuf>>,
+    /// smart feature 定義 TOML（0042）。`None` は baseline pack 互換。
+    pub feature_files: Option<Vec<PathBuf>>,
 }
 
 impl Default for MemoryConfig {
@@ -51,6 +53,7 @@ impl Default for MemoryConfig {
             enabled: true,
             kind_files: None,
             recipe_files: None,
+            feature_files: None,
         }
     }
 }
@@ -61,6 +64,7 @@ impl MemoryConfig {
             enabled: false,
             kind_files: None,
             recipe_files: None,
+            feature_files: None,
         }
     }
 }

@@ -4,6 +4,7 @@ mod agent_turn_context;
 mod capability;
 mod client_cwd;
 mod contextual_memory;
+mod feature_registry;
 mod llm_step;
 mod memory_kind_registry;
 mod memory_recipe;
@@ -28,6 +29,10 @@ pub use contextual_memory::{
     resolve_entries_for_prompt, resolve_memory_operation_add, validate_kind,
     validate_standard_kind_operation, validate_text, MemoryBlock, MemoryEntry, MemoryInjectPolicy,
     MemoryScope, MemoryStatus, MemoryValidationError, ProjectKey, ProjectKeyError,
+};
+pub use feature_registry::{
+    actions_equivalent, baseline_feature_registry, feature_action_schema_prompt, FeatureDefinition,
+    FeatureRegistry, FeatureRegistryError,
 };
 pub use llm_step::LlmStepResult;
 pub(crate) use memory_kind_registry::parse_kinds_toml_str;

@@ -42,6 +42,9 @@ pub struct HistoryPayload {
     pub user_message: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub request_messages: Vec<HistoryMessage>,
+    /// smart feature 適用の redacted summary（replay 用 transcript とは別）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feature_summaries: Vec<HistoryMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_log_tail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,6 +330,7 @@ mod tests {
             command: "ask".into(),
             user_message: "hello".into(),
             request_messages: vec![],
+            feature_summaries: vec![],
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
@@ -342,14 +346,16 @@ mod tests {
         };
         assert_eq!(payload.conversation_id.as_deref(), Some("conv"));
         assert!(payload.request_messages.is_empty());
+        assert!(payload.feature_summaries.is_empty());
     }
 
     #[test]
-    fn history_payload_deserializes_without_request_messages() {
+    fn history_payload_deserializes_without_feature_summaries() {
         let payload: HistoryPayload = serde_json::from_str(
-            r#"{"history_id":"id","command":"ask","user_message":"hi","tools":[],"socket_path":"/tmp/s","log_tail_bytes":1}"#,
+            r#"{"history_id":"id","command":"ask","user_message":"hi","tools":[],"socket_path":"/tmp/s","log_tail_bytes":1,"request_messages":[{"role":"user","content":"hi"}]}"#,
         )
         .expect("deserialize");
-        assert!(payload.request_messages.is_empty());
+        assert_eq!(payload.request_messages.len(), 1);
+        assert!(payload.feature_summaries.is_empty());
     }
 }
