@@ -22,6 +22,7 @@ use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
 use crate::application::contextual_pack_arc;
 use crate::application::request_service::RequestService;
+use crate::domain::FeatureRegistry;
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, MemoryConfig, ProfileRegistry,
@@ -81,9 +82,13 @@ pub async fn run(
         basic_pack_arc()
     };
 
-    let feature_registry = FilesystemFeatureRegistryLoader::new(memory_config.clone())
-        .load()
-        .map_err(|e| anyhow::anyhow!("feature registry: {e}"))?;
+    let feature_registry = if memory_config.enabled {
+        FilesystemFeatureRegistryLoader::new(memory_config.clone())
+            .load()
+            .map_err(|e| anyhow::anyhow!("feature registry: {e}"))?
+    } else {
+        FeatureRegistry::empty()
+    };
 
     let handler: Arc<dyn ClientRequestHandler> =
         Arc::new(RequestService::new_with_turns_and_packs(

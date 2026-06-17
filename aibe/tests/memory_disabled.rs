@@ -4,16 +4,18 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
-use aibe::adapters::outbound::{ConversationStore, MockLlm};
+use aibe::adapters::outbound::{ConversationStore, MockLlm, ScriptedMockLlm};
 use aibe::application::basic_pack_arc;
 use aibe::application::memory_runtime::MEMORY_DISABLED_MESSAGE;
 use aibe::application::RequestService;
 use aibe::domain::FeatureRegistry;
-use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
+use aibe::domain::LlmStepResult;
+use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryContext, MemoryKindListRequestBody, MemoryOperationAdd,
     MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody, MemoryRecipeRunRequestBody,
-    ProtocolMessage, RequestContext,
+    ProtocolMessage, RequestContext, RouteTurnCliOverrides, RouteTurnConversation,
+    RouteTurnSession,
 };
 
 fn memory_disabled_service() -> RequestService {
@@ -247,4 +249,64 @@ async fn server_starts_with_broken_kinds_toml_when_memory_disabled() {
     assert!(line.contains(r#""type":"pong""#), "pong: {line}");
 
     server.abort();
+}
+
+#[tokio::test]
+async fn route_turn_strips_feature_actions_when_feature_registry_empty() {
+    let tools_config = ToolsConfig::default();
+    let strategy = tools_config.termination_strategy;
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        r#"{"route_kind":"tool_assisted","new_conversation":false,"recommended_tools":["read_file"],"feature_actions":[{"type":"memory_query","query":{}}],"route_reason":"inspect error"}"#
+            .to_string(),
+    )]));
+    let profile_registry =
+        ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
+    let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = basic_pack_arc();
+    let service = RequestService::new_with_turns_and_packs(
+        profile_registry,
+        tool_registry,
+        tools_config,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        "default".to_string(),
+        Arc::new(ConversationStore::new(
+            std::env::temp_dir().join("aibe-test-memory-disabled-route"),
+        )),
+        aibe::adapters::outbound::StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::empty(),
+    );
+    let resp = service
+        .handle(
+            ClientRequest::RouteTurn {
+                id: "route-disabled".into(),
+                query: "直近のエラーを調べて".into(),
+                cwd: "/tmp/proj".into(),
+                session: RouteTurnSession {
+                    ai_session_id: session_id(),
+                    aish_session_dir: None,
+                    tty: true,
+                },
+                conversation: RouteTurnConversation {
+                    conversation_id: None,
+                    recent_summary: None,
+                    new_conversation: true,
+                },
+                cli_overrides: RouteTurnCliOverrides::default(),
+            },
+            None,
+        )
+        .await;
+    match resp {
+        ClientResponse::RouteTurnResult { plan, .. } => {
+            assert!(
+                plan.feature_actions.is_empty(),
+                "empty registry must not return feature_actions: {:?}",
+                plan.feature_actions
+            );
+        }
+        other => panic!("expected route_turn_result: {other:?}"),
+    }
 }

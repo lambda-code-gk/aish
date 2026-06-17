@@ -113,10 +113,12 @@ local history:
 
 non-TTY または `chat` 等は従来どおり `request_messages` を replay する。
 
-### 8.2 memory.enabled=false
+### 8.2 memory.enabled=false（0043 で更新）
 
-- `aibe`: feature registry は `memory.enabled` に関係なくロードする（route_turn の trigger マージは有効）。
-- `ai`: `memory_query` / `memory_recipe_run` は memory 無効時 no-op。`set_log_tail_bytes` / `set_recommended_tools` は有効。
+- `aibe`: composition root は `FeatureRegistry::empty()` を渡す。`route_turn` は feature catalog / trigger マージ / `feature_actions` を返さない（LLM が返しても strip）。
+- `ai`: smart feature plan は実質 no-op（`route_turn` から feature が来ない）。
+
+詳細: [0043_feature-pack-boundary-hardening-spec.md](0043_feature-pack-boundary-hardening-spec.md)。
 
 ### 8.3 memory_query 重複防止
 

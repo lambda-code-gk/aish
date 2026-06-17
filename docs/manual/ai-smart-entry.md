@@ -67,7 +67,7 @@ ai --preset fast --tools read_file 'list files'
 3. `ai --tools read_file '...'` では CLI 明示値が feature plan より優先されること。
 4. `ai history` の replay payload に memory 全文が残らず、summary は `feature_summaries` のみであること（該当 turn 後）。
 5. TTY で `ai history retry` / `rerun`（元が `ask`）を実行すると `route_turn` が再実行され、現行 registry に基づく feature が再適用されること。
-6. `memory.enabled=false` でも `set_log_tail_bytes` / `set_recommended_tools` は適用され、`memory_query` は no-op になること。
+6. `memory.enabled=false` のとき `route_turn` は feature catalog / `feature_actions` を返さないこと（smart feature は無効）。
 
 ## 期待結果
 

@@ -78,10 +78,10 @@ max_rounds = 8
 exec_timeout_ms = 30_000
 max_tool_output_bytes = 32_768
 
-# contextual memory を無効化して basic ランタイムにする（0038 Phase A）
+# contextual memory を無効化して basic ランタイムにする（0038 Phase A + 0043）
 # [memory]
 # enabled = false
-# feature_files = ["memory/packs/aish-memory/features.toml"]
+# enabled=false では smart feature registry も empty（baseline features.toml は読まない）
 # 環境変数 AIBE_MEMORY_ENABLED=0 でも無効化可。ai 側は ~/.config/ai/config.toml の [memory] も合わせること。
 
 [tools.shell_exec]

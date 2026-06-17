@@ -6,6 +6,7 @@ use std::sync::Arc;
 use aibe_protocol::{
     ClientResponse, ErrorCode, FeatureAction, RouteKind, RoutePlan, RouteTurnCliOverrides,
     RouteTurnConversation, RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS,
+    SHELL_LOG_TAIL_MAX_BYTES,
 };
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -130,7 +131,11 @@ impl RouteTurnService {
             conversation.new_conversation || generated_conversation,
             recent_summary.clone(),
         )?;
-        merge_registry_feature_actions(&mut plan, &query, &self.feature_registry);
+        if self.feature_registry.feature_ids().is_empty() {
+            plan.feature_actions.clear();
+        } else {
+            merge_registry_feature_actions(&mut plan, &query, &self.feature_registry);
+        }
         if plan.new_conversation || generated_conversation {
             self.store.ensure_conversation(
                 &session.ai_session_id,
@@ -238,6 +243,11 @@ fn extract_json_object(raw: &str) -> Option<&str> {
     raw.get(start..=end)
 }
 
+fn clamp_log_tail_bytes(bytes: u64) -> u64 {
+    let max = SHELL_LOG_TAIL_MAX_BYTES as u64;
+    bytes.min(max)
+}
+
 fn merge_registry_feature_actions(plan: &mut RoutePlan, query: &str, registry: &FeatureRegistry) {
     for action in registry.match_query(query) {
         if !plan
@@ -286,7 +296,7 @@ fn finalize_route_plan(
         ),
         recommended_preset: draft.recommended_preset.filter(|s| !s.trim().is_empty()),
         recommended_tools: sanitize_recommended_tools(draft.recommended_tools),
-        log_tail_bytes: draft.log_tail_bytes,
+        log_tail_bytes: draft.log_tail_bytes.map(clamp_log_tail_bytes),
         require_shell_approval: draft.require_shell_approval.unwrap_or(false),
         log_tail_escalation: draft.log_tail_escalation.unwrap_or(false),
         route_reason: redact_route_reason(&route_reason),
@@ -462,6 +472,25 @@ mod tests {
     fn sanitize_recommended_tools_maps_view_file_to_read_file() {
         let got = sanitize_recommended_tools(Some(vec!["view_file".into()])).expect("tools");
         assert_eq!(got, vec!["read_file".to_string()]);
+    }
+
+    #[test]
+    fn finalize_route_plan_clamps_log_tail_bytes_to_protocol_max() {
+        let draft = RoutePlanDraft {
+            conversation_id: None,
+            new_conversation: None,
+            route_kind: Some("continue".into()),
+            recommended_preset: None,
+            recommended_tools: None,
+            log_tail_bytes: Some((SHELL_LOG_TAIL_MAX_BYTES as u64) + 999_999),
+            require_shell_approval: None,
+            log_tail_escalation: None,
+            feature_actions: None,
+            route_reason: Some("inspect".into()),
+            confidence: None,
+        };
+        let plan = finalize_route_plan(draft, "conv-1".into(), false, None).expect("finalize");
+        assert_eq!(plan.log_tail_bytes, Some(SHELL_LOG_TAIL_MAX_BYTES as u64));
     }
 
     #[test]

@@ -38,3 +38,28 @@ impl FeatureRegistryLoader for FilesystemFeatureRegistryLoader {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feature_files_none_loads_baseline_pack() {
+        let loader = FilesystemFeatureRegistryLoader::new(MemoryConfig::default());
+        let registry = loader.load().expect("load");
+        assert!(!registry.feature_ids().is_empty());
+        assert!(registry.feature_ids().contains(&"inspect_error"));
+    }
+
+    #[test]
+    fn feature_files_empty_yields_empty_registry() {
+        let loader = FilesystemFeatureRegistryLoader::new(MemoryConfig {
+            enabled: true,
+            kind_files: None,
+            recipe_files: None,
+            feature_files: Some(vec![]),
+        });
+        let registry = loader.load().expect("load");
+        assert!(registry.feature_ids().is_empty());
+    }
+}
