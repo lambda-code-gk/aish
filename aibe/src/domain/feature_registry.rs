@@ -20,6 +20,37 @@ pub struct FeatureDefinition {
     pub description: Option<String>,
     pub triggers: Vec<String>,
     pub actions: Vec<FeatureAction>,
+    pub priority: u32,
+    pub requires_memory: bool,
+    pub requires_recipe: bool,
+}
+
+/// trigger 一致後の eligibility 判定用（0043 Phase 2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeatureEligibilityContext {
+    pub memory_kinds_enabled: bool,
+    pub recipes_enabled: bool,
+}
+
+impl Default for FeatureEligibilityContext {
+    fn default() -> Self {
+        Self {
+            memory_kinds_enabled: true,
+            recipes_enabled: true,
+        }
+    }
+}
+
+impl FeatureEligibilityContext {
+    pub fn from_memory_kinds_and_recipes(
+        memory_kinds_enabled: bool,
+        recipes_enabled: bool,
+    ) -> Self {
+        Self {
+            memory_kinds_enabled,
+            recipes_enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -101,8 +132,17 @@ impl FeatureRegistry {
 
     /// user query に trigger が部分一致する feature の actions を返す（順序は定義順）。
     pub fn match_query(&self, query: &str) -> Vec<FeatureAction> {
+        self.match_eligible_actions(query, FeatureEligibilityContext::default())
+    }
+
+    /// trigger 候補を eligibility で落とし、priority 昇順で actions を返す。
+    pub fn match_eligible_actions(
+        &self,
+        query: &str,
+        ctx: FeatureEligibilityContext,
+    ) -> Vec<FeatureAction> {
         let q = query.to_ascii_lowercase();
-        let mut out = Vec::new();
+        let mut matched: Vec<&FeatureDefinition> = Vec::new();
         for id in &self.feature_order {
             let Some(def) = self.features.get(id) else {
                 continue;
@@ -114,6 +154,17 @@ impl FeatureRegistry {
             {
                 continue;
             }
+            if def.requires_memory && !ctx.memory_kinds_enabled {
+                continue;
+            }
+            if def.requires_recipe && !ctx.recipes_enabled {
+                continue;
+            }
+            matched.push(def);
+        }
+        matched.sort_by_key(|def| def.priority);
+        let mut out = Vec::new();
+        for def in matched {
             for action in &def.actions {
                 if !out
                     .iter()
@@ -139,6 +190,16 @@ struct FeatureDefinitionToml {
     triggers: Vec<String>,
     #[serde(default)]
     actions: Vec<toml::Value>,
+    #[serde(default = "default_feature_priority")]
+    priority: u32,
+    #[serde(default)]
+    requires_memory: bool,
+    #[serde(default)]
+    requires_recipe: bool,
+}
+
+fn default_feature_priority() -> u32 {
+    100
 }
 
 fn parse_feature_definition(
@@ -169,6 +230,9 @@ fn parse_feature_definition(
         description: parsed.description,
         triggers: parsed.triggers,
         actions,
+        priority: parsed.priority,
+        requires_memory: parsed.requires_memory,
+        requires_recipe: parsed.requires_recipe,
     })
 }
 
@@ -315,5 +379,44 @@ mod tests {
             },
         };
         assert!(actions_equivalent(&with_query, &without_query));
+    }
+
+    #[test]
+    fn match_eligible_actions_skips_requires_memory_when_kinds_disabled() {
+        let reg = FeatureRegistry::baseline().expect("baseline");
+        let ctx = FeatureEligibilityContext {
+            memory_kinds_enabled: false,
+            recipes_enabled: true,
+        };
+        let actions = reg.match_eligible_actions("プロジェクトのルールは？", ctx);
+        assert!(!actions
+            .iter()
+            .any(|a| matches!(a, FeatureAction::MemoryQuery { .. })));
+    }
+
+    #[test]
+    fn match_eligible_actions_skips_requires_recipe_when_recipes_disabled() {
+        let reg = FeatureRegistry::baseline().expect("baseline");
+        let ctx = FeatureEligibilityContext {
+            memory_kinds_enabled: true,
+            recipes_enabled: false,
+        };
+        let actions = reg.match_eligible_actions("作業の目的を整理したい", ctx);
+        assert!(!actions
+            .iter()
+            .any(|a| matches!(a, FeatureAction::MemoryRecipeRun { .. })));
+    }
+
+    #[test]
+    fn match_eligible_actions_keeps_inspect_error_without_memory_or_recipe() {
+        let reg = FeatureRegistry::baseline().expect("baseline");
+        let ctx = FeatureEligibilityContext {
+            memory_kinds_enabled: false,
+            recipes_enabled: false,
+        };
+        let actions = reg.match_eligible_actions("直近のエラーを調べて", ctx);
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, FeatureAction::SetLogTailBytes { .. })));
     }
 }

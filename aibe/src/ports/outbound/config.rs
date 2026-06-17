@@ -67,6 +67,28 @@ impl MemoryConfig {
             feature_files: None,
         }
     }
+
+    /// `kind_files=None` 互換を含め、AISH kind pack が有効か。
+    pub fn memory_kinds_enabled(&self) -> bool {
+        match &self.kind_files {
+            None => true,
+            Some(files) => !files.is_empty(),
+        }
+    }
+
+    /// `recipe_files=None` 互換を含め、recipe pack が有効か。
+    pub fn recipes_enabled(&self) -> bool {
+        match &self.recipe_files {
+            None => true,
+            Some(files) => !files.is_empty(),
+        }
+    }
+
+    /// `kind_files=[]` かつ `recipe_files=[]` の generic memory 明示設定。
+    pub fn is_explicit_generic_memory_pack(&self) -> bool {
+        matches!(&self.kind_files, Some(k) if k.is_empty())
+            && matches!(&self.recipe_files, Some(r) if r.is_empty())
+    }
 }
 
 #[derive(Debug, Clone)]

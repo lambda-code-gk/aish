@@ -4,15 +4,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use aibe_protocol::{
-    ClientResponse, ErrorCode, FeatureAction, RouteKind, RoutePlan, RouteTurnCliOverrides,
-    RouteTurnConversation, RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS,
-    SHELL_LOG_TAIL_MAX_BYTES,
+    sanitize_readonly_advisory_tools, sanitize_readonly_advisory_tools_option, ClientResponse,
+    ErrorCode, FeatureAction, RouteKind, RoutePlan, RouteTurnCliOverrides, RouteTurnConversation,
+    RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS, SHELL_LOG_TAIL_MAX_BYTES,
 };
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::domain::{
-    actions_equivalent, feature_action_schema_prompt, ChatMessage, FeatureRegistry, MessageRole,
+    actions_equivalent, feature_action_schema_prompt, ChatMessage, FeatureEligibilityContext,
+    FeatureRegistry, MessageRole,
 };
 use crate::ports::outbound::{
     ConversationStore, ConversationStoreError, LlmError, ProfileRegistry, RouterConfig,
@@ -33,6 +34,7 @@ pub struct RouteTurnService {
     router: RouterConfig,
     store: Arc<dyn ConversationStore>,
     feature_registry: FeatureRegistry,
+    feature_eligibility: FeatureEligibilityContext,
 }
 
 impl RouteTurnService {
@@ -41,12 +43,14 @@ impl RouteTurnService {
         router: RouterConfig,
         store: Arc<dyn ConversationStore>,
         feature_registry: FeatureRegistry,
+        feature_eligibility: FeatureEligibilityContext,
     ) -> Self {
         Self {
             profile_registry,
             router,
             store,
             feature_registry,
+            feature_eligibility,
         }
     }
 
@@ -56,7 +60,13 @@ impl RouteTurnService {
         router: RouterConfig,
         store: Arc<dyn ConversationStore>,
     ) -> Self {
-        Self::new(profile_registry, router, store, FeatureRegistry::empty())
+        Self::new(
+            profile_registry,
+            router,
+            store,
+            FeatureRegistry::empty(),
+            FeatureEligibilityContext::default(),
+        )
     }
 }
 
@@ -134,7 +144,12 @@ impl RouteTurnService {
         if self.feature_registry.feature_ids().is_empty() {
             plan.feature_actions.clear();
         } else {
-            merge_registry_feature_actions(&mut plan, &query, &self.feature_registry);
+            merge_registry_feature_actions(
+                &mut plan,
+                &query,
+                &self.feature_registry,
+                self.feature_eligibility,
+            );
         }
         if plan.new_conversation || generated_conversation {
             self.store.ensure_conversation(
@@ -248,8 +263,13 @@ fn clamp_log_tail_bytes(bytes: u64) -> u64 {
     bytes.min(max)
 }
 
-fn merge_registry_feature_actions(plan: &mut RoutePlan, query: &str, registry: &FeatureRegistry) {
-    for action in registry.match_query(query) {
+fn merge_registry_feature_actions(
+    plan: &mut RoutePlan,
+    query: &str,
+    registry: &FeatureRegistry,
+    ctx: FeatureEligibilityContext,
+) {
+    for action in registry.match_eligible_actions(query, ctx) {
         if !plan
             .feature_actions
             .iter()
@@ -280,6 +300,14 @@ fn finalize_route_plan(
                     .filter_map(|a| match a {
                         FeatureAction::Unsupported => None,
                         FeatureAction::MemoryRecipeRun { apply, .. } if apply => None,
+                        FeatureAction::SetRecommendedTools { tools } => {
+                            let tools = sanitize_readonly_advisory_tools(&tools);
+                            if tools.is_empty() {
+                                None
+                            } else {
+                                Some(FeatureAction::SetRecommendedTools { tools })
+                            }
+                        }
                         other => Some(other),
                     })
                     .collect::<Vec<_>>()
@@ -295,7 +323,7 @@ fn finalize_route_plan(
             new_conversation,
         ),
         recommended_preset: draft.recommended_preset.filter(|s| !s.trim().is_empty()),
-        recommended_tools: sanitize_recommended_tools(draft.recommended_tools),
+        recommended_tools: sanitize_readonly_advisory_tools_option(draft.recommended_tools),
         log_tail_bytes: draft.log_tail_bytes.map(clamp_log_tail_bytes),
         require_shell_approval: draft.require_shell_approval.unwrap_or(false),
         log_tail_escalation: draft.log_tail_escalation.unwrap_or(false),
@@ -372,34 +400,6 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
     out
 }
 
-fn sanitize_recommended_tools(raw: Option<Vec<String>>) -> Option<Vec<String>> {
-    let raw = raw.filter(|tools| !tools.is_empty())?;
-    let mut out = Vec::new();
-    for name in raw {
-        let mapped = map_route_tool_alias(&name);
-        if aibe_protocol::is_known_tool(&mapped) && !out.iter().any(|existing| existing == &mapped)
-        {
-            out.push(mapped);
-        }
-    }
-    (!out.is_empty()).then_some(out)
-}
-
-fn map_route_tool_alias(raw: &str) -> String {
-    let norm = raw.trim().to_ascii_lowercase().replace('-', "_");
-    match norm.as_str() {
-        "view_file" | "viewfile" | "read" | "cat" | "cat_file" => {
-            aibe_protocol::READ_FILE.to_string()
-        }
-        "list_files" | "listdir" | "ls" | "dir" => aibe_protocol::LIST_DIR.to_string(),
-        "search" | "find" | "rg" => aibe_protocol::GREP.to_string(),
-        "git" | "status" => aibe_protocol::GIT_STATUS.to_string(),
-        "diff" => aibe_protocol::GIT_DIFF.to_string(),
-        "shell" | "exec" | "run" => aibe_protocol::SHELL_EXEC.to_string(),
-        other => other.to_string(),
-    }
-}
-
 fn normalize_route_kind(
     raw: Option<&str>,
     recommended_tools: &Option<Vec<String>>,
@@ -469,8 +469,36 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_recommended_tools_maps_view_file_to_read_file() {
-        let got = sanitize_recommended_tools(Some(vec!["view_file".into()])).expect("tools");
+    fn finalize_route_plan_sanitizes_recommended_tools_to_read_only() {
+        let draft = RoutePlanDraft {
+            conversation_id: None,
+            new_conversation: None,
+            route_kind: Some("tool_assisted".into()),
+            recommended_preset: None,
+            recommended_tools: Some(vec![
+                "read_file".into(),
+                "shell_exec".into(),
+                "shell".into(),
+                "grep".into(),
+            ]),
+            log_tail_bytes: None,
+            require_shell_approval: None,
+            log_tail_escalation: None,
+            feature_actions: None,
+            route_reason: Some("inspect".into()),
+            confidence: None,
+        };
+        let plan = finalize_route_plan(draft, "conv-1".into(), false, None).expect("finalize");
+        assert_eq!(
+            plan.recommended_tools,
+            Some(vec!["read_file".to_string(), "grep".to_string()])
+        );
+    }
+
+    #[test]
+    fn sanitize_readonly_advisory_tools_maps_view_file_to_read_file() {
+        let got =
+            sanitize_readonly_advisory_tools_option(Some(vec!["view_file".into()])).expect("tools");
         assert_eq!(got, vec!["read_file".to_string()]);
     }
 

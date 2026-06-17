@@ -32,7 +32,7 @@ pub use contextual_memory::{
 };
 pub use feature_registry::{
     actions_equivalent, baseline_feature_registry, feature_action_schema_prompt, FeatureDefinition,
-    FeatureRegistry, FeatureRegistryError,
+    FeatureEligibilityContext, FeatureRegistry, FeatureRegistryError,
 };
 pub use llm_step::LlmStepResult;
 pub(crate) use memory_kind_registry::parse_kinds_toml_str;

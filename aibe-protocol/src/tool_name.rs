@@ -15,6 +15,9 @@ pub const GIT_STATUS: &str = "git_status";
 
 pub const KNOWN_TOOLS: &[&str] = &[SHELL_EXEC, READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
 
+/// `route_turn` advisory / `SetRecommendedTools` で許可する read-only tool。
+pub const READONLY_ADVISORY_TOOLS: &[&str] = &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
+
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("unknown tool: {0}")]
 pub struct UnknownToolError(pub String);
@@ -105,6 +108,42 @@ pub fn parse_tool_names(names: Vec<String>) -> Result<Vec<ToolName>, UnknownTool
     names.iter().map(|s| s.parse()).collect()
 }
 
+/// advisory tool 名の別名を正規化する（`shell_exec` 系はマップしない）。
+pub fn map_advisory_tool_alias(raw: &str) -> String {
+    let norm = raw.trim().to_ascii_lowercase().replace('-', "_");
+    match norm.as_str() {
+        "view_file" | "viewfile" | "read" | "cat" | "cat_file" => READ_FILE.to_string(),
+        "list_files" | "listdir" | "ls" | "dir" => LIST_DIR.to_string(),
+        "search" | "find" | "rg" => GREP.to_string(),
+        "git" | "status" | "git_status" => GIT_STATUS.to_string(),
+        "diff" => GIT_DIFF.to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// read-only advisory tool のみを残す（`shell_exec` と未知 tool は除外）。
+pub fn sanitize_readonly_advisory_tools(raw: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in raw {
+        let mapped = map_advisory_tool_alias(name);
+        if mapped == SHELL_EXEC {
+            continue;
+        }
+        if READONLY_ADVISORY_TOOLS.contains(&mapped.as_str())
+            && !out.iter().any(|existing| existing == &mapped)
+        {
+            out.push(mapped);
+        }
+    }
+    out
+}
+
+pub fn sanitize_readonly_advisory_tools_option(raw: Option<Vec<String>>) -> Option<Vec<String>> {
+    let raw = raw.filter(|tools| !tools.is_empty())?;
+    let out = sanitize_readonly_advisory_tools(&raw);
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +179,22 @@ mod tests {
     fn parse_tool_names_rejects_unknown() {
         let err = parse_tool_names(vec!["read_file".into(), "bogus".into()]).unwrap_err();
         assert_eq!(err, UnknownToolError("bogus".into()));
+    }
+
+    #[test]
+    fn sanitize_readonly_advisory_tools_excludes_shell_exec() {
+        let got = sanitize_readonly_advisory_tools(&[
+            "read_file".into(),
+            "shell_exec".into(),
+            "shell".into(),
+            "grep".into(),
+        ]);
+        assert_eq!(got, vec!["read_file".to_string(), "grep".to_string()]);
+    }
+
+    #[test]
+    fn sanitize_readonly_advisory_tools_maps_aliases() {
+        let got = sanitize_readonly_advisory_tools(&["view_file".into(), "ls".into()]);
+        assert_eq!(got, vec!["read_file".to_string(), "list_dir".to_string()]);
     }
 }

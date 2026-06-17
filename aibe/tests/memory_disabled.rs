@@ -42,6 +42,7 @@ fn memory_disabled_service() -> RequestService {
         rpc_extension,
         turn_hook,
         FeatureRegistry::empty(),
+        aibe::domain::FeatureEligibilityContext::default(),
     )
 }
 
@@ -277,6 +278,7 @@ async fn route_turn_strips_feature_actions_when_feature_registry_empty() {
         rpc_extension,
         turn_hook,
         FeatureRegistry::empty(),
+        aibe::domain::FeatureEligibilityContext::default(),
     );
     let resp = service
         .handle(

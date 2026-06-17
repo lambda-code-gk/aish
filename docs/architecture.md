@@ -146,8 +146,9 @@ aish          →  （aibe への path 依存禁止）
 - **自動適用（MVP）**: `memory_query`、`memory_recipe_run { apply: false }`、`set_log_tail_bytes`、`set_recommended_tools`（read-only tool のみ）。
 - **log tail**: `set_log_tail_bytes` と `RoutePlan.log_tail_bytes` は `SHELL_LOG_TAIL_MAX_BYTES` で clamp。超過で turn 全体を失敗させない。
 - **tools 経路の整理**:
-  - `RoutePlan.recommended_tools` — 0030 互換 advisory。`shell_exec` 含みうる（実行時承認あり）。Phase 2 で read-only 統一予定。
-  - `FeatureAction::SetRecommendedTools` — smart feature 自動適用。**`shell_exec` は除外**（read-only のみ）。
+  - `RoutePlan.recommended_tools` — 0030 互換 advisory。**read-only tool のみ**（`aibe-protocol::sanitize_readonly_advisory_tools`）。`shell_exec` は route_turn advisory として通さない。
+  - `FeatureAction::SetRecommendedTools` — smart feature 自動適用。同じ read-only 境界。
+- **pack 3 状態（0043 Phase 2）**: `kind_files=[]` かつ `recipe_files=[]` かつ `feature_files=None` のとき baseline feature を読まない（generic memory）。feature 定義は `priority` / `requires_memory` / `requires_recipe` で eligibility を判定し、不整合 feature は `route_turn` に出さない。
 - **履歴**: feature executor の memory 本文は `agent_turn` のみへ。local history の `request_messages` は **replay 用 transcript を保持**し、redacted summary は `feature_summaries` に分離する。
 - **retry / rerun**: TTY かつ元 turn が `ask` のとき `route_turn` + feature executor を再実行。non-TTY / `chat` は `request_messages` replay。
 - **memory.enabled=false**（0043）: composition root は `FeatureRegistry::empty()` を渡す。`route_turn` は feature catalog / trigger マージ / `feature_actions` を返さない（LLM が返しても strip）。

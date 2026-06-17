@@ -26,6 +26,9 @@ impl FilesystemFeatureRegistryLoader {
 impl FeatureRegistryLoader for FilesystemFeatureRegistryLoader {
     fn load(&self) -> Result<FeatureRegistry, FeatureRegistryError> {
         match &self.memory_config.feature_files {
+            None if self.memory_config.is_explicit_generic_memory_pack() => {
+                Ok(FeatureRegistry::empty())
+            }
             None => FeatureRegistry::baseline(),
             Some(files) if files.is_empty() => Ok(FeatureRegistry::empty()),
             Some(files) => {
@@ -58,6 +61,18 @@ mod tests {
             kind_files: None,
             recipe_files: None,
             feature_files: Some(vec![]),
+        });
+        let registry = loader.load().expect("load");
+        assert!(registry.feature_ids().is_empty());
+    }
+
+    #[test]
+    fn generic_memory_pack_without_feature_files_yields_empty_registry() {
+        let loader = FilesystemFeatureRegistryLoader::new(MemoryConfig {
+            enabled: true,
+            kind_files: Some(vec![]),
+            recipe_files: Some(vec![]),
+            feature_files: None,
         });
         let registry = loader.load().expect("load");
         assert!(registry.feature_ids().is_empty());

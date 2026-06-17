@@ -8,8 +8,7 @@
 
 use aibe_protocol::{
     ClientResponse, FeatureAction, MemoryContext, MemoryQueryDto, MemoryRecipeProposalDto,
-    ProtocolMessage, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
-    SHELL_LOG_TAIL_MAX_BYTES, SYSTEM_INSTRUCTION_MAX_BYTES,
+    ProtocolMessage, SHELL_LOG_TAIL_MAX_BYTES, SYSTEM_INSTRUCTION_MAX_BYTES,
 };
 
 use crate::clap_cli::TurnOptions;
@@ -214,35 +213,7 @@ fn truncate_system_message(raw: String, max_bytes: usize) -> String {
 }
 
 fn resolve_safe_tools(raw: &[String]) -> Vec<String> {
-    const SAFE: &[&str] = &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
-
-    let mut out: Vec<String> = Vec::new();
-    for t in raw {
-        let norm = t.trim().to_ascii_lowercase().replace('-', "_");
-        let mapped = match norm.as_str() {
-            // common aliases
-            "view_file" | "viewfile" | "read" | "cat" | "cat_file" => READ_FILE,
-            "list_files" | "listdir" | "ls" | "dir" => LIST_DIR,
-            "search" | "find" | "rg" => GREP,
-            "diff" => GIT_DIFF,
-            "git" | "status" | "git_status" => GIT_STATUS,
-            other => other,
-        };
-
-        // unknown tool は safe にしない
-        if mapped == SHELL_EXEC {
-            continue;
-        }
-        if !SAFE.contains(&mapped) {
-            // keep the behavior strict for MVP
-            continue;
-        }
-        let s = mapped.to_string();
-        if !out.iter().any(|x| x == &s) {
-            out.push(s);
-        }
-    }
-    out
+    aibe_protocol::sanitize_readonly_advisory_tools(raw)
 }
 
 fn format_memory_recipe_proposals(proposals: Vec<MemoryRecipeProposalDto>) -> String {

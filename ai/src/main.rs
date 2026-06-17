@@ -47,9 +47,8 @@ use aibe_client::{
     ShellExecApprovalPrompt,
 };
 use aibe_protocol::{
-    is_known_tool, ClientRequest, ClientResponse, ProtocolMessage, RouteKind, RoutePlan,
-    RouteTurnCliOverrides, RouteTurnConversation, RouteTurnSession, GIT_DIFF, GIT_STATUS, GREP,
-    LIST_DIR, READ_FILE, SHELL_EXEC,
+    ClientRequest, ClientResponse, ProtocolMessage, RouteKind, RoutePlan, RouteTurnCliOverrides,
+    RouteTurnConversation, RouteTurnSession,
 };
 
 fn main() -> ExitCode {
@@ -1462,27 +1461,8 @@ fn apply_route_plan_advisory(
 
 fn sanitize_recommended_tools(raw: Option<&[String]>) -> Option<Vec<String>> {
     let raw = raw.filter(|tools| !tools.is_empty())?;
-    let mut out = Vec::new();
-    for name in raw {
-        let mapped = map_route_tool_alias(name);
-        if is_known_tool(&mapped) && !out.iter().any(|existing| existing == &mapped) {
-            out.push(mapped);
-        }
-    }
+    let out = aibe_protocol::sanitize_readonly_advisory_tools(raw);
     (!out.is_empty()).then_some(out)
-}
-
-fn map_route_tool_alias(raw: &str) -> String {
-    let norm = raw.trim().to_ascii_lowercase().replace('-', "_");
-    match norm.as_str() {
-        "view_file" | "viewfile" | "read" | "cat" | "cat_file" => READ_FILE.to_string(),
-        "list_files" | "listdir" | "ls" | "dir" => LIST_DIR.to_string(),
-        "search" | "find" | "rg" => GREP.to_string(),
-        "git" | "status" => GIT_STATUS.to_string(),
-        "diff" => GIT_DIFF.to_string(),
-        "shell" | "exec" | "run" => SHELL_EXEC.to_string(),
-        other => other.to_string(),
-    }
 }
 
 fn maybe_log_route_escalation(quiet: bool, plan: &RoutePlan) {

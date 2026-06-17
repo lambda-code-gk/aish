@@ -7,7 +7,8 @@ use crate::application::agent_turn::AgentTurnService;
 use crate::application::route_turn::RouteTurnService;
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
-    parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError, FeatureRegistry,
+    parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError,
+    FeatureEligibilityContext, FeatureRegistry,
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
@@ -36,6 +37,7 @@ pub struct RequestService {
     rpc_extension: Arc<dyn RpcExtension>,
     turn_hook: Arc<dyn TurnHook>,
     feature_registry: FeatureRegistry,
+    feature_eligibility: FeatureEligibilityContext,
 }
 
 impl RequestService {
@@ -52,6 +54,7 @@ impl RequestService {
         rpc_extension: Arc<dyn RpcExtension>,
         turn_hook: Arc<dyn TurnHook>,
         feature_registry: FeatureRegistry,
+        feature_eligibility: FeatureEligibilityContext,
     ) -> Self {
         Self {
             profile_registry,
@@ -65,6 +68,7 @@ impl RequestService {
             rpc_extension,
             turn_hook,
             feature_registry,
+            feature_eligibility,
         }
     }
 
@@ -93,6 +97,7 @@ impl RequestService {
             rpc_extension,
             turn_hook,
             feature_registry,
+            FeatureEligibilityContext::default(),
         )
     }
 
@@ -122,6 +127,7 @@ impl RequestService {
             rpc_extension,
             turn_hook,
             feature_registry,
+            FeatureEligibilityContext::default(),
         )
     }
 
@@ -158,6 +164,7 @@ impl RequestService {
                     },
                     self.conversation_store.clone(),
                     self.feature_registry.clone(),
+                    self.feature_eligibility,
                 );
                 route_service
                     .run(id, query, cwd, session, conversation, cli_overrides)

@@ -31,8 +31,9 @@ pub use response::{
     RouteKind, RoutePlan, RouteTurnResult, RouteTurnStatus,
 };
 pub use tool_name::{
-    is_known_tool, parse_tool_names, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS, GREP,
-    KNOWN_TOOLS, LIST_DIR, READ_FILE, SHELL_EXEC,
+    is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,
+    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS,
+    GREP, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE, SHELL_EXEC,
 };
 
 /// `RequestContext.shell_log_tail` の truncate 上限（バイト）。

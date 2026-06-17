@@ -82,6 +82,10 @@ max_tool_output_bytes = 32_768
 # [memory]
 # enabled = false
 # enabled=false では smart feature registry も empty（baseline features.toml は読まない）
+# generic memory のみ使う例（AISH kind / recipe / feature を明示的に無効化）:
+# kind_files = []
+# recipe_files = []
+# feature_files = []
 # 環境変数 AIBE_MEMORY_ENABLED=0 でも無効化可。ai 側は ~/.config/ai/config.toml の [memory] も合わせること。
 
 [tools.shell_exec]

@@ -12,6 +12,7 @@ use aibe::adapters::outbound::{
 };
 use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
+use aibe::domain::FeatureEligibilityContext;
 use aibe::domain::FeatureRegistry;
 use aibe::domain::LlmStepResult;
 use aibe::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
@@ -307,4 +308,135 @@ async fn registry_does_not_duplicate_memory_query_when_llm_already_returned_one(
         .filter(|a| matches!(a, FeatureAction::MemoryQuery { .. }))
         .count();
     assert_eq!(memory_queries, 1, "plan: {:?}", plan.feature_actions);
+}
+
+#[tokio::test]
+async fn route_turn_strips_shell_exec_from_recommended_tools() {
+    let store_root = tempdir().expect("tempdir").into_path();
+    let tools_config = ToolsConfig::default();
+    let strategy = tools_config.termination_strategy;
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        r#"{"route_kind":"tool_assisted","new_conversation":false,"recommended_tools":["read_file","shell_exec","shell"],"route_reason":"inspect"}"#
+            .to_string(),
+    )]));
+    let profile_registry =
+        ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
+    let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        profile_registry.clone(),
+    );
+    let svc = RequestService::new(
+        profile_registry,
+        tool_registry,
+        tools_config,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        "fast".to_string(),
+        Arc::new(ConversationStore::new(store_root)),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::empty(),
+    );
+    let resp = svc
+        .handle(
+            ClientRequest::RouteTurn {
+                id: "route-tools".into(),
+                query: "hello".into(),
+                cwd: "/tmp/proj".into(),
+                session: RouteTurnSession {
+                    ai_session_id: "session-tools".into(),
+                    aish_session_dir: None,
+                    tty: true,
+                },
+                conversation: RouteTurnConversation {
+                    conversation_id: None,
+                    recent_summary: None,
+                    new_conversation: true,
+                },
+                cli_overrides: RouteTurnCliOverrides::default(),
+            },
+            None,
+        )
+        .await;
+    let plan = match resp {
+        ClientResponse::RouteTurnResult { plan, .. } => plan,
+        other => panic!("expected route_turn_result, got {other:?}"),
+    };
+    assert_eq!(plan.recommended_tools, Some(vec!["read_file".to_string()]));
+}
+
+#[tokio::test]
+async fn registry_skips_requires_recipe_features_when_recipes_disabled() {
+    let store_root = tempdir().expect("tempdir").into_path();
+    let tools_config = ToolsConfig::default();
+    let strategy = tools_config.termination_strategy;
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        r#"{"route_kind":"tool_assisted","new_conversation":false,"recommended_tools":[],"feature_actions":[],"route_reason":"clarify"}"#
+            .to_string(),
+    )]));
+    let profile_registry =
+        ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
+    let tool_registry = build_registry(&tools_config, &[]);
+    let (rpc_extension, turn_hook) = contextual_pack_arc(
+        Arc::new(EmptyContextualMemoryStore),
+        Arc::new(FilesystemMemorySpaceResolver),
+        shared_builtin_loader(),
+        shared_baseline_recipe_loader(),
+        Arc::new(InProcessMemorySubscriptionBroker::new()),
+        StaticCapabilityPolicy::local_full(),
+        profile_registry.clone(),
+    );
+    let svc = RequestService::new_with_turns_and_packs(
+        profile_registry,
+        tool_registry,
+        tools_config,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        "fast".to_string(),
+        Arc::new(ConversationStore::new(store_root)),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::baseline().expect("baseline"),
+        FeatureEligibilityContext {
+            memory_kinds_enabled: true,
+            recipes_enabled: false,
+        },
+    );
+    let resp = svc
+        .handle(
+            ClientRequest::RouteTurn {
+                id: "route-elig".into(),
+                query: "作業の目的を整理したい".into(),
+                cwd: "/tmp/proj".into(),
+                session: RouteTurnSession {
+                    ai_session_id: "session-elig".into(),
+                    aish_session_dir: None,
+                    tty: true,
+                },
+                conversation: RouteTurnConversation {
+                    conversation_id: None,
+                    recent_summary: None,
+                    new_conversation: true,
+                },
+                cli_overrides: RouteTurnCliOverrides::default(),
+            },
+            None,
+        )
+        .await;
+    let plan = match resp {
+        ClientResponse::RouteTurnResult { plan, .. } => plan,
+        other => panic!("expected route_turn_result, got {other:?}"),
+    };
+    use aibe_protocol::FeatureAction;
+    assert!(!plan
+        .feature_actions
+        .iter()
+        .any(|a| matches!(a, FeatureAction::MemoryRecipeRun { .. })));
 }

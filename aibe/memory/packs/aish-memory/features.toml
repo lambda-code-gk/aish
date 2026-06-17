@@ -25,6 +25,8 @@ tools = ["read_file", "grep", "git_status"]
 
 [clarify_goal]
 description = "作業目的を整理し、goal/now/idea 候補を提案する"
+requires_recipe = true
+priority = 20
 triggers = [
   "目的",
   "ゴール",
@@ -42,6 +44,8 @@ apply = false
 
 [memory_context]
 description = "現在の goal / rule / decision など contextual memory を参照する"
+requires_memory = true
+priority = 10
 triggers = [
   "ルール",
   "方針",

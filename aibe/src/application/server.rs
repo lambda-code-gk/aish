@@ -22,7 +22,7 @@ use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
 use crate::application::contextual_pack_arc;
 use crate::application::request_service::RequestService;
-use crate::domain::FeatureRegistry;
+use crate::domain::{FeatureEligibilityContext, FeatureRegistry};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, MemoryConfig, ProfileRegistry,
@@ -89,6 +89,10 @@ pub async fn run(
     } else {
         FeatureRegistry::empty()
     };
+    let feature_eligibility = FeatureEligibilityContext::from_memory_kinds_and_recipes(
+        memory_config.memory_kinds_enabled(),
+        memory_config.recipes_enabled(),
+    );
 
     let handler: Arc<dyn ClientRequestHandler> =
         Arc::new(RequestService::new_with_turns_and_packs(
@@ -103,6 +107,7 @@ pub async fn run(
             rpc_extension,
             turn_hook,
             feature_registry,
+            feature_eligibility,
         ));
 
     unix_socket_server::run(socket_path, handler).await
