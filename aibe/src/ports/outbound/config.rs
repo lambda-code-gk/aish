@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+use crate::domain::FeaturePackResolution;
+
 use super::llm::LlmProvider;
 use super::termination_capability::TerminationCapability;
 
@@ -88,6 +90,19 @@ impl MemoryConfig {
     pub fn is_explicit_generic_memory_pack(&self) -> bool {
         matches!(&self.kind_files, Some(k) if k.is_empty())
             && matches!(&self.recipe_files, Some(r) if r.is_empty())
+    }
+
+    /// `MemoryConfig` から feature pack 入力を解決する（0043 Phase 3）。
+    ///
+    /// `memory.enabled=false` のときは呼び出し元が `FeatureRegistry::empty()` を使う想定。
+    /// 本メソッドは `enabled` を見ず、`feature_files` と generic memory 状態だけを解釈する。
+    pub fn resolve_feature_pack(&self) -> FeaturePackResolution {
+        match &self.feature_files {
+            Some(files) if files.is_empty() => FeaturePackResolution::empty(),
+            Some(files) => FeaturePackResolution::explicit_files(files.clone()),
+            None if self.is_explicit_generic_memory_pack() => FeaturePackResolution::empty(),
+            None => FeaturePackResolution::baseline_compat(),
+        }
     }
 }
 
@@ -404,6 +419,42 @@ mod tests {
             ..ToolsConfig::default()
         };
         assert_eq!(cfg.effective_max_rounds(), 3);
+    }
+
+    #[test]
+    fn resolve_feature_pack_generic_memory_with_none_feature_files_is_empty() {
+        let cfg = MemoryConfig {
+            enabled: true,
+            kind_files: Some(vec![]),
+            recipe_files: Some(vec![]),
+            feature_files: None,
+        };
+        let pack = cfg.resolve_feature_pack();
+        assert_eq!(pack.mode, crate::domain::EffectiveFeatureMode::Empty);
+        assert!(pack.config.feature_files.is_empty());
+    }
+
+    #[test]
+    fn resolve_feature_pack_default_is_baseline_compat() {
+        let pack = MemoryConfig::default().resolve_feature_pack();
+        assert_eq!(
+            pack.mode,
+            crate::domain::EffectiveFeatureMode::BaselineCompat
+        );
+        assert!(pack.config.feature_files.is_empty());
+    }
+
+    #[test]
+    fn resolve_feature_pack_explicit_empty_feature_files_is_empty() {
+        let cfg = MemoryConfig {
+            enabled: true,
+            kind_files: None,
+            recipe_files: None,
+            feature_files: Some(vec![]),
+        };
+        let pack = cfg.resolve_feature_pack();
+        assert_eq!(pack.mode, crate::domain::EffectiveFeatureMode::Empty);
+        assert!(pack.config.feature_files.is_empty());
     }
 }
 

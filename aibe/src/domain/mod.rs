@@ -31,8 +31,9 @@ pub use contextual_memory::{
     MemoryScope, MemoryStatus, MemoryValidationError, ProjectKey, ProjectKeyError,
 };
 pub use feature_registry::{
-    actions_equivalent, baseline_feature_registry, feature_action_schema_prompt, FeatureDefinition,
-    FeatureEligibilityContext, FeatureRegistry, FeatureRegistryError,
+    actions_equivalent, baseline_feature_registry, feature_action_schema_prompt,
+    EffectiveFeatureMode, FeatureDefinition, FeatureEligibilityContext, FeaturePackConfig,
+    FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
 };
 pub use llm_step::LlmStepResult;
 pub(crate) use memory_kind_registry::parse_kinds_toml_str;

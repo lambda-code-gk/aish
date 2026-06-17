@@ -86,6 +86,7 @@ max_tool_output_bytes = 32_768
 # kind_files = []
 # recipe_files = []
 # feature_files = []
+# feature 未指定（None）でも generic memory では baseline feature は読まない（0043 Phase 3: composition root が empty に解決）
 # 環境変数 AIBE_MEMORY_ENABLED=0 でも無効化可。ai 側は ~/.config/ai/config.toml の [memory] も合わせること。
 
 [tools.shell_exec]

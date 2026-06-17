@@ -1,10 +1,72 @@
 //! Smart feature 定義の registry（0042）。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use aibe_protocol::FeatureAction;
 use serde::Deserialize;
+
+/// feature registry の解決モード（0043 Phase 3）。composition root が決定する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveFeatureMode {
+    /// 空 registry（明示空または generic memory 時の `feature_files=None`）。
+    Empty,
+    /// baseline pack 互換（`feature_files=None`、generic memory ではない）。
+    BaselineCompat,
+    /// `feature_files` に列挙された TOML のみを merge。
+    ExplicitFiles,
+}
+
+/// feature pack の入力（memory pack から独立した設定面、0043 Phase 3）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeaturePackConfig {
+    pub feature_files: Vec<PathBuf>,
+}
+
+impl FeaturePackConfig {
+    pub fn empty() -> Self {
+        Self {
+            feature_files: Vec::new(),
+        }
+    }
+
+    pub fn explicit_files(files: Vec<PathBuf>) -> Self {
+        Self {
+            feature_files: files,
+        }
+    }
+}
+
+/// feature pack の解決結果（composition root が一度だけ決める）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeaturePackResolution {
+    pub mode: EffectiveFeatureMode,
+    pub config: FeaturePackConfig,
+}
+
+impl FeaturePackResolution {
+    pub fn empty() -> Self {
+        Self {
+            mode: EffectiveFeatureMode::Empty,
+            config: FeaturePackConfig::empty(),
+        }
+    }
+
+    pub fn baseline_compat() -> Self {
+        Self {
+            mode: EffectiveFeatureMode::BaselineCompat,
+            config: FeaturePackConfig::empty(),
+        }
+    }
+
+    pub fn explicit_files(files: Vec<PathBuf>) -> Self {
+        Self {
+            mode: EffectiveFeatureMode::ExplicitFiles,
+            config: FeaturePackConfig::explicit_files(files),
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FeatureRegistryError {

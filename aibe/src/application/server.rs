@@ -83,7 +83,7 @@ pub async fn run(
     };
 
     let feature_registry = if memory_config.enabled {
-        FilesystemFeatureRegistryLoader::new(memory_config.clone())
+        FilesystemFeatureRegistryLoader::new(memory_config.resolve_feature_pack())
             .load()
             .map_err(|e| anyhow::anyhow!("feature registry: {e}"))?
     } else {

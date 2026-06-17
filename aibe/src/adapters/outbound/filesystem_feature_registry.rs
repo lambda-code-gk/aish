@@ -1,19 +1,21 @@
-//! `feature_files` または baseline pack の smart feature 読み込み。
+//! `FeaturePackConfig` に基づく smart feature 読み込み（0043 Phase 3）。
 
 use std::fs;
 use std::path::Path;
 
-use crate::domain::{FeatureRegistry, FeatureRegistryError};
-use crate::ports::outbound::{FeatureRegistryLoader, MemoryConfig};
+use crate::domain::{
+    EffectiveFeatureMode, FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
+};
+use crate::ports::outbound::FeatureRegistryLoader;
 
 #[derive(Debug, Clone)]
 pub struct FilesystemFeatureRegistryLoader {
-    memory_config: MemoryConfig,
+    resolution: FeaturePackResolution,
 }
 
 impl FilesystemFeatureRegistryLoader {
-    pub fn new(memory_config: MemoryConfig) -> Self {
-        Self { memory_config }
+    pub fn new(resolution: FeaturePackResolution) -> Self {
+        Self { resolution }
     }
 
     fn load_file(path: &Path) -> Result<FeatureRegistry, FeatureRegistryError> {
@@ -25,15 +27,12 @@ impl FilesystemFeatureRegistryLoader {
 
 impl FeatureRegistryLoader for FilesystemFeatureRegistryLoader {
     fn load(&self) -> Result<FeatureRegistry, FeatureRegistryError> {
-        match &self.memory_config.feature_files {
-            None if self.memory_config.is_explicit_generic_memory_pack() => {
-                Ok(FeatureRegistry::empty())
-            }
-            None => FeatureRegistry::baseline(),
-            Some(files) if files.is_empty() => Ok(FeatureRegistry::empty()),
-            Some(files) => {
+        match self.resolution.mode {
+            EffectiveFeatureMode::Empty => Ok(FeatureRegistry::empty()),
+            EffectiveFeatureMode::BaselineCompat => FeatureRegistry::baseline(),
+            EffectiveFeatureMode::ExplicitFiles => {
                 let mut merged = FeatureRegistry::empty();
-                for path in files {
+                for path in &self.resolution.config.feature_files {
                     merged.merge(Self::load_file(path)?);
                 }
                 Ok(merged)
@@ -45,36 +44,44 @@ impl FeatureRegistryLoader for FilesystemFeatureRegistryLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
-    fn feature_files_none_loads_baseline_pack() {
-        let loader = FilesystemFeatureRegistryLoader::new(MemoryConfig::default());
+    fn baseline_compat_mode_loads_baseline_pack() {
+        let loader = FilesystemFeatureRegistryLoader::new(
+            crate::domain::FeaturePackResolution::baseline_compat(),
+        );
         let registry = loader.load().expect("load");
         assert!(!registry.feature_ids().is_empty());
         assert!(registry.feature_ids().contains(&"inspect_error"));
     }
 
     #[test]
-    fn feature_files_empty_yields_empty_registry() {
-        let loader = FilesystemFeatureRegistryLoader::new(MemoryConfig {
-            enabled: true,
-            kind_files: None,
-            recipe_files: None,
-            feature_files: Some(vec![]),
-        });
+    fn empty_mode_yields_empty_registry() {
+        let loader =
+            FilesystemFeatureRegistryLoader::new(crate::domain::FeaturePackResolution::empty());
         let registry = loader.load().expect("load");
         assert!(registry.feature_ids().is_empty());
     }
 
     #[test]
-    fn generic_memory_pack_without_feature_files_yields_empty_registry() {
-        let loader = FilesystemFeatureRegistryLoader::new(MemoryConfig {
-            enabled: true,
-            kind_files: Some(vec![]),
-            recipe_files: Some(vec![]),
-            feature_files: None,
-        });
+    fn explicit_files_load_listed_feature_files_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let feature_path = dir.path().join("custom-features.toml");
+        fs::write(
+            &feature_path,
+            r#"
+[custom_feature]
+description = "custom"
+triggers = ["hello"]
+"#,
+        )
+        .expect("write feature file");
+        let loader =
+            FilesystemFeatureRegistryLoader::new(FeaturePackResolution::explicit_files(vec![
+                feature_path,
+            ]));
         let registry = loader.load().expect("load");
-        assert!(registry.feature_ids().is_empty());
+        assert_eq!(registry.feature_ids(), vec!["custom_feature"]);
     }
 }

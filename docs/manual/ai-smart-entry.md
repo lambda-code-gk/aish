@@ -69,7 +69,7 @@ ai --preset fast --tools read_file 'list files'
 5. TTY で `ai history retry` / `rerun`（元が `ask`）を実行すると `route_turn` が再実行され、現行 registry に基づく feature が再適用されること。
 6. `memory.enabled=false` のとき `route_turn` は feature catalog / `feature_actions` を返さないこと（smart feature は無効）。
 7. `route_turn` の `recommended_tools` に `shell_exec` が含まれても `ai` 側では read-only tool のみ採用されること（0043 Phase 2）。
-8. generic memory（`kind_files=[]` + `recipe_files=[]`、feature 未指定）では AISH baseline feature が効かないこと。
+8. generic memory（`kind_files=[]` + `recipe_files=[]`、feature 未指定）では AISH baseline feature が効かないこと（`FeaturePackConfig` が empty に解決される）。
 
 ## 期待結果
 

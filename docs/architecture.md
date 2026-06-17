@@ -142,6 +142,7 @@ aish          →  （aibe への path 依存禁止）
 `RoutePlan.feature_actions` は構造化された機能提案の配列である。`ai` は `ai ...` 文字列を再帰実行せず、`feature_executor` が action を解釈する。
 
 - **定義**: AISH 固有 feature は `aibe/memory/packs/aish-memory/features.toml`（`[memory] feature_files`、未指定時は baseline pack 互換）。trigger 部分一致で action を展開し、LLM が返した `feature_actions` にマージする。
+- **Phase 3 方針**: feature pack は memory pack から独立した設定面として扱うが、TOML の `[features]` 節はまだ導入しない。現行の `[memory].feature_files` は互換入力として受け、`FeaturePackConfig` 側に正規化してから registry を構築する。
 - **route_turn プロンプト**: 許可 action type・JSON 形状・使用タイミングを明示する。
 - **自動適用（MVP）**: `memory_query`、`memory_recipe_run { apply: false }`、`set_log_tail_bytes`、`set_recommended_tools`（read-only tool のみ）。
 - **log tail**: `set_log_tail_bytes` と `RoutePlan.log_tail_bytes` は `SHELL_LOG_TAIL_MAX_BYTES` で clamp。超過で turn 全体を失敗させない。
@@ -149,6 +150,7 @@ aish          →  （aibe への path 依存禁止）
   - `RoutePlan.recommended_tools` — 0030 互換 advisory。**read-only tool のみ**（`aibe-protocol::sanitize_readonly_advisory_tools`）。`shell_exec` は route_turn advisory として通さない。
   - `FeatureAction::SetRecommendedTools` — smart feature 自動適用。同じ read-only 境界。
 - **pack 3 状態（0043 Phase 2）**: `kind_files=[]` かつ `recipe_files=[]` かつ `feature_files=None` のとき baseline feature を読まない（generic memory）。feature 定義は `priority` / `requires_memory` / `requires_recipe` で eligibility を判定し、不整合 feature は `route_turn` に出さない。
+- **pack 分離（0043 Phase 3）**: `kind_files` / `recipe_files` は memory pack、`feature_files` は feature pack に分けて解釈する。`feature_files=None` の互換解釈は維持するが、設定モデルは分離済みであるべき。
 - **履歴**: feature executor の memory 本文は `agent_turn` のみへ。local history の `request_messages` は **replay 用 transcript を保持**し、redacted summary は `feature_summaries` に分離する。
 - **retry / rerun**: TTY かつ元 turn が `ask` のとき `route_turn` + feature executor を再実行。non-TTY / `chat` は `request_messages` replay。
 - **memory.enabled=false**（0043）: composition root は `FeatureRegistry::empty()` を渡す。`route_turn` は feature catalog / trigger マージ / `feature_actions` を返さない（LLM が返しても strip）。
