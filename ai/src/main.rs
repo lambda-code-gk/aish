@@ -12,24 +12,28 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 
-use ai::adapters::outbound::toml_config::AiConfig;
+use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
-    detect_terminal_size, external_command_names, load_shell_exec_approval, read_chat_line,
-    resolve_shell_log_for_ask, AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore,
-    ShellExecRenderOptions, StdoutPresenter, YesExecCache,
+    detect_terminal_size, external_command_names, load_preprocessor_model,
+    load_shell_exec_approval, read_chat_line, resolve_session_error_summary,
+    resolve_shell_log_for_ask, write_observation_record, AibeUnixClient, ChatReadLineResult,
+    FileLogTail, LocalHistoryStore, ObservationContext, ObservationRecord, ShellExecRenderOptions,
+    StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
-    build_response_summary, build_summary, ensure_aibe_if_needed, execute_feature_actions_mvp,
-    list_history, memory_cli, next_history_id, plan_ask_launch, record_turn, HistoryRecordInput,
-    HistoryReplayInput, TurnCancelGuard,
+    build_response_summary, build_summary, ensure_aibe_if_needed, evaluate_preprocessor,
+    execute_feature_actions_mvp, list_history, memory_cli, next_history_id, plan_ask_launch,
+    record_turn, HistoryRecordInput, HistoryReplayInput, PreprocessorRunInput,
+    PreprocessorRunOutcome, TurnCancelGuard,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
     MemoryCliOptions, NowCommand, OutputFormatArg, TurnOptions,
 };
+use ai::domain::smart_preprocessor::{PreprocessConfig, SmartIntentClass, SmartPreprocessMode};
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
     resolve_progress, validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError,
@@ -213,7 +217,9 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     let smart = if std::io::stdin().is_terminal() {
-        run_smart_route(
+        run_smart_route_with_preprocessor(
+            &cfg,
+            "ask",
             &base_settings.socket_path,
             &message.content,
             &base_settings,
@@ -331,7 +337,9 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     let base_settings = resolve_turn_settings(&cfg, &turn)?;
     let (settings, messages, feature_summaries, conversation_id, route_plan_json) =
         if should_reapply_smart_features(&payload) {
-            let smart = run_smart_route(
+            let smart = run_smart_route_with_preprocessor(
+                &cfg,
+                "retry",
                 &base_settings.socket_path,
                 &message.content,
                 &base_settings,
@@ -415,7 +423,9 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     let base_settings = resolve_turn_settings(&cfg, &merged_turn)?;
     let (settings, messages, feature_summaries, conversation_id, route_plan_json) =
         if should_reapply_smart_features(&payload) {
-            let smart = run_smart_route(
+            let smart = run_smart_route_with_preprocessor(
+                &cfg,
+                "rerun",
                 &base_settings.socket_path,
                 &message.content,
                 &base_settings,
@@ -1323,6 +1333,175 @@ fn apply_smart_route_and_features(
     }
 }
 
+fn build_preprocess_config(
+    cfg: &SmartPreprocessorConfig,
+    validated_model: Option<&ai::adapters::outbound::ValidatedPreprocessorModel>,
+) -> Option<PreprocessConfig> {
+    if !cfg.enabled {
+        return None;
+    }
+    let mode = SmartPreprocessMode::parse(&cfg.mode_raw)?;
+    if mode == SmartPreprocessMode::Off {
+        return None;
+    }
+    Some(PreprocessConfig {
+        mode,
+        route_turn_threshold_bps: (cfg.route_turn_threshold * 10000.0) as u16,
+        assist_threshold_bps: (cfg.assist_threshold * 10000.0) as u16,
+        max_evidence_bytes: cfg.max_evidence_bytes,
+        feature_hash_buckets: cfg.feature_hash_buckets,
+        feature_hash_seed: cfg.feature_hash_seed,
+        allow_shortcuts: cfg
+            .allow_shortcuts
+            .iter()
+            .filter_map(|s| SmartIntentClass::parse_shortcut(s))
+            .filter(|intent| matches!(intent, SmartIntentClass::SimpleChat))
+            .collect(),
+        model_version: validated_model.map(|m| m.model_version.clone()),
+        gate_model_verified: validated_model.is_some(),
+    })
+}
+
+fn write_preprocessor_observation(
+    sp_cfg: &SmartPreprocessorConfig,
+    decision: &ai::domain::smart_preprocessor::SmartPreprocessDecision,
+    ai_session_id: &str,
+    conversation_id: Option<String>,
+    decision_path: &str,
+    route_turn_used: bool,
+    fallback_reason: Option<String>,
+) {
+    let record = ObservationRecord::from_decision(
+        decision,
+        ObservationContext {
+            ai_session_id: Some(ai_session_id.to_string()),
+            conversation_id,
+            history_id: None,
+            decision_path: decision_path.to_string(),
+            route_turn_used,
+            fallback_reason,
+        },
+    );
+    let _ = write_observation_record(
+        &sp_cfg.observation_path,
+        &record,
+        sp_cfg.max_observation_bytes,
+    );
+}
+
+fn resolve_recent_local_history_summary(cfg: &AiConfig, ai_session_id: &str) -> Option<String> {
+    let store = LocalHistoryStore::new(cfg.history_dir.clone());
+    let entries = store.list().ok()?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.ai_session_id.as_deref() == Some(ai_session_id))?;
+    let summary = format!(
+        "request: {}; response: {}",
+        entry.request_summary.detail, entry.response_summary.detail
+    );
+    Some(ai::domain::smart_preprocessor::redact_for_evidence(
+        &summary, 240,
+    ))
+}
+
+fn run_preprocessor_pipeline(
+    cfg: &AiConfig,
+    ai_session_id: &str,
+    command: &str,
+    query: &str,
+    turn: &TurnOptions,
+    hints: &RouteTurnHints,
+) -> Option<PreprocessorRunOutcome> {
+    let sp_cfg = cfg.smart_preprocessor.as_ref()?;
+    let validated_model = sp_cfg
+        .model_path
+        .as_ref()
+        .and_then(|path| load_preprocessor_model(path).ok());
+    let pre_cfg = build_preprocess_config(sp_cfg, validated_model.as_ref())?;
+    let aish_session_dir = std::env::var("AISH_SESSION_DIR").ok().map(PathBuf::from);
+    let local_history_summary = resolve_recent_local_history_summary(cfg, ai_session_id);
+    let session_error = resolve_session_error_summary(aish_session_dir.as_deref());
+    let outcome = evaluate_preprocessor(
+        PreprocessorRunInput {
+            query: query.to_string(),
+            command: command.to_string(),
+            tty: true,
+            new_conversation: hints.conversation_id.is_none() && turn.new,
+            conversation_id: hints.conversation_id.clone(),
+            memory_enabled: cfg.memory_enabled,
+            history_tail_summary: local_history_summary,
+            session_error_summary: session_error,
+        },
+        &pre_cfg,
+    );
+    Some(outcome)
+}
+
+fn run_smart_route_with_preprocessor(
+    cfg: &AiConfig,
+    command: &str,
+    socket_path: &Path,
+    query: &str,
+    settings: &ResolvedTurnSettings,
+    turn: &TurnOptions,
+    mut hints: RouteTurnHints,
+) -> SmartRouteOutcome {
+    let preprocessor =
+        run_preprocessor_pipeline(cfg, &settings.ai_session_id, command, query, turn, &hints);
+    if let Some(ref outcome) = preprocessor {
+        if let Some(ref summary) = outcome.decision.route_turn_hints.recent_summary {
+            hints.recent_summary = Some(summary.clone());
+        }
+        if outcome.short_circuit {
+            let conversation_id = hints
+                .conversation_id
+                .clone()
+                .or_else(|| Some(next_conversation_id()));
+            if let Some(sp_cfg) = cfg.smart_preprocessor.as_ref() {
+                write_preprocessor_observation(
+                    sp_cfg,
+                    &outcome.decision,
+                    &settings.ai_session_id,
+                    conversation_id.clone(),
+                    "gate_short_circuit",
+                    false,
+                    None,
+                );
+            }
+            return SmartRouteOutcome {
+                conversation_id,
+                route_plan: None,
+                route_fallback: false,
+            };
+        }
+    }
+    let conversation_id_hint = hints.conversation_id.clone();
+    let smart = run_smart_route(socket_path, query, settings, turn, hints);
+    if let (Some(sp_cfg), Some(outcome)) = (cfg.smart_preprocessor.as_ref(), preprocessor) {
+        let (decision_path, fallback_reason) = if smart.route_fallback {
+            ("text_only_fallback", Some("route_turn_failed".to_string()))
+        } else {
+            let path = match outcome.decision.mode {
+                SmartPreprocessMode::Shadow => "shadow",
+                SmartPreprocessMode::Assist => "assist",
+                SmartPreprocessMode::Gate => "route_turn",
+                SmartPreprocessMode::Off => "route_turn",
+            };
+            (path, None)
+        };
+        write_preprocessor_observation(
+            sp_cfg,
+            &outcome.decision,
+            &settings.ai_session_id,
+            smart.conversation_id.clone().or(conversation_id_hint),
+            decision_path,
+            !smart.route_fallback,
+            fallback_reason,
+        );
+    }
+    smart
+}
+
 fn run_smart_route(
     socket_path: &Path,
     query: &str,
@@ -1375,11 +1554,13 @@ fn try_route_turn(client: &AibeUnixClient, request: ClientRequest) -> Result<Rou
 #[derive(Debug, Clone, Default)]
 struct RouteTurnHints {
     conversation_id: Option<String>,
+    recent_summary: Option<String>,
 }
 
 fn route_turn_hints_from_payload(payload: &HistoryPayload) -> RouteTurnHints {
     RouteTurnHints {
         conversation_id: payload.conversation_id.clone(),
+        recent_summary: None,
     }
 }
 
@@ -1404,7 +1585,7 @@ fn build_route_turn_request(
         },
         conversation: RouteTurnConversation {
             conversation_id: hints.conversation_id.clone(),
-            recent_summary: None,
+            recent_summary: hints.recent_summary.clone(),
             new_conversation: hints.conversation_id.is_none() && turn.new,
         },
         cli_overrides: RouteTurnCliOverrides {
@@ -2223,11 +2404,15 @@ mod cli_tests {
     use std::path::PathBuf;
 
     use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
+    use ai::adapters::outbound::LocalHistoryStore;
     use ai::clap_cli::{AiCli, TurnOptions};
     use ai::domain::{
         resolve_console_hints, resolve_progress, ConfigToolsTokens, FilterMetadata, ShellLogChoice,
     };
-    use ai::domain::{HistoryMessage, HistoryPayload};
+    use ai::domain::{
+        HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, HistorySummary,
+    };
+    use ai::ports::outbound::HistoryStore;
     use aibe_client::default_socket_path;
     use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RouteKind, RoutePlan};
 
@@ -2424,6 +2609,7 @@ mod cli_tests {
         let turn = crate::TurnOptions::default();
         let hints = crate::RouteTurnHints {
             conversation_id: Some("conv-original".into()),
+            recent_summary: None,
         };
         let request = crate::build_route_turn_request("retry me", &settings, &turn, hints);
         let ClientRequest::RouteTurn { conversation, .. } = request else {
@@ -2505,6 +2691,70 @@ mod cli_tests {
     }
 
     #[test]
+    fn resolve_recent_local_history_summary_uses_matching_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = LocalHistoryStore::new(dir.path().to_path_buf());
+        let entry = ai::domain::HistoryIndexEntry {
+            history_id: "h1".into(),
+            created_at_ms: 1,
+            command: "ask".into(),
+            session_id: Some("sess".into()),
+            ai_session_id: Some("ai-session".into()),
+            conversation_id: Some("conv".into()),
+            preset: None,
+            profile: None,
+            shell_exec_approval: None,
+            route_plan: None,
+            socket_path: "/tmp/sock".into(),
+            request_kind: HistoryRecordKind::Ask,
+            request_summary: HistorySummary::new("request=1"),
+            response_kind: HistoryRecordKind::Ask,
+            response_summary: HistorySummary::new("response=1"),
+            status: HistoryRecordStatus::Ok,
+        };
+        let payload = HistoryPayload {
+            history_id: "h1".into(),
+            command: "ask".into(),
+            user_message: "hello".into(),
+            request_messages: vec![],
+            feature_summaries: vec![],
+            shell_log_tail: None,
+            client_cwd: None,
+            tools: vec![],
+            llm_profile: None,
+            preset: None,
+            session_id: Some("sess".into()),
+            ai_session_id: Some("ai-session".into()),
+            conversation_id: Some("conv".into()),
+            shell_exec_approval: None,
+            route_plan: None,
+            socket_path: "/tmp/sock".into(),
+            log_tail_bytes: 1,
+        };
+        store.append(&entry, &payload).expect("append");
+
+        let cfg = ai::adapters::outbound::toml_config::AiConfig {
+            socket_path: default_socket_path(),
+            context_current: None,
+            memory_enabled: true,
+            ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
+            ask_filter: None,
+            ask_console_hints: None,
+            ask_progress: None,
+            history_dir: dir.path().to_path_buf(),
+            history_max_entries: 1,
+            log_tail_bytes: None,
+            presets: std::collections::HashMap::new(),
+            smart_preprocessor: None,
+        };
+        let summary =
+            crate::resolve_recent_local_history_summary(&cfg, "ai-session").expect("summary");
+        assert!(summary.contains("request: request=1"));
+        assert!(summary.contains("response: response=1"));
+    }
+
+    #[test]
     fn turn_options_parse_progress_flags() {
         use clap::Parser;
 
@@ -2558,6 +2808,7 @@ mod cli_tests {
             history_max_entries: 500,
             log_tail_bytes: None,
             presets: HashMap::new(),
+            smart_preprocessor: None,
         };
         let turn = TurnOptions {
             format: Some(OutputFormatArg::Json),
@@ -2620,6 +2871,7 @@ mod cli_tests {
             history_max_entries: 500,
             log_tail_bytes: None,
             presets: HashMap::from([("fast".into(), AiPresetConfig::default())]),
+            smart_preprocessor: None,
         };
         let plan = RoutePlan {
             conversation_id: "conv-1".into(),

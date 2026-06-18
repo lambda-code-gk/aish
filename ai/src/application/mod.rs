@@ -9,6 +9,7 @@ pub mod memory_command_policy;
 pub mod memory_space;
 #[cfg(not(feature = "memory"))]
 pub mod memory_stub;
+mod smart_preprocessor;
 mod turn_cancel;
 
 pub use ask::{Ask, AskError, AskOutcome, AskRunOptions};
@@ -20,3 +21,4 @@ pub use history::{
 pub use turn_cancel::{clear_turn_cancel, register_turn_cancel, TurnCancelGuard};
 
 pub use feature_executor::{execute_feature_actions_mvp, FeatureExecutionOutcome};
+pub use smart_preprocessor::{evaluate_preprocessor, PreprocessorRunInput, PreprocessorRunOutcome};

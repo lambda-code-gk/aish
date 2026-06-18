@@ -124,6 +124,8 @@ aish          →  （aibe への path 依存禁止）
 
 `ai` は tty の `ask` 入口で `route_turn` を 1 回実行し、失敗時のみ 1 回だけ再試行する。non-TTY では `route_turn` を飛ばし、従来の 1 shot ask に倒す。
 
+0044 の Smart Preprocessor / Local Intent Router は `ai` 側の前段補助としてこの `route_turn` 呼び出しの直前に入る。`route_turn` と `feature_executor` の正本は変えず、`route_turn` を省略できる場合でも安全条件を満たすときだけに限る。
+
 `route_turn` の request には次を含める。
 
 - `session.ai_session_id`: `aish` 由来の共有キー、または `ai` が生成した一意 ID
@@ -153,6 +155,20 @@ aish          →  （aibe への path 依存禁止）
 - **pack 分離（0043 Phase 3）**: `kind_files` / `recipe_files` は memory pack、`feature_files` は feature pack に分けて解釈する。`feature_files=None` の互換解釈は維持するが、設定モデルは分離済みであるべき。
 - **履歴**: feature executor の memory 本文は `agent_turn` のみへ。local history の `request_messages` は **replay 用 transcript を保持**し、redacted summary は `feature_summaries` に分離する。
 - **retry / rerun**: TTY かつ元 turn が `ask` のとき `route_turn` + feature executor を再実行。non-TTY / `chat` は `request_messages` replay。
+
+### Smart Preprocessor（0044）
+
+`ai` の smart entry 前段に、LLM を使わない局所 intent 判定層を置く。`route_turn` の置き換えではなく前段補助である。
+
+- **配置**: `ai` クレート（`domain/smart_preprocessor`、`application/smart_preprocessor`）。`aish` / `aibe` には入れない。
+- **パイプライン**: Hard Rules → Signal/Feature Extraction → Local Classifier → Confidence Gate →（必要なら）`route_turn` fallback。
+- **mode**（`[smart_preprocessor]`）:
+  - `off` — 無効（現行互換）
+  - `shadow` — 観測ログのみ。`route_turn` は従来どおり
+  - `assist` — bounded `recent_summary` を `route_turn` へ補強
+  - `gate` — 高信頼かつ安全な `simple_chat` のみ `route_turn` 短絡候補（`retry` / `rerun` / `memory_lookup` は transcript または memory 経路が必要なため短絡対象外）
+- **安全**: classifier / gate は shell approval・memory policy・CLI 明示値を bypass しない。raw shell log / LLM 出力全文は分類器入力に入れない。
+- **観測**: append-only NDJSON（`~/.local/share/ai/smart_preprocessor/observation.jsonl` 既定）。学習機構は持たない。
 - **memory.enabled=false**（0043）: composition root は `FeatureRegistry::empty()` を渡す。`route_turn` は feature catalog / trigger マージ / `feature_actions` を返さない（LLM が返しても strip）。
 
 詳細: [spec/0041](spec/0041_ai-smart-feature-plan-spec.md)、[spec/0042](spec/0042_configurable-smart-features-spec.md)、[spec/0043](spec/0043_feature-pack-boundary-hardening-spec.md)。

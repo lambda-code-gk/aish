@@ -28,6 +28,22 @@ pub struct AiConfig {
     pub history_max_entries: usize,
     pub log_tail_bytes: Option<usize>,
     pub presets: HashMap<String, AiPresetConfig>,
+    pub smart_preprocessor: Option<SmartPreprocessorConfig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SmartPreprocessorConfig {
+    pub enabled: bool,
+    pub mode_raw: String,
+    pub model_path: Option<PathBuf>,
+    pub feature_hash_buckets: u32,
+    pub feature_hash_seed: u64,
+    pub route_turn_threshold: f32,
+    pub assist_threshold: f32,
+    pub max_evidence_bytes: usize,
+    pub max_observation_bytes: usize,
+    pub allow_shortcuts: Vec<String>,
+    pub observation_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -61,7 +77,9 @@ impl AiConfig {
             history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
             log_tail_bytes: None,
             presets: HashMap::new(),
+            smart_preprocessor: None,
         };
+        let config_dir = path.parent().map(|p| p.to_path_buf());
         if path.is_file() {
             if let Ok(raw) = fs::read_to_string(&path) {
                 if let Ok(file) = toml::from_str::<FileConfig>(&raw) {
@@ -100,6 +118,12 @@ impl AiConfig {
                             .into_iter()
                             .map(|(name, preset)| (name, preset.into()))
                             .collect();
+                    }
+                    if let Some(sp) = file.smart_preprocessor {
+                        cfg.smart_preprocessor = Some(SmartPreprocessorConfig::from_section(
+                            sp,
+                            config_dir.as_deref(),
+                        ));
                     }
                 }
             }
@@ -198,6 +222,7 @@ struct FileConfig {
     history_max_entries: Option<usize>,
     log_tail_bytes: Option<usize>,
     presets: Option<HashMap<String, PresetToml>>,
+    smart_preprocessor: Option<SmartPreprocessorSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +242,56 @@ struct AskSection {
     filter: Option<String>,
     console_hints: Option<bool>,
     progress: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SmartPreprocessorSection {
+    enabled: Option<bool>,
+    mode: Option<String>,
+    model_path: Option<String>,
+    feature_hash_buckets: Option<u32>,
+    feature_hash_seed: Option<u64>,
+    route_turn_threshold: Option<f32>,
+    assist_threshold: Option<f32>,
+    max_evidence_bytes: Option<usize>,
+    max_observation_bytes: Option<usize>,
+    allow_shortcuts: Option<Vec<String>>,
+    observation_path: Option<String>,
+}
+
+impl SmartPreprocessorConfig {
+    fn from_section(
+        section: SmartPreprocessorSection,
+        config_dir: Option<&std::path::Path>,
+    ) -> Self {
+        let model_path = section.model_path.map(|p| {
+            let expanded = expand_home(p);
+            if expanded.is_absolute() {
+                expanded
+            } else if let Some(dir) = config_dir {
+                dir.join(expanded)
+            } else {
+                expanded
+            }
+        });
+        Self {
+            enabled: section.enabled.unwrap_or(false),
+            mode_raw: section.mode.unwrap_or_else(|| "shadow".to_string()),
+            model_path,
+            feature_hash_buckets: section.feature_hash_buckets.unwrap_or(262144),
+            feature_hash_seed: section.feature_hash_seed.unwrap_or(17),
+            route_turn_threshold: section.route_turn_threshold.unwrap_or(0.85),
+            assist_threshold: section.assist_threshold.unwrap_or(0.95),
+            max_evidence_bytes: section.max_evidence_bytes.unwrap_or(4096),
+            max_observation_bytes: section.max_observation_bytes.unwrap_or(2048),
+            allow_shortcuts: section
+                .allow_shortcuts
+                .unwrap_or_else(|| vec!["simple_chat".into()]),
+            observation_path: section.observation_path.map(expand_home).unwrap_or_else(
+                crate::adapters::outbound::smart_preprocessor_observation::default_observation_path,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

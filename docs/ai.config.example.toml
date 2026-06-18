@@ -32,3 +32,14 @@ log_tail_bytes = 4096
 quiet = true
 # console_hints = false
 # shell_exec_approval = "never"
+
+# Smart Preprocessor（0044）— 既定は無効。有効化時は shadow から始めることを推奨。
+# [smart_preprocessor]
+# enabled = true
+# mode = "shadow"
+# model_path = "smart_preprocessor/model.json"
+# route_turn_threshold = 0.85
+# assist_threshold = 0.95
+# max_evidence_bytes = 4096
+# max_observation_bytes = 512
+# allow_shortcuts = ["simple_chat"]

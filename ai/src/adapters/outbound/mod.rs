@@ -10,6 +10,8 @@ mod output_filter;
 pub mod project_key;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
+mod smart_preprocessor_model;
+pub mod smart_preprocessor_observation;
 mod stderr_spinner;
 mod stdout_presenter;
 mod terminal_size;
@@ -37,6 +39,11 @@ pub use shell_exec_approval_ui::{
     format_shell_exec_invocation, parse_shell_exec_choice, prompt_shell_exec_approval,
 };
 pub use shell_log_resolver::resolve_shell_log_for_ask;
+pub use smart_preprocessor_model::{load_preprocessor_model, ValidatedPreprocessorModel};
+pub use smart_preprocessor_observation::{
+    default_observation_path, resolve_session_error_summary, write_observation_record,
+    ObservationContext, ObservationRecord,
+};
 pub use stdout_presenter::{
     format_shell_exec_executed_summary, render_response, ShellExecRenderOptions, StdoutPresenter,
 };

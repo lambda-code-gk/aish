@@ -12,6 +12,7 @@ mod reports;
 mod request_context;
 mod shell_exec_approval;
 mod shell_log;
+pub mod smart_preprocessor;
 mod terminal_display;
 mod terminal_size;
 mod tools;
@@ -44,6 +45,11 @@ pub use shell_exec_approval::{
 };
 pub use shell_log::{
     validate_session_id, ShellLogChoice, ShellLogResolveError, AI_ASK_LOG_SESSION,
+};
+pub use smart_preprocessor::{
+    run_preprocessor, should_short_circuit, PreprocessConfig, PreprocessInput, SmartConfidenceGate,
+    SmartIntentClass, SmartPreprocessDecision, SmartPreprocessMode, SmartRouteTurnHints,
+    FEATURE_EXTRACTOR_VERSION,
 };
 pub use terminal_size::TerminalSize;
 pub use tools::{

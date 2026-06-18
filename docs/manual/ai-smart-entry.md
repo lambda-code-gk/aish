@@ -71,6 +71,24 @@ ai --preset fast --tools read_file 'list files'
 7. `route_turn` の `recommended_tools` に `shell_exec` が含まれても `ai` 側では read-only tool のみ採用されること（0043 Phase 2）。
 8. generic memory（`kind_files=[]` + `recipe_files=[]`、feature 未指定）では AISH baseline feature が効かないこと（`FeaturePackConfig` が empty に解決される）。
 
+## 9. Smart Preprocessor（0044）
+
+mock 導通（実 API 不要）:
+
+```bash
+./scripts/smoke-mock.sh
+cargo test -p ai smart_preprocessor -j 1
+cargo test -p ai --test smart_preprocessor_ask_e2e -j 1
+```
+
+手動確認:
+
+1. `~/.config/ai/config.toml` に `[smart_preprocessor] enabled = true` / `mode = "shadow"` を追加する。
+2. TTY で `ai 'hello'` を実行し、従来どおり応答が返ること（`route_turn` は呼ばれる）。
+3. `~/.local/share/ai/smart_preprocessor/observation.jsonl`（または `observation_path` 指定先）に 1 行追記されること。raw secret / 長文ログは含まれないこと。
+4. `mode = "assist"` に切り替え、`AISH_SESSION_DIR` 配下に session log がある状態でエラー修正系の入力を送ると、`route_turn` の `recent_summary` が補強されること（mock / stderr 確認）。
+5. `mode = "gate"` は高信頼の `retry` / `rerun` 等のみ短絡候補。危険入力（`sudo` 等）では必ず `route_turn` に落ちること。
+
 ## 期待結果
 
 - TTY の `ai '...'` は常に smart entry（v1 opt-out なし）。

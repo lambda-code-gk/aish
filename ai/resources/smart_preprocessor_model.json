@@ -1,0 +1,5 @@
+{
+  "model_version": "smart-lr-v1",
+  "feature_extractor_version": "smart-features-v1",
+  "dimension": 262144
+}
