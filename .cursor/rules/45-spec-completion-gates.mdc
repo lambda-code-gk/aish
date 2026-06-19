@@ -1,0 +1,47 @@
+---
+description: 仕様完了ゲート・受け入れテスト・中核コンポーネントのスタブ禁止
+alwaysApply: true
+---
+
+# 仕様完了ゲート
+
+## 完了の正本
+
+機能の「完了」は **設計書の受け入れ条件** と **`scripts/spec-acceptance.toml` のテスト対応** が正本である。次だけでは完了にしない。
+
+- ファイル配置が揃った
+- `./scripts/verify.sh` が緑（受け入れレジストリ未登録のテストのみの場合）
+- `docs/0000_spec-index.md` を手で「実装済み」にした
+
+## Phase ゲート
+
+複数 Phase がある実装指示書では:
+
+1. **Phase ごと**に受け入れテストを `scripts/spec-acceptance.toml` に追加する
+2. 当該 Phase の `pending = false` テストが緑になってから次 Phase に進む
+3. 全 Phase 完了まで `docs/tasks/` に置き、`docs/done/` へ移さない
+4. `pending = true` のテストは **必ず `#[ignore]` 付きで先に追加**（RED の意図を固定）
+
+## 中核コンポーネントのスタブ（40-no-stubs 補足）
+
+次は「動いているように見えるスタブ」として扱い、完了にしない。
+
+- `model_path` / 学習済み artifact があるのに **推論で重みを使わない**
+- feature hashing の出力が **スコア計算に使われない**
+- `gate` 等の mode があるのに **閾値到達不能** または **短絡 E2E がない**
+- 仕様の algorithm（例: logistic regression）を **別アルゴリズムに置き換えたが spec / 実装指示書に未記載**
+
+意図的な縮小は **spec または実装指示書に明示** し、受け入れ条件から外す。
+
+## 親（Cursor）の監査（Codex 完了後）
+
+サブエージェントの「完了」報告の前に:
+
+1. 設計書 § 受け入れ条件を Yes/No で照合
+2. `scripts/spec-acceptance.toml` に未登録の AC がないか確認
+3. `pending` が残る spec について `docs/done/` 移動・index の「実装済み」を **更新しない**
+4. 仕様との差分を返信の「未確定・推測・指示外」に列挙
+
+## スコープ変更
+
+簡略化・延期するときは **黙って置き換えない**。spec 追記、AC の `pending` 化、または別番号への分割のいずれかで可視化する。

@@ -15,6 +15,14 @@ alwaysApply: true
 
 受け入れ条件を満たす **実際に使う経路** まで実装し、テストと docs を揃えてから完了とする。
 
+### 中核コンポーネント（補足）
+
+分類器・モデル artifact・閾値ゲートなど **仕様の中核** について:
+
+- キーワード分類や空の `model.json` で「一応 decision を返す」だけでは完了にしない
+- `model_path` があるなら推論が重みを読むこと。未到達なら `scripts/spec-acceptance.toml` で `pending = true` + `#[ignore]` テストを先に置く
+- 詳細: `.cursor/rules/45-spec-completion-gates.mdc`
+
 ## 返信末尾（該当時は必須）
 
 ### 未確定・推測・指示外

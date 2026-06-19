@@ -60,7 +60,17 @@
 ./scripts/verify.sh
 ```
 
-（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh`）
+（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-spec-acceptance.py`）
+
+### 受け入れ条件レジストリ
+
+設計書の受け入れ条件は [`scripts/spec-acceptance.toml`](../scripts/spec-acceptance.toml) に **テスト関数と 1:1 で登録** する。
+
+- 実装前: 未到達の AC は `pending = true` + Rust 側 `#[ignore]` テストを先に追加
+- Phase 完了: 当該 Phase の `pending` を `false` にし、`#[ignore]` を外して緑にする
+- 全 Phase 完了後のみ: 実装指示書を `docs/done/` へ移動し、`0000_spec-index.md` を「実装済み」に更新
+
+詳細: `.cursor/rules/45-spec-completion-gates.mdc`
 
 ### Hexagonal effect boundary ルール追加
 

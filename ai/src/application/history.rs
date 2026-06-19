@@ -41,6 +41,7 @@ pub struct HistoryReplayInput {
     pub ai_session_id: Option<String>,
     pub shell_exec_approval: Option<String>,
     pub route_plan: Option<String>,
+    pub route_fallback: bool,
     pub socket_path: String,
     pub log_tail_bytes: usize,
     pub request_messages: Vec<HistoryMessage>,
@@ -128,6 +129,7 @@ pub fn record_turn<S: HistoryStore>(
         ai_session_id: payload.ai_session_id.clone(),
         shell_exec_approval: payload.shell_exec_approval.clone(),
         route_plan: payload.route_plan.clone(),
+        route_fallback: payload.route_fallback,
         socket_path: payload.socket_path.clone(),
         log_tail_bytes: payload.log_tail_bytes,
         request_messages: payload.request_messages.clone(),
@@ -263,6 +265,7 @@ mod tests {
             conversation_id: Some("conv".into()),
             shell_exec_approval: Some("ask".into()),
             route_plan: Some("route".into()),
+            route_fallback: false,
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 16,
             request_messages: vec![HistoryMessage {

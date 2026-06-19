@@ -1,5 +1,79 @@
 {
   "model_version": "smart-lr-v1",
   "feature_extractor_version": "smart-features-v1",
-  "dimension": 262144
+  "dimension": 262144,
+  "heads": {
+    "intent": {
+      "simple_chat": {
+        "bias": -1.0,
+        "features": {
+          "signal:simple_chat": 4.0,
+          "signal:short_text": 1.5
+        }
+      },
+      "inspect": {
+        "bias": -1.0,
+        "features": {
+          "user:asks_git": 5.5,
+          "user:asks_explain": 4.5
+        }
+      },
+      "debug": {
+        "bias": -2.5,
+        "features": {
+          "user:asks_fix": 5.5,
+          "session:has_error": 2.0
+        }
+      },
+      "memory_lookup": {
+        "bias": -1.5,
+        "features": {
+          "user:asks_memory": 6.0
+        }
+      },
+      "shell_command_candidate": {
+        "bias": -4.0,
+        "features": {
+          "signal:shell_risk": 6.0
+        }
+      },
+      "retry": {
+        "bias": -1.0,
+        "features": {
+          "command:retry": 8.0
+        }
+      },
+      "rerun": {
+        "bias": -1.0,
+        "features": {
+          "command:rerun": 8.0
+        }
+      },
+      "ambiguous": {
+        "bias": -1.5,
+        "features": {}
+      },
+      "unknown": {
+        "bias": -2.0,
+        "features": {}
+      }
+    },
+    "safety": {
+      "bias": -3.0,
+      "features": {
+        "signal:shell_risk": 5.0,
+        "signal:secret_risk": 6.0,
+        "signal:write_risk": 4.0,
+        "signal:memory_write_risk": 6.0,
+        "signal:network_risk": 4.0
+      }
+    },
+    "gate": {
+      "bias": 2.0,
+      "features": {
+        "signal:simple_chat": 4.5,
+        "signal:short_text": 1.0
+      }
+    }
+  }
 }

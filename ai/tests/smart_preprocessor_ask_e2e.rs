@@ -75,6 +75,7 @@ impl MockSocketServer {
                             messages.iter().any(|m| {
                                 m.role == "user"
                                     && (m.content.contains("ping")
+                                        || m.content.contains("hello")
                                         || m.content.contains("エラー")
                                         || m.content.contains("error"))
                             }),
@@ -113,6 +114,16 @@ impl Drop for MockSocketServer {
             let _ = handle.join();
         }
     }
+}
+
+fn bundled_model_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/smart_preprocessor_model.json")
+}
+
+fn install_model(home: &std::path::Path) -> std::path::PathBuf {
+    let model_path = home.join("model.json");
+    fs::copy(bundled_model_path(), &model_path).expect("copy model");
+    model_path
 }
 
 fn write_ai_config(
@@ -174,13 +185,17 @@ fn shadow_mode_calls_route_turn_and_writes_observation() {
     }
     let server = MockSocketServer::with_expected_route_turns(1);
     let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
     let cfg = write_ai_config(
         &server.socket_path,
         &home,
-        r#"
+        &format!(
+            r#"
 mode = "shadow"
-model_path = "model.json"
+model_path = "{}"
 "#,
+            model_path.display()
+        ),
     );
     let captured = run_tty_ask(&cfg, home.path(), "ping preprocessor shadow");
     assert!(
@@ -189,7 +204,7 @@ model_path = "model.json"
     );
     assert_eq!(*server.route_turn_count.lock().expect("lock"), 1);
     let obs = fs::read_to_string(home.path().join("observation.jsonl")).unwrap_or_default();
-    assert!(obs.contains("shadow") || obs.contains("Shadow"));
+    assert!(obs.contains("shadow") || obs.contains("\"mode\":\"shadow\""));
     assert!(!obs.contains("ghp_"));
 }
 
@@ -201,13 +216,18 @@ fn assist_mode_passes_bounded_summary_to_route_turn() {
     }
     let server = MockSocketServer::with_expected_route_turns(1);
     let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
     let cfg = write_ai_config(
         &server.socket_path,
         &home,
-        r#"
+        &format!(
+            r#"
 mode = "assist"
-model_path = "model.json"
+model_path = "{}"
+assist_threshold = 0.50
 "#,
+            model_path.display()
+        ),
     );
     unsafe {
         std::env::set_var("AISH_SESSION_DIR", home.path());
@@ -226,4 +246,39 @@ model_path = "model.json"
     unsafe {
         std::env::remove_var("AISH_SESSION_DIR");
     }
+}
+
+#[test]
+fn gate_mode_skips_route_turn_for_simple_chat() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(0);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 2048
+"#,
+            model_path.display()
+        ),
+    );
+    let captured = run_tty_ask(&cfg, home.path(), "hello");
+    assert!(
+        captured.contains("preprocessor ok"),
+        "transcript: {captured}"
+    );
+    assert_eq!(
+        *server.route_turn_count.lock().expect("lock"),
+        0,
+        "gate short-circuit must skip route_turn"
+    );
+    let obs = fs::read_to_string(home.path().join("observation.jsonl")).unwrap_or_default();
+    assert!(obs.contains("gate_short_circuit") || obs.contains("\"mode\":\"gate\""));
 }

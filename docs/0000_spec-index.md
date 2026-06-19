@@ -40,11 +40,18 @@
 | 0043 | [0043_feature-pack-boundary-hardening-spec.md](spec/0043_feature-pack-boundary-hardening-spec.md) | 設計確定（Phase 1–3 実装済み） | Feature Pack Boundary Hardening（memory.enabled ゲート / eligibility / read-only tools / feature pack 分離） |
 | 0044 | [0044_smart-preprocessor-spec.md](spec/0044_smart-preprocessor-spec.md) | 設計確定（実装済み） | AISH Smart Preprocessor / Local Intent Router（`ai` 前段判定 / `route_turn` 補助 / observation log） |
 
+### 状態ラベルの意味
+
+| 状態 | 意味 |
+|------|------|
+| 設計確定 | spec のみ確定。実装は未着手または別途追跡 |
+| 設計確定（実装中 …） | 実装指示書が `docs/tasks/` にあり、受け入れ条件が未完了 |
+| 設計確定（実装済み） | `scripts/spec-acceptance.toml` の当該 spec がすべて `pending = false` かつ `docs/done/` へ移動済み |
+| 実装済み（Phase N） | 当該 Phase の受け入れテストが `pending = false` で緑 |
+
 ## 実装指示書（docs/tasks/ — 進行中）
 
-| 番号 | ファイル | 状態 | 概要 |
-|------|----------|------|------|
-| — | — | — | 進行中の実装指示書なし |
+（なし）
 
 ## 実装済み指示書（docs/done/）
 

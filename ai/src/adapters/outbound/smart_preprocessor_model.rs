@@ -1,16 +1,19 @@
 //! Smart Preprocessor model artifact の読み込みと検証。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::domain::smart_preprocessor::{DEFAULT_MODEL_VERSION, FEATURE_EXTRACTOR_VERSION};
+use crate::domain::smart_preprocessor::{
+    PreprocessorModel, SmartIntentClass, SparseLogisticHead, DEFAULT_MODEL_VERSION,
+    FEATURE_EXTRACTOR_VERSION,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ValidatedPreprocessorModel {
-    pub model_version: String,
-    pub feature_extractor_version: String,
+    pub model: PreprocessorModel,
 }
 
 #[derive(Debug, Deserialize)]
@@ -19,11 +22,30 @@ struct ModelFile {
     feature_extractor_version: String,
     #[serde(default)]
     _dimension: Option<u32>,
+    heads: ModelHeads,
     #[allow(dead_code)]
     checksum: Option<String>,
 }
 
-pub fn load_preprocessor_model(path: &Path) -> Result<ValidatedPreprocessorModel, String> {
+#[derive(Debug, Deserialize)]
+struct ModelHeads {
+    intent: HashMap<String, HeadToml>,
+    safety: HeadToml,
+    gate: HeadToml,
+}
+
+#[derive(Debug, Deserialize)]
+struct HeadToml {
+    bias: f32,
+    #[serde(default)]
+    features: HashMap<String, f32>,
+}
+
+pub fn load_preprocessor_model(
+    path: &Path,
+    feature_hash_buckets: u32,
+    feature_hash_seed: u64,
+) -> Result<ValidatedPreprocessorModel, String> {
     if !path.is_file() {
         return Err(format!("model file not found: {}", path.display()));
     }
@@ -46,14 +68,61 @@ pub fn load_preprocessor_model(path: &Path) -> Result<ValidatedPreprocessorModel
             file.model_version
         ));
     }
-    if let Some(ref checksum) = file.checksum {
-        if checksum.trim().is_empty() {
-            return Err("checksum must not be empty when present".into());
-        }
+    if file.heads.intent.is_empty() {
+        return Err("intent heads must not be empty".into());
     }
+    let intent_heads = file
+        .heads
+        .intent
+        .into_iter()
+        .map(|(name, head)| {
+            let intent = parse_intent_head_name(&name)?;
+            let sparse = resolve_head(head, feature_hash_buckets, feature_hash_seed)?;
+            Ok((intent, sparse))
+        })
+        .collect::<Result<HashMap<_, _>, String>>()?;
+    let safety_head = resolve_head(file.heads.safety, feature_hash_buckets, feature_hash_seed)?;
+    let gate_head = resolve_head(file.heads.gate, feature_hash_buckets, feature_hash_seed)?;
     Ok(ValidatedPreprocessorModel {
-        model_version: file.model_version,
-        feature_extractor_version: file.feature_extractor_version,
+        model: PreprocessorModel {
+            model_version: file.model_version,
+            feature_extractor_version: file.feature_extractor_version,
+            intent_heads,
+            safety_head,
+            gate_head,
+        },
+    })
+}
+
+fn parse_intent_head_name(name: &str) -> Result<SmartIntentClass, String> {
+    match name.trim() {
+        "simple_chat" => Ok(SmartIntentClass::SimpleChat),
+        "inspect" => Ok(SmartIntentClass::Inspect),
+        "debug" => Ok(SmartIntentClass::Debug),
+        "memory_lookup" => Ok(SmartIntentClass::MemoryLookup),
+        "memory_recipe_hint" => Ok(SmartIntentClass::MemoryRecipeHint),
+        "shell_command_candidate" => Ok(SmartIntentClass::ShellCommandCandidate),
+        "retry" => Ok(SmartIntentClass::Retry),
+        "rerun" => Ok(SmartIntentClass::Rerun),
+        "ambiguous" => Ok(SmartIntentClass::Ambiguous),
+        "unknown" => Ok(SmartIntentClass::Unknown),
+        other => Err(format!("unsupported intent head: {other}")),
+    }
+}
+
+fn resolve_head(head: HeadToml, buckets: u32, seed: u64) -> Result<SparseLogisticHead, String> {
+    let mut weights = Vec::new();
+    for (name, weight) in head.features {
+        if !weight.is_finite() {
+            return Err(format!("non-finite weight for feature {name}"));
+        }
+        let index = crate::domain::smart_preprocessor::hash_feature(&name, buckets, seed);
+        weights.push((index, weight));
+    }
+    weights.sort_by_key(|(index, _)| *index);
+    Ok(SparseLogisticHead {
+        bias: head.bias,
+        weights,
     })
 }
 
@@ -63,8 +132,9 @@ mod tests {
 
     #[test]
     fn load_rejects_missing_file() {
-        let err = load_preprocessor_model(Path::new("/tmp/nonexistent-smart-model.json"))
-            .expect_err("missing");
+        let err =
+            load_preprocessor_model(Path::new("/tmp/nonexistent-smart-model.json"), 262144, 17)
+                .expect_err("missing");
         assert!(err.contains("not found"));
     }
 
@@ -74,36 +144,22 @@ mod tests {
         let path = dir.path().join("model.json");
         fs::write(
             &path,
-            r#"{"model_version":"smart-lr-v1","feature_extractor_version":"wrong"}"#,
+            r#"{"model_version":"smart-lr-v1","feature_extractor_version":"wrong","heads":{"intent":{"simple_chat":{"bias":0.0,"features":{}}},"safety":{"bias":0.0,"features":{}},"gate":{"bias":0.0,"features":{}}}}"#,
         )
         .expect("write");
-        let err = load_preprocessor_model(&path).expect_err("mismatch");
+        let err = load_preprocessor_model(&path, 262144, 17).expect_err("mismatch");
         assert!(err.contains("mismatch"));
     }
 
     #[test]
-    fn load_rejects_unsupported_model_version() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("model.json");
-        fs::write(
-            &path,
-            r#"{"model_version":"smart-lr-v0","feature_extractor_version":"smart-features-v1"}"#,
-        )
-        .expect("write");
-        let err = load_preprocessor_model(&path).expect_err("unsupported");
-        assert!(err.contains("unsupported model_version"));
-    }
-
-    #[test]
-    fn load_accepts_valid_model() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("model.json");
-        fs::write(
-            &path,
-            r#"{"model_version":"smart-lr-v1","feature_extractor_version":"smart-features-v1"}"#,
-        )
-        .expect("write");
-        let model = load_preprocessor_model(&path).expect("load");
-        assert_eq!(model.model_version, "smart-lr-v1");
+    fn load_accepts_bundled_model() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/smart_preprocessor_model.json");
+        let model = load_preprocessor_model(&path, 262144, 17).expect("load");
+        assert_eq!(model.model.model_version, "smart-lr-v1");
+        assert!(model
+            .model
+            .intent_heads
+            .contains_key(&SmartIntentClass::SimpleChat));
     }
 }

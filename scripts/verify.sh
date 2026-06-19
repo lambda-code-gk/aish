@@ -29,5 +29,6 @@ fi
 
 run ./scripts/check-architecture.sh
 run ./scripts/check-docs-consistency.sh
+run ./scripts/check-spec-acceptance.py
 
 echo "verify: all checks passed"

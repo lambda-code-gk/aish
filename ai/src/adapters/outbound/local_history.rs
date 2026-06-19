@@ -235,6 +235,7 @@ mod tests {
             conversation_id: Some("conv".into()),
             shell_exec_approval: Some("ask".into()),
             route_plan: Some("route".into()),
+            route_fallback: false,
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 16,
             request_messages: vec![],
@@ -287,6 +288,7 @@ mod tests {
                 conversation_id: None,
                 shell_exec_approval: None,
                 route_plan: None,
+                route_fallback: false,
                 socket_path: "/tmp/s".into(),
                 log_tail_bytes: 1,
             };

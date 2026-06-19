@@ -87,7 +87,7 @@ cargo test -p ai --test smart_preprocessor_ask_e2e -j 1
 2. TTY で `ai 'hello'` を実行し、従来どおり応答が返ること（`route_turn` は呼ばれる）。
 3. `~/.local/share/ai/smart_preprocessor/observation.jsonl`（または `observation_path` 指定先）に 1 行追記されること。raw secret / 長文ログは含まれないこと。
 4. `mode = "assist"` に切り替え、`AISH_SESSION_DIR` 配下に session log がある状態でエラー修正系の入力を送ると、`route_turn` の `recent_summary` が補強されること（mock / stderr 確認）。
-5. `mode = "gate"` は高信頼の `retry` / `rerun` 等のみ短絡候補。危険入力（`sudo` 等）では必ず `route_turn` に落ちること。
+5. `mode = "gate"` は高信頼の **`simple_chat` のみ** 短絡候補（`retry` / `rerun` / `memory_lookup` は transcript または memory 経路が必要なため短絡対象外）。危険入力（`sudo` 等）では必ず `route_turn` に落ちること。
 
 ## 期待結果
 

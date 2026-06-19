@@ -125,6 +125,17 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 - **`git commit` / `push` はユーザー明示時のみ**（Codex に任せない運用を推奨）
 - feature ブランチ運用時の **commit 整理（soft reset → 意味単位で commit し直し）** は Codex 完了後に親が行う（`.cursor/rules/05-git-workflow.mdc`）
 - MCP 障害時のフォールバック
+- **完了監査**: Codex の「完了」報告後、設計書の受け入れ条件と [`scripts/spec-acceptance.toml`](../scripts/spec-acceptance.toml) を照合。`pending` が残る spec では `docs/done/` 移動・index の「実装済み」更新をしない（`.cursor/rules/45-spec-completion-gates.mdc`）
+
+## 完了ゲート（実装タスク共通）
+
+| 段階 | 条件 |
+|------|------|
+| 着手 | 実装指示書が `docs/tasks/` にある |
+| Phase 完了 | 当該 Phase の `spec-acceptance.toml` エントリが `pending = false` かつテスト緑 |
+| 全体完了 | 全 Phase の `pending = false` + `./scripts/verify.sh` + 実装指示書を `docs/done/` へ |
+
+`verify.sh` だけ緑でも、受け入れレジストリに `pending = true` が残っていれば **仕様未完了** とする。
 
 ## Linux: `bwrap: loopback: Operation not permitted`
 

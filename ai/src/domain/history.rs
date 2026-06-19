@@ -64,6 +64,9 @@ pub struct HistoryPayload {
     pub shell_exec_approval: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route_plan: Option<String>,
+    /// 直前ターンで `route_turn` が失敗し text-only fallback したか（retry/rerun の route metadata 用）。
+    #[serde(default)]
+    pub route_fallback: bool,
     pub socket_path: String,
     pub log_tail_bytes: usize,
 }
@@ -341,12 +344,23 @@ mod tests {
             conversation_id: Some("conv".into()),
             shell_exec_approval: Some("ask".into()),
             route_plan: Some("route".into()),
+            route_fallback: false,
             socket_path: "/tmp/sock".into(),
             log_tail_bytes: 1,
         };
         assert_eq!(payload.conversation_id.as_deref(), Some("conv"));
         assert!(payload.request_messages.is_empty());
         assert!(payload.feature_summaries.is_empty());
+        assert!(!payload.route_fallback);
+    }
+
+    #[test]
+    fn history_payload_deserializes_without_route_fallback() {
+        let payload: HistoryPayload = serde_json::from_str(
+            r#"{"history_id":"id","command":"ask","user_message":"hi","tools":[],"socket_path":"/tmp/s","log_tail_bytes":1,"request_messages":[{"role":"user","content":"hi"}]}"#,
+        )
+        .expect("deserialize");
+        assert!(!payload.route_fallback);
     }
 
     #[test]

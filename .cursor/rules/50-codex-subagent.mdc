@@ -56,7 +56,7 @@ Subagent for aish. Project .codex/config.toml uses workspace-write sandbox; stay
 Explore with shell/tools; edits allowed in workspace. Do not access paths outside the repo without explicit user allowance. Do not commit secrets or write API keys to the repo.
 Do not git commit or git push unless the user message explicitly requests it.
 Output in Japanese. Mark 推測 explicitly.
-Prefer ./scripts/verify.sh after code changes (or fmt/clippy/test/check-architecture.sh/check-docs-consistency.sh).
+Prefer ./scripts/verify.sh after code changes (or fmt/clippy/test/check-architecture.sh/check-docs-consistency.sh/check-spec-acceptance.py).
 No require_escalated retries on the same command.
 ```
 
@@ -84,6 +84,7 @@ No require_escalated retries on the same command.
 - `cargo test` 等の最終確認は親でもよいが、Codex に任せてもよい
 - **git commit / push はユーザー明示まで行わない**（Codex にも明示指示がない限りさせない）
 - feature ブランチ運用時: **commit 整理**（soft reset → 意味単位で commit し直し）は Codex 完了後に親が行う（`.cursor/rules/05-git-workflow.mdc`）
+- **完了監査**: Codex 返答を「完了」とみなす前に、設計書の受け入れ条件と `scripts/spec-acceptance.toml` を照合する（`.cursor/rules/45-spec-completion-gates.mdc`）。`pending` が残る間は `docs/done/` 移動と index の「実装済み」更新をしない
 
 ## Codex に委譲しないこと
 

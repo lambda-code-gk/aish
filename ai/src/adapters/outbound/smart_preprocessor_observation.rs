@@ -59,15 +59,15 @@ impl ObservationRecord {
                 .clone()
                 .map(|value| limit_text(value, 80)),
             feature_hash_version: decision.feature_hash_version.clone(),
-            mode: format!("{:?}", decision.mode),
+            mode: decision.mode.as_str().to_string(),
             intent: decision.intent.as_str().to_string(),
             confidence_bps: decision.confidence_bps,
-            gate: format!("{:?}", decision.gate),
+            gate: decision.gate.as_str().to_string(),
             head_scores: decision.head_scores.clone(),
             decision_path: limit_text(ctx.decision_path, 80),
             route_turn_used: ctx.route_turn_used,
             fallback_reason: ctx.fallback_reason.map(|value| limit_text(value, 120)),
-            signal_counts: decision.reason_codes.len(),
+            signal_counts: decision.signal_feature_count,
             redaction_stats: RedactionStats {
                 evidence_items: decision.evidence.len(),
             },
@@ -162,7 +162,8 @@ fn limit_text(value: String, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::domain::smart_preprocessor::{
-        run_preprocessor, PreprocessConfig, PreprocessInput, SmartPreprocessMode,
+        run_preprocessor, PreprocessConfig, PreprocessInput, RouteMetadataInput,
+        SmartPreprocessMode,
     };
 
     #[test]
@@ -178,6 +179,8 @@ mod tests {
             memory_enabled: true,
             history_tail_summary: None,
             session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
         };
         let mut cfg = PreprocessConfig::default();
         cfg.mode = SmartPreprocessMode::Shadow;

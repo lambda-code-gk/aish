@@ -1,8 +1,8 @@
 # 0044 — AISH Smart Preprocessor / Local Intent Router 実装指示書
 
-> **種別**: 実装指示書（`docs/tasks/`）  
+> **種別**: 実装指示書（`docs/done/`）  
 > **設計正本**: [0044_smart-preprocessor-spec.md](../spec/0044_smart-preprocessor-spec.md)  
-> **状態**: 進行中  
+> **状態**: 実装済み（Phase 1–3）  
 > **起票**: 2026-06-18  
 > **対象**: Phase 1 - 3
 
@@ -244,5 +244,23 @@ Phase 1-3 の実装確認で、少なくとも次の正常系を通す。
 1. Phase 1 - 3 が順に実装される。
 2. 4. で列挙した docs が同一変更で同期される。
 3. 5. の mock 導通コマンドが通る。
-4. `./scripts/verify.sh` が通る。
+4. `./scripts/verify.sh` が通る（`check-spec-acceptance.py` 含む）。
 5. `route_turn` / `feature_executor` / `aish` の境界が壊れていない。
+
+## 8. Phase ゲートと受け入れテスト正本
+
+Phase ごとに **受け入れテストを先に追加** し、緑になってから次 Phase に進む。`docs/done/` へ移動するのは **Phase 3 まで完了** し、`scripts/spec-acceptance.toml` の当該 spec がすべて `pending = false` になったコミットのみ。
+
+| Phase | 状態（2026-06-19） | ゲート |
+|-------|-------------------|--------|
+| 1 shadow | 完了 | `shadow_mode_calls_route_turn_and_writes_observation` ほか unit |
+| 2 assist | 完了 | `assist_mode_passes_bounded_summary_to_route_turn` |
+| 3 gate | 完了 | `gate_mode_skips_route_turn_for_simple_chat` ほか `spec-acceptance.toml` 全 AC |
+
+受け入れ条件 ↔ テスト関数の対応は [`scripts/spec-acceptance.toml`](../../scripts/spec-acceptance.toml)。検査は `./scripts/check-spec-acceptance.py`（`verify.sh` から呼ぶ）。
+
+### 実装メモ（完了時点）
+
+- classifier: feature hashing + multi-head logistic regression（`model.json` の named weights → sparse head）。モデル未読込時は `classify_local` へフォールバック。
+- `ai/resources/smart_preprocessor_model.json`: intent / safety / gate head 重みを同梱。
+- gate 短絡: 検証済み model + `simple_chat` + 閾値 + safety + TTY + CLI 明示値なし のときのみ。

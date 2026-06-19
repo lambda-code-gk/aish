@@ -1,0 +1,95 @@
+# 設計書の受け入れ条件と Rust テスト関数の対応表。
+# 検査: ./scripts/check-spec-acceptance.py（verify.sh から呼ぶ）
+#
+# pending = true  … テスト関数は存在すること。実装未完の間は #[ignore] 可。
+# pending = false … テストが存在し、#[ignore] であってはならない（verify で実行される想定）。
+
+[[cases]]
+spec = "0044"
+phase = 1
+id = "shadow_observation"
+description = "shadow は route_turn を呼び観測ログを書く"
+test = "shadow_mode_calls_route_turn_and_writes_observation"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 2
+id = "assist_recent_summary"
+description = "assist は bounded recent_summary を route_turn へ渡す"
+test = "assist_mode_passes_bounded_summary_to_route_turn"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 1
+id = "serde_roundtrip"
+description = "Decision DTO の serde roundtrip"
+test = "serde_roundtrip_decision"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 1
+id = "redaction"
+description = "evidence の redaction（secret / path）"
+test = "redaction_masks_secrets_and_paths"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 1
+id = "observation_no_raw_secret"
+description = "observation log に raw secret を残さない"
+test = "observation_does_not_store_raw_user_text"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 1
+id = "dangerous_forces_route_turn"
+description = "高リスク入力は route_turn 必須"
+test = "dangerous_input_forces_route_turn"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "gate_short_circuit"
+description = "gate + simple_chat で route_turn を省略する"
+test = "gate_mode_skips_route_turn_for_simple_chat"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "classifier_model_weights"
+description = "モデル重みが推論スコアに反映される"
+test = "classifier_model_weights_affect_inference"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 1
+id = "hash_bucket_regression"
+description = "feature hash bucket 数の変更で index が変わる"
+test = "feature_hash_bucket_change_alters_index"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "simple_chat_threshold_reachable"
+description = "simple_chat の confidence が gate 閾値に到達可能"
+test = "simple_chat_confidence_reaches_gate_threshold"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
