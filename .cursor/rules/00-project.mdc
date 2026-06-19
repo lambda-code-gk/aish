@@ -31,6 +31,14 @@ alwaysApply: true
 
 （内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh`）
 
+### メモリ不足環境（AI エージェント・低 RAM マシン）
+
+`verify.sh` は **既定で直列**（`CARGO_BUILD_JOBS=1`、`cargo test -j 1`）。OOM を避けるため、エージェントや手動検証でも次を守る。
+
+- `cargo test` に **`-j 1`** を付ける（クレート並列を抑える）
+- 複数クレートの `cargo test` を **同時に走らせない**（1 本ずつ順に実行）
+- 十分な RAM があるときだけ `VERIFY_PARALLEL=1 ./scripts/verify.sh` で並列に戻す
+
 ## Git
 
 - 機能実装は **feature ブランチ**（詳細: `.cursor/rules/05-git-workflow.mdc`）。

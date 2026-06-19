@@ -14,11 +14,11 @@ use clap::Parser;
 
 use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
-    detect_terminal_size, external_command_names, load_preprocessor_model,
-    load_shell_exec_approval, read_chat_line, resolve_session_error_summary,
-    resolve_shell_log_for_ask, write_observation_record, AibeUnixClient, ChatReadLineResult,
-    FileLogTail, LocalHistoryStore, ObservationContext, ObservationRecord, ShellExecRenderOptions,
-    StdoutPresenter, YesExecCache,
+    detect_terminal_size, external_command_names, load_bundled_preprocessor_model,
+    load_preprocessor_model, load_shell_exec_approval, read_chat_line,
+    resolve_session_error_summary, resolve_shell_log_for_ask, write_observation_record,
+    AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore, ObservationContext,
+    ObservationRecord, ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -1389,6 +1389,18 @@ fn build_preprocess_config(
     })
 }
 
+fn preprocessor_model_load_fallback_reason(model_load_error: Option<&String>) -> Option<String> {
+    model_load_error.map(|_| "model_load_failed".to_string())
+}
+
+fn preprocessor_route_turn_fallback_reason(model_load_error: Option<&String>) -> Option<String> {
+    if model_load_error.is_some() {
+        Some("route_turn_failed;model_load_failed".to_string())
+    } else {
+        Some("route_turn_failed".to_string())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_preprocessor_observation(
     sp_cfg: &SmartPreprocessorConfig,
@@ -1498,7 +1510,13 @@ fn run_preprocessor_pipeline(
             Ok(model) => (Some(model), None),
             Err(err) => (None, Some(err)),
         },
-        None => (None, None),
+        None => match load_bundled_preprocessor_model(
+            sp_cfg.feature_hash_buckets,
+            sp_cfg.feature_hash_seed,
+        ) {
+            Ok(model) => (Some(model), None),
+            Err(err) => (None, Some(err)),
+        },
     };
     let pre_cfg = build_preprocess_config(sp_cfg, validated_model.as_ref())?;
     let aish_session_dir = std::env::var("AISH_SESSION_DIR").ok().map(PathBuf::from);
@@ -1551,12 +1569,8 @@ fn run_smart_route_with_preprocessor(
             hints.recent_summary = Some(summary.clone());
         }
         let observation_history_id = outcome.history_id.clone().or_else(|| history_id.clone());
-        let model_fallback = outcome.model_load_error.as_ref().map(|err| {
-            format!(
-                "model_load_failed:{}",
-                err.chars().take(80).collect::<String>()
-            )
-        });
+        let model_fallback =
+            preprocessor_model_load_fallback_reason(outcome.model_load_error.as_ref());
         if outcome.short_circuit {
             let conversation_id = hints
                 .conversation_id
@@ -1585,18 +1599,13 @@ fn run_smart_route_with_preprocessor(
     let smart = run_smart_route(socket_path, query, settings, turn, hints);
     if let (Some(sp_cfg), Some(outcome)) = (cfg.smart_preprocessor.as_ref(), preprocessor) {
         let observation_history_id = outcome.history_id.clone().or_else(|| history_id.clone());
-        let model_fallback = outcome.model_load_error.as_ref().map(|err| {
-            format!(
-                "model_load_failed:{}",
-                err.chars().take(80).collect::<String>()
-            )
-        });
+        let model_fallback =
+            preprocessor_model_load_fallback_reason(outcome.model_load_error.as_ref());
         let (decision_path, fallback_reason) = if smart.route_fallback {
-            let reason = match model_fallback {
-                Some(model_err) => Some(format!("route_turn_failed;{model_err}")),
-                None => Some("route_turn_failed".to_string()),
-            };
-            ("text_only_fallback", reason)
+            (
+                "text_only_fallback",
+                preprocessor_route_turn_fallback_reason(outcome.model_load_error.as_ref()),
+            )
         } else {
             let path = match outcome.decision.mode {
                 SmartPreprocessMode::Shadow => "shadow",

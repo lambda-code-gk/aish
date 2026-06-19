@@ -193,6 +193,7 @@ fn shadow_mode_calls_route_turn_and_writes_observation() {
             r#"
 mode = "shadow"
 model_path = "{}"
+max_observation_bytes = 2048
 "#,
             model_path.display()
         ),
@@ -224,7 +225,7 @@ fn assist_mode_passes_bounded_summary_to_route_turn() {
             r#"
 mode = "assist"
 model_path = "{}"
-assist_threshold = 0.50
+max_observation_bytes = 2048
 "#,
             model_path.display()
         ),

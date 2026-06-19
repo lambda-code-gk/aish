@@ -39,7 +39,10 @@ pub use shell_exec_approval_ui::{
     format_shell_exec_invocation, parse_shell_exec_choice, prompt_shell_exec_approval,
 };
 pub use shell_log_resolver::resolve_shell_log_for_ask;
-pub use smart_preprocessor_model::{load_preprocessor_model, ValidatedPreprocessorModel};
+pub use smart_preprocessor_model::{
+    bundled_model_path, load_bundled_preprocessor_model, load_preprocessor_model,
+    ValidatedPreprocessorModel,
+};
 pub use smart_preprocessor_observation::{
     default_observation_path, resolve_session_error_summary, write_observation_record,
     ObservationContext, ObservationRecord,

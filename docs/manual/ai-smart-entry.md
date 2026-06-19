@@ -89,6 +89,15 @@ cargo test -p ai --test smart_preprocessor_ask_e2e -j 1
 4. `mode = "assist"` に切り替え、`AISH_SESSION_DIR` 配下に session log がある状態でエラー修正系の入力を送ると、`route_turn` の `recent_summary` が補強されること（mock / stderr 確認）。
 5. `mode = "gate"` は高信頼の **`simple_chat` のみ** 短絡候補（`retry` / `rerun` / `memory_lookup` は transcript または memory 経路が必要なため短絡対象外）。危険入力（`sudo` 等）では必ず `route_turn` に落ちること。
 
+### Phase 2.6（production 仕上げ）
+
+1. `model_path` を省略した状態で `enabled = true` / `mode = "shadow"` とし、bundled model（`ai/resources/smart_preprocessor_model.json`）で動作すること。
+2. observation JSONL に `reason_codes` / `failure_kind` / `context_needs` / `tool_hints` が出ること。raw user text / secret / path は含まれないこと。
+3. `assist_threshold = 0.55`（既定）で、session error がある入力時に `recent_summary` に `session_error:` プレフィックス付き要約が入ること。
+4. confidence が `route_turn_threshold`（0.85）未満の gate 入力では `route_turn` が省略されないこと。
+5. session log に `permission denied` があると observation の `failure_kind` が `permission` になること。
+6. git 差分相談で `context_needs` に `git_status` / `git_diff`、「前に決めた方針」で `tool_hints` に `memory_search` が出ること（debug ログまたは observation で確認）。
+
 ## 期待結果
 
 - TTY の `ai '...'` は常に smart entry（v1 opt-out なし）。

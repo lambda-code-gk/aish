@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -10,6 +10,9 @@ use crate::domain::smart_preprocessor::{
     PreprocessorModel, SmartIntentClass, SparseLogisticHead, DEFAULT_MODEL_VERSION,
     FEATURE_EXTRACTOR_VERSION,
 };
+
+/// リポジトリ外に配置した `ai` バイナリでも読めるよう、compile 時に埋め込む。
+const BUNDLED_MODEL_JSON: &str = include_str!("../../../resources/smart_preprocessor_model.json");
 
 #[derive(Debug, Clone)]
 pub struct ValidatedPreprocessorModel {
@@ -41,32 +44,50 @@ struct HeadToml {
     features: HashMap<String, f32>,
 }
 
+pub fn bundled_model_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/smart_preprocessor_model.json")
+}
+
+pub fn load_bundled_preprocessor_model(
+    feature_hash_buckets: u32,
+    feature_hash_seed: u64,
+) -> Result<ValidatedPreprocessorModel, String> {
+    parse_preprocessor_model_json(
+        BUNDLED_MODEL_JSON,
+        "bundled",
+        feature_hash_buckets,
+        feature_hash_seed,
+    )
+}
+
 pub fn load_preprocessor_model(
     path: &Path,
     feature_hash_buckets: u32,
     feature_hash_seed: u64,
 ) -> Result<ValidatedPreprocessorModel, String> {
     if !path.is_file() {
-        return Err(format!("model file not found: {}", path.display()));
+        return Err("model file not found".into());
     }
-    let raw =
-        fs::read_to_string(path).map_err(|e| format!("read model {}: {e}", path.display()))?;
+    let raw = fs::read_to_string(path).map_err(|_| "read model failed".to_string())?;
+    parse_preprocessor_model_json(&raw, "file", feature_hash_buckets, feature_hash_seed)
+}
+
+fn parse_preprocessor_model_json(
+    raw: &str,
+    source_label: &str,
+    feature_hash_buckets: u32,
+    feature_hash_seed: u64,
+) -> Result<ValidatedPreprocessorModel, String> {
     let file: ModelFile =
-        serde_json::from_str(&raw).map_err(|e| format!("parse model {}: {e}", path.display()))?;
+        serde_json::from_str(raw).map_err(|_| format!("parse model {source_label} failed"))?;
     if file.model_version.trim().is_empty() {
         return Err("model_version must not be empty".into());
     }
     if file.feature_extractor_version != FEATURE_EXTRACTOR_VERSION {
-        return Err(format!(
-            "feature_extractor_version mismatch: expected {FEATURE_EXTRACTOR_VERSION}, got {}",
-            file.feature_extractor_version
-        ));
+        return Err("feature_extractor_version mismatch".into());
     }
     if file.model_version != DEFAULT_MODEL_VERSION {
-        return Err(format!(
-            "unsupported model_version: expected {DEFAULT_MODEL_VERSION}, got {}",
-            file.model_version
-        ));
+        return Err("unsupported model_version".into());
     }
     if file.heads.intent.is_empty() {
         return Err("intent heads must not be empty".into());
@@ -135,7 +156,8 @@ mod tests {
         let err =
             load_preprocessor_model(Path::new("/tmp/nonexistent-smart-model.json"), 262144, 17)
                 .expect_err("missing");
-        assert!(err.contains("not found"));
+        assert_eq!(err, "model file not found");
+        assert!(!err.contains('/'));
     }
 
     #[test]
@@ -161,5 +183,22 @@ mod tests {
             .model
             .intent_heads
             .contains_key(&SmartIntentClass::SimpleChat));
+    }
+
+    #[test]
+    fn bundled_model_is_used_when_model_path_is_missing() {
+        let model = load_bundled_preprocessor_model(262144, 17).expect("bundled");
+        assert_eq!(model.model.model_version, DEFAULT_MODEL_VERSION);
+        assert_eq!(
+            model.model.feature_extractor_version,
+            FEATURE_EXTRACTOR_VERSION
+        );
+    }
+
+    #[test]
+    fn bundled_model_loads_from_embedded_json_without_filesystem() {
+        let model = parse_preprocessor_model_json(BUNDLED_MODEL_JSON, "bundled", 262144, 17)
+            .expect("embedded");
+        assert_eq!(model.model.model_version, DEFAULT_MODEL_VERSION);
     }
 }

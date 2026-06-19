@@ -281,9 +281,9 @@ impl SmartPreprocessorConfig {
             feature_hash_buckets: section.feature_hash_buckets.unwrap_or(262144),
             feature_hash_seed: section.feature_hash_seed.unwrap_or(17),
             route_turn_threshold: section.route_turn_threshold.unwrap_or(0.85),
-            assist_threshold: section.assist_threshold.unwrap_or(0.95),
+            assist_threshold: section.assist_threshold.unwrap_or(0.55),
             max_evidence_bytes: section.max_evidence_bytes.unwrap_or(4096),
-            max_observation_bytes: section.max_observation_bytes.unwrap_or(512),
+            max_observation_bytes: section.max_observation_bytes.unwrap_or(2048),
             allow_shortcuts: section
                 .allow_shortcuts
                 .unwrap_or_else(|| vec!["simple_chat".into()]),

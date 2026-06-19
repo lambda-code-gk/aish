@@ -38,6 +38,10 @@ pub struct ObservationRecord {
     pub route_turn_used: bool,
     pub fallback_reason: Option<String>,
     pub signal_counts: usize,
+    pub reason_codes: Vec<String>,
+    pub failure_kind: Option<String>,
+    pub context_needs: Vec<String>,
+    pub tool_hints: Vec<String>,
     pub redaction_stats: RedactionStats,
 }
 
@@ -66,13 +70,50 @@ impl ObservationRecord {
             head_scores: decision.head_scores.clone(),
             decision_path: limit_text(ctx.decision_path, 80),
             route_turn_used: ctx.route_turn_used,
-            fallback_reason: ctx.fallback_reason.map(|value| limit_text(value, 120)),
+            fallback_reason: normalize_fallback_reason(ctx.fallback_reason.as_deref()),
             signal_counts: decision.signal_feature_count,
+            reason_codes: decision
+                .reason_codes
+                .iter()
+                .map(|code| limit_text(code.clone(), 48))
+                .take(16)
+                .collect(),
+            failure_kind: decision.failure_kind.map(|kind| kind.as_str().to_string()),
+            context_needs: decision
+                .context_needs
+                .iter()
+                .map(|need| need.as_str().to_string())
+                .collect(),
+            tool_hints: decision
+                .tool_hints
+                .iter()
+                .map(|hint| hint.as_str().to_string())
+                .collect(),
             redaction_stats: RedactionStats {
                 evidence_items: decision.evidence.len(),
             },
         }
     }
+}
+
+/// observation 用に fallback_reason を固定コードへ正規化する（パス・生エラー文言を残さない）。
+pub fn normalize_fallback_reason(raw: Option<&str>) -> Option<String> {
+    let value = raw?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let normalized = if value.starts_with("route_turn_failed") {
+        if value.contains("model_load_failed") {
+            "route_turn_failed;model_load_failed"
+        } else {
+            "route_turn_failed"
+        }
+    } else if value.starts_with("model_load_failed") {
+        "model_load_failed"
+    } else {
+        return None;
+    };
+    Some(normalized.to_string())
 }
 
 pub fn default_observation_path() -> PathBuf {
@@ -162,8 +203,8 @@ fn limit_text(value: String, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::domain::smart_preprocessor::{
-        run_preprocessor, PreprocessConfig, PreprocessInput, RouteMetadataInput,
-        SmartPreprocessMode,
+        build_hashed_features, hash_feature, run_preprocessor, PreprocessConfig, PreprocessInput,
+        RouteMetadataInput, SmartPreprocessMode,
     };
 
     #[test]
@@ -201,6 +242,172 @@ mod tests {
         assert!(!content.contains("ghp_abc"));
         let value: serde_json::Value = serde_json::from_str(content.trim()).expect("valid json");
         assert!(value.get("head_scores").is_some());
+        assert!(value.get("reason_codes").is_none() || value["reason_codes"].is_array());
+    }
+
+    #[test]
+    fn observation_persists_reason_codes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("obs.jsonl");
+        let input = PreprocessInput {
+            user_text: "hello".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let mut cfg = PreprocessConfig::default();
+        cfg.mode = SmartPreprocessMode::Shadow;
+        let decision = run_preprocessor(input, &cfg);
+        assert!(!decision.reason_codes.is_empty());
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: Some("sess".into()),
+                conversation_id: None,
+                history_id: None,
+                decision_path: "shadow".into(),
+                route_turn_used: true,
+                fallback_reason: None,
+            },
+        );
+        write_observation_record(&path, &record, 4096).expect("write");
+        let content = std::fs::read_to_string(&path).expect("read");
+        let value: serde_json::Value = serde_json::from_str(content.trim()).expect("json");
+        let codes = value["reason_codes"].as_array().expect("reason_codes");
+        assert!(!codes.is_empty());
+        assert!(codes
+            .iter()
+            .all(|code| code.as_str().is_some_and(|s| !s.contains("ghp_"))));
+    }
+
+    #[test]
+    fn observation_does_not_store_raw_paths_or_secrets() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("obs.jsonl");
+        let input = PreprocessInput {
+            user_text: "secret token=ghp_abc /home/user/secret".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: Some("/home/user/project".into()),
+            session_error_summary: Some("permission denied /etc/shadow".into()),
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let mut cfg = PreprocessConfig::default();
+        cfg.mode = SmartPreprocessMode::Shadow;
+        let decision = run_preprocessor(input, &cfg);
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "shadow".into(),
+                route_turn_used: true,
+                fallback_reason: None,
+            },
+        );
+        write_observation_record(&path, &record, 4096).expect("write");
+        let content = std::fs::read_to_string(&path).expect("read");
+        assert!(!content.contains("ghp_abc"));
+        assert!(!content.contains("/home/user"));
+        assert!(!content.contains("/etc/shadow"));
+    }
+
+    #[test]
+    fn session_error_summary_uses_session_error_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("session.jsonl");
+        fs::write(
+            &log_path,
+            r#"{"event":"error","message":"test failed: foo"}"#,
+        )
+        .expect("write");
+        let summary = resolve_session_error_summary(Some(dir.path())).expect("summary");
+        let input = PreprocessInput {
+            user_text: "fix".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: Some(summary),
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let features = build_hashed_features(&input, 4096, 17);
+        let marker = hash_feature("session_error_ngram:te", 4096, 17);
+        assert!(features.iter().any(|feature| feature.index == marker));
+    }
+
+    #[test]
+    fn observation_fallback_reason_omits_paths() {
+        let input = PreprocessInput {
+            user_text: "hello".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let mut cfg = PreprocessConfig::default();
+        cfg.mode = SmartPreprocessMode::Shadow;
+        let decision = run_preprocessor(input, &cfg);
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "shadow".into(),
+                route_turn_used: true,
+                fallback_reason: Some(
+                    "model_load_failed:model file not found: /home/user/secret/model.json".into(),
+                ),
+            },
+        );
+        assert_eq!(record.fallback_reason.as_deref(), Some("model_load_failed"));
+
+        let route_record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "text_only_fallback".into(),
+                route_turn_used: false,
+                fallback_reason: Some(
+                    "route_turn_failed;model_load_failed:parse model /etc/foo failed".into(),
+                ),
+            },
+        );
+        assert_eq!(
+            route_record.fallback_reason.as_deref(),
+            Some("route_turn_failed;model_load_failed")
+        );
+    }
+
+    #[test]
+    fn normalize_fallback_reason_rejects_unknown_values() {
+        assert_eq!(normalize_fallback_reason(None), None);
+        assert_eq!(
+            normalize_fallback_reason(Some("connect error: /tmp/foo")),
+            None
+        );
     }
 
     #[test]

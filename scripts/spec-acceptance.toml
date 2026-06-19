@@ -93,3 +93,84 @@ description = "simple_chat の confidence が gate 閾値に到達可能"
 test = "simple_chat_confidence_reaches_gate_threshold"
 file_glob = "ai/src/domain/smart_preprocessor.rs"
 pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "assist_threshold_alignment"
+description = "assist threshold で hint と recent_summary が一致する"
+test = "assist_threshold_injects_error_summary_hint"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "reason_codes_observation"
+description = "reason_codes が observation に保存される"
+test = "observation_persists_reason_codes"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "observation_no_raw_secret_phase26"
+description = "observation に raw user text / secret / path を残さない"
+test = "observation_does_not_store_raw_paths_or_secrets"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "bundled_model_fallback"
+description = "model_path 未指定時は bundled model を読む"
+test = "bundled_model_is_used_when_model_path_is_missing"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_model.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "failure_kind_permission"
+description = "permission denied が failure_kind に分類される"
+test = "permission_denied_sets_failure_kind_permission"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "context_needs_tool_hints"
+description = "context_needs / tool_hints が固定される"
+test = "context_needs_and_tool_hints_are_populated"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "session_error_prefix"
+description = "session_error prefix が観測に出る"
+test = "session_error_summary_uses_session_error_prefix"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "threshold_split"
+description = "route_turn_threshold と assist_threshold が別判定になる"
+test = "assist_and_route_turn_thresholds_are_distinct"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 26
+id = "fallback_reason_no_path"
+description = "observation fallback_reason にパスを残さない"
+test = "observation_fallback_reason_omits_paths"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false

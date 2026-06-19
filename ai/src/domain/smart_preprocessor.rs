@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 pub const FEATURE_EXTRACTOR_VERSION: &str = "smart-features-v1";
 pub const DEFAULT_MODEL_VERSION: &str = "smart-lr-v1";
+pub const MAX_REASON_CODES: usize = 16;
+pub const MAX_REASON_CODE_LEN: usize = 48;
+pub const DEFAULT_HINT_THRESHOLD_BPS: BasisPoints = 5500;
+pub const DEFAULT_SHORT_CIRCUIT_THRESHOLD_BPS: BasisPoints = 8500;
 
 /// basis points: 0..=10000 (= 0.0..=1.0)
 pub type BasisPoints = u16;
@@ -54,6 +58,100 @@ impl SmartConfidenceGate {
             Self::ForceRouteTurn => "force_route_turn",
             Self::AssistRouteTurn => "assist_route_turn",
             Self::ShortCircuitAllowed => "short_circuit_allowed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartFailureKind {
+    Build,
+    Test,
+    Runtime,
+    Permission,
+    Network,
+    Dependency,
+    Git,
+    FileNotFound,
+    CommandNotFound,
+    Timeout,
+    UnknownFailure,
+}
+
+impl SmartFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Build => "build",
+            Self::Test => "test",
+            Self::Runtime => "runtime",
+            Self::Permission => "permission",
+            Self::Network => "network",
+            Self::Dependency => "dependency",
+            Self::Git => "git",
+            Self::FileNotFound => "file_not_found",
+            Self::CommandNotFound => "command_not_found",
+            Self::Timeout => "timeout",
+            Self::UnknownFailure => "unknown_failure",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartContextNeed {
+    LastCommand,
+    ExitStatus,
+    StderrTail,
+    StdoutTail,
+    ErrorLines,
+    GitStatus,
+    GitDiff,
+    ConversationTail,
+    MemoryCards,
+    ProjectRules,
+}
+
+impl SmartContextNeed {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LastCommand => "last_command",
+            Self::ExitStatus => "exit_status",
+            Self::StderrTail => "stderr_tail",
+            Self::StdoutTail => "stdout_tail",
+            Self::ErrorLines => "error_lines",
+            Self::GitStatus => "git_status",
+            Self::GitDiff => "git_diff",
+            Self::ConversationTail => "conversation_tail",
+            Self::MemoryCards => "memory_cards",
+            Self::ProjectRules => "project_rules",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartToolHint {
+    GitStatus,
+    GitDiff,
+    Grep,
+    ReadFile,
+    ListDir,
+    ShellExecCandidate,
+    MemorySearch,
+    ConversationSearch,
+}
+
+impl SmartToolHint {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GitStatus => "git_status",
+            Self::GitDiff => "git_diff",
+            Self::Grep => "grep",
+            Self::ReadFile => "read_file",
+            Self::ListDir => "list_dir",
+            Self::ShellExecCandidate => "shell_exec_candidate",
+            Self::MemorySearch => "memory_search",
+            Self::ConversationSearch => "conversation_search",
         }
     }
 }
@@ -168,6 +266,9 @@ pub struct SmartPreprocessDecision {
     pub model_version: Option<String>,
     pub feature_hash_version: String,
     pub reason_codes: Vec<String>,
+    pub failure_kind: Option<SmartFailureKind>,
+    pub context_needs: Vec<SmartContextNeed>,
+    pub tool_hints: Vec<SmartToolHint>,
     pub signal_feature_count: usize,
 }
 
@@ -223,8 +324,8 @@ impl Default for PreprocessConfig {
     fn default() -> Self {
         Self {
             mode: SmartPreprocessMode::Shadow,
-            route_turn_threshold_bps: 8500,
-            assist_threshold_bps: 9500,
+            route_turn_threshold_bps: DEFAULT_SHORT_CIRCUIT_THRESHOLD_BPS,
+            assist_threshold_bps: DEFAULT_HINT_THRESHOLD_BPS,
             max_evidence_bytes: 4096,
             feature_hash_buckets: 262144,
             feature_hash_seed: 17,
@@ -453,7 +554,7 @@ pub fn build_hashed_features(
     names.extend(extract_ngram_features("user", &user_for_features, 2));
     names.extend(extract_ngram_features("user", &user_for_features, 3));
     if let Some(ref summary) = input.session_error_summary {
-        names.extend(extract_ngram_features("stderr", summary, 2));
+        names.extend(extract_ngram_features("session_error", summary, 2));
     }
     if let Some(ref summary) = input.history_tail_summary {
         names.extend(extract_ngram_features("history", summary, 2));
@@ -688,9 +789,6 @@ pub fn apply_confidence_gate(
             SmartConfidenceGate::ShortCircuitAllowed
         }
         _ if gate_confidence >= config.assist_threshold_bps => SmartConfidenceGate::AssistRouteTurn,
-        _ if gate_confidence >= config.route_turn_threshold_bps => {
-            SmartConfidenceGate::AssistRouteTurn
-        }
         _ => SmartConfidenceGate::ForceRouteTurn,
     }
 }
@@ -708,6 +806,133 @@ pub fn build_bounded_summary(input: &PreprocessInput, max_bytes: usize) -> Optio
     }
     let joined = parts.join("; ");
     Some(redact_for_evidence(&joined, max_bytes))
+}
+
+pub fn clamp_reason_codes(mut codes: Vec<String>) -> Vec<String> {
+    codes.truncate(MAX_REASON_CODES);
+    codes
+        .into_iter()
+        .map(|code| {
+            if code.len() <= MAX_REASON_CODE_LEN {
+                return code;
+            }
+            truncate_with_ellipsis(&code, MAX_REASON_CODE_LEN)
+        })
+        .collect()
+}
+
+pub fn infer_failure_kind(session_error_summary: Option<&str>) -> Option<SmartFailureKind> {
+    let text = session_error_summary?.to_ascii_lowercase();
+    if text.contains("permission denied") {
+        return Some(SmartFailureKind::Permission);
+    }
+    if text.contains("no such file or directory") {
+        return Some(SmartFailureKind::FileNotFound);
+    }
+    if text.contains("command not found") {
+        return Some(SmartFailureKind::CommandNotFound);
+    }
+    if text.contains("timed out") || text.contains("timeout") {
+        return Some(SmartFailureKind::Timeout);
+    }
+    if text.contains("test failed") || text.contains("failures:") || text.contains("cargo test") {
+        return Some(SmartFailureKind::Test);
+    }
+    if text.contains("failed to resolve")
+        || text.contains("dependency")
+        || text.contains("crate not found")
+    {
+        return Some(SmartFailureKind::Dependency);
+    }
+    if text.contains("network unreachable")
+        || text.contains("connection refused")
+        || text.contains("connection timed out")
+    {
+        return Some(SmartFailureKind::Network);
+    }
+    if text.contains("build failed") || text.contains("could not compile") {
+        return Some(SmartFailureKind::Build);
+    }
+    if text.contains("git ") || text.contains("merge conflict") {
+        return Some(SmartFailureKind::Git);
+    }
+    if text.contains("panic") || text.contains("runtime error") {
+        return Some(SmartFailureKind::Runtime);
+    }
+    if !text.is_empty() {
+        return Some(SmartFailureKind::UnknownFailure);
+    }
+    None
+}
+
+pub fn derive_context_needs(input: &PreprocessInput) -> Vec<SmartContextNeed> {
+    let text = normalize_text(&input.user_text);
+    let mut needs = Vec::new();
+    if contains_any(&text, &["git", "コミット", "差分", "commit", "diff"]) {
+        needs.push(SmartContextNeed::GitStatus);
+        needs.push(SmartContextNeed::GitDiff);
+    }
+    if input.session_error_summary.is_some() {
+        needs.push(SmartContextNeed::ErrorLines);
+    }
+    if contains_any(&text, &["さっき", "前の", "直前", "前に"]) {
+        needs.push(SmartContextNeed::ConversationTail);
+    }
+    if contains_any(&text, &["前に", "覚え", "memory", "設計方針", "決めた"])
+        && input.memory_enabled
+    {
+        needs.push(SmartContextNeed::MemoryCards);
+    }
+    if contains_any(&text, &["ルール", "規約", "policy", "convention"]) {
+        needs.push(SmartContextNeed::ProjectRules);
+    }
+    needs.sort_by_key(|need| need.as_str());
+    needs.dedup();
+    needs
+}
+
+pub fn derive_tool_hints(input: &PreprocessInput, intent: SmartIntentClass) -> Vec<SmartToolHint> {
+    let text = normalize_text(&input.user_text);
+    let mut hints = Vec::new();
+    if contains_any(&text, &["git", "コミット", "差分", "commit", "diff"]) {
+        hints.push(SmartToolHint::GitStatus);
+        hints.push(SmartToolHint::GitDiff);
+    }
+    if contains_any(&text, &["前に", "覚え", "memory", "設計方針", "決めた"])
+        && input.memory_enabled
+    {
+        hints.push(SmartToolHint::MemorySearch);
+    }
+    if contains_any(&text, &["grep", "検索", "探して", "find"]) {
+        hints.push(SmartToolHint::Grep);
+    }
+    if contains_any(&text, &["読んで", "read", "ファイル"]) {
+        hints.push(SmartToolHint::ReadFile);
+    }
+    if contains_any(&text, &["一覧", "list", "ディレクトリ"]) {
+        hints.push(SmartToolHint::ListDir);
+    }
+    if matches!(intent, SmartIntentClass::ShellCommandCandidate)
+        || contains_any(&text, &["sudo", "rm ", "chmod", "curl", "wget"])
+    {
+        hints.push(SmartToolHint::ShellExecCandidate);
+    }
+    if contains_any(&text, &["会話", "さっき", "前の", "直前"]) {
+        hints.push(SmartToolHint::ConversationSearch);
+    }
+    hints.sort_by_key(|hint| hint.as_str());
+    hints.dedup();
+    hints
+}
+
+pub fn should_inject_route_turn_hints(
+    mode: SmartPreprocessMode,
+    gate: SmartConfidenceGate,
+) -> bool {
+    matches!(
+        mode,
+        SmartPreprocessMode::Assist | SmartPreprocessMode::Gate
+    ) && gate == SmartConfidenceGate::AssistRouteTurn
 }
 
 pub fn run_preprocessor(
@@ -762,18 +987,15 @@ pub fn run_preprocessor(
     if !route_turn_required {
         reason_codes.push("gate_short_circuit".into());
     }
-    let recent_summary = match config.mode {
-        SmartPreprocessMode::Assist if confidence_bps >= config.assist_threshold_bps => {
-            build_bounded_summary(&input, config.max_evidence_bytes)
-        }
-        SmartPreprocessMode::Gate
-            if gate != SmartConfidenceGate::ForceRouteTurn
-                && confidence_bps >= config.assist_threshold_bps =>
-        {
-            build_bounded_summary(&input, config.max_evidence_bytes)
-        }
-        _ => None,
+    let recent_summary = if should_inject_route_turn_hints(config.mode, gate) {
+        build_bounded_summary(&input, config.max_evidence_bytes)
+    } else {
+        None
     };
+    let failure_kind = infer_failure_kind(input.session_error_summary.as_deref());
+    let context_needs = derive_context_needs(&input);
+    let tool_hints = derive_tool_hints(&input, intent);
+    let reason_codes = clamp_reason_codes(reason_codes);
     let mut evidence = Vec::new();
     evidence.push(SmartEvidence {
         kind: "user_excerpt".into(),
@@ -803,6 +1025,9 @@ pub fn run_preprocessor(
         model_version: config.model.as_ref().map(|m| m.model_version.clone()),
         feature_hash_version: FEATURE_EXTRACTOR_VERSION.to_string(),
         reason_codes,
+        failure_kind,
+        context_needs,
+        tool_hints,
         signal_feature_count,
     }
 }
@@ -1158,5 +1383,137 @@ mod tests {
             ),
             SmartConfidenceGate::ForceRouteTurn
         );
+    }
+
+    #[test]
+    fn permission_denied_sets_failure_kind_permission() {
+        let mut input = sample_input("さっきのエラーを直して");
+        input.session_error_summary = Some("permission denied: /etc/shadow".into());
+        let decision = run_preprocessor(input, &config_with_model(SmartPreprocessMode::Shadow));
+        assert_eq!(decision.failure_kind, Some(SmartFailureKind::Permission));
+    }
+
+    #[test]
+    fn context_needs_and_tool_hints_are_populated() {
+        let input = sample_input("前に決めた設計方針を見たい");
+        let decision = run_preprocessor(input, &config_with_model(SmartPreprocessMode::Shadow));
+        assert!(decision
+            .context_needs
+            .contains(&SmartContextNeed::MemoryCards));
+        assert!(decision
+            .context_needs
+            .contains(&SmartContextNeed::ConversationTail));
+        assert!(decision.tool_hints.contains(&SmartToolHint::MemorySearch));
+
+        let git_input = sample_input("この差分をコミット単位に分けたい");
+        let git_decision =
+            run_preprocessor(git_input, &config_with_model(SmartPreprocessMode::Shadow));
+        assert!(git_decision
+            .context_needs
+            .contains(&SmartContextNeed::GitStatus));
+        assert!(git_decision
+            .context_needs
+            .contains(&SmartContextNeed::GitDiff));
+        assert!(git_decision.tool_hints.contains(&SmartToolHint::GitStatus));
+        assert!(git_decision.tool_hints.contains(&SmartToolHint::GitDiff));
+    }
+
+    #[test]
+    fn assist_and_route_turn_thresholds_are_distinct() {
+        let safety = SmartSafetySummary {
+            requires_approval: false,
+            contains_secret_risk: false,
+            contains_write_risk: false,
+            contains_network_risk: false,
+        };
+        let head_scores = SmartHeadScores {
+            intent_bps: 7000,
+            safety_bps: 1000,
+            gate_bps: 7000,
+        };
+        let cfg = PreprocessConfig::default();
+        assert_eq!(
+            apply_confidence_gate(
+                SmartIntentClass::SimpleChat,
+                7000,
+                &safety,
+                &head_scores,
+                &cfg
+            ),
+            SmartConfidenceGate::AssistRouteTurn
+        );
+        let mut gate_cfg = PreprocessConfig::default();
+        gate_cfg.mode = SmartPreprocessMode::Gate;
+        assert_eq!(
+            apply_confidence_gate(
+                SmartIntentClass::SimpleChat,
+                7000,
+                &safety,
+                &head_scores,
+                &gate_cfg
+            ),
+            SmartConfidenceGate::AssistRouteTurn
+        );
+        assert!(!should_short_circuit(&SmartPreprocessDecision {
+            version: 1,
+            mode: SmartPreprocessMode::Gate,
+            intent: SmartIntentClass::SimpleChat,
+            confidence_bps: 7000,
+            gate: SmartConfidenceGate::AssistRouteTurn,
+            route_turn_required: true,
+            route_turn_hints: SmartRouteTurnHints {
+                recent_summary: None,
+                new_conversation: true,
+                conversation_id: None,
+            },
+            safety: safety.clone(),
+            evidence: Vec::new(),
+            head_scores: head_scores.clone(),
+            model_version: Some(DEFAULT_MODEL_VERSION.to_string()),
+            feature_hash_version: FEATURE_EXTRACTOR_VERSION.to_string(),
+            reason_codes: Vec::new(),
+            failure_kind: None,
+            context_needs: Vec::new(),
+            tool_hints: Vec::new(),
+            signal_feature_count: 0,
+        }));
+    }
+
+    #[test]
+    fn assist_threshold_injects_error_summary_hint() {
+        let mut input = sample_input("さっきのエラーを直して");
+        input.session_error_summary = Some("test failed: foo".into());
+        let mut cfg = config_with_model(SmartPreprocessMode::Assist);
+        cfg.assist_threshold_bps = DEFAULT_HINT_THRESHOLD_BPS;
+        let decision = run_preprocessor(input, &cfg);
+        assert_eq!(decision.gate, SmartConfidenceGate::AssistRouteTurn);
+        let summary = decision
+            .route_turn_hints
+            .recent_summary
+            .expect("recent_summary");
+        assert!(summary.contains("session_error"));
+        assert!(summary.contains("test failed"));
+    }
+
+    #[test]
+    fn session_error_feature_uses_session_error_prefix() {
+        let mut input = sample_input("fix error");
+        input.session_error_summary = Some("permission denied".into());
+        let features = build_hashed_features(&input, 4096, 17);
+        assert!(!features.is_empty());
+        let names = vec!["session_error_ngram:pe".to_string()];
+        let idx = hash_feature(&names[0], 4096, 17);
+        assert!(features.iter().any(|f| f.index == idx));
+    }
+
+    #[test]
+    fn clamp_reason_codes_limits_count_and_length() {
+        let codes: Vec<String> = (0..20).map(|i| format!("code_{i}")).collect();
+        let long = "x".repeat(80);
+        let mut with_long = codes;
+        with_long.push(long);
+        let clamped = clamp_reason_codes(with_long);
+        assert_eq!(clamped.len(), MAX_REASON_CODES);
+        assert!(clamped.iter().all(|code| code.len() <= MAX_REASON_CODE_LEN));
     }
 }
