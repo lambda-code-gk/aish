@@ -1,13 +1,14 @@
 //! `agent_turn` ユースケース（ツール付きエージェントループ）。
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::application::llm_error::client_response_for_llm_error;
 use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, Capability, ChatMessage, ToolName, SHELL_EXEC};
 use crate::ports::outbound::{
-    CapabilityPolicy, LlmProvider, ShellExecApprovalGate, TerminationCapability,
+    CapabilityPolicy, LlmCallTracer, LlmProvider, ShellExecApprovalGate, TerminationCapability,
     ToolExecutionContext, ToolRoundTerminator, TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase};
@@ -21,6 +22,7 @@ pub struct AgentTurnService {
     termination_capability: TerminationCapability,
     capability_policy: Arc<dyn CapabilityPolicy>,
     turn_hook: Arc<dyn TurnHook>,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 }
 
 impl AgentTurnService {
@@ -31,6 +33,7 @@ impl AgentTurnService {
         termination_capability: TerminationCapability,
         capability_policy: Arc<dyn CapabilityPolicy>,
         turn_hook: Arc<dyn TurnHook>,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self::with_capability_policy(
             llm,
@@ -39,6 +42,7 @@ impl AgentTurnService {
             termination_capability,
             capability_policy,
             turn_hook,
+            llm_tracer,
         )
     }
 
@@ -49,6 +53,7 @@ impl AgentTurnService {
         termination_capability: TerminationCapability,
         capability_policy: Arc<dyn CapabilityPolicy>,
         turn_hook: Arc<dyn TurnHook>,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self {
             llm,
@@ -57,6 +62,7 @@ impl AgentTurnService {
             termination_capability,
             capability_policy,
             turn_hook,
+            llm_tracer,
         }
     }
 
@@ -101,6 +107,15 @@ impl AgentTurnService {
         }
 
         let prepped = prepend_system_and_shell(messages, &context);
+        if let Some(events) = events.as_ref() {
+            events
+                .progress(
+                    &id,
+                    ProgressPhase::Preparing,
+                    Some("preparing context".into()),
+                )
+                .await;
+        }
         let conversation = self
             .turn_hook
             .prepare_turn_messages(&context, prepped.clone())
@@ -162,11 +177,13 @@ impl AgentTurnService {
             events
                 .progress(
                     &id,
-                    ProgressPhase::Thinking,
+                    ProgressPhase::Generating,
                     Some("generating response".into()),
                 )
                 .await;
         }
+        self.llm_tracer.start("agent_turn", None, None);
+        let started = Instant::now();
 
         let assistant = if let Some(cancel) = cancellation {
             if let Some(events) = events.as_ref() {
@@ -186,6 +203,7 @@ impl AgentTurnService {
                     _ = cancel.wait() => {
                         drop(delta_tx);
                         stream_forwarder.abort();
+                        self.llm_tracer.end("agent_turn", started.elapsed().as_millis() as u64, false);
                         events
                             .progress(
                                 &id,
@@ -210,6 +228,7 @@ impl AgentTurnService {
                 tokio::select! {
                     res = self.llm.complete_streaming(conversation, &mut ignore_delta) => res,
                     _ = cancel.wait() => {
+                        self.llm_tracer.end("agent_turn", started.elapsed().as_millis() as u64, false);
                         return ClientResponse::Cancelled {
                             id: id.clone(),
                             turn_id: id,
@@ -245,6 +264,11 @@ impl AgentTurnService {
                 .complete_streaming(conversation, &mut ignore_delta)
                 .await
         };
+        self.llm_tracer.end(
+            "agent_turn",
+            started.elapsed().as_millis() as u64,
+            assistant.is_ok(),
+        );
 
         if let Some(events) = events.as_ref() {
             events.final_response(&id).await;

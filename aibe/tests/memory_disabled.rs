@@ -43,6 +43,7 @@ fn memory_disabled_service() -> RequestService {
         turn_hook,
         FeatureRegistry::empty(),
         aibe::domain::FeatureEligibilityContext::default(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     )
 }
 
@@ -279,6 +280,7 @@ async fn route_turn_strips_feature_actions_when_feature_registry_empty() {
         turn_hook,
         FeatureRegistry::empty(),
         aibe::domain::FeatureEligibilityContext::default(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let resp = service
         .handle(

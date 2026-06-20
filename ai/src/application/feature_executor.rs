@@ -337,6 +337,7 @@ mod tests {
             silent_exec: false,
             console_hint: false,
             no_console_hint: false,
+            trace_route: false,
         };
         let out =
             execute_feature_actions_mvp(&actions, "user", None, "sess_001", turn, &client, true);
@@ -376,6 +377,7 @@ mod tests {
             silent_exec: false,
             console_hint: false,
             no_console_hint: false,
+            trace_route: false,
         };
 
         // memory actions are not present; memory_context not needed.
@@ -428,6 +430,7 @@ mod tests {
             silent_exec: false,
             console_hint: false,
             no_console_hint: false,
+            trace_route: false,
         };
 
         let out = execute_feature_actions_mvp(

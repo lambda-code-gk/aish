@@ -14,11 +14,12 @@ use clap::Parser;
 
 use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
-    detect_terminal_size, external_command_names, load_bundled_preprocessor_model,
-    load_preprocessor_model, load_shell_exec_approval, read_chat_line,
-    resolve_session_error_summary, resolve_shell_log_for_ask, write_observation_record,
-    AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore, LocalRouteMetrics,
-    ObservationContext, ObservationRecord, ShellExecRenderOptions, StdoutPresenter, YesExecCache,
+    detect_terminal_size, external_command_names, finalize_preprocessor_observation,
+    load_bundled_preprocessor_model, load_preprocessor_model, load_shell_exec_approval,
+    read_chat_line, resolve_session_error_summary, resolve_shell_log_for_ask,
+    smart_preprocessor_trace_enabled, AibeUnixClient, ChatReadLineResult, FileLogTail,
+    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
+    StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -173,6 +174,7 @@ struct ResolvedTurnSettings {
     silent_exec: bool,
     shell_exec_approval: Option<String>,
     console_hint: ConsoleHintReport,
+    trace_route: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,6 +256,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         prep.conversation_id,
         prep.route_plan_json,
         prep.route_fallback,
+        prep.observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
     )?;
     Ok(exit_code_for_response(
@@ -306,6 +309,7 @@ fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
             Some(conversation_id.clone()),
             None,
             false,
+            None,
             Arc::clone(&shell_exec_state),
         )?;
         let exit_code = exit_code_for_response(&outcome.response, outcome.cancel_source);
@@ -342,44 +346,53 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         content: payload.user_message.clone(),
     };
     let base_settings = resolve_turn_settings(&cfg, &turn)?;
-    let (settings, messages, feature_summaries, conversation_id, route_plan_json, route_fallback) =
-        if should_reapply_smart_features(&payload) {
-            let smart = run_smart_route_with_preprocessor(
-                &cfg,
-                "retry",
-                &base_settings.socket_path,
-                &message.content,
-                &base_settings,
-                &turn,
-                route_turn_hints_from_payload(&payload),
-                route_metadata_from_payload(Some(&payload)),
-                Some(payload.history_id.clone()),
-            );
-            let prep = apply_smart_route_and_features(
-                &cfg,
-                &message.content,
-                turn.clone(),
-                &base_settings,
-                smart,
-            );
-            (
-                resolve_turn_settings(&cfg, &prep.effective_turn)?,
-                prep.agent_messages,
-                prep.feature_summaries,
-                prep.conversation_id,
-                prep.route_plan_json,
-                prep.route_fallback,
-            )
-        } else {
-            (
-                base_settings,
-                replay_messages_from_payload(&payload),
-                Vec::new(),
-                payload.conversation_id.clone(),
-                payload.route_plan.clone(),
-                payload.route_fallback,
-            )
-        };
+    let (
+        settings,
+        messages,
+        feature_summaries,
+        conversation_id,
+        route_plan_json,
+        route_fallback,
+        observation_draft,
+    ) = if should_reapply_smart_features(&payload) {
+        let smart = run_smart_route_with_preprocessor(
+            &cfg,
+            "retry",
+            &base_settings.socket_path,
+            &message.content,
+            &base_settings,
+            &turn,
+            route_turn_hints_from_payload(&payload),
+            route_metadata_from_payload(Some(&payload)),
+            Some(payload.history_id.clone()),
+        );
+        let prep = apply_smart_route_and_features(
+            &cfg,
+            &message.content,
+            turn.clone(),
+            &base_settings,
+            smart,
+        );
+        (
+            resolve_turn_settings(&cfg, &prep.effective_turn)?,
+            prep.agent_messages,
+            prep.feature_summaries,
+            prep.conversation_id,
+            prep.route_plan_json,
+            prep.route_fallback,
+            prep.observation_draft,
+        )
+    } else {
+        (
+            base_settings,
+            replay_messages_from_payload(&payload),
+            Vec::new(),
+            payload.conversation_id.clone(),
+            payload.route_plan.clone(),
+            payload.route_fallback,
+            None,
+        )
+    };
     let response = execute_turn(
         &cfg,
         "retry",
@@ -392,6 +405,7 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         conversation_id,
         route_plan_json,
         route_fallback,
+        observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
     )?;
     Ok(exit_code_for_response(
@@ -433,44 +447,53 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     merged_turn.log = None;
     merged_turn.session = None;
     let base_settings = resolve_turn_settings(&cfg, &merged_turn)?;
-    let (settings, messages, feature_summaries, conversation_id, route_plan_json, route_fallback) =
-        if should_reapply_smart_features(&payload) {
-            let smart = run_smart_route_with_preprocessor(
-                &cfg,
-                "rerun",
-                &base_settings.socket_path,
-                &message.content,
-                &base_settings,
-                &merged_turn,
-                route_turn_hints_from_payload(&payload),
-                route_metadata_from_payload(Some(&payload)),
-                Some(payload.history_id.clone()),
-            );
-            let prep = apply_smart_route_and_features(
-                &cfg,
-                &message.content,
-                merged_turn.clone(),
-                &base_settings,
-                smart,
-            );
-            (
-                resolve_turn_settings(&cfg, &prep.effective_turn)?,
-                prep.agent_messages,
-                prep.feature_summaries,
-                prep.conversation_id,
-                prep.route_plan_json,
-                prep.route_fallback,
-            )
-        } else {
-            (
-                base_settings,
-                replay_messages_from_payload(&payload),
-                Vec::new(),
-                payload.conversation_id.clone(),
-                payload.route_plan.clone(),
-                payload.route_fallback,
-            )
-        };
+    let (
+        settings,
+        messages,
+        feature_summaries,
+        conversation_id,
+        route_plan_json,
+        route_fallback,
+        observation_draft,
+    ) = if should_reapply_smart_features(&payload) {
+        let smart = run_smart_route_with_preprocessor(
+            &cfg,
+            "rerun",
+            &base_settings.socket_path,
+            &message.content,
+            &base_settings,
+            &merged_turn,
+            route_turn_hints_from_payload(&payload),
+            route_metadata_from_payload(Some(&payload)),
+            Some(payload.history_id.clone()),
+        );
+        let prep = apply_smart_route_and_features(
+            &cfg,
+            &message.content,
+            merged_turn.clone(),
+            &base_settings,
+            smart,
+        );
+        (
+            resolve_turn_settings(&cfg, &prep.effective_turn)?,
+            prep.agent_messages,
+            prep.feature_summaries,
+            prep.conversation_id,
+            prep.route_plan_json,
+            prep.route_fallback,
+            prep.observation_draft,
+        )
+    } else {
+        (
+            base_settings,
+            replay_messages_from_payload(&payload),
+            Vec::new(),
+            payload.conversation_id.clone(),
+            payload.route_plan.clone(),
+            payload.route_fallback,
+            None,
+        )
+    };
     let response = execute_turn(
         &cfg,
         "rerun",
@@ -483,6 +506,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         conversation_id,
         route_plan_json,
         route_fallback,
+        observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
     )?;
     Ok(exit_code_for_response(
@@ -539,6 +563,7 @@ fn execute_turn(
     conversation_id: Option<String>,
     route_plan_json: Option<String>,
     route_fallback: bool,
+    observation_draft: Option<PreprocessorObservationDraft>,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
@@ -628,6 +653,7 @@ fn execute_turn(
     let yes_exec_effective =
         settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
     let _progress_guard = presenter.progress_guard();
+    let agent_turn_started = Instant::now();
     let response = if settings.timeout_secs.is_some() || settings.progress || yes_exec_effective {
         run_agent_turn_async(
             plan.socket_path.clone(),
@@ -660,6 +686,14 @@ fn execute_turn(
         cancel_source,
         streamed,
     } = response;
+    let agent_turn_latency_ms = agent_turn_started.elapsed().as_millis() as u64;
+    if let Some(draft) = observation_draft {
+        finalize_preprocessor_observation(
+            draft,
+            agent_turn_latency_ms,
+            smart_preprocessor_trace_enabled(settings.trace_route),
+        );
+    }
     let streamed = streamed || settings.progress || settings.timeout_secs.is_some();
     let response_error = match &response {
         ClientResponse::Error { message, .. } => Some(message.clone()),
@@ -1271,6 +1305,7 @@ struct SmartRouteOutcome {
     route_plan: Option<RoutePlan>,
     route_fallback: bool,
     local_route: Option<LocalRouteDecision>,
+    observation_draft: Option<PreprocessorObservationDraft>,
 }
 
 impl SmartRouteOutcome {
@@ -1280,6 +1315,7 @@ impl SmartRouteOutcome {
             route_plan: None,
             route_fallback: false,
             local_route: None,
+            observation_draft: None,
         }
     }
 }
@@ -1292,6 +1328,7 @@ struct SmartFeaturePrep {
     conversation_id: Option<String>,
     route_plan_json: Option<String>,
     route_fallback: bool,
+    observation_draft: Option<PreprocessorObservationDraft>,
 }
 
 fn should_reapply_smart_features(payload: &HistoryPayload) -> bool {
@@ -1369,6 +1406,7 @@ fn apply_smart_route_and_features(
         conversation_id: smart.conversation_id,
         route_plan_json,
         route_fallback: smart.route_fallback,
+        observation_draft: smart.observation_draft,
     }
 }
 
@@ -1421,7 +1459,7 @@ fn preprocessor_route_turn_fallback_reason(model_load_error: Option<&String>) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_preprocessor_observation(
+fn build_preprocessor_observation_draft(
     sp_cfg: &SmartPreprocessorConfig,
     decision: &ai::domain::smart_preprocessor::SmartPreprocessDecision,
     ai_session_id: &str,
@@ -1431,29 +1469,21 @@ fn write_preprocessor_observation(
     route_turn_used: bool,
     fallback_reason: Option<String>,
     local_route: LocalRouteMetrics,
-) {
-    let route_turn_hints_present =
-        decision.inject_hints && decision.route_turn_hints.has_route_turn_hint_payload();
-    let route_turn_hints_injected = route_turn_used && route_turn_hints_present;
-    let record = ObservationRecord::from_decision(
-        decision,
-        ObservationContext {
-            ai_session_id: Some(ai_session_id.to_string()),
-            conversation_id,
-            history_id,
-            decision_path: decision_path.to_string(),
-            route_turn_used,
-            route_turn_hints_present,
-            route_turn_hints_injected,
-            fallback_reason,
-            local_route,
-        },
-    );
-    let _ = write_observation_record(
-        &sp_cfg.observation_path,
-        &record,
-        sp_cfg.max_observation_bytes,
-    );
+    local_route_decision: Option<LocalRouteDecision>,
+) -> PreprocessorObservationDraft {
+    PreprocessorObservationDraft {
+        observation_path: sp_cfg.observation_path.clone(),
+        max_observation_bytes: sp_cfg.max_observation_bytes,
+        decision: decision.clone(),
+        ai_session_id: ai_session_id.to_string(),
+        conversation_id,
+        history_id,
+        decision_path: decision_path.to_string(),
+        route_turn_used,
+        fallback_reason,
+        local_route,
+        local_route_decision,
+    }
 }
 
 fn resolve_recent_local_history_summary(cfg: &AiConfig, ai_session_id: &str) -> Option<String> {
@@ -1649,16 +1679,16 @@ fn run_smart_route_with_preprocessor(
                 .conversation_id
                 .clone()
                 .or_else(|| Some(next_conversation_id()));
-            if let Some(sp_cfg) = cfg.smart_preprocessor.as_ref() {
-                write_preprocessor_observation(
+            let observation_draft = cfg.smart_preprocessor.as_ref().map(|sp_cfg| {
+                build_preprocessor_observation_draft(
                     sp_cfg,
                     &outcome.decision,
                     &settings.ai_session_id,
                     conversation_id.clone(),
-                    observation_history_id,
+                    observation_history_id.clone(),
                     "local_route",
                     false,
-                    model_fallback,
+                    model_fallback.clone(),
                     LocalRouteMetrics {
                         local_route_kind: Some(local.route_kind.as_str().to_string()),
                         local_route_used: true,
@@ -1668,13 +1698,15 @@ fn run_smart_route_with_preprocessor(
                         route_turn_latency_ms: 0,
                         estimated_tokens_saved: local.estimated_tokens_saved,
                     },
-                );
-            }
+                    outcome.local_route.clone(),
+                )
+            });
             return SmartRouteOutcome {
                 conversation_id,
                 route_plan: None,
                 route_fallback: false,
                 local_route: outcome.local_route.clone(),
+                observation_draft,
             };
         }
         if outcome.short_circuit {
@@ -1682,24 +1714,26 @@ fn run_smart_route_with_preprocessor(
                 .conversation_id
                 .clone()
                 .or_else(|| Some(next_conversation_id()));
-            if let Some(sp_cfg) = cfg.smart_preprocessor.as_ref() {
-                write_preprocessor_observation(
+            let observation_draft = cfg.smart_preprocessor.as_ref().map(|sp_cfg| {
+                build_preprocessor_observation_draft(
                     sp_cfg,
                     &outcome.decision,
                     &settings.ai_session_id,
                     conversation_id.clone(),
-                    observation_history_id,
+                    observation_history_id.clone(),
                     "gate_short_circuit",
                     false,
-                    model_fallback,
+                    model_fallback.clone(),
                     LocalRouteMetrics::default(),
-                );
-            }
+                    None,
+                )
+            });
             return SmartRouteOutcome {
                 conversation_id,
                 route_plan: None,
                 route_fallback: false,
                 local_route: None,
+                observation_draft,
             };
         }
     }
@@ -1707,7 +1741,9 @@ fn run_smart_route_with_preprocessor(
     let route_turn_started = Instant::now();
     let smart = run_smart_route(socket_path, query, settings, turn, hints);
     let route_turn_latency_ms = route_turn_started.elapsed().as_millis() as u64;
-    if let (Some(sp_cfg), Some(outcome)) = (cfg.smart_preprocessor.as_ref(), preprocessor) {
+    let observation_draft = if let (Some(sp_cfg), Some(outcome)) =
+        (cfg.smart_preprocessor.as_ref(), preprocessor.as_ref())
+    {
         let observation_history_id = outcome.history_id.clone().or_else(|| history_id.clone());
         let model_fallback =
             preprocessor_model_load_fallback_reason(outcome.model_load_error.as_ref());
@@ -1739,7 +1775,7 @@ fn run_smart_route_with_preprocessor(
             };
             (path, reason)
         };
-        write_preprocessor_observation(
+        Some(build_preprocessor_observation_draft(
             sp_cfg,
             &outcome.decision,
             &settings.ai_session_id,
@@ -1760,9 +1796,18 @@ fn run_smart_route_with_preprocessor(
                 route_turn_latency_ms,
                 estimated_tokens_saved: 0,
             },
-        );
+            outcome.local_route.clone(),
+        ))
+    } else {
+        None
+    };
+    SmartRouteOutcome {
+        conversation_id: smart.conversation_id,
+        route_plan: smart.route_plan,
+        route_fallback: smart.route_fallback,
+        local_route: smart.local_route,
+        observation_draft,
     }
-    smart
 }
 
 fn run_smart_route(
@@ -1797,6 +1842,7 @@ fn run_smart_route(
             route_plan: Some(plan.clone()),
             route_fallback: false,
             local_route: None,
+            observation_draft: None,
         }
     } else {
         SmartRouteOutcome {
@@ -1804,6 +1850,7 @@ fn run_smart_route(
             route_plan: None,
             route_fallback: true,
             local_route: None,
+            observation_draft: None,
         }
     }
 }
@@ -2051,7 +2098,10 @@ fn replay_messages_from_payload(payload: &HistoryPayload) -> Vec<ProtocolMessage
 
 fn progress_phase_name(phase: aibe_protocol::ProgressPhase) -> String {
     match phase {
+        aibe_protocol::ProgressPhase::Preparing => "preparing".to_string(),
+        aibe_protocol::ProgressPhase::Routing => "routing".to_string(),
         aibe_protocol::ProgressPhase::Thinking => "thinking".to_string(),
+        aibe_protocol::ProgressPhase::Generating => "generating".to_string(),
         aibe_protocol::ProgressPhase::ToolCall => "tool_call".to_string(),
         aibe_protocol::ProgressPhase::WaitingApproval => "waiting_approval".to_string(),
         aibe_protocol::ProgressPhase::Finalizing => "finalizing".to_string(),
@@ -2155,6 +2205,7 @@ fn resolve_turn_settings(
         silent_exec: turn.silent_exec,
         shell_exec_approval,
         console_hint,
+        trace_route: turn.trace_route,
     })
 }
 
@@ -2928,6 +2979,7 @@ mod cli_tests {
             silent_exec: false,
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
+            trace_route: false,
         };
         let turn = crate::TurnOptions::default();
         let hints = crate::RouteTurnHints {
@@ -2975,6 +3027,7 @@ mod cli_tests {
             silent_exec: false,
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
+            trace_route: false,
         };
         let turn = crate::TurnOptions {
             new: true,
@@ -3302,6 +3355,7 @@ mod cli_tests {
             silent_exec: false,
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
+            trace_route: false,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,
@@ -3313,6 +3367,7 @@ mod cli_tests {
                 route_plan: None,
                 route_fallback: false,
                 local_route: Some(local),
+                observation_draft: None,
             },
         );
         assert_eq!(prep.agent_messages.len(), 3);

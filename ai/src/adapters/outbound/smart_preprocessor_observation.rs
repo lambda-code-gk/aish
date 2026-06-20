@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::domain::smart_preprocessor::{
-    redact_for_evidence, SmartHeadScores, SmartPreprocessDecision,
+    redact_for_evidence, LocalRouteDecision, SmartHeadScores, SmartPreprocessDecision,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -19,6 +19,63 @@ pub struct LocalRouteMetrics {
     pub local_route_latency_ms: u64,
     pub route_turn_latency_ms: u64,
     pub estimated_tokens_saved: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TurnLlmAccounting {
+    pub route_turn_used: bool,
+    pub agent_turn_used: bool,
+    pub route_turn_latency_ms: u64,
+    pub agent_turn_latency_ms: u64,
+    pub total_turn_latency_ms: u64,
+    pub llm_call_count_estimated: u32,
+    pub llm_call_sites: Vec<String>,
+}
+
+impl TurnLlmAccounting {
+    pub fn from_turn_metrics(
+        route_turn_used: bool,
+        agent_turn_used: bool,
+        route_turn_latency_ms: u64,
+        agent_turn_latency_ms: u64,
+        local_route_latency_ms: u64,
+    ) -> Self {
+        let mut llm_call_sites = Vec::new();
+        if route_turn_used {
+            llm_call_sites.push("route_turn".to_string());
+        }
+        if agent_turn_used {
+            llm_call_sites.push("agent_turn".to_string());
+        }
+        let llm_call_count_estimated = llm_call_sites.len() as u32;
+        let total_turn_latency_ms = local_route_latency_ms
+            .saturating_add(route_turn_latency_ms)
+            .saturating_add(agent_turn_latency_ms);
+        Self {
+            route_turn_used,
+            agent_turn_used,
+            route_turn_latency_ms,
+            agent_turn_latency_ms,
+            total_turn_latency_ms,
+            llm_call_count_estimated,
+            llm_call_sites,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PreprocessorObservationDraft {
+    pub observation_path: PathBuf,
+    pub max_observation_bytes: usize,
+    pub decision: SmartPreprocessDecision,
+    pub ai_session_id: String,
+    pub conversation_id: Option<String>,
+    pub history_id: Option<String>,
+    pub decision_path: String,
+    pub route_turn_used: bool,
+    pub fallback_reason: Option<String>,
+    pub local_route: LocalRouteMetrics,
+    pub local_route_decision: Option<LocalRouteDecision>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +133,16 @@ pub struct ObservationRecord {
     pub route_turn_required: bool,
     pub short_circuit_allowed: bool,
     pub inject_hints: bool,
+    #[serde(default)]
+    pub agent_turn_used: bool,
+    #[serde(default)]
+    pub agent_turn_latency_ms: u64,
+    #[serde(default)]
+    pub total_turn_latency_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub llm_call_count_estimated: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub llm_call_sites: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,7 +151,11 @@ pub struct RedactionStats {
 }
 
 impl ObservationRecord {
-    pub fn from_decision(decision: &SmartPreprocessDecision, ctx: ObservationContext) -> Self {
+    pub fn from_decision(
+        decision: &SmartPreprocessDecision,
+        ctx: ObservationContext,
+        turn_llm: TurnLlmAccounting,
+    ) -> Self {
         Self {
             schema_version: "1",
             timestamp_ms: current_time_ms(),
@@ -137,7 +208,57 @@ impl ObservationRecord {
             route_turn_required: decision.route_turn_required,
             short_circuit_allowed: decision.short_circuit_allowed,
             inject_hints: decision.inject_hints,
+            agent_turn_used: turn_llm.agent_turn_used,
+            agent_turn_latency_ms: turn_llm.agent_turn_latency_ms,
+            total_turn_latency_ms: turn_llm.total_turn_latency_ms,
+            llm_call_count_estimated: turn_llm.llm_call_count_estimated,
+            llm_call_sites: turn_llm.llm_call_sites,
         }
+    }
+}
+
+pub fn finalize_preprocessor_observation(
+    draft: PreprocessorObservationDraft,
+    agent_turn_latency_ms: u64,
+    trace_enabled: bool,
+) {
+    let turn_llm = TurnLlmAccounting::from_turn_metrics(
+        draft.route_turn_used,
+        true,
+        draft.local_route.route_turn_latency_ms,
+        agent_turn_latency_ms,
+        draft.local_route.local_route_latency_ms,
+    );
+    let route_turn_hints_present = draft.decision.inject_hints
+        && draft
+            .decision
+            .route_turn_hints
+            .has_route_turn_hint_payload();
+    let route_turn_hints_injected = draft.route_turn_used && route_turn_hints_present;
+    let ctx = ObservationContext {
+        ai_session_id: Some(draft.ai_session_id),
+        conversation_id: draft.conversation_id,
+        history_id: draft.history_id,
+        decision_path: draft.decision_path,
+        route_turn_used: draft.route_turn_used,
+        route_turn_hints_present,
+        route_turn_hints_injected,
+        fallback_reason: draft.fallback_reason,
+        local_route: draft.local_route,
+    };
+    let record = ObservationRecord::from_decision(&draft.decision, ctx.clone(), turn_llm.clone());
+    let _ = write_observation_record(
+        &draft.observation_path,
+        &record,
+        draft.max_observation_bytes,
+    );
+    if trace_enabled {
+        crate::adapters::outbound::smart_preprocessor_trace::emit_smart_preprocessor_trace(
+            &draft.decision,
+            &ctx,
+            draft.local_route_decision.as_ref(),
+            &turn_llm,
+        );
     }
 }
 
@@ -271,6 +392,13 @@ mod tests {
         RouteMetadataInput, SmartPreprocessMode,
     };
 
+    fn obs_record(
+        decision: &SmartPreprocessDecision,
+        ctx: ObservationContext,
+    ) -> ObservationRecord {
+        ObservationRecord::from_decision(decision, ctx, TurnLlmAccounting::default())
+    }
+
     #[test]
     fn observation_does_not_store_raw_user_text() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -290,7 +418,7 @@ mod tests {
         let mut cfg = PreprocessConfig::default();
         cfg.mode = SmartPreprocessMode::Shadow;
         let decision = run_preprocessor(input, &cfg);
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: Some("sess".into()),
@@ -332,7 +460,7 @@ mod tests {
         cfg.mode = SmartPreprocessMode::Shadow;
         let decision = run_preprocessor(input, &cfg);
         assert!(!decision.reason_codes.is_empty());
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: Some("sess".into()),
@@ -375,7 +503,7 @@ mod tests {
         let mut cfg = PreprocessConfig::default();
         cfg.mode = SmartPreprocessMode::Shadow;
         let decision = run_preprocessor(input, &cfg);
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -440,7 +568,7 @@ mod tests {
         let mut cfg = PreprocessConfig::default();
         cfg.mode = SmartPreprocessMode::Shadow;
         let decision = run_preprocessor(input, &cfg);
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -458,7 +586,7 @@ mod tests {
         );
         assert_eq!(record.fallback_reason.as_deref(), Some("model_load_failed"));
 
-        let route_record = ObservationRecord::from_decision(
+        let route_record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -506,7 +634,7 @@ mod tests {
         let mut cfg = PreprocessConfig::default();
         cfg.mode = SmartPreprocessMode::Assist;
         let decision = run_preprocessor(input.clone(), &cfg);
-        let present_only = ObservationRecord::from_decision(
+        let present_only = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -526,7 +654,7 @@ mod tests {
 
         input.session_error_summary = Some("permission denied".into());
         let debug_decision = run_preprocessor(input, &cfg);
-        let injected = ObservationRecord::from_decision(
+        let injected = obs_record(
             &debug_decision,
             ObservationContext {
                 ai_session_id: None,
@@ -564,7 +692,7 @@ mod tests {
         let mut cfg = PreprocessConfig::default();
         cfg.mode = SmartPreprocessMode::Assist;
         let decision = run_preprocessor(input, &cfg);
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -629,7 +757,7 @@ mod tests {
         )
         .expect("local route");
         assert_eq!(local.route_kind, LocalRouteKind::VcsInspect);
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: Some("sess".into()),
@@ -682,7 +810,7 @@ mod tests {
             ..PreprocessConfig::default()
         };
         let decision = run_preprocessor(input, &cfg);
-        let fallback_record = ObservationRecord::from_decision(
+        let fallback_record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -706,7 +834,7 @@ mod tests {
         );
         assert_eq!(fallback_record.route_turn_fallback_count, 1);
 
-        let blocked_record = ObservationRecord::from_decision(
+        let blocked_record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -778,7 +906,7 @@ mod tests {
             confidence_bps: 9000,
             estimated_tokens_saved: 0,
         };
-        let record = ObservationRecord::from_decision(
+        let record = obs_record(
             &decision,
             ObservationContext {
                 ai_session_id: None,
@@ -804,5 +932,102 @@ mod tests {
             record.fallback_reason.as_deref(),
             Some("missing_required_local_tool")
         );
+    }
+
+    #[test]
+    fn observation_records_turn_llm_accounting() {
+        let input = PreprocessInput {
+            user_text: "hello".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let decision = run_preprocessor(
+            input,
+            &PreprocessConfig {
+                mode: SmartPreprocessMode::Gate,
+                ..PreprocessConfig::default()
+            },
+        );
+        let turn_llm = TurnLlmAccounting::from_turn_metrics(false, true, 0, 1280, 130);
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: Some("sess".into()),
+                conversation_id: None,
+                history_id: None,
+                decision_path: "local_route".into(),
+                route_turn_used: false,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
+                fallback_reason: None,
+                local_route: LocalRouteMetrics {
+                    local_route_latency_ms: 130,
+                    ..LocalRouteMetrics::default()
+                },
+            },
+            turn_llm,
+        );
+        assert!(!record.route_turn_used);
+        assert!(record.agent_turn_used);
+        assert_eq!(record.agent_turn_latency_ms, 1280);
+        assert_eq!(record.total_turn_latency_ms, 1410);
+        assert_eq!(record.llm_call_count_estimated, 1);
+        assert_eq!(record.llm_call_sites, vec!["agent_turn"]);
+    }
+
+    #[test]
+    fn finalize_observation_writes_agent_turn_latency() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("obs.jsonl");
+        let decision = run_preprocessor(
+            PreprocessInput {
+                user_text: "hello".into(),
+                command: Some("ask".into()),
+                tty: true,
+                new_conversation: true,
+                conversation_id: None,
+                memory_enabled: true,
+                history_tail_summary: None,
+                session_error_summary: None,
+                cli_overrides: false,
+                route_metadata: RouteMetadataInput::default(),
+            },
+            &PreprocessConfig {
+                mode: SmartPreprocessMode::Gate,
+                ..PreprocessConfig::default()
+            },
+        );
+        finalize_preprocessor_observation(
+            PreprocessorObservationDraft {
+                observation_path: path.clone(),
+                max_observation_bytes: 4096,
+                decision,
+                ai_session_id: "sess".into(),
+                conversation_id: None,
+                history_id: None,
+                decision_path: "local_route".into(),
+                route_turn_used: false,
+                fallback_reason: None,
+                local_route: LocalRouteMetrics {
+                    local_route_used: true,
+                    local_route_latency_ms: 4,
+                    ..LocalRouteMetrics::default()
+                },
+                local_route_decision: None,
+            },
+            900,
+            false,
+        );
+        let content = fs::read_to_string(&path).expect("read");
+        let value: serde_json::Value = serde_json::from_str(content.trim()).expect("json");
+        assert_eq!(value["agent_turn_latency_ms"], 900);
+        assert_eq!(value["total_turn_latency_ms"], 904);
     }
 }

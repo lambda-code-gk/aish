@@ -255,6 +255,7 @@ fn memory_query_forwards_user_input_as_user_query() {
         silent_exec: false,
         console_hint: false,
         no_console_hint: false,
+        trace_route: false,
     };
     let _ = execute_feature_actions_mvp(
         &actions,

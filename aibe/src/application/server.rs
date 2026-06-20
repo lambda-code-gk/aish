@@ -10,8 +10,8 @@ use crate::adapters::inbound::unix_socket_server;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
-    ConversationStore as FilesystemConversationStore, FilesystemFeatureRegistryLoader,
-    StaticCapabilityPolicy,
+    ConversationStore as FilesystemConversationStore, EnvLlmCallTracer,
+    FilesystemFeatureRegistryLoader, StaticCapabilityPolicy,
 };
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
@@ -25,8 +25,8 @@ use crate::application::request_service::RequestService;
 use crate::domain::{FeatureEligibilityContext, FeatureRegistry};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, MemoryConfig, ProfileRegistry,
-    ToolsConfig,
+    ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, LlmCallTracer, MemoryConfig,
+    ProfileRegistry, ToolsConfig,
 };
 
 pub async fn run(
@@ -47,6 +47,7 @@ pub async fn run(
         FilesystemConversationStore::new(conversation_store_root.clone()),
     );
     let capability_policy = StaticCapabilityPolicy::local_full();
+    let llm_tracer: Arc<dyn LlmCallTracer> = Arc::new(EnvLlmCallTracer);
 
     let (rpc_extension, turn_hook) = if memory_config.enabled {
         #[cfg(feature = "memory")]
@@ -72,6 +73,7 @@ pub async fn run(
                 memory_broker,
                 Arc::clone(&capability_policy),
                 profile_registry.clone(),
+                Arc::clone(&llm_tracer),
             )
         }
         #[cfg(not(feature = "memory"))]
@@ -108,6 +110,7 @@ pub async fn run(
             turn_hook,
             feature_registry,
             feature_eligibility,
+            llm_tracer,
         ));
 
     unix_socket_server::run(socket_path, handler).await

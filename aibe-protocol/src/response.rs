@@ -109,7 +109,10 @@ pub enum RouteTurnStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProgressPhase {
+    Preparing,
+    Routing,
     Thinking,
+    Generating,
     ToolCall,
     WaitingApproval,
     Finalizing,

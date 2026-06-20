@@ -12,6 +12,7 @@ mod shell_exec_approval_ui;
 mod shell_log_resolver;
 mod smart_preprocessor_model;
 pub mod smart_preprocessor_observation;
+mod smart_preprocessor_trace;
 mod stderr_spinner;
 mod stdout_presenter;
 mod terminal_size;
@@ -44,9 +45,11 @@ pub use smart_preprocessor_model::{
     ValidatedPreprocessorModel,
 };
 pub use smart_preprocessor_observation::{
-    default_observation_path, resolve_session_error_summary, write_observation_record,
-    LocalRouteMetrics, ObservationContext, ObservationRecord,
+    default_observation_path, finalize_preprocessor_observation, resolve_session_error_summary,
+    write_observation_record, LocalRouteMetrics, ObservationContext, ObservationRecord,
+    PreprocessorObservationDraft, TurnLlmAccounting,
 };
+pub use smart_preprocessor_trace::smart_preprocessor_trace_enabled;
 pub use stdout_presenter::{
     format_shell_exec_executed_summary, render_response, ShellExecRenderOptions, StdoutPresenter,
 };

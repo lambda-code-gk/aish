@@ -39,7 +39,12 @@ async fn text_only_turn_forwards_multiple_streaming_deltas() {
         cfg.termination_strategy,
     ));
     let registry = build_registry(&cfg, &[]);
-    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
+    let executor = ToolRoundExecutor::new(
+        Arc::clone(&llm),
+        registry,
+        cfg.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
+    );
     let (_, turn_hook) = basic_pack_arc();
     let svc = AgentTurnService::new(
         llm,
@@ -48,6 +53,7 @@ async fn text_only_turn_forwards_multiple_streaming_deltas() {
         TerminationCapability::summary_prompt_only(),
         StaticCapabilityPolicy::local_full(),
         turn_hook,
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let sink = Arc::new(RecordingSink {
         deltas: Mutex::new(Vec::new()),

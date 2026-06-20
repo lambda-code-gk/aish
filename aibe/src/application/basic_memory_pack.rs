@@ -66,6 +66,17 @@ mod tests {
     use crate::domain::AgentTurnContext;
 
     #[test]
+    fn turn_hook_prepare_does_not_call_llm_provider() {
+        let pack = BasicPack;
+        let ctx = AgentTurnContext::for_text_only(None);
+        let msgs = pack
+            .prepare_turn_messages(&ctx, vec![ChatMessage::user("hi")])
+            .expect("noop");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hi");
+    }
+
+    #[test]
     fn turn_hook_is_noop() {
         let pack = BasicPack;
         let ctx = AgentTurnContext::for_text_only(None);

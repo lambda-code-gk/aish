@@ -32,7 +32,12 @@ fn agent_turn_service(
         cfg.termination_strategy,
     ));
     let registry = build_registry(&cfg, &[]);
-    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
+    let executor = ToolRoundExecutor::new(
+        Arc::clone(&llm),
+        registry,
+        cfg.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
+    );
     let (_, turn_hook) = basic_pack_arc();
     AgentTurnService::new(
         llm,
@@ -41,6 +46,7 @@ fn agent_turn_service(
         capability,
         StaticCapabilityPolicy::local_full(),
         turn_hook,
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     )
 }
 

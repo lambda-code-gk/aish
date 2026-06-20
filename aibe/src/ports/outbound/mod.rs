@@ -5,6 +5,7 @@ pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod feature_registry_loader;
 pub mod llm;
+pub mod llm_call_tracer;
 pub mod memory_kind_registry_loader;
 pub mod memory_recipe_registry_loader;
 pub mod memory_space_resolver;
@@ -18,6 +19,8 @@ pub mod tool_round_terminator;
 pub mod tools;
 pub mod turn_events;
 pub mod turn_hook;
+
+pub use llm_call_tracer::{LlmCallTracer, NoopLlmCallTracer};
 
 pub use capability_policy::{CapabilityDenied, CapabilityPolicy};
 pub use command_policy::CommandPolicy;

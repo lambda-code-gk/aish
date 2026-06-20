@@ -281,7 +281,12 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
         cfg.termination_strategy,
     ));
     let registry = build_registry(&cfg, &[]);
-    let executor = ToolRoundExecutor::new(Arc::clone(&llm), registry, cfg.clone());
+    let executor = ToolRoundExecutor::new(
+        Arc::clone(&llm),
+        registry,
+        cfg.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
+    );
     let (_, turn_hook) = basic_pack_arc();
     let svc = AgentTurnService::new(
         llm,
@@ -290,6 +295,7 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
         TerminationCapability::summary_prompt_only(),
         StaticCapabilityPolicy::local_full(),
         turn_hook,
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let res = svc
         .run(

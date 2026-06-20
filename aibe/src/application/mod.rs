@@ -1,5 +1,6 @@
 pub mod agent_turn;
 pub mod basic_memory_pack;
+pub mod llm_call_trace;
 pub mod llm_error;
 pub mod memory_runtime;
 pub mod memory_subscribe_transport;

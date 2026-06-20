@@ -18,6 +18,7 @@ struct MockSocketServer {
     _dir: tempfile::TempDir,
     socket_path: std::path::PathBuf,
     route_turn_count: Arc<Mutex<usize>>,
+    agent_turn_count: Arc<Mutex<usize>>,
     last_conversation: Arc<Mutex<Option<RouteTurnConversation>>>,
 }
 
@@ -29,6 +30,8 @@ impl MockSocketServer {
         let listener = UnixListener::bind(&socket_path).expect("bind");
         let route_turn_count = Arc::new(Mutex::new(0usize));
         let count_clone = Arc::clone(&route_turn_count);
+        let agent_turn_count = Arc::new(Mutex::new(0usize));
+        let agent_count_clone = Arc::clone(&agent_turn_count);
         let last_conversation = Arc::new(Mutex::new(None));
         let conversation_clone = Arc::clone(&last_conversation);
         let handle = thread::spawn(move || {
@@ -76,6 +79,7 @@ impl MockSocketServer {
                         }
                     }
                     ClientRequest::AgentTurn { messages, .. } => {
+                        *agent_count_clone.lock().expect("lock") += 1;
                         assert!(
                             messages.iter().any(|m| {
                                 m.role == "user"
@@ -114,8 +118,17 @@ impl MockSocketServer {
             _dir: dir,
             socket_path,
             route_turn_count,
+            agent_turn_count,
             last_conversation,
         }
+    }
+
+    fn agent_turn_requests(&self) -> usize {
+        *self.agent_turn_count.lock().expect("lock")
+    }
+
+    fn route_turn_requests(&self) -> usize {
+        *self.route_turn_count.lock().expect("lock")
     }
 
     fn last_route_turn_conversation(&self) -> Option<RouteTurnConversation> {
@@ -547,5 +560,139 @@ max_observation_bytes = 4096
         *server.route_turn_count.lock().expect("lock"),
         1,
         "unsafe input must fall back to route_turn"
+    );
+}
+
+#[test]
+fn local_route_still_calls_agent_turn() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(0);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 4096
+[ask]
+tools = "@read-only"
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "git diff を見て", &[]);
+    assert_eq!(server.route_turn_requests(), 0);
+    assert_eq!(server.agent_turn_requests(), 1);
+}
+
+#[test]
+fn local_route_observation_includes_agent_turn_latency() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(0);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let observation_path = home.path().join("observation.jsonl");
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 4096
+[ask]
+tools = "@read-only"
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "git diff を見て", &[]);
+    let obs = fs::read_to_string(&observation_path).unwrap_or_default();
+    let line = obs.lines().last().expect("observation line");
+    let value: serde_json::Value = serde_json::from_str(line).expect("json");
+    assert_eq!(value["route_turn_used"], false);
+    assert_eq!(value["agent_turn_used"], true);
+    assert!(value.get("agent_turn_latency_ms").is_some());
+    assert!(value.get("total_turn_latency_ms").is_some());
+}
+
+#[test]
+fn route_turn_fallback_observation_marks_route_turn_used() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let observation_path = home.path().join("observation.jsonl");
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 4096
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(
+        &cfg,
+        home.path(),
+        "sudo rm -rf /tmp/foo の git diff を見て",
+        &[],
+    );
+    assert_eq!(server.route_turn_requests(), 1);
+    let obs = fs::read_to_string(&observation_path).unwrap_or_default();
+    let line = obs.lines().last().expect("observation line");
+    let value: serde_json::Value = serde_json::from_str(line).expect("json");
+    assert_eq!(value["route_turn_used"], true);
+    assert_eq!(value["agent_turn_used"], true);
+    assert_eq!(value["decision_path"], "local_route_fallback");
+    assert_eq!(value["fallback_reason"].as_str(), Some("unsafe"));
+}
+
+#[test]
+fn local_route_missing_tools_fallback_reason_in_observation() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let observation_path = home.path().join("observation.jsonl");
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 4096
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "git diff を見て", &[]);
+    assert_eq!(server.route_turn_requests(), 1);
+    let obs = fs::read_to_string(&observation_path).unwrap_or_default();
+    let line = obs.lines().last().expect("observation line");
+    let value: serde_json::Value = serde_json::from_str(line).expect("json");
+    assert_eq!(value["route_turn_used"], true);
+    assert_eq!(
+        value["fallback_reason"].as_str(),
+        Some("missing_required_local_tool")
     );
 }

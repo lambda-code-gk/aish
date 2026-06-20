@@ -12,9 +12,9 @@ use crate::domain::{
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    CapabilityPolicy, ConversationStore, ProfileRegistry, RouterConfig, RpcExtension,
-    ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink,
-    TurnHook,
+    CapabilityPolicy, ConversationStore, LlmCallTracer, ProfileRegistry, RouterConfig,
+    RpcExtension, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation,
+    TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
     ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody, ProtocolMessage,
@@ -38,6 +38,7 @@ pub struct RequestService {
     turn_hook: Arc<dyn TurnHook>,
     feature_registry: FeatureRegistry,
     feature_eligibility: FeatureEligibilityContext,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 }
 
 impl RequestService {
@@ -55,6 +56,7 @@ impl RequestService {
         turn_hook: Arc<dyn TurnHook>,
         feature_registry: FeatureRegistry,
         feature_eligibility: FeatureEligibilityContext,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self {
             profile_registry,
@@ -69,6 +71,7 @@ impl RequestService {
             turn_hook,
             feature_registry,
             feature_eligibility,
+            llm_tracer,
         }
     }
 
@@ -98,6 +101,7 @@ impl RequestService {
             turn_hook,
             feature_registry,
             FeatureEligibilityContext::default(),
+            Arc::new(crate::ports::outbound::NoopLlmCallTracer),
         )
     }
 
@@ -128,6 +132,7 @@ impl RequestService {
             turn_hook,
             feature_registry,
             FeatureEligibilityContext::default(),
+            Arc::new(crate::ports::outbound::NoopLlmCallTracer),
         )
     }
 
@@ -165,6 +170,7 @@ impl RequestService {
                     self.conversation_store.clone(),
                     self.feature_registry.clone(),
                     self.feature_eligibility,
+                    Arc::clone(&self.llm_tracer),
                 );
                 route_service
                     .run(id, query, cwd, session, conversation, cli_overrides)
@@ -254,6 +260,7 @@ impl RequestService {
                     Arc::clone(llm),
                     Arc::clone(&self.tool_registry),
                     self.tools_config.clone(),
+                    Arc::clone(&self.llm_tracer),
                 );
                 let agent_turn = AgentTurnService::with_capability_policy(
                     Arc::clone(llm),
@@ -262,6 +269,7 @@ impl RequestService {
                     termination_capability,
                     Arc::clone(&self.capability_policy),
                     Arc::clone(&self.turn_hook),
+                    Arc::clone(&self.llm_tracer),
                 );
                 let turn_id = id.clone();
                 if let Some(cancel) = cancellation.clone() {

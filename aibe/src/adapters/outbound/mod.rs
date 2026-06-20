@@ -2,6 +2,7 @@ mod capability_policy;
 mod contextual_memory_store;
 mod conversation_store;
 mod env_config;
+mod env_llm_call_tracer;
 mod filesystem_feature_registry;
 mod filesystem_memory_kind_registry;
 mod filesystem_memory_recipe_registry;
@@ -24,6 +25,7 @@ pub use capability_policy::StaticCapabilityPolicy;
 pub use contextual_memory_store::{EmptyContextualMemoryStore, FilesystemContextualMemoryStore};
 pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;
+pub use env_llm_call_tracer::EnvLlmCallTracer;
 pub use filesystem_feature_registry::FilesystemFeatureRegistryLoader;
 pub use filesystem_memory_kind_registry::{
     shared_baseline_loader, shared_builtin_loader, BaselineMemoryKindRegistryLoader,

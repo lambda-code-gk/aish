@@ -8,9 +8,9 @@ use super::memory_service::MemoryService;
 use super::memory_subscribe_service::MemorySubscribeService;
 use crate::domain::{AgentTurnContext, ChatMessage, MessageRole};
 use crate::ports::outbound::{
-    CapabilityPolicy, ContextualMemoryStore, MemoryKindRegistryLoader, MemoryRecipeRegistryLoader,
-    MemorySpaceResolver, MemorySubscription, MemorySubscriptionBroker, ProfileRegistry,
-    RpcExtension, TurnHook, TurnHookError,
+    CapabilityPolicy, ContextualMemoryStore, LlmCallTracer, MemoryKindRegistryLoader,
+    MemoryRecipeRegistryLoader, MemorySpaceResolver, MemorySubscription, MemorySubscriptionBroker,
+    ProfileRegistry, RpcExtension, TurnHook, TurnHookError,
 };
 use aibe_protocol::{
     ClientResponse, MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
@@ -26,9 +26,11 @@ pub struct ContextualMemoryPack {
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
     capability_policy: Arc<dyn CapabilityPolicy>,
     profile_registry: ProfileRegistry,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 }
 
 impl ContextualMemoryPack {
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         memory_store: Arc<dyn ContextualMemoryStore>,
@@ -38,6 +40,7 @@ impl ContextualMemoryPack {
         memory_broker: Arc<dyn MemorySubscriptionBroker>,
         capability_policy: Arc<dyn CapabilityPolicy>,
         profile_registry: ProfileRegistry,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self {
             memory_store,
@@ -47,6 +50,7 @@ impl ContextualMemoryPack {
             memory_broker,
             capability_policy,
             profile_registry,
+            llm_tracer,
         }
     }
 
@@ -137,6 +141,7 @@ impl RpcExtension for ContextualMemoryPack {
             self.profile_registry.clone(),
             Some(Arc::clone(&self.memory_broker)),
             Arc::clone(&self.capability_policy),
+            Arc::clone(&self.llm_tracer),
         );
         service
             .run(
@@ -164,6 +169,7 @@ impl RpcExtension for ContextualMemoryPack {
 }
 
 /// composition root / テスト用: `ContextualMemoryPack` を trait object として返す。
+#[allow(clippy::too_many_arguments)]
 pub fn contextual_pack_arc(
     memory_store: Arc<dyn ContextualMemoryStore>,
     memory_space_resolver: Arc<dyn MemorySpaceResolver>,
@@ -172,6 +178,7 @@ pub fn contextual_pack_arc(
     memory_broker: Arc<dyn MemorySubscriptionBroker>,
     capability_policy: Arc<dyn CapabilityPolicy>,
     profile_registry: ProfileRegistry,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 ) -> (Arc<dyn RpcExtension>, Arc<dyn TurnHook>) {
     let pack = Arc::new(ContextualMemoryPack::new(
         memory_store,
@@ -181,6 +188,7 @@ pub fn contextual_pack_arc(
         memory_broker,
         capability_policy,
         profile_registry,
+        llm_tracer,
     ));
     (
         Arc::clone(&pack) as Arc<dyn RpcExtension>,

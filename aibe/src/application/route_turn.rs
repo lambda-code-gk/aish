@@ -12,12 +12,14 @@ use aibe_protocol::{
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
+use crate::application::llm_call_trace::trace_llm_result;
 use crate::domain::{
     actions_equivalent, feature_action_schema_prompt, ChatMessage, FeatureEligibilityContext,
     FeatureRegistry, MessageRole,
 };
 use crate::ports::outbound::{
-    ConversationStore, ConversationStoreError, LlmError, ProfileRegistry, RouterConfig,
+    ConversationStore, ConversationStoreError, LlmCallTracer, LlmError, ProfileRegistry,
+    RouterConfig,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +38,7 @@ pub struct RouteTurnService {
     store: Arc<dyn ConversationStore>,
     feature_registry: FeatureRegistry,
     feature_eligibility: FeatureEligibilityContext,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 }
 
 impl RouteTurnService {
@@ -45,6 +48,7 @@ impl RouteTurnService {
         store: Arc<dyn ConversationStore>,
         feature_registry: FeatureRegistry,
         feature_eligibility: FeatureEligibilityContext,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self {
             profile_registry,
@@ -52,6 +56,7 @@ impl RouteTurnService {
             store,
             feature_registry,
             feature_eligibility,
+            llm_tracer,
         }
     }
 
@@ -67,6 +72,7 @@ impl RouteTurnService {
             store,
             FeatureRegistry::empty(),
             FeatureEligibilityContext::default(),
+            Arc::new(crate::ports::outbound::NoopLlmCallTracer),
         )
     }
 }
@@ -130,10 +136,12 @@ impl RouteTurnService {
             recent_summary.as_deref(),
             &self.feature_registry,
         );
-        let response = llm
-            .complete(&prompt)
-            .await
-            .map_err(|e| RouteTurnError::Provider(llm_error_to_string(e)))?;
+        let profile_name = self.router.profile.as_str();
+        let response = trace_llm_result(&self.llm_tracer, "route_turn", Some(profile_name), || {
+            llm.complete(&prompt)
+        })
+        .await
+        .map_err(|e| RouteTurnError::Provider(llm_error_to_string(e)))?;
         let raw = response.content.trim().to_string();
         let draft = parse_route_plan(&raw)?;
         let mut plan = finalize_route_plan(

@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::application::tool_defs::definitions_for;
 use crate::application::tool_round::rejected::rejected_tool_result;
@@ -10,8 +11,8 @@ use crate::domain::{
     ToolRiskClass, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
 };
 use crate::ports::outbound::{
-    LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig, TurnCancellation,
-    TurnEventSink,
+    LlmCallTracer, LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
+    TurnCancellation, TurnEventSink,
 };
 
 /// 1 ラウンドの結果。max-round 終端は `AgentTurnService` + terminator が担当。
@@ -34,6 +35,7 @@ pub struct ToolRoundExecutor {
     llm: Arc<dyn LlmProvider>,
     registry: Arc<dyn ToolRegistry>,
     tools_config: ToolsConfig,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 }
 
 fn classify_tool(name: &str) -> (ToolRiskClass, ToolApprovalState) {
@@ -57,11 +59,13 @@ impl ToolRoundExecutor {
         llm: Arc<dyn LlmProvider>,
         registry: Arc<dyn ToolRegistry>,
         tools_config: ToolsConfig,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self {
             llm,
             registry,
             tools_config,
+            llm_tracer,
         }
     }
 
@@ -80,6 +84,8 @@ impl ToolRoundExecutor {
         cancellation: Option<&Arc<TurnCancellation>>,
     ) -> Result<RoundOutcome, LlmError> {
         let tool_defs = definitions_for(allowed_tools);
+        self.llm_tracer.start("tool_round", None, None);
+        let started = Instant::now();
         let step = if let Some(cancel) = cancellation {
             if let Some(events) = events.as_ref() {
                 let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -98,6 +104,7 @@ impl ToolRoundExecutor {
                     _ = cancel.wait() => {
                         drop(delta_tx);
                         stream_forwarder.abort();
+                        self.llm_tracer.end("tool_round", started.elapsed().as_millis() as u64, false);
                         return Ok(RoundOutcome::Cancelled {
                             executed: executed_so_far.to_vec(),
                         });
@@ -113,6 +120,7 @@ impl ToolRoundExecutor {
                 tokio::select! {
                     res = self.llm.complete_with_tools_streaming(conversation, &tool_defs, &mut ignore_delta) => res?,
                     _ = cancel.wait() => {
+                        self.llm_tracer.end("tool_round", started.elapsed().as_millis() as u64, false);
                         return Ok(RoundOutcome::Cancelled {
                             executed: executed_so_far.to_vec(),
                         });
@@ -146,6 +154,8 @@ impl ToolRoundExecutor {
                 .complete_with_tools_streaming(conversation, &tool_defs, &mut ignore_delta)
                 .await?
         };
+        self.llm_tracer
+            .end("tool_round", started.elapsed().as_millis() as u64, true);
 
         let mut executed = executed_so_far.to_vec();
 
@@ -274,7 +284,7 @@ mod tests {
     use crate::domain::{
         LlmStepResult, MessageRole, ToolCall, ToolName, ToolResult, READ_FILE, SHELL_EXEC,
     };
-    use crate::ports::outbound::{ToolDefinition, ToolExecutor};
+    use crate::ports::outbound::{NoopLlmCallTracer, ToolDefinition, ToolExecutor};
 
     struct StepLlm {
         steps: Mutex<Vec<LlmStepResult>>,
@@ -364,7 +374,12 @@ mod tests {
     }
 
     fn executor(llm: Arc<dyn LlmProvider>, registry: Arc<dyn ToolRegistry>) -> ToolRoundExecutor {
-        ToolRoundExecutor::new(llm, registry, ToolsConfig::default())
+        ToolRoundExecutor::new(
+            llm,
+            registry,
+            ToolsConfig::default(),
+            Arc::new(NoopLlmCallTracer),
+        )
     }
 
     fn tool_ctx() -> ToolExecutionContext {

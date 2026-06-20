@@ -101,6 +101,7 @@ fn turn_hook(store: Arc<dyn ContextualMemoryStore>) -> Arc<dyn TurnHook> {
             Arc::new(MockLlm::new()),
             aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
         ),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     )
     .1
 }

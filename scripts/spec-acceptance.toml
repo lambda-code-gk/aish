@@ -273,3 +273,48 @@ description = "local route metrics が observation に保存される"
 test = "local_route_observation_records_metrics"
 file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
 pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "trace_local_route_agent_turn"
+description = "local route 成功時も agent_turn は呼ばれる"
+test = "local_route_still_calls_agent_turn"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "observation_agent_turn_latency"
+description = "observation に agent_turn_latency_ms / total_turn_latency_ms が入る"
+test = "local_route_observation_includes_agent_turn_latency"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "observation_turn_llm_accounting"
+description = "observation に LLM call accounting が保存される"
+test = "observation_records_turn_llm_accounting"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "aibe_llm_trace_sites"
+description = "aibe LLM trace で route_turn / agent_turn site を区別できる"
+test = "trace_end_ok_flag"
+file_glob = "aibe/src/adapters/outbound/env_llm_call_tracer.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 3
+id = "prepare_hook_no_llm"
+description = "prepare_turn_messages は LLM provider を呼ばない"
+test = "turn_hook_prepare_does_not_call_llm_provider"
+file_glob = "aibe/src/application/basic_memory_pack.rs"
+pending = false

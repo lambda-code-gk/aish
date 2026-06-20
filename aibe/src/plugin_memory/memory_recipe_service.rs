@@ -8,14 +8,16 @@ use aibe_protocol::{
     MemoryRecipeProposalDto, MemoryRecipeStatus,
 };
 
+use crate::application::llm_call_trace::trace_llm_result;
 use crate::domain::{
     build_recipe_messages, collect_recipe_materials, parse_and_validate_recipe_output,
     publish_memory_changes, required_capabilities_for_memory_operations, Capability,
     MemoryKindRegistryError, MemoryRecipeError, MemoryRecipeRegistryError,
 };
 use crate::ports::outbound::{
-    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, MemoryKindRegistryLoader,
-    MemoryRecipeRegistryLoader, MemorySpaceResolver, MemorySubscriptionBroker, ProfileRegistry,
+    CapabilityPolicy, ContextualMemoryStore, ContextualMemoryStoreError, LlmCallTracer,
+    MemoryKindRegistryLoader, MemoryRecipeRegistryLoader, MemorySpaceResolver,
+    MemorySubscriptionBroker, NoopLlmCallTracer, ProfileRegistry,
 };
 
 pub struct MemoryRecipeService {
@@ -26,6 +28,7 @@ pub struct MemoryRecipeService {
     profile_registry: ProfileRegistry,
     broker: Option<Arc<dyn MemorySubscriptionBroker>>,
     capability_policy: Arc<dyn CapabilityPolicy>,
+    llm_tracer: Arc<dyn LlmCallTracer>,
 }
 
 impl MemoryRecipeService {
@@ -44,6 +47,7 @@ impl MemoryRecipeService {
             profile_registry,
             None,
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+            Arc::new(NoopLlmCallTracer),
         )
     }
 
@@ -63,9 +67,11 @@ impl MemoryRecipeService {
             profile_registry,
             Some(broker),
             crate::adapters::outbound::StaticCapabilityPolicy::local_full(),
+            Arc::new(NoopLlmCallTracer),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_capability_policy(
         store: Arc<dyn ContextualMemoryStore>,
         resolver: Arc<dyn MemorySpaceResolver>,
@@ -74,6 +80,7 @@ impl MemoryRecipeService {
         profile_registry: ProfileRegistry,
         broker: Option<Arc<dyn MemorySubscriptionBroker>>,
         capability_policy: Arc<dyn CapabilityPolicy>,
+        llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
         Self {
             store,
@@ -83,6 +90,7 @@ impl MemoryRecipeService {
             profile_registry,
             broker,
             capability_policy,
+            llm_tracer,
         }
     }
 
@@ -144,16 +152,21 @@ impl MemoryRecipeService {
             Err(msg) => return invalid(id, &msg),
         };
 
-        let assistant = match llm.complete(&messages).await {
-            Ok(msg) => msg,
-            Err(e) => {
-                return ClientResponse::error(
-                    id,
-                    ErrorCode::InvalidRequest,
-                    format!("recipe llm failed: {e}"),
-                );
-            }
-        };
+        let assistant =
+            match trace_llm_result(&self.llm_tracer, "memory_recipe", profile_name, || {
+                llm.complete(&messages)
+            })
+            .await
+            {
+                Ok(msg) => msg,
+                Err(e) => {
+                    return ClientResponse::error(
+                        id,
+                        ErrorCode::InvalidRequest,
+                        format!("recipe llm failed: {e}"),
+                    );
+                }
+            };
 
         let registry = match self
             .registry_loader

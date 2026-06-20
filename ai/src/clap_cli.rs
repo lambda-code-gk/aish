@@ -101,6 +101,9 @@ pub struct TurnOptions {
     /// console hint を無効にする
     #[arg(long, short = 'N', conflicts_with = "console_hint")]
     pub no_console_hint: bool,
+    /// Smart Preprocessor の route / LLM accounting trace を stderr に出す
+    #[arg(long)]
+    pub trace_route: bool,
 }
 
 #[derive(Parser)]

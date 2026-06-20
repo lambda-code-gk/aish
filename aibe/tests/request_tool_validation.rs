@@ -33,6 +33,7 @@ fn service() -> RequestService {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     RequestService::new(
         profile_registry,

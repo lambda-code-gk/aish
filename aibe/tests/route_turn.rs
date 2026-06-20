@@ -46,6 +46,7 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     RequestService::new(
         profile_registry,
@@ -195,6 +196,7 @@ async fn registry_merges_feature_actions_when_query_matches_trigger() {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let svc = RequestService::new(
         profile_registry,
@@ -265,6 +267,7 @@ async fn registry_does_not_duplicate_memory_query_when_llm_already_returned_one(
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let svc = RequestService::new(
         profile_registry,
@@ -333,6 +336,7 @@ async fn route_turn_strips_shell_exec_from_recommended_tools() {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let svc = RequestService::new(
         profile_registry,
@@ -395,6 +399,7 @@ async fn registry_skips_requires_recipe_features_when_recipes_disabled() {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         StaticCapabilityPolicy::local_full(),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let svc = RequestService::new_with_turns_and_packs(
         profile_registry,
@@ -412,6 +417,7 @@ async fn registry_skips_requires_recipe_features_when_recipes_disabled() {
             memory_kinds_enabled: true,
             recipes_enabled: false,
         },
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let resp = svc
         .handle(

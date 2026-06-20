@@ -98,6 +98,7 @@ fn default_turn() -> TurnOptions {
         silent_exec: false,
         console_hint: false,
         no_console_hint: false,
+        trace_route: false,
     }
 }
 

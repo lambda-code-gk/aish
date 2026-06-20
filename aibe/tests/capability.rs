@@ -44,6 +44,7 @@ fn request_service_with_policy(
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         Arc::clone(&policy),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     RequestService::new(
         profile_registry,
@@ -347,6 +348,7 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         Arc::clone(&policy),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let service = RequestService::new(
         profile_registry,
@@ -425,6 +427,7 @@ async fn memory_only_profile_denies_shell_execute() {
         Arc::new(InProcessMemorySubscriptionBroker::new()),
         Arc::clone(&policy),
         profile_registry.clone(),
+        Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
     );
     let service = RequestService::new(
         profile_registry,
@@ -503,6 +506,7 @@ async fn memory_recipe_run_requires_memory_recipe_run_capability() {
                     aibe::domain::Capability::MemoryWrite,
                 ],
             )),
+            Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
         );
     let res = service
         .run(
@@ -543,6 +547,7 @@ async fn memory_recipe_run_requires_memory_read() {
                 "recipe_no_read",
                 [aibe::domain::Capability::MemoryRecipeRun],
             )),
+            Arc::new(aibe::ports::outbound::NoopLlmCallTracer),
         );
     let res = service
         .run(
