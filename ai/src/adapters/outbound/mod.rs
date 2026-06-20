@@ -45,7 +45,7 @@ pub use smart_preprocessor_model::{
 };
 pub use smart_preprocessor_observation::{
     default_observation_path, resolve_session_error_summary, write_observation_record,
-    ObservationContext, ObservationRecord,
+    LocalRouteMetrics, ObservationContext, ObservationRecord,
 };
 pub use stdout_presenter::{
     format_shell_exec_executed_summary, render_response, ShellExecRenderOptions, StdoutPresenter,

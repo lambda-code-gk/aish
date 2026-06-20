@@ -483,3 +483,67 @@ max_observation_bytes = 2048
         .expect("hints on unsafe git consult");
     assert!(hints.context_needs.iter().any(|n| n == "git_diff"));
 }
+
+#[test]
+fn local_route_skips_route_turn_for_high_confidence_safe_input() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(0);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 4096
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "git diff を見て", &[]);
+    assert_eq!(
+        *server.route_turn_count.lock().expect("lock"),
+        0,
+        "high confidence safe git inspect should use local route"
+    );
+    assert!(server.last_route_turn_conversation().is_none());
+}
+
+#[test]
+fn local_route_falls_back_to_route_turn_for_medium_or_unsafe_input() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 4096
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(
+        &cfg,
+        home.path(),
+        "sudo rm -rf /tmp/foo の git diff を見て",
+        &[],
+    );
+    assert_eq!(
+        *server.route_turn_count.lock().expect("lock"),
+        1,
+        "unsafe input must fall back to route_turn"
+    );
+}

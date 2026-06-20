@@ -1167,6 +1167,285 @@ pub fn run_preprocessor(
     }
 }
 
+pub const LOCAL_ROUTE_ESTIMATED_TOKENS_SAVED: u32 = 800;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalRouteKind {
+    SimpleChat,
+    ShellHelp,
+    GitInspect,
+    OutputStyleRequest,
+    CodeReviewContextSelection,
+}
+
+impl LocalRouteKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SimpleChat => "simple_chat",
+            Self::ShellHelp => "shell_help",
+            Self::GitInspect => "git_inspect",
+            Self::OutputStyleRequest => "output_style_request",
+            Self::CodeReviewContextSelection => "code_review_context_selection",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalOutputStyle {
+    Default,
+    Concise,
+    Expanded,
+    Checklist,
+    CodeFirst,
+    ReviewFirst,
+}
+
+impl LocalOutputStyle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Concise => "concise",
+            Self::Expanded => "expanded",
+            Self::Checklist => "checklist",
+            Self::CodeFirst => "code_first",
+            Self::ReviewFirst => "review_first",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalToolHint {
+    GitStatus,
+    GitDiff,
+    Grep,
+    ReadFile,
+    ListDir,
+}
+
+impl LocalToolHint {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GitStatus => "git_status",
+            Self::GitDiff => "git_diff",
+            Self::Grep => "grep",
+            Self::ReadFile => "read_file",
+            Self::ListDir => "list_dir",
+        }
+    }
+
+    pub fn runtime_tool_name(self) -> &'static str {
+        self.as_str()
+    }
+
+    pub fn from_smart_tool_hint(hint: SmartToolHint) -> Option<Self> {
+        match hint {
+            SmartToolHint::GitStatus => Some(Self::GitStatus),
+            SmartToolHint::GitDiff => Some(Self::GitDiff),
+            SmartToolHint::Grep => Some(Self::Grep),
+            SmartToolHint::ReadFile => Some(Self::ReadFile),
+            SmartToolHint::ListDir => Some(Self::ListDir),
+            SmartToolHint::ShellExecCandidate
+            | SmartToolHint::MemorySearch
+            | SmartToolHint::ConversationSearch => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalRouteDecision {
+    pub route_kind: LocalRouteKind,
+    pub enabled_tools: Vec<LocalToolHint>,
+    pub context_needs: Vec<SmartContextNeed>,
+    pub output_style: LocalOutputStyle,
+    pub fallback_required: bool,
+    pub source_intent: SmartIntentClass,
+    pub confidence_bps: u16,
+    pub estimated_tokens_saved: u32,
+}
+
+pub fn build_local_route_context_summary(context_needs: &[SmartContextNeed]) -> Option<String> {
+    if context_needs.is_empty() {
+        return None;
+    }
+    let labels: Vec<&str> = context_needs.iter().map(|need| need.as_str()).collect();
+    Some(format!("local_context_needs: {}", labels.join(",")))
+}
+
+pub fn local_output_style_system_hint(style: LocalOutputStyle) -> Option<&'static str> {
+    match style {
+        LocalOutputStyle::Default => None,
+        LocalOutputStyle::Concise => {
+            Some("Respond concisely. Prefer short paragraphs and minimal preamble.")
+        }
+        LocalOutputStyle::Expanded => Some("Provide an expanded explanation with useful detail."),
+        LocalOutputStyle::Checklist => {
+            Some("Respond as a checklist with short actionable bullets.")
+        }
+        LocalOutputStyle::CodeFirst => Some("Lead with code or command examples before prose."),
+        LocalOutputStyle::ReviewFirst => {
+            Some("Lead with review findings, risks, and recommendations.")
+        }
+    }
+}
+
+pub fn intent_supports_local_route(intent: SmartIntentClass) -> bool {
+    matches!(
+        intent,
+        SmartIntentClass::SimpleChat | SmartIntentClass::Inspect
+    )
+}
+
+pub fn derive_local_route_kind(intent: SmartIntentClass, text: &str) -> Option<LocalRouteKind> {
+    let text = normalize_text(text);
+    match intent {
+        SmartIntentClass::SimpleChat => Some(LocalRouteKind::SimpleChat),
+        SmartIntentClass::Inspect => {
+            if contains_any(
+                &text,
+                &["git", "コミット", "差分", "commit", "diff", "status"],
+            ) {
+                Some(LocalRouteKind::GitInspect)
+            } else if contains_any(
+                &text,
+                &["shell", "bash", "zsh", "コマンド", "使い方", "help"],
+            ) {
+                Some(LocalRouteKind::ShellHelp)
+            } else if contains_any(
+                &text,
+                &["簡潔", "箇条書き", "短く", "concise", "checklist", "output"],
+            ) {
+                Some(LocalRouteKind::OutputStyleRequest)
+            } else if contains_any(&text, &["review", "レビュー", "コード", "refactor"]) {
+                Some(LocalRouteKind::CodeReviewContextSelection)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn derive_local_output_style(text: &str) -> LocalOutputStyle {
+    let text = normalize_text(text);
+    if contains_any(&text, &["簡潔", "短く", "concise"]) {
+        LocalOutputStyle::Concise
+    } else if contains_any(&text, &["箇条書き", "checklist"]) {
+        LocalOutputStyle::Checklist
+    } else if contains_any(&text, &["詳しく", "expanded", "詳細"]) {
+        LocalOutputStyle::Expanded
+    } else if contains_any(&text, &["コード", "code first"]) {
+        LocalOutputStyle::CodeFirst
+    } else if contains_any(&text, &["review", "レビュー"]) {
+        LocalOutputStyle::ReviewFirst
+    } else {
+        LocalOutputStyle::Default
+    }
+}
+
+pub fn project_safe_local_tools(tool_hints: &[SmartToolHint]) -> Vec<LocalToolHint> {
+    let mut out = Vec::new();
+    for hint in tool_hints {
+        if let Some(local) = LocalToolHint::from_smart_tool_hint(*hint) {
+            out.push(local);
+        }
+    }
+    out.sort_by_key(|hint| hint.as_str());
+    out.dedup();
+    out
+}
+
+pub fn clamp_local_tools_to_allowlist(
+    tools: Vec<LocalToolHint>,
+    allowlist: &[String],
+) -> Vec<LocalToolHint> {
+    if allowlist.is_empty() {
+        return Vec::new();
+    }
+    let allowed: std::collections::HashSet<&str> = allowlist.iter().map(String::as_str).collect();
+    tools
+        .into_iter()
+        .filter(|tool| allowed.contains(tool.runtime_tool_name()))
+        .collect()
+}
+
+pub fn derive_local_route_decision(
+    decision: &SmartPreprocessDecision,
+    user_text: &str,
+    config: &PreprocessConfig,
+    cli_tool_allowlist: &[String],
+) -> Option<LocalRouteDecision> {
+    if config.mode != SmartPreprocessMode::Gate {
+        return None;
+    }
+    if !intent_supports_local_route(decision.intent) {
+        return None;
+    }
+    if intent_always_requires_route_turn(decision.intent) {
+        return None;
+    }
+    let route_kind = derive_local_route_kind(decision.intent, user_text)?;
+    let mut fallback_required = false;
+    if !decision.safety.is_safe_for_short_circuit() {
+        fallback_required = true;
+    }
+    if decision.confidence_bps < config.route_turn_threshold_bps {
+        fallback_required = true;
+    }
+    if decision.tool_hints.iter().any(|hint| {
+        matches!(
+            hint,
+            SmartToolHint::MemorySearch | SmartToolHint::ConversationSearch
+        )
+    }) {
+        fallback_required = true;
+    }
+    let context_needs: Vec<_> = decision
+        .context_needs
+        .iter()
+        .filter(|need| !matches!(need, SmartContextNeed::MemoryCards))
+        .copied()
+        .collect();
+    let enabled_tools = clamp_local_tools_to_allowlist(
+        project_safe_local_tools(&decision.tool_hints),
+        cli_tool_allowlist,
+    );
+    Some(LocalRouteDecision {
+        route_kind,
+        enabled_tools,
+        context_needs,
+        output_style: derive_local_output_style(user_text),
+        fallback_required,
+        source_intent: decision.intent,
+        confidence_bps: decision.confidence_bps,
+        estimated_tokens_saved: if fallback_required {
+            0
+        } else {
+            LOCAL_ROUTE_ESTIMATED_TOKENS_SAVED
+        },
+    })
+}
+
+pub fn should_use_local_route(
+    decision: &SmartPreprocessDecision,
+    local: &LocalRouteDecision,
+    config: &PreprocessConfig,
+    tty: bool,
+    cli_overrides: bool,
+) -> bool {
+    config.mode == SmartPreprocessMode::Gate
+        && !local.fallback_required
+        && decision.safety.is_safe_for_short_circuit()
+        && decision.confidence_bps >= config.route_turn_threshold_bps
+        && decision.model_version.as_deref() == Some(DEFAULT_MODEL_VERSION)
+        && decision.feature_hash_version == FEATURE_EXTRACTOR_VERSION
+        && tty
+        && !cli_overrides
+        && !intent_always_requires_route_turn(decision.intent)
+}
+
 pub fn should_short_circuit(decision: &SmartPreprocessDecision) -> bool {
     decision.mode == SmartPreprocessMode::Gate
         && decision.short_circuit_allowed
@@ -1731,5 +2010,71 @@ mod tests {
         assert!(decision.inject_hints);
         assert!(!decision.context_needs.is_empty() || !decision.tool_hints.is_empty());
         assert!(decision.route_turn_hints.has_route_turn_hint_payload());
+    }
+
+    #[test]
+    fn local_route_decision_is_deterministic() {
+        let input = sample_input("git diff を見て");
+        let cfg = config_with_model(SmartPreprocessMode::Gate);
+        let decision = run_preprocessor(input.clone(), &cfg);
+        let allowlist = vec![
+            "git_status".into(),
+            "git_diff".into(),
+            "grep".into(),
+            "read_file".into(),
+            "list_dir".into(),
+        ];
+        let first = derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist);
+        let second = derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist);
+        assert_eq!(first, second);
+        let local = first.expect("local route");
+        assert_eq!(local.route_kind, LocalRouteKind::GitInspect);
+        assert!(!local.enabled_tools.is_empty());
+    }
+
+    #[test]
+    fn local_route_excludes_memory_from_fast_path() {
+        let input = sample_input("前に決めた設計方針を教えて");
+        let cfg = config_with_model(SmartPreprocessMode::Gate);
+        let decision = run_preprocessor(input.clone(), &cfg);
+        assert_eq!(decision.intent, SmartIntentClass::MemoryLookup);
+        assert!(derive_local_route_decision(&decision, &input.user_text, &cfg, &[]).is_none());
+    }
+
+    #[test]
+    fn local_route_kind_derivation_covers_phase_targets() {
+        assert_eq!(
+            derive_local_route_kind(SmartIntentClass::SimpleChat, "hello"),
+            Some(LocalRouteKind::SimpleChat)
+        );
+        assert_eq!(
+            derive_local_route_kind(SmartIntentClass::Inspect, "bash の使い方を教えて"),
+            Some(LocalRouteKind::ShellHelp)
+        );
+        assert_eq!(
+            derive_local_route_kind(SmartIntentClass::Inspect, "git diff を見て"),
+            Some(LocalRouteKind::GitInspect)
+        );
+        assert_eq!(
+            derive_local_route_kind(SmartIntentClass::Inspect, "箇条書きで答えて"),
+            Some(LocalRouteKind::OutputStyleRequest)
+        );
+        assert_eq!(
+            derive_local_route_kind(SmartIntentClass::Inspect, "このコードをレビューして"),
+            Some(LocalRouteKind::CodeReviewContextSelection)
+        );
+    }
+
+    #[test]
+    fn local_route_context_and_output_style_hints_are_bounded() {
+        let summary = build_local_route_context_summary(&[
+            SmartContextNeed::GitStatus,
+            SmartContextNeed::GitDiff,
+        ])
+        .expect("summary");
+        assert!(summary.contains("git_status"));
+        assert!(summary.contains("git_diff"));
+        assert!(local_output_style_system_hint(LocalOutputStyle::Default).is_none());
+        assert!(local_output_style_system_hint(LocalOutputStyle::Concise).is_some());
     }
 }

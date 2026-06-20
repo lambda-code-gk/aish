@@ -17,8 +17,8 @@ use ai::adapters::outbound::{
     detect_terminal_size, external_command_names, load_bundled_preprocessor_model,
     load_preprocessor_model, load_shell_exec_approval, read_chat_line,
     resolve_session_error_summary, resolve_shell_log_for_ask, write_observation_record,
-    AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore, ObservationContext,
-    ObservationRecord, ShellExecRenderOptions, StdoutPresenter, YesExecCache,
+    AibeUnixClient, ChatReadLineResult, FileLogTail, LocalHistoryStore, LocalRouteMetrics,
+    ObservationContext, ObservationRecord, ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -34,14 +34,15 @@ use ai::clap_cli::{
     MemoryCliOptions, NowCommand, OutputFormatArg, TurnOptions,
 };
 use ai::domain::smart_preprocessor::{
-    PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
+    build_local_route_context_summary, local_output_style_system_hint, LocalRouteDecision,
+    LocalToolHint, PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
 };
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
-    resolve_progress, validate_ask_arg_order, AskArgOrderError, AskInput, AskRequestError,
-    ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter, HistoryMessage, HistoryPayload,
-    HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat, OutputFormatError,
-    RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
+    resolve_progress, resolve_tools, validate_ask_arg_order, AskArgOrderError, AskInput,
+    AskRequestError, ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter, HistoryMessage,
+    HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat,
+    OutputFormatError, RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
     ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
@@ -1269,6 +1270,7 @@ struct SmartRouteOutcome {
     conversation_id: Option<String>,
     route_plan: Option<RoutePlan>,
     route_fallback: bool,
+    local_route: Option<LocalRouteDecision>,
 }
 
 impl SmartRouteOutcome {
@@ -1277,6 +1279,7 @@ impl SmartRouteOutcome {
             conversation_id: None,
             route_plan: None,
             route_fallback: false,
+            local_route: None,
         }
     }
 }
@@ -1330,6 +1333,22 @@ fn apply_smart_route_and_features(
             feature_history_summaries = outcome.history_summaries;
         }
         turn = apply_route_plan_advisory(turn, plan, cfg, base_settings.quiet);
+    } else if let Some(ref local) = smart.local_route {
+        turn = apply_local_route_tools(&turn, &local.enabled_tools);
+        if let Some(summary) = build_local_route_context_summary(&local.context_needs) {
+            feature_extra_messages.push(ProtocolMessage {
+                role: "system".to_string(),
+                content: summary,
+            });
+        }
+        if turn.format.is_none() {
+            if let Some(hint) = local_output_style_system_hint(local.output_style) {
+                feature_extra_messages.push(ProtocolMessage {
+                    role: "system".to_string(),
+                    content: hint.to_string(),
+                });
+            }
+        }
     }
     if smart.route_fallback {
         turn.tools = Some("none".to_string());
@@ -1411,6 +1430,7 @@ fn write_preprocessor_observation(
     decision_path: &str,
     route_turn_used: bool,
     fallback_reason: Option<String>,
+    local_route: LocalRouteMetrics,
 ) {
     let route_turn_hints_present =
         decision.inject_hints && decision.route_turn_hints.has_route_turn_hint_payload();
@@ -1426,6 +1446,7 @@ fn write_preprocessor_observation(
             route_turn_hints_present,
             route_turn_hints_injected,
             fallback_reason,
+            local_route,
         },
     );
     let _ = write_observation_record(
@@ -1494,9 +1515,49 @@ fn route_metadata_from_payload(payload: Option<&HistoryPayload>) -> RouteMetadat
     meta
 }
 
+fn cli_tool_allowlist_for_local_route(
+    settings: &ResolvedTurnSettings,
+    turn: &TurnOptions,
+) -> Vec<String> {
+    if let Some(ref tools) = turn.tools {
+        return tools
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+    if let Ok(resolved) = resolve_tools(settings.tools_cli.as_deref(), &settings.ask_tools) {
+        return resolved
+            .allowlist
+            .into_names()
+            .into_iter()
+            .map(|name| name.as_str().to_string())
+            .collect();
+    }
+    Vec::new()
+}
+
+fn apply_local_route_tools(turn: &TurnOptions, enabled_tools: &[LocalToolHint]) -> TurnOptions {
+    let mut turn = turn.clone();
+    if turn.tools.is_some() {
+        return turn;
+    }
+    if enabled_tools.is_empty() {
+        return turn;
+    }
+    let names: Vec<String> = enabled_tools
+        .iter()
+        .map(|tool| tool.runtime_tool_name().to_string())
+        .collect();
+    turn.tools = Some(names.join(","));
+    turn
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_preprocessor_pipeline(
     cfg: &AiConfig,
+    settings: &ResolvedTurnSettings,
     ai_session_id: &str,
     command: &str,
     query: &str,
@@ -1543,6 +1604,7 @@ fn run_preprocessor_pipeline(
             model_load_error: model_load_error.clone(),
         },
         &pre_cfg,
+        &cli_tool_allowlist_for_local_route(settings, turn),
     );
     Some(outcome)
 }
@@ -1559,8 +1621,10 @@ fn run_smart_route_with_preprocessor(
     route_metadata: RouteMetadataInput,
     history_id: Option<String>,
 ) -> SmartRouteOutcome {
+    let preprocess_started = Instant::now();
     let preprocessor = run_preprocessor_pipeline(
         cfg,
+        settings,
         &settings.ai_session_id,
         command,
         query,
@@ -1569,6 +1633,7 @@ fn run_smart_route_with_preprocessor(
         route_metadata,
         history_id.clone(),
     );
+    let local_decision_latency_ms = preprocess_started.elapsed().as_millis() as u64;
     if let Some(ref outcome) = preprocessor {
         if outcome.decision.inject_hints {
             let rh = &outcome.decision.route_turn_hints;
@@ -1578,6 +1643,40 @@ fn run_smart_route_with_preprocessor(
         let observation_history_id = outcome.history_id.clone().or_else(|| history_id.clone());
         let model_fallback =
             preprocessor_model_load_fallback_reason(outcome.model_load_error.as_ref());
+        if outcome.use_local_route {
+            let local = outcome.local_route.as_ref().expect("local route");
+            let conversation_id = hints
+                .conversation_id
+                .clone()
+                .or_else(|| Some(next_conversation_id()));
+            if let Some(sp_cfg) = cfg.smart_preprocessor.as_ref() {
+                write_preprocessor_observation(
+                    sp_cfg,
+                    &outcome.decision,
+                    &settings.ai_session_id,
+                    conversation_id.clone(),
+                    observation_history_id,
+                    "local_route",
+                    false,
+                    model_fallback,
+                    LocalRouteMetrics {
+                        local_route_kind: Some(local.route_kind.as_str().to_string()),
+                        local_route_used: true,
+                        route_turn_skipped_count: 1,
+                        route_turn_fallback_count: 0,
+                        local_route_latency_ms: local_decision_latency_ms,
+                        route_turn_latency_ms: 0,
+                        estimated_tokens_saved: local.estimated_tokens_saved,
+                    },
+                );
+            }
+            return SmartRouteOutcome {
+                conversation_id,
+                route_plan: None,
+                route_fallback: false,
+                local_route: outcome.local_route.clone(),
+            };
+        }
         if outcome.short_circuit {
             let conversation_id = hints
                 .conversation_id
@@ -1593,21 +1692,29 @@ fn run_smart_route_with_preprocessor(
                     "gate_short_circuit",
                     false,
                     model_fallback,
+                    LocalRouteMetrics::default(),
                 );
             }
             return SmartRouteOutcome {
                 conversation_id,
                 route_plan: None,
                 route_fallback: false,
+                local_route: None,
             };
         }
     }
     let conversation_id_hint = hints.conversation_id.clone();
+    let route_turn_started = Instant::now();
     let smart = run_smart_route(socket_path, query, settings, turn, hints);
+    let route_turn_latency_ms = route_turn_started.elapsed().as_millis() as u64;
     if let (Some(sp_cfg), Some(outcome)) = (cfg.smart_preprocessor.as_ref(), preprocessor) {
         let observation_history_id = outcome.history_id.clone().or_else(|| history_id.clone());
         let model_fallback =
             preprocessor_model_load_fallback_reason(outcome.model_load_error.as_ref());
+        let local_route_fallback = outcome
+            .local_route
+            .as_ref()
+            .is_some_and(|local| local.fallback_required);
         let (decision_path, fallback_reason) = if smart.route_fallback {
             (
                 "text_only_fallback",
@@ -1617,6 +1724,7 @@ fn run_smart_route_with_preprocessor(
             let path = match outcome.decision.mode {
                 SmartPreprocessMode::Shadow => "shadow",
                 SmartPreprocessMode::Assist => "assist",
+                SmartPreprocessMode::Gate if local_route_fallback => "local_route_fallback",
                 SmartPreprocessMode::Gate => "route_turn",
                 SmartPreprocessMode::Off => "route_turn",
             };
@@ -1631,6 +1739,18 @@ fn run_smart_route_with_preprocessor(
             decision_path,
             !smart.route_fallback,
             fallback_reason,
+            LocalRouteMetrics {
+                local_route_kind: outcome
+                    .local_route
+                    .as_ref()
+                    .map(|local| local.route_kind.as_str().to_string()),
+                local_route_used: false,
+                route_turn_skipped_count: 0,
+                route_turn_fallback_count: u8::from(local_route_fallback),
+                local_route_latency_ms: local_decision_latency_ms,
+                route_turn_latency_ms,
+                estimated_tokens_saved: 0,
+            },
         );
     }
     smart
@@ -1667,12 +1787,14 @@ fn run_smart_route(
             conversation_id: Some(plan.conversation_id.clone()),
             route_plan: Some(plan.clone()),
             route_fallback: false,
+            local_route: None,
         }
     } else {
         SmartRouteOutcome {
             conversation_id: None,
             route_plan: None,
             route_fallback: true,
+            local_route: None,
         }
     }
 }
@@ -3077,5 +3199,114 @@ mod cli_tests {
         let turn = crate::apply_route_plan_advisory(TurnOptions::default(), &plan, &cfg, true);
         assert!(turn.preset.is_none());
         assert_eq!(turn.tools.as_deref(), Some("read_file"));
+    }
+
+    #[test]
+    fn local_route_enabled_tools_are_clamped_to_cli_allowlist() {
+        use ai::domain::smart_preprocessor::{
+            clamp_local_tools_to_allowlist, project_safe_local_tools, LocalToolHint, SmartToolHint,
+        };
+
+        let projected = project_safe_local_tools(&[
+            SmartToolHint::GitStatus,
+            SmartToolHint::GitDiff,
+            SmartToolHint::Grep,
+        ]);
+        let clamped = clamp_local_tools_to_allowlist(projected, &["git_status".into()]);
+        assert_eq!(clamped, vec![LocalToolHint::GitStatus]);
+
+        let mut turn = TurnOptions::default();
+        turn.tools = Some("git_status".into());
+        let applied =
+            crate::apply_local_route_tools(&turn, &[LocalToolHint::GitDiff, LocalToolHint::Grep]);
+        assert_eq!(applied.tools.as_deref(), Some("git_status"));
+    }
+
+    #[test]
+    fn apply_local_route_wires_context_and_output_style_messages() {
+        use std::collections::HashMap;
+
+        use ai::domain::smart_preprocessor::{
+            build_local_route_context_summary, local_output_style_system_hint, LocalOutputStyle,
+            LocalRouteDecision, LocalRouteKind, LocalToolHint, SmartContextNeed, SmartIntentClass,
+        };
+
+        let local = LocalRouteDecision {
+            route_kind: LocalRouteKind::GitInspect,
+            enabled_tools: vec![LocalToolHint::GitDiff],
+            context_needs: vec![SmartContextNeed::GitDiff],
+            output_style: LocalOutputStyle::Concise,
+            fallback_required: false,
+            source_intent: SmartIntentClass::Inspect,
+            confidence_bps: 9000,
+            estimated_tokens_saved: 800,
+        };
+        assert!(build_local_route_context_summary(&local.context_needs).is_some());
+        assert!(local_output_style_system_hint(local.output_style).is_some());
+
+        let cfg = AiConfig {
+            socket_path: default_socket_path(),
+            context_current: None,
+            memory_enabled: true,
+            ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
+            ask_filter: None,
+            ask_console_hints: None,
+            ask_progress: None,
+            history_dir: PathBuf::from("/tmp/ai-history-test"),
+            history_max_entries: 500,
+            log_tail_bytes: None,
+            presets: HashMap::new(),
+            smart_preprocessor: None,
+        };
+        let settings = crate::ResolvedTurnSettings {
+            quiet: true,
+            output_format: None,
+            preset_name: None,
+            log_tail_bytes: 1,
+            socket_path: default_socket_path(),
+            session_id: None,
+            ai_session_id: "sess".into(),
+            shell_log_choice: ShellLogChoice::None,
+            output_filter: None,
+            output_filter_meta: FilterMetadata {
+                enabled: false,
+                source: "none".into(),
+                masked: false,
+            },
+            llm_profile: None,
+            ask_tools: ConfigToolsTokens::default(),
+            tools_cli: None,
+            no_start: false,
+            verbose_tools: false,
+            progress: false,
+            progress_spinner: false,
+            timeout_secs: None,
+            yes_exec: false,
+            silent_exec: false,
+            shell_exec_approval: None,
+            console_hint: resolve_console_hints(None, None, None, true, None),
+        };
+        let prep = crate::apply_smart_route_and_features(
+            &cfg,
+            "git diff を見て",
+            TurnOptions::default(),
+            &settings,
+            crate::SmartRouteOutcome {
+                conversation_id: Some("conv-1".into()),
+                route_plan: None,
+                route_fallback: false,
+                local_route: Some(local),
+            },
+        );
+        assert_eq!(prep.agent_messages.len(), 3);
+        assert!(prep
+            .agent_messages
+            .iter()
+            .any(|msg| msg.role == "system" && msg.content.contains("local_context_needs")));
+        assert!(prep
+            .agent_messages
+            .iter()
+            .any(|msg| msg.role == "system" && msg.content.contains("concise")));
     }
 }

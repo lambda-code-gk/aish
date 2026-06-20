@@ -87,7 +87,7 @@ cargo test -p ai --test smart_preprocessor_ask_e2e -j 1
 2. TTY で `ai 'hello'` を実行し、従来どおり応答が返ること（`route_turn` は呼ばれる）。
 3. `~/.local/share/ai/smart_preprocessor/observation.jsonl`（または `observation_path` 指定先）に 1 行追記されること。raw secret / 長文ログは含まれないこと。
 4. `mode = "assist"` に切り替え、`AISH_SESSION_DIR` 配下に session log がある状態でエラー修正系の入力を送ると、`route_turn` の `recent_summary` が補強されること（mock / stderr 確認）。
-5. `mode = "gate"` は高信頼の **`simple_chat` のみ** 短絡候補（`retry` / `rerun` / `memory_lookup` は transcript または memory 経路が必要なため短絡対象外）。危険入力（`sudo` 等）では必ず `route_turn` に落ちること。
+5. `mode = "gate"` は高信頼かつ安全な入力で local route fast path を使える（`simple_chat` / `shell_help` / `git_inspect` 等。`memory_lookup` / `retry` / `rerun` は対象外）。危険入力（`sudo` 等）では必ず `route_turn` に落ちること。
 
 ### Phase 2.6（production 仕上げ）
 
@@ -105,6 +105,14 @@ cargo test -p ai --test smart_preprocessor_ask_e2e -j 1
 3. `MemoryLookup` / memory 系入力でも `route_turn` は呼ばれ、`preprocessor_hints` が載ること。
 4. `mode = "gate"` の `hello` 短絡時は `route_turn` request が作られず、observation に `route_turn_hints_injected: false` になること。
 5. observation に `route_turn_hints_present` / `route_turn_hints_injected` が区別して記録され、raw text は含まれないこと。
+
+### Phase 2.9（local route fast path）
+
+1. `mode = "gate"` で `git diff を見て` のような安全な git inspect 入力を送ると、`route_turn` が呼ばれず、stderr に `tools enabled: git_diff,git_status` 相当が出ること。
+2. unsafe 入力（`sudo rm` 等を含む）は従来どおり `route_turn` に落ちること。
+3. observation に `local_route_kind` / `local_route_used` / `route_turn_skipped_count` / `route_turn_fallback_count` / `local_route_latency_ms` / `route_turn_latency_ms` / `estimated_tokens_saved` / `route_turn_required` / `short_circuit_allowed` / `inject_hints` が記録されること（`decision_path: local_route`）。
+4. `--tools` 明示値があるとき、local route がその上限を超えて tool を追加しないこと。
+5. local route 成功時に `context_needs` と `output_style` が bounded な system message として agent_turn に渡ること。
 
 ## 期待結果
 

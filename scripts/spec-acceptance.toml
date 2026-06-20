@@ -228,3 +228,48 @@ description = "observation の hint present / injected を区別する"
 test = "observation_distinguishes_hint_present_and_injected"
 file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
 pending = false
+
+[[cases]]
+spec = "0044"
+phase = 29
+id = "local_route_decision"
+description = "LocalRouteDecision が deterministic に導出される"
+test = "local_route_decision_is_deterministic"
+file_glob = "ai/src/domain/smart_preprocessor.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 29
+id = "tool_enablement_projection"
+description = "tool_hints が CLI 上限つきで local safe tool に投影される"
+test = "local_route_enabled_tools_are_clamped_to_cli_allowlist"
+file_glob = "ai/src/main.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 29
+id = "route_turn_short_circuit"
+description = "高信頼かつ安全な入力で route_turn が省略される"
+test = "local_route_skips_route_turn_for_high_confidence_safe_input"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 29
+id = "route_turn_fallback"
+description = "medium / unsafe 入力は route_turn に落ちる"
+test = "local_route_falls_back_to_route_turn_for_medium_or_unsafe_input"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 29
+id = "observation_metrics"
+description = "local route metrics が observation に保存される"
+test = "local_route_observation_records_metrics"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false

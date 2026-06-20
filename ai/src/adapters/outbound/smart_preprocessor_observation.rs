@@ -10,6 +10,17 @@ use crate::domain::smart_preprocessor::{
     redact_for_evidence, SmartHeadScores, SmartPreprocessDecision,
 };
 
+#[derive(Debug, Clone, Default)]
+pub struct LocalRouteMetrics {
+    pub local_route_kind: Option<String>,
+    pub local_route_used: bool,
+    pub route_turn_skipped_count: u8,
+    pub route_turn_fallback_count: u8,
+    pub local_route_latency_ms: u64,
+    pub route_turn_latency_ms: u64,
+    pub estimated_tokens_saved: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct ObservationContext {
     pub ai_session_id: Option<String>,
@@ -20,6 +31,7 @@ pub struct ObservationContext {
     pub route_turn_hints_present: bool,
     pub route_turn_hints_injected: bool,
     pub fallback_reason: Option<String>,
+    pub local_route: LocalRouteMetrics,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +59,23 @@ pub struct ObservationRecord {
     pub context_needs: Vec<String>,
     pub tool_hints: Vec<String>,
     pub redaction_stats: RedactionStats,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_route_kind: Option<String>,
+    #[serde(default)]
+    pub local_route_used: bool,
+    #[serde(default)]
+    pub route_turn_skipped_count: u8,
+    #[serde(default)]
+    pub route_turn_fallback_count: u8,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub local_route_latency_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub route_turn_latency_ms: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub estimated_tokens_saved: u32,
+    pub route_turn_required: bool,
+    pub short_circuit_allowed: bool,
+    pub inject_hints: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,8 +127,26 @@ impl ObservationRecord {
             redaction_stats: RedactionStats {
                 evidence_items: decision.evidence.len(),
             },
+            local_route_kind: ctx.local_route.local_route_kind,
+            local_route_used: ctx.local_route.local_route_used,
+            route_turn_skipped_count: ctx.local_route.route_turn_skipped_count,
+            route_turn_fallback_count: ctx.local_route.route_turn_fallback_count,
+            local_route_latency_ms: ctx.local_route.local_route_latency_ms,
+            route_turn_latency_ms: ctx.local_route.route_turn_latency_ms,
+            estimated_tokens_saved: ctx.local_route.estimated_tokens_saved,
+            route_turn_required: decision.route_turn_required,
+            short_circuit_allowed: decision.short_circuit_allowed,
+            inject_hints: decision.inject_hints,
         }
     }
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
 }
 
 /// observation 用に fallback_reason を固定コードへ正規化する（パス・生エラー文言を残さない）。
@@ -209,8 +256,8 @@ fn limit_text(value: String, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::domain::smart_preprocessor::{
-        build_hashed_features, hash_feature, run_preprocessor, PreprocessConfig, PreprocessInput,
-        RouteMetadataInput, SmartPreprocessMode,
+        build_hashed_features, derive_local_route_decision, hash_feature, run_preprocessor,
+        PreprocessConfig, PreprocessInput, RouteMetadataInput, SmartPreprocessMode,
     };
 
     #[test]
@@ -243,6 +290,7 @@ mod tests {
                 route_turn_hints_present: false,
                 route_turn_hints_injected: false,
                 fallback_reason: None,
+                local_route: LocalRouteMetrics::default(),
             },
         );
         write_observation_record(&path, &record, 4096).expect("write");
@@ -284,6 +332,7 @@ mod tests {
                 route_turn_hints_present: false,
                 route_turn_hints_injected: false,
                 fallback_reason: None,
+                local_route: LocalRouteMetrics::default(),
             },
         );
         write_observation_record(&path, &record, 4096).expect("write");
@@ -326,6 +375,7 @@ mod tests {
                 route_turn_hints_present: false,
                 route_turn_hints_injected: false,
                 fallback_reason: None,
+                local_route: LocalRouteMetrics::default(),
             },
         );
         write_observation_record(&path, &record, 4096).expect("write");
@@ -392,6 +442,7 @@ mod tests {
                 fallback_reason: Some(
                     "model_load_failed:model file not found: /home/user/secret/model.json".into(),
                 ),
+                local_route: LocalRouteMetrics::default(),
             },
         );
         assert_eq!(record.fallback_reason.as_deref(), Some("model_load_failed"));
@@ -409,6 +460,7 @@ mod tests {
                 fallback_reason: Some(
                     "route_turn_failed;model_load_failed:parse model /etc/foo failed".into(),
                 ),
+                local_route: LocalRouteMetrics::default(),
             },
         );
         assert_eq!(
@@ -455,6 +507,7 @@ mod tests {
                     && decision.route_turn_hints.has_route_turn_hint_payload(),
                 route_turn_hints_injected: false,
                 fallback_reason: None,
+                local_route: LocalRouteMetrics::default(),
             },
         );
         assert!(present_only.route_turn_hints_present);
@@ -476,6 +529,7 @@ mod tests {
                         .has_route_turn_hint_payload(),
                 route_turn_hints_injected: true,
                 fallback_reason: None,
+                local_route: LocalRouteMetrics::default(),
             },
         );
         assert!(injected.route_turn_hints_present);
@@ -510,6 +564,7 @@ mod tests {
                 route_turn_hints_present: true,
                 route_turn_hints_injected: true,
                 fallback_reason: None,
+                local_route: LocalRouteMetrics::default(),
             },
         );
         let json = serde_json::to_string(&record).expect("json");
@@ -530,5 +585,136 @@ mod tests {
         fs::write(&log_path, content).expect("write");
         let summary = resolve_session_error_summary(Some(dir.path())).expect("summary");
         assert!(summary.contains("tail marker"));
+    }
+
+    #[test]
+    fn local_route_observation_records_metrics() {
+        use crate::domain::smart_preprocessor::{
+            derive_local_route_decision, run_preprocessor, LocalRouteKind, SmartPreprocessMode,
+        };
+
+        let input = PreprocessInput {
+            user_text: "git diff を見て".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let mut cfg = PreprocessConfig::default();
+        cfg.mode = SmartPreprocessMode::Gate;
+        let decision = run_preprocessor(input.clone(), &cfg);
+        let local = derive_local_route_decision(
+            &decision,
+            &input.user_text,
+            &cfg,
+            &["git_status".into(), "git_diff".into()],
+        )
+        .expect("local route");
+        assert_eq!(local.route_kind, LocalRouteKind::GitInspect);
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: Some("sess".into()),
+                conversation_id: None,
+                history_id: None,
+                decision_path: "local_route".into(),
+                route_turn_used: false,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
+                fallback_reason: None,
+                local_route: LocalRouteMetrics {
+                    local_route_kind: Some(local.route_kind.as_str().to_string()),
+                    local_route_used: true,
+                    route_turn_skipped_count: 1,
+                    route_turn_fallback_count: 0,
+                    local_route_latency_ms: 3,
+                    route_turn_latency_ms: 0,
+                    estimated_tokens_saved: local.estimated_tokens_saved,
+                },
+            },
+        );
+        assert_eq!(record.local_route_kind.as_deref(), Some("git_inspect"));
+        assert!(record.local_route_used);
+        assert_eq!(record.route_turn_skipped_count, 1);
+        assert_eq!(record.route_turn_fallback_count, 0);
+        assert_eq!(record.local_route_latency_ms, 3);
+        assert_eq!(record.estimated_tokens_saved, local.estimated_tokens_saved);
+        let json = serde_json::to_string(&record).expect("json");
+        assert!(json.contains("route_turn_skipped_count"));
+        assert!(json.contains("route_turn_required"));
+        assert!(!json.contains("ghp_"));
+    }
+
+    #[test]
+    fn local_route_fallback_count_only_when_fallback_required() {
+        let input = PreprocessInput {
+            user_text: "hello".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Gate,
+            ..PreprocessConfig::default()
+        };
+        let decision = run_preprocessor(input, &cfg);
+        let fallback_record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "local_route_fallback".into(),
+                route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
+                fallback_reason: None,
+                local_route: LocalRouteMetrics {
+                    local_route_kind: Some("git_inspect".into()),
+                    local_route_used: false,
+                    route_turn_skipped_count: 0,
+                    route_turn_fallback_count: 1,
+                    local_route_latency_ms: 2,
+                    route_turn_latency_ms: 5,
+                    estimated_tokens_saved: 0,
+                },
+            },
+        );
+        assert_eq!(fallback_record.route_turn_fallback_count, 1);
+
+        let blocked_record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "route_turn".into(),
+                route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
+                fallback_reason: None,
+                local_route: LocalRouteMetrics {
+                    local_route_kind: Some("git_inspect".into()),
+                    local_route_used: false,
+                    route_turn_skipped_count: 0,
+                    route_turn_fallback_count: 0,
+                    local_route_latency_ms: 2,
+                    route_turn_latency_ms: 5,
+                    estimated_tokens_saved: 0,
+                },
+            },
+        );
+        assert_eq!(blocked_record.route_turn_fallback_count, 0);
     }
 }

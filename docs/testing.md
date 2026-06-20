@@ -114,6 +114,19 @@ OOM を避けるため、**既定は直列**とする。
 | bundled model（`model_path` 未指定） | `bundled_model_is_used_when_model_path_is_missing` | `smart_preprocessor_model.rs` |
 | `session_error` feature prefix | `session_error_summary_uses_session_error_prefix` | observation unit |
 
+Phase 2.9（local route fast path）:
+
+| 観点 | テスト位置 | 備考 |
+|------|------------|------|
+| `LocalRouteDecision` の deterministic 導出 | `local_route_decision_is_deterministic` | `ai/src/domain/smart_preprocessor.rs` |
+| CLI 上限つき tool enablement | `local_route_enabled_tools_are_clamped_to_cli_allowlist` | `ai/src/main.rs` |
+| high confidence safe input で `route_turn` 省略 | `local_route_skips_route_turn_for_high_confidence_safe_input` | `smart_preprocessor_ask_e2e.rs` |
+| unsafe / medium は `route_turn` fallback | `local_route_falls_back_to_route_turn_for_medium_or_unsafe_input` | 同上 |
+| observation metrics（skip / fallback / latency / tokens saved） | `local_route_observation_records_metrics` | `smart_preprocessor_observation.rs` |
+| observation 3軸（`route_turn_required` / `short_circuit_allowed` / `inject_hints`） | `local_route_observation_records_metrics` 等 | 同上 |
+| route kind 5種の導出 | `local_route_kind_derivation_covers_phase_targets` | `smart_preprocessor.rs` |
+| context / output_style の fast path 配線 | `apply_local_route_wires_context_and_output_style_messages` | `ai/src/main.rs` |
+
 Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`chat` の transcript は `ai` 側で成功 turn ごとに追記し、`history` payload の `request_messages` に保存する。`retry` / `rerun` は payload に transcript があればそれを再生する。`--yes-exec` は [`ai/tests/yes_exec_integration.rs`](../ai/tests/yes_exec_integration.rs) で非 TTY 含め検証する。history GC は `history_max_entries`（既定 500、`0` で無効）で [`local_history.rs`](../ai/src/adapters/outbound/local_history.rs) が prune する。streaming の multi-delta forward は [`aibe/tests/agent_turn_streaming.rs`](../aibe/tests/agent_turn_streaming.rs) を参照する。
 
 ### 0017 以降のクレート別テスト配置
