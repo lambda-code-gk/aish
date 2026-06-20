@@ -3247,7 +3247,7 @@ mod cli_tests {
         };
 
         let local = LocalRouteDecision {
-            route_kind: LocalRouteKind::ToolBackedInspection,
+            route_kind: LocalRouteKind::VcsInspect,
             enabled_tools: vec![LocalToolHint::GitDiff],
             context_needs: vec![SmartContextNeed::VcsDiff],
             output_style: LocalOutputStyle::Concise,

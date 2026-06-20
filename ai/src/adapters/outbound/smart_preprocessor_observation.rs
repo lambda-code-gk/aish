@@ -628,7 +628,7 @@ mod tests {
             false,
         )
         .expect("local route");
-        assert_eq!(local.route_kind, LocalRouteKind::ToolBackedInspection);
+        assert_eq!(local.route_kind, LocalRouteKind::VcsInspect);
         let record = ObservationRecord::from_decision(
             &decision,
             ObservationContext {
@@ -651,10 +651,7 @@ mod tests {
                 },
             },
         );
-        assert_eq!(
-            record.local_route_kind.as_deref(),
-            Some("tool_backed_inspection")
-        );
+        assert_eq!(record.local_route_kind.as_deref(), Some("vcs_inspect"));
         assert!(record.local_route_used);
         assert_eq!(record.route_turn_skipped_count, 1);
         assert_eq!(record.route_turn_fallback_count, 0);
@@ -697,7 +694,7 @@ mod tests {
                 route_turn_hints_injected: false,
                 fallback_reason: None,
                 local_route: LocalRouteMetrics {
-                    local_route_kind: Some("tool_backed_inspection".into()),
+                    local_route_kind: Some("vcs_inspect".into()),
                     local_route_used: false,
                     route_turn_skipped_count: 0,
                     route_turn_fallback_count: 1,
@@ -721,7 +718,7 @@ mod tests {
                 route_turn_hints_injected: false,
                 fallback_reason: None,
                 local_route: LocalRouteMetrics {
-                    local_route_kind: Some("tool_backed_inspection".into()),
+                    local_route_kind: Some("vcs_inspect".into()),
                     local_route_used: false,
                     route_turn_skipped_count: 0,
                     route_turn_fallback_count: 0,
@@ -771,7 +768,7 @@ mod tests {
             },
         );
         let local = LocalRouteDecision {
-            route_kind: LocalRouteKind::ToolBackedInspection,
+            route_kind: LocalRouteKind::VcsInspect,
             enabled_tools: Vec::new(),
             context_needs: Vec::new(),
             output_style: LocalOutputStyle::Default,

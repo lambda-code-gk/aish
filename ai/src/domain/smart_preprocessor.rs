@@ -1190,8 +1190,7 @@ pub const LOCAL_ROUTE_ESTIMATED_TOKENS_SAVED: u32 = 800;
 pub enum LocalRouteKind {
     SimpleChat,
     ShellHelp,
-    #[serde(alias = "git_inspect")]
-    ToolBackedInspection,
+    VcsInspect,
     OutputStyleRequest,
     CodeReviewContextSelection,
 }
@@ -1201,7 +1200,7 @@ impl LocalRouteKind {
         match self {
             Self::SimpleChat => "simple_chat",
             Self::ShellHelp => "shell_help",
-            Self::ToolBackedInspection => "tool_backed_inspection",
+            Self::VcsInspect => "vcs_inspect",
             Self::OutputStyleRequest => "output_style_request",
             Self::CodeReviewContextSelection => "code_review_context_selection",
         }
@@ -1210,7 +1209,7 @@ impl LocalRouteKind {
     /// Local fast path に必要な built-in tool capability（いずれか 1 つで可）。
     pub fn required_tool_capabilities(self) -> &'static [LocalToolHint] {
         match self {
-            Self::ToolBackedInspection => &[LocalToolHint::GitStatus, LocalToolHint::GitDiff],
+            Self::VcsInspect => &[LocalToolHint::GitStatus, LocalToolHint::GitDiff],
             _ => &[],
         }
     }
@@ -1307,7 +1306,7 @@ pub fn has_required_local_tool_capabilities(
     context_needs: &[SmartContextNeed],
 ) -> bool {
     match route_kind {
-        LocalRouteKind::ToolBackedInspection => {
+        LocalRouteKind::VcsInspect => {
             let mut required: Vec<LocalToolHint> = context_needs
                 .iter()
                 .filter_map(|need| local_tool_for_context_need(*need))
@@ -1377,7 +1376,7 @@ pub fn derive_local_route_kind(intent: SmartIntentClass, text: &str) -> Option<L
                 &text,
                 &["git", "コミット", "差分", "commit", "diff", "status"],
             ) {
-                Some(LocalRouteKind::ToolBackedInspection)
+                Some(LocalRouteKind::VcsInspect)
             } else if contains_any(
                 &text,
                 &["shell", "bash", "zsh", "コマンド", "使い方", "help"],
@@ -2129,7 +2128,7 @@ mod tests {
             derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist, true, false);
         assert_eq!(first, second);
         let local = first.expect("local route");
-        assert_eq!(local.route_kind, LocalRouteKind::ToolBackedInspection);
+        assert_eq!(local.route_kind, LocalRouteKind::VcsInspect);
         assert!(!local.enabled_tools.is_empty());
     }
 
@@ -2157,7 +2156,7 @@ mod tests {
         );
         assert_eq!(
             derive_local_route_kind(SmartIntentClass::Inspect, "git diff を見て"),
-            Some(LocalRouteKind::ToolBackedInspection)
+            Some(LocalRouteKind::VcsInspect)
         );
         assert_eq!(
             derive_local_route_kind(SmartIntentClass::Inspect, "箇条書きで答えて"),
@@ -2183,7 +2182,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_backed_inspection_requires_vcs_tool_capability_in_allowlist() {
+    fn vcs_inspect_requires_vcs_tool_capability_in_allowlist() {
         let input = sample_input("git diff を見て");
         let cfg = config_with_model(SmartPreprocessMode::Gate);
         let decision = run_preprocessor(input.clone(), &cfg);
@@ -2196,10 +2195,7 @@ mod tests {
             false,
         )
         .expect("local route");
-        assert_eq!(
-            without_tools.route_kind,
-            LocalRouteKind::ToolBackedInspection
-        );
+        assert_eq!(without_tools.route_kind, LocalRouteKind::VcsInspect);
         assert!(without_tools.fallback_required);
         assert_eq!(
             without_tools.fallback_reason.as_deref(),
@@ -2238,12 +2234,12 @@ mod tests {
         );
 
         assert!(!has_required_local_tool_capabilities(
-            LocalRouteKind::ToolBackedInspection,
+            LocalRouteKind::VcsInspect,
             &[LocalToolHint::GitStatus],
             &[],
         ));
         assert!(has_required_local_tool_capabilities(
-            LocalRouteKind::ToolBackedInspection,
+            LocalRouteKind::VcsInspect,
             &[LocalToolHint::GitStatus, LocalToolHint::GitDiff],
             &[],
         ));
