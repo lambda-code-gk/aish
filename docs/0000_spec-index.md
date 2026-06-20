@@ -38,7 +38,7 @@
 | 0041 | [0041_ai-smart-feature-plan-spec.md](spec/0041_ai-smart-feature-plan-spec.md) | 設計確定（実装済み） | `ai` Smart Feature Plan（`route_turn` / `feature_actions` / approval gate） |
 | 0042 | [0042_configurable-smart-features-spec.md](spec/0042_configurable-smart-features-spec.md) | 設計確定（実装済み） | Configurable Smart Features（`features.toml` / registry / prompt schema） |
 | 0043 | [0043_feature-pack-boundary-hardening-spec.md](spec/0043_feature-pack-boundary-hardening-spec.md) | 設計確定（Phase 1–3 実装済み） | Feature Pack Boundary Hardening（memory.enabled ゲート / eligibility / read-only tools / feature pack 分離） |
-| 0044 | [0044_smart-preprocessor-spec.md](spec/0044_smart-preprocessor-spec.md) | 設計確定（実装済み） | AISH Smart Preprocessor / Local Intent Router（`ai` 前段判定 / `route_turn` 補助 / observation log） |
+| 0044 | [0044_smart-preprocessor-spec.md](spec/0044_smart-preprocessor-spec.md) | 設計確定（実装済み） | AISH Smart Preprocessor / Local Intent Router（Phase 2.7 まで: `route_turn` hint wire / 3軸 gate / observation） |
 
 ### 状態ラベルの意味
 
@@ -114,4 +114,5 @@
 | 0043 | [0043_feature-pack-boundary-hardening-phase3-implementation-spec.md](done/0043_feature-pack-boundary-hardening-phase3-implementation-spec.md) | 実装済み（Phase 3） | Feature Pack Boundary Hardening Phase 3（FeaturePackConfig 分離 / composition root 解決） |
 | 0044 | [0044_smart-preprocessor-implementation-spec.md](done/0044_smart-preprocessor-implementation-spec.md) | 実装済み（Phase 1–3） | AISH Smart Preprocessor / Local Intent Router（設計: [0044](spec/0044_smart-preprocessor-spec.md)） |
 | 0044 | [0044_smart-preprocessor-phase2.6-implementation-spec.md](done/0044_smart-preprocessor-phase2.6-implementation-spec.md) | 実装済み（Phase 2.6） | Smart Preprocessor production 仕上げ（threshold 分離 / observation 拡張 / bundled model / failure_kind / context_needs+tool_hints） |
+| 0044 | [0044_smart-preprocessor-phase2.7-implementation-spec.md](done/0044_smart-preprocessor-phase2.7-implementation-spec.md) | 実装済み（Phase 2.7） | Smart Preprocessor `route_turn` hint wire（3軸 gate 分離 / `RouteTurnPreprocessorHints` / observation 区別 / aibe advisory） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

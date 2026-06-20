@@ -214,11 +214,35 @@ impl SmartIntentClass {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SmartRouteTurnHints {
     pub recent_summary: Option<String>,
     pub new_conversation: bool,
     pub conversation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_needs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_hints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preprocessor_intent: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preprocessor_reason_codes: Vec<String>,
+}
+
+impl SmartRouteTurnHints {
+    pub fn has_preprocessor_wire_hints(&self) -> bool {
+        !self.context_needs.is_empty()
+            || !self.tool_hints.is_empty()
+            || self.failure_kind.is_some()
+            || self.preprocessor_intent.is_some()
+            || !self.preprocessor_reason_codes.is_empty()
+    }
+
+    pub fn has_route_turn_hint_payload(&self) -> bool {
+        self.recent_summary.is_some() || self.has_preprocessor_wire_hints()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +283,8 @@ pub struct SmartPreprocessDecision {
     pub confidence_bps: BasisPoints,
     pub gate: SmartConfidenceGate,
     pub route_turn_required: bool,
+    pub short_circuit_allowed: bool,
+    pub inject_hints: bool,
     pub route_turn_hints: SmartRouteTurnHints,
     pub safety: SmartSafetySummary,
     pub evidence: Vec<SmartEvidence>,
@@ -925,14 +951,116 @@ pub fn derive_tool_hints(input: &PreprocessInput, intent: SmartIntentClass) -> V
     hints
 }
 
-pub fn should_inject_route_turn_hints(
+pub fn compute_route_turn_required(
+    mode: SmartPreprocessMode,
+    intent: SmartIntentClass,
+    short_circuit_allowed: bool,
+    inject_hints: bool,
+) -> bool {
+    if intent_always_requires_route_turn(intent) {
+        return true;
+    }
+    match mode {
+        SmartPreprocessMode::Off | SmartPreprocessMode::Shadow | SmartPreprocessMode::Assist => {
+            true
+        }
+        SmartPreprocessMode::Gate => !short_circuit_allowed || inject_hints,
+    }
+}
+
+pub fn intent_always_requires_route_turn(intent: SmartIntentClass) -> bool {
+    matches!(
+        intent,
+        SmartIntentClass::MemoryRecipeHint
+            | SmartIntentClass::MemoryLookup
+            | SmartIntentClass::Retry
+            | SmartIntentClass::Rerun
+            | SmartIntentClass::ShellCommandCandidate
+            | SmartIntentClass::Ambiguous
+            | SmartIntentClass::Unknown
+    )
+}
+
+pub fn compute_short_circuit_allowed(
+    intent: SmartIntentClass,
+    gate: SmartConfidenceGate,
+    safety: &SmartSafetySummary,
+    config: &PreprocessConfig,
+    input: &PreprocessInput,
+) -> bool {
+    config.mode == SmartPreprocessMode::Gate
+        && gate == SmartConfidenceGate::ShortCircuitAllowed
+        && config.allow_shortcuts.contains(&intent)
+        && safety.is_safe_for_short_circuit()
+        && config.model.is_some()
+        && input.tty
+        && !input.cli_overrides
+        && !intent_always_requires_route_turn(intent)
+}
+
+pub fn compute_inject_hints(
     mode: SmartPreprocessMode,
     gate: SmartConfidenceGate,
+    context_needs: &[SmartContextNeed],
+    tool_hints: &[SmartToolHint],
+    failure_kind: Option<SmartFailureKind>,
+    input: &PreprocessInput,
+    max_evidence_bytes: usize,
 ) -> bool {
-    matches!(
-        mode,
-        SmartPreprocessMode::Assist | SmartPreprocessMode::Gate
-    ) && gate == SmartConfidenceGate::AssistRouteTurn
+    let has_wire_hints =
+        !context_needs.is_empty() || !tool_hints.is_empty() || failure_kind.is_some();
+    let has_bounded_summary = build_bounded_summary(input, max_evidence_bytes).is_some();
+    match mode {
+        SmartPreprocessMode::Off | SmartPreprocessMode::Shadow => false,
+        SmartPreprocessMode::Assist => {
+            gate == SmartConfidenceGate::AssistRouteTurn
+                || gate == SmartConfidenceGate::ShortCircuitAllowed
+                || has_wire_hints
+        }
+        SmartPreprocessMode::Gate => {
+            if gate == SmartConfidenceGate::ShortCircuitAllowed {
+                has_wire_hints || has_bounded_summary
+            } else {
+                gate == SmartConfidenceGate::AssistRouteTurn
+                    || has_wire_hints
+                    || has_bounded_summary
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_route_turn_hints(
+    input: &PreprocessInput,
+    intent: SmartIntentClass,
+    inject_hints: bool,
+    recent_summary: Option<String>,
+    reason_codes: &[String],
+    failure_kind: Option<SmartFailureKind>,
+    context_needs: &[SmartContextNeed],
+    tool_hints: &[SmartToolHint],
+) -> SmartRouteTurnHints {
+    let mut hints = SmartRouteTurnHints {
+        recent_summary: if inject_hints { recent_summary } else { None },
+        new_conversation: input.new_conversation,
+        conversation_id: input.conversation_id.clone(),
+        ..Default::default()
+    };
+    if !inject_hints {
+        return hints;
+    }
+    hints.context_needs = context_needs
+        .iter()
+        .map(|need| need.as_str().to_string())
+        .collect();
+    hints.tool_hints = tool_hints
+        .iter()
+        .map(|hint| hint.as_str().to_string())
+        .collect();
+    hints.failure_kind = failure_kind.map(|kind| kind.as_str().to_string());
+    hints.preprocessor_intent = Some(intent.as_str().to_string());
+    hints.preprocessor_reason_codes = reason_codes.to_vec();
+    hints
 }
 
 pub fn run_preprocessor(
@@ -970,38 +1098,47 @@ pub fn run_preprocessor(
         reason_codes.push("cli_override".into());
     }
     let gate = apply_confidence_gate(intent, confidence_bps, &safety, &head_scores, config);
-    let model_verified = config.model.is_some();
-    let route_turn_required = match config.mode {
-        SmartPreprocessMode::Off => true,
-        SmartPreprocessMode::Shadow => true,
-        SmartPreprocessMode::Assist => true,
-        SmartPreprocessMode::Gate => {
-            !(gate == SmartConfidenceGate::ShortCircuitAllowed
-                && config.allow_shortcuts.contains(&intent)
-                && safety.is_safe_for_short_circuit()
-                && model_verified
-                && input.tty
-                && !input.cli_overrides)
-        }
-    };
-    if !route_turn_required {
+    let failure_kind = infer_failure_kind(input.session_error_summary.as_deref());
+    let context_needs = derive_context_needs(&input);
+    let tool_hints = derive_tool_hints(&input, intent);
+    let short_circuit_allowed =
+        compute_short_circuit_allowed(intent, gate, &safety, config, &input);
+    let inject_hints = compute_inject_hints(
+        config.mode,
+        gate,
+        &context_needs,
+        &tool_hints,
+        failure_kind,
+        &input,
+        config.max_evidence_bytes,
+    );
+    let route_turn_required =
+        compute_route_turn_required(config.mode, intent, short_circuit_allowed, inject_hints);
+    if short_circuit_allowed && !route_turn_required {
         reason_codes.push("gate_short_circuit".into());
     }
-    let recent_summary = if should_inject_route_turn_hints(config.mode, gate) {
+    let recent_summary = if inject_hints {
         build_bounded_summary(&input, config.max_evidence_bytes)
     } else {
         None
     };
-    let failure_kind = infer_failure_kind(input.session_error_summary.as_deref());
-    let context_needs = derive_context_needs(&input);
-    let tool_hints = derive_tool_hints(&input, intent);
     let reason_codes = clamp_reason_codes(reason_codes);
+    let route_turn_hints = build_route_turn_hints(
+        &input,
+        intent,
+        inject_hints,
+        recent_summary,
+        &reason_codes,
+        failure_kind,
+        &context_needs,
+        &tool_hints,
+    );
     let mut evidence = Vec::new();
     evidence.push(SmartEvidence {
         kind: "user_excerpt".into(),
         value: redact_for_evidence(&input.user_text, 200),
     });
-    if let Some(ref summary) = recent_summary {
+    if let Some(ref summary) = route_turn_hints.recent_summary {
         evidence.push(SmartEvidence {
             kind: "bounded_summary".into(),
             value: summary.clone(),
@@ -1014,11 +1151,9 @@ pub fn run_preprocessor(
         confidence_bps,
         gate,
         route_turn_required,
-        route_turn_hints: SmartRouteTurnHints {
-            recent_summary,
-            new_conversation: input.new_conversation,
-            conversation_id: input.conversation_id.clone(),
-        },
+        short_circuit_allowed,
+        inject_hints,
+        route_turn_hints,
         safety,
         evidence,
         head_scores,
@@ -1034,8 +1169,9 @@ pub fn run_preprocessor(
 
 pub fn should_short_circuit(decision: &SmartPreprocessDecision) -> bool {
     decision.mode == SmartPreprocessMode::Gate
+        && decision.short_circuit_allowed
         && !decision.route_turn_required
-        && decision.gate == SmartConfidenceGate::ShortCircuitAllowed
+        && !decision.inject_hints
         && decision.safety.is_safe_for_short_circuit()
         && decision.model_version.as_deref() == Some(DEFAULT_MODEL_VERSION)
         && decision.feature_hash_version == FEATURE_EXTRACTOR_VERSION
@@ -1461,11 +1597,9 @@ mod tests {
             confidence_bps: 7000,
             gate: SmartConfidenceGate::AssistRouteTurn,
             route_turn_required: true,
-            route_turn_hints: SmartRouteTurnHints {
-                recent_summary: None,
-                new_conversation: true,
-                conversation_id: None,
-            },
+            short_circuit_allowed: false,
+            inject_hints: true,
+            route_turn_hints: SmartRouteTurnHints::default(),
             safety: safety.clone(),
             evidence: Vec::new(),
             head_scores: head_scores.clone(),
@@ -1515,5 +1649,87 @@ mod tests {
         let clamped = clamp_reason_codes(with_long);
         assert_eq!(clamped.len(), MAX_REASON_CODES);
         assert!(clamped.iter().all(|code| code.len() <= MAX_REASON_CODE_LEN));
+    }
+
+    #[test]
+    fn smart_route_turn_hints_extend_with_wire_subset() {
+        let hints = build_route_turn_hints(
+            &sample_input("git diff を見て"),
+            SmartIntentClass::Inspect,
+            true,
+            None,
+            &["git_context".into()],
+            None,
+            &[SmartContextNeed::GitStatus, SmartContextNeed::GitDiff],
+            &[SmartToolHint::GitStatus],
+        );
+        assert_eq!(
+            hints.context_needs,
+            vec!["git_status".to_string(), "git_diff".to_string()]
+        );
+        assert_eq!(hints.tool_hints, vec!["git_status".to_string()]);
+        assert_eq!(hints.preprocessor_intent.as_deref(), Some("inspect"));
+        assert!(hints.has_route_turn_hint_payload());
+    }
+
+    #[test]
+    fn three_axis_gate_decision_is_independent() {
+        let input = sample_input("hello");
+        let safety = assess_safety(&input);
+        let cfg = config_with_model(SmartPreprocessMode::Gate);
+        let gate = SmartConfidenceGate::ShortCircuitAllowed;
+        let short = compute_short_circuit_allowed(
+            SmartIntentClass::SimpleChat,
+            gate,
+            &safety,
+            &cfg,
+            &input,
+        );
+        assert!(short);
+        assert!(!compute_inject_hints(
+            SmartPreprocessMode::Gate,
+            gate,
+            &[],
+            &[],
+            None,
+            &input,
+            cfg.max_evidence_bytes
+        ));
+        assert!(!compute_route_turn_required(
+            SmartPreprocessMode::Gate,
+            SmartIntentClass::SimpleChat,
+            short,
+            false
+        ));
+        assert!(compute_route_turn_required(
+            SmartPreprocessMode::Gate,
+            SmartIntentClass::SimpleChat,
+            short,
+            true
+        ));
+        let git_needs = derive_context_needs(&sample_input("git diff"));
+        assert!(compute_inject_hints(
+            SmartPreprocessMode::Gate,
+            SmartConfidenceGate::ShortCircuitAllowed,
+            &git_needs,
+            &[],
+            None,
+            &sample_input("git diff"),
+            cfg.max_evidence_bytes
+        ));
+    }
+
+    #[test]
+    fn memory_lookup_stays_route_turn_required_but_allows_hint_injection() {
+        let mut input = sample_input("前に決めた設計方針を教えて");
+        input.memory_enabled = true;
+        let mut cfg = config_with_model(SmartPreprocessMode::Assist);
+        cfg.assist_threshold_bps = 10_000;
+        let decision = run_preprocessor(input, &cfg);
+        assert_eq!(decision.intent, SmartIntentClass::MemoryLookup);
+        assert!(decision.route_turn_required);
+        assert!(decision.inject_hints);
+        assert!(!decision.context_needs.is_empty() || !decision.tool_hints.is_empty());
+        assert!(decision.route_turn_hints.has_route_turn_hint_payload());
     }
 }

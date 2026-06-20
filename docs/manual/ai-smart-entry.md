@@ -98,6 +98,14 @@ cargo test -p ai --test smart_preprocessor_ask_e2e -j 1
 5. session log に `permission denied` があると observation の `failure_kind` が `permission` になること。
 6. git 差分相談で `context_needs` に `git_status` / `git_diff`、「前に決めた方針」で `tool_hints` に `memory_search` が出ること（debug ログまたは observation で確認）。
 
+### Phase 2.7（`route_turn` hint wire）
+
+1. `mode = "assist"` で git 差分相談を送ると、mock aibe / ログ上の `route_turn` request に `preprocessor_hints.context_needs` に `git_status` / `git_diff` が載ること。
+2. `AISH_SESSION_DIR` に session error がある debug 入力で `preprocessor_hints.failure_kind` が載ること（例: `permission`）。
+3. `MemoryLookup` / memory 系入力でも `route_turn` は呼ばれ、`preprocessor_hints` が載ること。
+4. `mode = "gate"` の `hello` 短絡時は `route_turn` request が作られず、observation に `route_turn_hints_injected: false` になること。
+5. observation に `route_turn_hints_present` / `route_turn_hints_injected` が区別して記録され、raw text は含まれないこと。
+
 ## 期待結果
 
 - TTY の `ai '...'` は常に smart entry（v1 opt-out なし）。

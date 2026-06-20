@@ -54,7 +54,7 @@ use aibe_client::{
 };
 use aibe_protocol::{
     ClientRequest, ClientResponse, ProtocolMessage, RouteKind, RoutePlan, RouteTurnCliOverrides,
-    RouteTurnConversation, RouteTurnSession,
+    RouteTurnConversation, RouteTurnPreprocessorHints, RouteTurnSession,
 };
 
 fn main() -> ExitCode {
@@ -1412,6 +1412,9 @@ fn write_preprocessor_observation(
     route_turn_used: bool,
     fallback_reason: Option<String>,
 ) {
+    let route_turn_hints_present =
+        decision.inject_hints && decision.route_turn_hints.has_route_turn_hint_payload();
+    let route_turn_hints_injected = route_turn_used && route_turn_hints_present;
     let record = ObservationRecord::from_decision(
         decision,
         ObservationContext {
@@ -1420,6 +1423,8 @@ fn write_preprocessor_observation(
             history_id,
             decision_path: decision_path.to_string(),
             route_turn_used,
+            route_turn_hints_present,
+            route_turn_hints_injected,
             fallback_reason,
         },
     );
@@ -1565,8 +1570,10 @@ fn run_smart_route_with_preprocessor(
         history_id.clone(),
     );
     if let Some(ref outcome) = preprocessor {
-        if let Some(ref summary) = outcome.decision.route_turn_hints.recent_summary {
-            hints.recent_summary = Some(summary.clone());
+        if outcome.decision.inject_hints {
+            let rh = &outcome.decision.route_turn_hints;
+            hints.recent_summary = rh.recent_summary.clone();
+            hints.preprocessor_hints = preprocessor_wire_hints(rh);
         }
         let observation_history_id = outcome.history_id.clone().or_else(|| history_id.clone());
         let model_fallback =
@@ -1682,12 +1689,34 @@ fn try_route_turn(client: &AibeUnixClient, request: ClientRequest) -> Result<Rou
 struct RouteTurnHints {
     conversation_id: Option<String>,
     recent_summary: Option<String>,
+    preprocessor_hints: Option<RouteTurnPreprocessorHints>,
+}
+
+fn preprocessor_wire_hints(
+    hints: &ai::domain::smart_preprocessor::SmartRouteTurnHints,
+) -> Option<RouteTurnPreprocessorHints> {
+    if hints.context_needs.is_empty()
+        && hints.tool_hints.is_empty()
+        && hints.failure_kind.is_none()
+        && hints.preprocessor_intent.is_none()
+        && hints.preprocessor_reason_codes.is_empty()
+    {
+        return None;
+    }
+    Some(RouteTurnPreprocessorHints {
+        context_needs: hints.context_needs.clone(),
+        tool_hints: hints.tool_hints.clone(),
+        failure_kind: hints.failure_kind.clone(),
+        preprocessor_intent: hints.preprocessor_intent.clone(),
+        preprocessor_reason_codes: hints.preprocessor_reason_codes.clone(),
+    })
 }
 
 fn route_turn_hints_from_payload(payload: &HistoryPayload) -> RouteTurnHints {
     RouteTurnHints {
         conversation_id: payload.conversation_id.clone(),
         recent_summary: None,
+        preprocessor_hints: None,
     }
 }
 
@@ -1714,6 +1743,7 @@ fn build_route_turn_request(
             conversation_id: hints.conversation_id.clone(),
             recent_summary: hints.recent_summary.clone(),
             new_conversation: hints.conversation_id.is_none() && turn.new,
+            preprocessor_hints: hints.preprocessor_hints.clone(),
         },
         cli_overrides: RouteTurnCliOverrides {
             preset: turn.preset.clone(),
@@ -2766,6 +2796,7 @@ mod cli_tests {
         let hints = crate::RouteTurnHints {
             conversation_id: Some("conv-original".into()),
             recent_summary: None,
+            preprocessor_hints: None,
         };
         let request = crate::build_route_turn_request("retry me", &settings, &turn, hints);
         let ClientRequest::RouteTurn { conversation, .. } = request else {

@@ -108,12 +108,28 @@ pub struct RouteTurnSession {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RouteTurnPreprocessorHints {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_needs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_hints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preprocessor_intent: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preprocessor_reason_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct RouteTurnConversation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recent_summary: Option<String>,
     pub new_conversation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preprocessor_hints: Option<RouteTurnPreprocessorHints>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -218,6 +234,54 @@ mod tests {
     }
 
     #[test]
+    fn route_turn_conversation_roundtrip_with_preprocessor_hints() {
+        let req = ClientRequest::RouteTurn {
+            id: "r1".into(),
+            query: "git diff".into(),
+            cwd: "/tmp/proj".into(),
+            session: RouteTurnSession::default(),
+            conversation: RouteTurnConversation {
+                conversation_id: None,
+                recent_summary: None,
+                new_conversation: true,
+                preprocessor_hints: Some(RouteTurnPreprocessorHints {
+                    context_needs: vec!["git_status".into(), "git_diff".into()],
+                    tool_hints: vec!["git_status".into()],
+                    failure_kind: None,
+                    preprocessor_intent: Some("inspect".into()),
+                    preprocessor_reason_codes: vec!["git_context".into()],
+                }),
+            },
+            cli_overrides: RouteTurnCliOverrides::default(),
+        };
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::RouteTurn { conversation, .. } => {
+                let hints = conversation.preprocessor_hints.expect("preprocessor_hints");
+                assert_eq!(hints.context_needs.len(), 2);
+                assert_eq!(hints.preprocessor_intent.as_deref(), Some("inspect"));
+            }
+            _ => panic!("expected route_turn"),
+        }
+    }
+
+    #[test]
+    fn route_turn_hints_serialize_as_additive_optional_field() {
+        let conversation = RouteTurnConversation {
+            conversation_id: None,
+            recent_summary: None,
+            new_conversation: true,
+            preprocessor_hints: None,
+        };
+        let json = serde_json::to_string(&conversation).expect("serialize");
+        assert!(!json.contains("preprocessor_hints"));
+        let legacy = r#"{"new_conversation":true}"#;
+        let parsed: RouteTurnConversation = serde_json::from_str(legacy).expect("legacy");
+        assert!(parsed.preprocessor_hints.is_none());
+    }
+
+    #[test]
     fn route_turn_roundtrip() {
         let req = ClientRequest::RouteTurn {
             id: "r1".into(),
@@ -232,6 +296,7 @@ mod tests {
                 conversation_id: Some("conv-1".into()),
                 recent_summary: Some("latest".into()),
                 new_conversation: false,
+                preprocessor_hints: None,
             },
             cli_overrides: RouteTurnCliOverrides {
                 preset: Some("fast".into()),

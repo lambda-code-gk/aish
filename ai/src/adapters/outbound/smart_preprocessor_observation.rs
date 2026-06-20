@@ -17,6 +17,8 @@ pub struct ObservationContext {
     pub history_id: Option<String>,
     pub decision_path: String,
     pub route_turn_used: bool,
+    pub route_turn_hints_present: bool,
+    pub route_turn_hints_injected: bool,
     pub fallback_reason: Option<String>,
 }
 
@@ -36,6 +38,8 @@ pub struct ObservationRecord {
     pub head_scores: SmartHeadScores,
     pub decision_path: String,
     pub route_turn_used: bool,
+    pub route_turn_hints_present: bool,
+    pub route_turn_hints_injected: bool,
     pub fallback_reason: Option<String>,
     pub signal_counts: usize,
     pub reason_codes: Vec<String>,
@@ -70,6 +74,8 @@ impl ObservationRecord {
             head_scores: decision.head_scores.clone(),
             decision_path: limit_text(ctx.decision_path, 80),
             route_turn_used: ctx.route_turn_used,
+            route_turn_hints_present: ctx.route_turn_hints_present,
+            route_turn_hints_injected: ctx.route_turn_hints_injected,
             fallback_reason: normalize_fallback_reason(ctx.fallback_reason.as_deref()),
             signal_counts: decision.signal_feature_count,
             reason_codes: decision
@@ -234,6 +240,8 @@ mod tests {
                 history_id: None,
                 decision_path: "shadow".into(),
                 route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
                 fallback_reason: None,
             },
         );
@@ -273,6 +281,8 @@ mod tests {
                 history_id: None,
                 decision_path: "shadow".into(),
                 route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
                 fallback_reason: None,
             },
         );
@@ -313,6 +323,8 @@ mod tests {
                 history_id: None,
                 decision_path: "shadow".into(),
                 route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
                 fallback_reason: None,
             },
         );
@@ -375,6 +387,8 @@ mod tests {
                 history_id: None,
                 decision_path: "shadow".into(),
                 route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
                 fallback_reason: Some(
                     "model_load_failed:model file not found: /home/user/secret/model.json".into(),
                 ),
@@ -390,6 +404,8 @@ mod tests {
                 history_id: None,
                 decision_path: "text_only_fallback".into(),
                 route_turn_used: false,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
                 fallback_reason: Some(
                     "route_turn_failed;model_load_failed:parse model /etc/foo failed".into(),
                 ),
@@ -408,6 +424,98 @@ mod tests {
             normalize_fallback_reason(Some("connect error: /tmp/foo")),
             None
         );
+    }
+
+    #[test]
+    fn observation_distinguishes_hint_present_and_injected() {
+        let mut input = PreprocessInput {
+            user_text: "git diff を見て".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: None,
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let mut cfg = PreprocessConfig::default();
+        cfg.mode = SmartPreprocessMode::Assist;
+        let decision = run_preprocessor(input.clone(), &cfg);
+        let present_only = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "assist".into(),
+                route_turn_used: false,
+                route_turn_hints_present: decision.inject_hints
+                    && decision.route_turn_hints.has_route_turn_hint_payload(),
+                route_turn_hints_injected: false,
+                fallback_reason: None,
+            },
+        );
+        assert!(present_only.route_turn_hints_present);
+        assert!(!present_only.route_turn_hints_injected);
+
+        input.session_error_summary = Some("permission denied".into());
+        let debug_decision = run_preprocessor(input, &cfg);
+        let injected = ObservationRecord::from_decision(
+            &debug_decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "assist".into(),
+                route_turn_used: true,
+                route_turn_hints_present: debug_decision.inject_hints
+                    && debug_decision
+                        .route_turn_hints
+                        .has_route_turn_hint_payload(),
+                route_turn_hints_injected: true,
+                fallback_reason: None,
+            },
+        );
+        assert!(injected.route_turn_hints_present);
+        assert!(injected.route_turn_hints_injected);
+    }
+
+    #[test]
+    fn observation_does_not_store_raw_text_for_preprocessor_hints() {
+        let input = PreprocessInput {
+            user_text: "secret token=ghp_abc /home/user/secret".into(),
+            command: Some("ask".into()),
+            tty: true,
+            new_conversation: true,
+            conversation_id: None,
+            memory_enabled: true,
+            history_tail_summary: None,
+            session_error_summary: Some("permission denied /etc/shadow".into()),
+            cli_overrides: false,
+            route_metadata: RouteMetadataInput::default(),
+        };
+        let mut cfg = PreprocessConfig::default();
+        cfg.mode = SmartPreprocessMode::Assist;
+        let decision = run_preprocessor(input, &cfg);
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "assist".into(),
+                route_turn_used: true,
+                route_turn_hints_present: true,
+                route_turn_hints_injected: true,
+                fallback_reason: None,
+            },
+        );
+        let json = serde_json::to_string(&record).expect("json");
+        assert!(!json.contains("ghp_abc"));
+        assert!(!json.contains("/home/user"));
+        assert!(!json.contains("/etc/shadow"));
     }
 
     #[test]

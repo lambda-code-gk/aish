@@ -295,6 +295,7 @@ async fn route_turn_strips_feature_actions_when_feature_registry_empty() {
                     conversation_id: None,
                     recent_summary: None,
                     new_conversation: true,
+                    preprocessor_hints: None,
                 },
                 cli_overrides: RouteTurnCliOverrides::default(),
             },

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use aibe_protocol::{
     sanitize_readonly_advisory_tools, sanitize_readonly_advisory_tools_option, ClientResponse,
     ErrorCode, FeatureAction, RouteKind, RoutePlan, RouteTurnCliOverrides, RouteTurnConversation,
-    RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS, SHELL_LOG_TAIL_MAX_BYTES,
+    RouteTurnPreprocessorHints, RouteTurnSession, RouteTurnStatus, KNOWN_TOOLS,
+    SHELL_LOG_TAIL_MAX_BYTES,
 };
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -209,6 +210,7 @@ fn build_route_messages(
             "conversation_id": conversation.conversation_id,
             "recent_summary": recent_summary,
             "new_conversation": conversation.new_conversation,
+            "preprocessor_hints": conversation.preprocessor_hints.as_ref().map(preprocessor_hints_for_prompt),
         },
         "cli_overrides": {
             "preset": cli_overrides.preset,
@@ -229,6 +231,16 @@ fn build_route_messages(
             user
         )),
     ]
+}
+
+fn preprocessor_hints_for_prompt(hints: &RouteTurnPreprocessorHints) -> serde_json::Value {
+    serde_json::json!({
+        "context_needs": hints.context_needs,
+        "tool_hints": hints.tool_hints,
+        "failure_kind": hints.failure_kind,
+        "preprocessor_intent": hints.preprocessor_intent,
+        "preprocessor_reason_codes": hints.preprocessor_reason_codes,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -443,6 +455,55 @@ fn llm_error_to_string(err: LlmError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preprocessor_hints_do_not_change_final_route_kind() {
+        let draft = RoutePlanDraft {
+            conversation_id: None,
+            new_conversation: None,
+            route_kind: Some("chat".into()),
+            recommended_preset: None,
+            recommended_tools: None,
+            log_tail_bytes: None,
+            require_shell_approval: None,
+            log_tail_escalation: None,
+            feature_actions: None,
+            route_reason: Some("inspect".into()),
+            confidence: None,
+        };
+        let plan = finalize_route_plan(draft, "conv-1".into(), false, None).expect("finalize");
+        assert_eq!(plan.route_kind, RouteKind::Chat);
+    }
+
+    #[test]
+    fn unknown_preprocessor_hints_are_ignored() {
+        let hints = RouteTurnPreprocessorHints {
+            context_needs: vec!["unknown_need".into()],
+            tool_hints: vec!["unknown_tool".into()],
+            failure_kind: Some("unknown_failure".into()),
+            preprocessor_intent: Some("unknown_intent".into()),
+            preprocessor_reason_codes: vec!["unknown_code".into()],
+        };
+        let value = preprocessor_hints_for_prompt(&hints);
+        assert_eq!(value["context_needs"][0], "unknown_need");
+        let conversation = RouteTurnConversation {
+            conversation_id: None,
+            recent_summary: None,
+            new_conversation: true,
+            preprocessor_hints: Some(hints),
+        };
+        let messages = build_route_messages(
+            "hello",
+            "/tmp",
+            &RouteTurnSession::default(),
+            &conversation,
+            &RouteTurnCliOverrides::default(),
+            None,
+            &FeatureRegistry::empty(),
+        );
+        assert!(messages.len() >= 2);
+        assert!(messages[1].content.contains("preprocessor_hints"));
+    }
 
     #[test]
     fn parse_route_plan_accepts_unknown_route_kind_strings() {

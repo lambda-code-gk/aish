@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use aibe_protocol::{
-    AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut, RouteTurnStatus,
+    AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut, RouteTurnConversation,
+    RouteTurnStatus,
 };
 
 struct MockSocketServer {
@@ -17,6 +18,7 @@ struct MockSocketServer {
     _dir: tempfile::TempDir,
     socket_path: std::path::PathBuf,
     route_turn_count: Arc<Mutex<usize>>,
+    last_conversation: Arc<Mutex<Option<RouteTurnConversation>>>,
 }
 
 impl MockSocketServer {
@@ -27,6 +29,8 @@ impl MockSocketServer {
         let listener = UnixListener::bind(&socket_path).expect("bind");
         let route_turn_count = Arc::new(Mutex::new(0usize));
         let count_clone = Arc::clone(&route_turn_count);
+        let last_conversation = Arc::new(Mutex::new(None));
+        let conversation_clone = Arc::clone(&last_conversation);
         let handle = thread::spawn(move || {
             let mut handled = 0usize;
             let max = if expected == 0 { 1 } else { expected + 1 };
@@ -48,6 +52,7 @@ impl MockSocketServer {
                 let response = match req {
                     ClientRequest::RouteTurn { conversation, .. } => {
                         *count_clone.lock().expect("lock") += 1;
+                        *conversation_clone.lock().expect("lock") = Some(conversation.clone());
                         if let Some(ref summary) = conversation.recent_summary {
                             assert!(
                                 !summary.is_empty(),
@@ -77,7 +82,12 @@ impl MockSocketServer {
                                     && (m.content.contains("ping")
                                         || m.content.contains("hello")
                                         || m.content.contains("エラー")
-                                        || m.content.contains("error"))
+                                        || m.content.contains("error")
+                                        || m.content.contains("git")
+                                        || m.content.contains("設計")
+                                        || m.content.contains("memory")
+                                        || m.content.contains("recipe")
+                                        || m.content.contains("sudo"))
                             }),
                             "user message must reach agent_turn"
                         );
@@ -104,7 +114,12 @@ impl MockSocketServer {
             _dir: dir,
             socket_path,
             route_turn_count,
+            last_conversation,
         }
+    }
+
+    fn last_route_turn_conversation(&self) -> Option<RouteTurnConversation> {
+        self.last_conversation.lock().expect("lock").clone()
     }
 }
 
@@ -160,19 +175,27 @@ fn script_available() -> bool {
         .unwrap_or(false)
 }
 
-fn run_tty_ask(cfg: &std::path::Path, home: &std::path::Path, query: &str) -> String {
+fn run_tty_ask(
+    cfg: &std::path::Path,
+    home: &std::path::Path,
+    query: &str,
+    extra_env: &[(&str, &str)],
+) -> String {
     let ai_bin = env!("CARGO_BIN_EXE_ai");
     let inner = format!("{ai_bin} --no-start --no-progress '{query}'");
     let transcript = home.join("typescript");
-    let status = Command::new("script")
-        .arg("-q")
+    let mut cmd = Command::new("script");
+    cmd.arg("-q")
         .arg("-c")
         .arg(&inner)
         .arg(&transcript)
         .env("AI_CONFIG", cfg)
         .env("HOME", home)
-        .status()
-        .expect("run script+ai");
+        .env_remove("AISH_SESSION_DIR");
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
+    let status = cmd.status().expect("run script+ai");
     assert!(status.success(), "ai exited with {status}");
     fs::read_to_string(&transcript).unwrap_or_default()
 }
@@ -198,7 +221,7 @@ max_observation_bytes = 2048
             model_path.display()
         ),
     );
-    let captured = run_tty_ask(&cfg, home.path(), "ping preprocessor shadow");
+    let captured = run_tty_ask(&cfg, home.path(), "ping preprocessor shadow", &[]);
     assert!(
         captured.contains("preprocessor ok"),
         "transcript: {captured}"
@@ -230,23 +253,22 @@ max_observation_bytes = 2048
             model_path.display()
         ),
     );
-    unsafe {
-        std::env::set_var("AISH_SESSION_DIR", home.path());
-    }
     fs::write(
         home.path().join("session.jsonl"),
         r#"{"event":"error","message":"test failed: foo"}"#,
     )
     .expect("session log");
-    let captured = run_tty_ask(&cfg, home.path(), "さっきのエラーを直して");
+    let captured = run_tty_ask(
+        &cfg,
+        home.path(),
+        "さっきのエラーを直して",
+        &[("AISH_SESSION_DIR", home.path().to_str().expect("utf8"))],
+    );
     assert!(
         captured.contains("preprocessor ok"),
         "transcript: {captured}"
     );
     assert_eq!(*server.route_turn_count.lock().expect("lock"), 1);
-    unsafe {
-        std::env::remove_var("AISH_SESSION_DIR");
-    }
 }
 
 #[test]
@@ -270,7 +292,7 @@ max_observation_bytes = 2048
             model_path.display()
         ),
     );
-    let captured = run_tty_ask(&cfg, home.path(), "hello");
+    let captured = run_tty_ask(&cfg, home.path(), "hello", &[]);
     assert!(
         captured.contains("preprocessor ok"),
         "transcript: {captured}"
@@ -282,4 +304,182 @@ max_observation_bytes = 2048
     );
     let obs = fs::read_to_string(home.path().join("observation.jsonl")).unwrap_or_default();
     assert!(obs.contains("gate_short_circuit") || obs.contains("\"mode\":\"gate\""));
+    assert!(obs.contains("\"route_turn_hints_injected\":false"));
+}
+
+fn assist_preprocessor_toml(model_path: &std::path::Path) -> String {
+    format!(
+        r#"
+mode = "assist"
+model_path = "{}"
+max_observation_bytes = 2048
+assist_threshold_bps = 5000
+"#,
+        model_path.display()
+    )
+}
+
+#[test]
+fn memory_lookup_keeps_route_turn_and_injects_hints() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &assist_preprocessor_toml(&model_path),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "前に決めた設計方針を教えて", &[]);
+    assert_eq!(*server.route_turn_count.lock().expect("lock"), 1);
+    let conversation = server
+        .last_route_turn_conversation()
+        .expect("route_turn conversation");
+    let hints = conversation.preprocessor_hints.expect("preprocessor hints");
+    assert!(hints.tool_hints.iter().any(|h| h == "memory_search"));
+}
+
+#[test]
+fn memory_recipe_hint_keeps_route_turn_and_injects_hints() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &assist_preprocessor_toml(&model_path),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "memory recipe を実行して", &[]);
+    assert_eq!(*server.route_turn_count.lock().expect("lock"), 1);
+    let conversation = server
+        .last_route_turn_conversation()
+        .expect("route_turn conversation");
+    assert!(conversation.preprocessor_hints.is_some());
+}
+
+#[test]
+fn git_diff_consultation_injects_context_needs() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &assist_preprocessor_toml(&model_path),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "git diff を見て", &[]);
+    let hints = server
+        .last_route_turn_conversation()
+        .and_then(|c| c.preprocessor_hints)
+        .expect("preprocessor hints");
+    assert!(hints.context_needs.iter().any(|n| n == "git_status"));
+    assert!(hints.context_needs.iter().any(|n| n == "git_diff"));
+}
+
+#[test]
+fn session_error_summary_injects_failure_kind_into_route_turn() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &assist_preprocessor_toml(&model_path),
+    );
+    fs::write(
+        home.path().join("session.jsonl"),
+        r#"{"event":"error","message":"permission denied"}"#,
+    )
+    .expect("session log");
+    let _ = run_tty_ask(
+        &cfg,
+        home.path(),
+        "このエラーを直して",
+        &[("AISH_SESSION_DIR", home.path().to_str().expect("utf8"))],
+    );
+    let hints = server
+        .last_route_turn_conversation()
+        .and_then(|c| c.preprocessor_hints)
+        .expect("preprocessor hints");
+    assert_eq!(hints.failure_kind.as_deref(), Some("permission"));
+}
+
+#[test]
+fn gate_short_circuit_skips_route_turn_request() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(0);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 2048
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(&cfg, home.path(), "hello", &[]);
+    assert_eq!(*server.route_turn_count.lock().expect("lock"), 0);
+    assert!(server.last_route_turn_conversation().is_none());
+}
+
+#[test]
+fn unsafe_input_skips_short_circuit_but_injects_hints_when_needed() {
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
+    let server = MockSocketServer::with_expected_route_turns(1);
+    let home = tempfile::tempdir().expect("home");
+    let model_path = install_model(home.path());
+    let cfg = write_ai_config(
+        &server.socket_path,
+        &home,
+        &format!(
+            r#"
+mode = "gate"
+model_path = "{}"
+max_observation_bytes = 2048
+"#,
+            model_path.display()
+        ),
+    );
+    let _ = run_tty_ask(
+        &cfg,
+        home.path(),
+        "sudo rm -rf /tmp/foo の git diff を見て",
+        &[],
+    );
+    assert_eq!(
+        *server.route_turn_count.lock().expect("lock"),
+        1,
+        "unsafe input must not short-circuit"
+    );
+    let hints = server
+        .last_route_turn_conversation()
+        .and_then(|c| c.preprocessor_hints)
+        .expect("hints on unsafe git consult");
+    assert!(hints.context_needs.iter().any(|n| n == "git_diff"));
 }

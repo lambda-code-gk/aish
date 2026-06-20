@@ -83,6 +83,7 @@ fn route_turn_roundtrip_over_socket() {
             conversation_id: Some("conv-1".into()),
             recent_summary: Some("summary".into()),
             new_conversation: false,
+            preprocessor_hints: None,
         },
         cli_overrides: aibe_protocol::RouteTurnCliOverrides {
             preset: Some("fast".into()),

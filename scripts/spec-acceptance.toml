@@ -174,3 +174,57 @@ description = "observation fallback_reason にパスを残さない"
 test = "observation_fallback_reason_omits_paths"
 file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
 pending = false
+
+[[cases]]
+spec = "0044"
+phase = 27
+id = "memory_lookup_hints"
+description = "MemoryLookup でも route_turn 必須かつ hint 注入あり"
+test = "memory_lookup_keeps_route_turn_and_injects_hints"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 27
+id = "memory_recipe_hint_hints"
+description = "MemoryRecipeHint でも route_turn 必須かつ hint 注入あり"
+test = "memory_recipe_hint_keeps_route_turn_and_injects_hints"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 27
+id = "git_context_needs"
+description = "git_status / git_diff が route_turn request に入る"
+test = "git_diff_consultation_injects_context_needs"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 27
+id = "debug_failure_kind"
+description = "session_error_summary 由来の failure_kind を wire する"
+test = "session_error_summary_injects_failure_kind_into_route_turn"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 27
+id = "gate_short_circuit_request"
+description = "short-circuit 時に route_turn request を作らない"
+test = "gate_short_circuit_skips_route_turn_request"
+file_glob = "ai/tests/smart_preprocessor_ask_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0044"
+phase = 27
+id = "observation_hint_flags"
+description = "observation の hint present / injected を区別する"
+test = "observation_distinguishes_hint_present_and_injected"
+file_glob = "ai/src/adapters/outbound/smart_preprocessor_observation.rs"
+pending = false
