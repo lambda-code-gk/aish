@@ -11,4 +11,4 @@ Codex が作成する **設計書**（境界・方針・スキーマ案・非目
 
 一覧: [0000_spec-index.md](../0000_spec-index.md)
 
-直近の大きな設計: [0038_contextual-memory-pack-phase-d-spec.md](0038_contextual-memory-pack-phase-d-spec.md)（0038 Phase A/B/C で整理した contextual memory pack を、Phase D で `memory` feature / basic build に分離）。
+直近の大きな設計: [0045_pack-composition-spec.md](0045_pack-composition-spec.md)（optional 機能の静的合成・脱着機構。参照実装は [0038](0038_contextual-memory-pack-phase-d-spec.md) Contextual Memory Pack）。

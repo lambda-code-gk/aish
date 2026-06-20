@@ -1,0 +1,36 @@
+---
+description: 新機能開発時のパック構成（Pack Composition）適用検討
+alwaysApply: true
+---
+
+# パック構成（Pack Composition）
+
+正本: `docs/spec/0045_pack-composition-spec.md`。
+
+## 用語
+
+- **パック構成** — optional 機能束を composition root で静的配線する機構（**プラグイン機構ではない**。動的ロードなし）
+- **Pack 境界** — core が依存する trait 接点（例: `TurnHook`, `RpcExtension`）
+- **Basic Pack** — 無効時の no-op / fail-closed 実装
+
+## 新機能開発時（必須）
+
+設計書・実装指示書を書く **前** に、パック構成の適用可否を検討する。
+
+1. `docs/spec/0045_pack-composition-spec.md` §6 チェックリストを読む
+2. 設計書に **「パック構成の適用」** 節を置き、**Yes / No / 部分適用** と理由を 1 段落で書く
+3. **Yes / 部分適用** のとき:
+   - Pack 境界 trait + Active/Basic Pack + composition root 1 か所
+   - disabled / feature-off の fail-closed テスト
+   - `docs/architecture.md` を同期
+4. **No** のときも、なぜ core 固定でよいかを設計書に 1 行以上書く
+
+## 採用時の禁止
+
+- core service へ `enabled` bool 分岐の散在
+- Basic Pack でスタブ成功（無効時は明示拒否 or no-op）
+- ランタイム toggle と Cargo feature の意味混同
+
+## 参照実装
+
+Contextual Memory Pack（0038）。`aish` はパック構成対象外。

@@ -58,6 +58,7 @@ Do not git commit or git push unless the user message explicitly requests it.
 Output in Japanese. Mark 推測 explicitly.
 Prefer ./scripts/verify.sh after code changes (or fmt/clippy/test/check-architecture.sh/check-docs-consistency.sh/check-spec-acceptance.py).
 No require_escalated retries on the same command.
+For new optional features: evaluate Pack Composition applicability per docs/spec/0045_pack-composition-spec.md §6; document Yes/No/partial in the feature spec.
 ```
 
 ## ドキュメント出力（既定）

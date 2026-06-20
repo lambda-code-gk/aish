@@ -43,7 +43,17 @@ alwaysApply: false
 - **ツール有効時は `context.cwd` 必須**。aibe プロセス cwd へのフォールバックは禁止
 - 新規 `ToolExecutor` は `std::env::current_dir()` を直接使わない（詳細は `docs/architecture.md` の「ツールとカレントディレクトリ」）
 
+## パック構成（optional 機能）
+
+新規 optional 機能は **パック構成（Pack Composition）** の適用可否を設計段階で検討する。正本: `docs/spec/0045_pack-composition-spec.md`。
+
+- Pack 境界 trait + Active/Basic Pack + composition root 1 か所
+- ランタイム toggle と Cargo feature は別軸（混同しない）
+- 動的プラグインロードではない（「プラグイン機構」と呼ばない）
+- 参照実装: Contextual Memory Pack（0038）。`aish` は対象外
+
 ## 変更時
 
 1. 境界・レイヤーに触れたら `./scripts/check-architecture.sh` を実行
 2. `docs/architecture.md` を実装と同時に更新
+3. optional 機能を追加・拡張する場合は設計書に「パック構成の適用」を記載

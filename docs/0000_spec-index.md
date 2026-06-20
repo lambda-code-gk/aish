@@ -39,6 +39,7 @@
 | 0042 | [0042_configurable-smart-features-spec.md](spec/0042_configurable-smart-features-spec.md) | 設計確定（実装済み） | Configurable Smart Features（`features.toml` / registry / prompt schema） |
 | 0043 | [0043_feature-pack-boundary-hardening-spec.md](spec/0043_feature-pack-boundary-hardening-spec.md) | 設計確定（Phase 1–3 実装済み） | Feature Pack Boundary Hardening（memory.enabled ゲート / eligibility / read-only tools / feature pack 分離） |
 | 0044 | [0044_smart-preprocessor-spec.md](spec/0044_smart-preprocessor-spec.md) | 設計確定（実装済み） | AISH Smart Preprocessor / Local Intent Router（Phase 2.9 まで: `LocalRouteDecision` / tool enablement fast path / observation metrics） |
+| 0045 | [0045_pack-composition-spec.md](spec/0045_pack-composition-spec.md) | 設計確定 | パック構成（Pack Composition）— optional 機能の静的合成・脱着機構（0038 参照実装） |
 
 ### 状態ラベルの意味
 

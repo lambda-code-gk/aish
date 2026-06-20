@@ -85,6 +85,17 @@
 
 詳細: `docs/spec/0031_hexagonal-effect-boundary-spec.md`
 
+### パック構成（Pack Composition）の適用検討
+
+**新規機能**の設計書・実装指示書を書く前に、optional 機能の脱着に **パック構成** が適用できるかを検討する（正本: [`docs/spec/0045_pack-composition-spec.md`](docs/spec/0045_pack-composition-spec.md)）。
+
+1. 0045 §6 のチェックリストで **Yes / No / 部分適用** を判断する
+2. 設計書に **「パック構成の適用」** 節を置き、判断と理由を 1 段落で書く（No の場合も core 固定の理由を 1 行以上）
+3. Yes / 部分適用時: Pack 境界 trait、Active/Basic Pack、composition root 1 か所、disabled テスト、`docs/architecture.md` 同期
+4. 「プラグイン機構」と呼ばない（動的ロードではない）
+
+参照実装: Contextual Memory Pack（0038）。`aish` は対象外。
+
 ## 報告義務（必須）
 
 返信の末尾に、該当があれば次の見出しで列挙する。
@@ -166,3 +177,4 @@
 - `.cursor/rules/20-rust.mdc` — `**/*.rs`
 - `.cursor/rules/30-architecture.mdc` — クレート配下
 - `.cursor/rules/40-no-stubs.mdc` — 常時: 仮実装禁止・報告
+- `.cursor/rules/46-pack-composition.mdc` — 常時: 新機能のパック構成適用検討
