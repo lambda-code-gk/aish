@@ -554,6 +554,48 @@ enabled = true
     }
 
     #[test]
+    fn smart_preprocessor_assist_threshold_is_parsed_from_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[smart_preprocessor]
+enabled = true
+mode = "assist"
+assist_threshold = 0.50
+"#,
+        )
+        .expect("write");
+        let file: FileConfig =
+            toml::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+        let section = file.smart_preprocessor.expect("smart_preprocessor");
+        let cfg = SmartPreprocessorConfig::from_section(section, Some(dir.path()));
+        assert!((cfg.assist_threshold - 0.50).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn smart_preprocessor_unknown_assist_threshold_bps_is_not_parsed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[smart_preprocessor]
+enabled = true
+mode = "assist"
+assist_threshold_bps = 5000
+"#,
+        )
+        .expect("write");
+        let file: FileConfig =
+            toml::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+        let section = file.smart_preprocessor.expect("smart_preprocessor");
+        let cfg = SmartPreprocessorConfig::from_section(section, Some(dir.path()));
+        assert!((cfg.assist_threshold - 0.55).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn env_filter_overrides_config_filter() {
         unsafe {
             std::env::set_var("AI_FILTER", "sed 's/a/b/'");

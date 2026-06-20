@@ -1728,7 +1728,16 @@ fn run_smart_route_with_preprocessor(
                 SmartPreprocessMode::Gate => "route_turn",
                 SmartPreprocessMode::Off => "route_turn",
             };
-            (path, model_fallback)
+            let reason = if local_route_fallback {
+                outcome
+                    .local_route
+                    .as_ref()
+                    .and_then(|local| local.fallback_reason.clone())
+                    .or(model_fallback)
+            } else {
+                model_fallback
+            };
+            (path, reason)
         };
         write_preprocessor_observation(
             sp_cfg,
@@ -1822,6 +1831,9 @@ fn preprocessor_wire_hints(
         && hints.failure_kind.is_none()
         && hints.preprocessor_intent.is_none()
         && hints.preprocessor_reason_codes.is_empty()
+        && hints.confidence_bps.is_none()
+        && hints.confidence_gate.is_none()
+        && hints.safety_requires_approval.is_none()
     {
         return None;
     }
@@ -1831,6 +1843,9 @@ fn preprocessor_wire_hints(
         failure_kind: hints.failure_kind.clone(),
         preprocessor_intent: hints.preprocessor_intent.clone(),
         preprocessor_reason_codes: hints.preprocessor_reason_codes.clone(),
+        confidence_bps: hints.confidence_bps,
+        confidence_gate: hints.confidence_gate.clone(),
+        safety_requires_approval: hints.safety_requires_approval,
     })
 }
 
@@ -3232,11 +3247,12 @@ mod cli_tests {
         };
 
         let local = LocalRouteDecision {
-            route_kind: LocalRouteKind::GitInspect,
+            route_kind: LocalRouteKind::ToolBackedInspection,
             enabled_tools: vec![LocalToolHint::GitDiff],
-            context_needs: vec![SmartContextNeed::GitDiff],
+            context_needs: vec![SmartContextNeed::VcsDiff],
             output_style: LocalOutputStyle::Concise,
             fallback_required: false,
+            fallback_reason: None,
             source_intent: SmartIntentClass::Inspect,
             confidence_bps: 9000,
             estimated_tokens_saved: 800,

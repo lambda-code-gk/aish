@@ -104,8 +104,10 @@ pub enum SmartContextNeed {
     StderrTail,
     StdoutTail,
     ErrorLines,
-    GitStatus,
-    GitDiff,
+    #[serde(alias = "git_status")]
+    VcsStatus,
+    #[serde(alias = "git_diff")]
+    VcsDiff,
     ConversationTail,
     MemoryCards,
     ProjectRules,
@@ -119,8 +121,8 @@ impl SmartContextNeed {
             Self::StderrTail => "stderr_tail",
             Self::StdoutTail => "stdout_tail",
             Self::ErrorLines => "error_lines",
-            Self::GitStatus => "git_status",
-            Self::GitDiff => "git_diff",
+            Self::VcsStatus => "vcs_status",
+            Self::VcsDiff => "vcs_diff",
             Self::ConversationTail => "conversation_tail",
             Self::MemoryCards => "memory_cards",
             Self::ProjectRules => "project_rules",
@@ -229,6 +231,12 @@ pub struct SmartRouteTurnHints {
     pub preprocessor_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preprocessor_reason_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_gate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety_requires_approval: Option<bool>,
 }
 
 impl SmartRouteTurnHints {
@@ -238,6 +246,9 @@ impl SmartRouteTurnHints {
             || self.failure_kind.is_some()
             || self.preprocessor_intent.is_some()
             || !self.preprocessor_reason_codes.is_empty()
+            || self.confidence_bps.is_some()
+            || self.confidence_gate.is_some()
+            || self.safety_requires_approval.is_some()
     }
 
     pub fn has_route_turn_hint_payload(&self) -> bool {
@@ -895,8 +906,8 @@ pub fn derive_context_needs(input: &PreprocessInput) -> Vec<SmartContextNeed> {
     let text = normalize_text(&input.user_text);
     let mut needs = Vec::new();
     if contains_any(&text, &["git", "コミット", "差分", "commit", "diff"]) {
-        needs.push(SmartContextNeed::GitStatus);
-        needs.push(SmartContextNeed::GitDiff);
+        needs.push(SmartContextNeed::VcsStatus);
+        needs.push(SmartContextNeed::VcsDiff);
     }
     if input.session_error_summary.is_some() {
         needs.push(SmartContextNeed::ErrorLines);
@@ -1123,7 +1134,7 @@ pub fn run_preprocessor(
         None
     };
     let reason_codes = clamp_reason_codes(reason_codes);
-    let route_turn_hints = build_route_turn_hints(
+    let mut route_turn_hints = build_route_turn_hints(
         &input,
         intent,
         inject_hints,
@@ -1133,6 +1144,11 @@ pub fn run_preprocessor(
         &context_needs,
         &tool_hints,
     );
+    if inject_hints {
+        route_turn_hints.confidence_bps = Some(confidence_bps);
+        route_turn_hints.confidence_gate = Some(gate.as_str().to_string());
+        route_turn_hints.safety_requires_approval = Some(safety.requires_approval);
+    }
     let mut evidence = Vec::new();
     evidence.push(SmartEvidence {
         kind: "user_excerpt".into(),
@@ -1174,7 +1190,8 @@ pub const LOCAL_ROUTE_ESTIMATED_TOKENS_SAVED: u32 = 800;
 pub enum LocalRouteKind {
     SimpleChat,
     ShellHelp,
-    GitInspect,
+    #[serde(alias = "git_inspect")]
+    ToolBackedInspection,
     OutputStyleRequest,
     CodeReviewContextSelection,
 }
@@ -1184,9 +1201,17 @@ impl LocalRouteKind {
         match self {
             Self::SimpleChat => "simple_chat",
             Self::ShellHelp => "shell_help",
-            Self::GitInspect => "git_inspect",
+            Self::ToolBackedInspection => "tool_backed_inspection",
             Self::OutputStyleRequest => "output_style_request",
             Self::CodeReviewContextSelection => "code_review_context_selection",
+        }
+    }
+
+    /// Local fast path に必要な built-in tool capability（いずれか 1 つで可）。
+    pub fn required_tool_capabilities(self) -> &'static [LocalToolHint] {
+        match self {
+            Self::ToolBackedInspection => &[LocalToolHint::GitStatus, LocalToolHint::GitDiff],
+            _ => &[],
         }
     }
 }
@@ -1261,9 +1286,54 @@ pub struct LocalRouteDecision {
     pub context_needs: Vec<SmartContextNeed>,
     pub output_style: LocalOutputStyle,
     pub fallback_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
     pub source_intent: SmartIntentClass,
     pub confidence_bps: u16,
     pub estimated_tokens_saved: u32,
+}
+
+pub fn local_tool_for_context_need(need: SmartContextNeed) -> Option<LocalToolHint> {
+    match need {
+        SmartContextNeed::VcsStatus => Some(LocalToolHint::GitStatus),
+        SmartContextNeed::VcsDiff => Some(LocalToolHint::GitDiff),
+        _ => None,
+    }
+}
+
+pub fn has_required_local_tool_capabilities(
+    route_kind: LocalRouteKind,
+    enabled_tools: &[LocalToolHint],
+    context_needs: &[SmartContextNeed],
+) -> bool {
+    match route_kind {
+        LocalRouteKind::ToolBackedInspection => {
+            let mut required: Vec<LocalToolHint> = context_needs
+                .iter()
+                .filter_map(|need| local_tool_for_context_need(*need))
+                .collect();
+            if required.is_empty() {
+                required.extend_from_slice(route_kind.required_tool_capabilities());
+            }
+            required.sort_by_key(|tool| tool.as_str());
+            required.dedup();
+            required
+                .iter()
+                .all(|required_tool| enabled_tools.contains(required_tool))
+        }
+        _ => true,
+    }
+}
+
+fn set_local_route_fallback_reason(
+    fallback_required: &mut bool,
+    fallback_reason: &mut Option<String>,
+    reason: &'static str,
+) {
+    *fallback_required = true;
+    if fallback_reason.is_none() {
+        *fallback_reason = Some(reason.to_string());
+    }
 }
 
 pub fn build_local_route_context_summary(context_needs: &[SmartContextNeed]) -> Option<String> {
@@ -1307,7 +1377,7 @@ pub fn derive_local_route_kind(intent: SmartIntentClass, text: &str) -> Option<L
                 &text,
                 &["git", "コミット", "差分", "commit", "diff", "status"],
             ) {
-                Some(LocalRouteKind::GitInspect)
+                Some(LocalRouteKind::ToolBackedInspection)
             } else if contains_any(
                 &text,
                 &["shell", "bash", "zsh", "コマンド", "使い方", "help"],
@@ -1376,6 +1446,8 @@ pub fn derive_local_route_decision(
     user_text: &str,
     config: &PreprocessConfig,
     cli_tool_allowlist: &[String],
+    tty: bool,
+    cli_overrides: bool,
 ) -> Option<LocalRouteDecision> {
     if config.mode != SmartPreprocessMode::Gate {
         return None;
@@ -1388,11 +1460,16 @@ pub fn derive_local_route_decision(
     }
     let route_kind = derive_local_route_kind(decision.intent, user_text)?;
     let mut fallback_required = false;
+    let mut fallback_reason = None;
     if !decision.safety.is_safe_for_short_circuit() {
-        fallback_required = true;
+        set_local_route_fallback_reason(&mut fallback_required, &mut fallback_reason, "unsafe");
     }
     if decision.confidence_bps < config.route_turn_threshold_bps {
-        fallback_required = true;
+        set_local_route_fallback_reason(
+            &mut fallback_required,
+            &mut fallback_reason,
+            "low_confidence",
+        );
     }
     if decision.tool_hints.iter().any(|hint| {
         matches!(
@@ -1400,7 +1477,21 @@ pub fn derive_local_route_decision(
             SmartToolHint::MemorySearch | SmartToolHint::ConversationSearch
         )
     }) {
-        fallback_required = true;
+        set_local_route_fallback_reason(
+            &mut fallback_required,
+            &mut fallback_reason,
+            "memory_or_conversation_tool",
+        );
+    }
+    if !tty {
+        set_local_route_fallback_reason(&mut fallback_required, &mut fallback_reason, "non_tty");
+    }
+    if cli_overrides {
+        set_local_route_fallback_reason(
+            &mut fallback_required,
+            &mut fallback_reason,
+            "cli_override",
+        );
     }
     let context_needs: Vec<_> = decision
         .context_needs
@@ -1412,12 +1503,20 @@ pub fn derive_local_route_decision(
         project_safe_local_tools(&decision.tool_hints),
         cli_tool_allowlist,
     );
+    if !has_required_local_tool_capabilities(route_kind, &enabled_tools, &context_needs) {
+        set_local_route_fallback_reason(
+            &mut fallback_required,
+            &mut fallback_reason,
+            "missing_required_local_tool",
+        );
+    }
     Some(LocalRouteDecision {
         route_kind,
         enabled_tools,
         context_needs,
         output_style: derive_local_output_style(user_text),
         fallback_required,
+        fallback_reason,
         source_intent: decision.intent,
         confidence_bps: decision.confidence_bps,
         estimated_tokens_saved: if fallback_required {
@@ -1825,10 +1924,10 @@ mod tests {
             run_preprocessor(git_input, &config_with_model(SmartPreprocessMode::Shadow));
         assert!(git_decision
             .context_needs
-            .contains(&SmartContextNeed::GitStatus));
+            .contains(&SmartContextNeed::VcsStatus));
         assert!(git_decision
             .context_needs
-            .contains(&SmartContextNeed::GitDiff));
+            .contains(&SmartContextNeed::VcsDiff));
         assert!(git_decision.tool_hints.contains(&SmartToolHint::GitStatus));
         assert!(git_decision.tool_hints.contains(&SmartToolHint::GitDiff));
     }
@@ -1939,12 +2038,12 @@ mod tests {
             None,
             &["git_context".into()],
             None,
-            &[SmartContextNeed::GitStatus, SmartContextNeed::GitDiff],
+            &[SmartContextNeed::VcsStatus, SmartContextNeed::VcsDiff],
             &[SmartToolHint::GitStatus],
         );
         assert_eq!(
             hints.context_needs,
-            vec!["git_status".to_string(), "git_diff".to_string()]
+            vec!["vcs_status".to_string(), "vcs_diff".to_string()]
         );
         assert_eq!(hints.tool_hints, vec!["git_status".to_string()]);
         assert_eq!(hints.preprocessor_intent.as_deref(), Some("inspect"));
@@ -2024,11 +2123,13 @@ mod tests {
             "read_file".into(),
             "list_dir".into(),
         ];
-        let first = derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist);
-        let second = derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist);
+        let first =
+            derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist, true, false);
+        let second =
+            derive_local_route_decision(&decision, &input.user_text, &cfg, &allowlist, true, false);
         assert_eq!(first, second);
         let local = first.expect("local route");
-        assert_eq!(local.route_kind, LocalRouteKind::GitInspect);
+        assert_eq!(local.route_kind, LocalRouteKind::ToolBackedInspection);
         assert!(!local.enabled_tools.is_empty());
     }
 
@@ -2038,7 +2139,10 @@ mod tests {
         let cfg = config_with_model(SmartPreprocessMode::Gate);
         let decision = run_preprocessor(input.clone(), &cfg);
         assert_eq!(decision.intent, SmartIntentClass::MemoryLookup);
-        assert!(derive_local_route_decision(&decision, &input.user_text, &cfg, &[]).is_none());
+        assert!(
+            derive_local_route_decision(&decision, &input.user_text, &cfg, &[], true, false)
+                .is_none()
+        );
     }
 
     #[test]
@@ -2053,7 +2157,7 @@ mod tests {
         );
         assert_eq!(
             derive_local_route_kind(SmartIntentClass::Inspect, "git diff を見て"),
-            Some(LocalRouteKind::GitInspect)
+            Some(LocalRouteKind::ToolBackedInspection)
         );
         assert_eq!(
             derive_local_route_kind(SmartIntentClass::Inspect, "箇条書きで答えて"),
@@ -2068,13 +2172,106 @@ mod tests {
     #[test]
     fn local_route_context_and_output_style_hints_are_bounded() {
         let summary = build_local_route_context_summary(&[
-            SmartContextNeed::GitStatus,
-            SmartContextNeed::GitDiff,
+            SmartContextNeed::VcsStatus,
+            SmartContextNeed::VcsDiff,
         ])
         .expect("summary");
-        assert!(summary.contains("git_status"));
-        assert!(summary.contains("git_diff"));
+        assert!(summary.contains("vcs_status"));
+        assert!(summary.contains("vcs_diff"));
         assert!(local_output_style_system_hint(LocalOutputStyle::Default).is_none());
         assert!(local_output_style_system_hint(LocalOutputStyle::Concise).is_some());
+    }
+
+    #[test]
+    fn tool_backed_inspection_requires_vcs_tool_capability_in_allowlist() {
+        let input = sample_input("git diff を見て");
+        let cfg = config_with_model(SmartPreprocessMode::Gate);
+        let decision = run_preprocessor(input.clone(), &cfg);
+        let without_tools = derive_local_route_decision(
+            &decision,
+            &input.user_text,
+            &cfg,
+            &["grep".into()],
+            true,
+            false,
+        )
+        .expect("local route");
+        assert_eq!(
+            without_tools.route_kind,
+            LocalRouteKind::ToolBackedInspection
+        );
+        assert!(without_tools.fallback_required);
+        assert_eq!(
+            without_tools.fallback_reason.as_deref(),
+            Some("missing_required_local_tool")
+        );
+
+        let with_git_tools = derive_local_route_decision(
+            &decision,
+            &input.user_text,
+            &cfg,
+            &["git_status".into(), "git_diff".into()],
+            true,
+            false,
+        )
+        .expect("local route");
+        assert!(!with_git_tools.fallback_required);
+        assert!(with_git_tools.fallback_reason.is_none());
+        assert!(!with_git_tools.enabled_tools.is_empty());
+
+        let partial_git_status = derive_local_route_decision(
+            &decision,
+            &input.user_text,
+            &cfg,
+            &["git_status".into()],
+            true,
+            false,
+        )
+        .expect("local route");
+        assert!(
+            partial_git_status.fallback_required,
+            "vcs context needs require matching tool capabilities"
+        );
+        assert_eq!(
+            partial_git_status.fallback_reason.as_deref(),
+            Some("missing_required_local_tool")
+        );
+
+        assert!(!has_required_local_tool_capabilities(
+            LocalRouteKind::ToolBackedInspection,
+            &[LocalToolHint::GitStatus],
+            &[],
+        ));
+        assert!(has_required_local_tool_capabilities(
+            LocalRouteKind::ToolBackedInspection,
+            &[LocalToolHint::GitStatus, LocalToolHint::GitDiff],
+            &[],
+        ));
+    }
+
+    #[test]
+    fn smart_context_need_deserializes_legacy_git_aliases() {
+        let status: SmartContextNeed = serde_json::from_str("\"git_status\"").expect("status");
+        let diff: SmartContextNeed = serde_json::from_str("\"git_diff\"").expect("diff");
+        assert_eq!(status, SmartContextNeed::VcsStatus);
+        assert_eq!(diff, SmartContextNeed::VcsDiff);
+    }
+
+    #[test]
+    fn route_turn_hints_include_confidence_fields_when_injected() {
+        let input = sample_input("git diff を見て");
+        let cfg = config_with_model(SmartPreprocessMode::Assist);
+        let decision = run_preprocessor(input, &cfg);
+        assert!(decision.inject_hints);
+        let hints = decision.route_turn_hints;
+        assert_eq!(hints.confidence_bps, Some(decision.confidence_bps));
+        assert_eq!(
+            hints.confidence_gate.as_deref(),
+            Some(decision.gate.as_str())
+        );
+        assert_eq!(
+            hints.safety_requires_approval,
+            Some(decision.safety.requires_approval)
+        );
     }
 }

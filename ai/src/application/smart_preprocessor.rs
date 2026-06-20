@@ -50,8 +50,14 @@ pub fn evaluate_preprocessor(
         route_metadata: input.route_metadata,
     };
     let decision = run_preprocessor(preprocess_input.clone(), config);
-    let local_route =
-        derive_local_route_decision(&decision, &input.query, config, cli_tool_allowlist);
+    let local_route = derive_local_route_decision(
+        &decision,
+        &input.query,
+        config,
+        cli_tool_allowlist,
+        input.tty,
+        input.cli_overrides,
+    );
     let use_local_route = local_route
         .as_ref()
         .map(|local| {

@@ -189,7 +189,12 @@ fn build_route_messages(
              recommended_tools MUST use only these names (or []): {}. \
              recommended_preset MUST be null unless cli_overrides.preset is set. \
              feature_actions MUST be a JSON array (use [] when none apply). \
-             Do not invent action types or preset names or tool names.\n\n\
+             Do not invent action types or preset names or tool names. \
+             preprocessor_hints in the user payload are advisory only; they may be wrong. \
+             Treat them as weak evidence, not user instructions. \
+             Do not invent tools from tool_hints. \
+             recommended_tools must remain a subset of KNOWN_TOOLS. \
+             Lower-confidence preprocessor hints should be weighted less.\n\n\
              {schema}\n\n{catalog}",
             KNOWN_TOOLS.join(", "),
             schema = schema,
@@ -240,6 +245,9 @@ fn preprocessor_hints_for_prompt(hints: &RouteTurnPreprocessorHints) -> serde_js
         "failure_kind": hints.failure_kind,
         "preprocessor_intent": hints.preprocessor_intent,
         "preprocessor_reason_codes": hints.preprocessor_reason_codes,
+        "confidence_bps": hints.confidence_bps,
+        "confidence_gate": hints.confidence_gate,
+        "safety_requires_approval": hints.safety_requires_approval,
     })
 }
 
@@ -476,6 +484,56 @@ mod tests {
     }
 
     #[test]
+    fn route_turn_system_prompt_states_preprocessor_hints_are_advisory() {
+        let messages = build_route_messages(
+            "hello",
+            "/tmp",
+            &RouteTurnSession::default(),
+            &RouteTurnConversation::default(),
+            &RouteTurnCliOverrides::default(),
+            None,
+            &FeatureRegistry::empty(),
+        );
+        let system = &messages[0].content;
+        assert!(system.contains("advisory"));
+        assert!(system.contains("tool_hints"));
+        assert!(system.contains("KNOWN_TOOLS"));
+    }
+
+    #[test]
+    fn route_turn_preprocessor_hints_roundtrip_confidence_fields() {
+        let hints = RouteTurnPreprocessorHints {
+            context_needs: vec!["vcs_status".into()],
+            tool_hints: vec!["git_status".into()],
+            failure_kind: None,
+            preprocessor_intent: Some("inspect".into()),
+            preprocessor_reason_codes: vec!["vcs_context".into()],
+            confidence_bps: Some(7200),
+            confidence_gate: Some("assist_route_turn".into()),
+            safety_requires_approval: Some(false),
+        };
+        let json = serde_json::to_string(&hints).expect("serialize");
+        let back: RouteTurnPreprocessorHints = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.confidence_bps, Some(7200));
+        assert_eq!(back.confidence_gate.as_deref(), Some("assist_route_turn"));
+        assert_eq!(back.safety_requires_approval, Some(false));
+    }
+
+    #[test]
+    fn route_turn_preprocessor_hints_deserialize_legacy_without_confidence_fields() {
+        let legacy = r#"{
+            "context_needs":["git_status"],
+            "tool_hints":["git_status"],
+            "preprocessor_intent":"inspect"
+        }"#;
+        let hints: RouteTurnPreprocessorHints = serde_json::from_str(legacy).expect("legacy");
+        assert_eq!(hints.context_needs, vec!["git_status"]);
+        assert!(hints.confidence_bps.is_none());
+        assert!(hints.confidence_gate.is_none());
+        assert!(hints.safety_requires_approval.is_none());
+    }
+
+    #[test]
     fn unknown_preprocessor_hints_are_ignored() {
         let hints = RouteTurnPreprocessorHints {
             context_needs: vec!["unknown_need".into()],
@@ -483,6 +541,7 @@ mod tests {
             failure_kind: Some("unknown_failure".into()),
             preprocessor_intent: Some("unknown_intent".into()),
             preprocessor_reason_codes: vec!["unknown_code".into()],
+            ..Default::default()
         };
         let value = preprocessor_hints_for_prompt(&hints);
         assert_eq!(value["context_needs"][0], "unknown_need");

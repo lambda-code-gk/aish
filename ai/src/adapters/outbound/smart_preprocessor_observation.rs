@@ -155,6 +155,17 @@ pub fn normalize_fallback_reason(raw: Option<&str>) -> Option<String> {
     if value.is_empty() {
         return None;
     }
+    if matches!(
+        value,
+        "low_confidence"
+            | "unsafe"
+            | "memory_or_conversation_tool"
+            | "missing_required_local_tool"
+            | "cli_override"
+            | "non_tty"
+    ) {
+        return Some(value.to_string());
+    }
     let normalized = if value.starts_with("route_turn_failed") {
         if value.contains("model_load_failed") {
             "route_turn_failed;model_load_failed"
@@ -256,8 +267,8 @@ fn limit_text(value: String, max_len: usize) -> String {
 mod tests {
     use super::*;
     use crate::domain::smart_preprocessor::{
-        build_hashed_features, derive_local_route_decision, hash_feature, run_preprocessor,
-        PreprocessConfig, PreprocessInput, RouteMetadataInput, SmartPreprocessMode,
+        build_hashed_features, hash_feature, run_preprocessor, PreprocessConfig, PreprocessInput,
+        RouteMetadataInput, SmartPreprocessMode,
     };
 
     #[test]
@@ -613,9 +624,11 @@ mod tests {
             &input.user_text,
             &cfg,
             &["git_status".into(), "git_diff".into()],
+            true,
+            false,
         )
         .expect("local route");
-        assert_eq!(local.route_kind, LocalRouteKind::GitInspect);
+        assert_eq!(local.route_kind, LocalRouteKind::ToolBackedInspection);
         let record = ObservationRecord::from_decision(
             &decision,
             ObservationContext {
@@ -638,7 +651,10 @@ mod tests {
                 },
             },
         );
-        assert_eq!(record.local_route_kind.as_deref(), Some("git_inspect"));
+        assert_eq!(
+            record.local_route_kind.as_deref(),
+            Some("tool_backed_inspection")
+        );
         assert!(record.local_route_used);
         assert_eq!(record.route_turn_skipped_count, 1);
         assert_eq!(record.route_turn_fallback_count, 0);
@@ -681,7 +697,7 @@ mod tests {
                 route_turn_hints_injected: false,
                 fallback_reason: None,
                 local_route: LocalRouteMetrics {
-                    local_route_kind: Some("git_inspect".into()),
+                    local_route_kind: Some("tool_backed_inspection".into()),
                     local_route_used: false,
                     route_turn_skipped_count: 0,
                     route_turn_fallback_count: 1,
@@ -705,7 +721,7 @@ mod tests {
                 route_turn_hints_injected: false,
                 fallback_reason: None,
                 local_route: LocalRouteMetrics {
-                    local_route_kind: Some("git_inspect".into()),
+                    local_route_kind: Some("tool_backed_inspection".into()),
                     local_route_used: false,
                     route_turn_skipped_count: 0,
                     route_turn_fallback_count: 0,
@@ -716,5 +732,80 @@ mod tests {
             },
         );
         assert_eq!(blocked_record.route_turn_fallback_count, 0);
+    }
+
+    #[test]
+    fn normalize_fallback_reason_accepts_local_route_codes() {
+        assert_eq!(
+            normalize_fallback_reason(Some("missing_required_local_tool")),
+            Some("missing_required_local_tool".into())
+        );
+        assert_eq!(
+            normalize_fallback_reason(Some("low_confidence")),
+            Some("low_confidence".into())
+        );
+    }
+
+    #[test]
+    fn local_route_fallback_reason_is_persisted_in_observation() {
+        use crate::domain::smart_preprocessor::{
+            LocalOutputStyle, LocalRouteDecision, LocalRouteKind, SmartIntentClass,
+        };
+
+        let decision = run_preprocessor(
+            PreprocessInput {
+                user_text: "hello".into(),
+                command: Some("ask".into()),
+                tty: true,
+                new_conversation: true,
+                conversation_id: None,
+                memory_enabled: true,
+                history_tail_summary: None,
+                session_error_summary: None,
+                cli_overrides: false,
+                route_metadata: RouteMetadataInput::default(),
+            },
+            &PreprocessConfig {
+                mode: SmartPreprocessMode::Gate,
+                ..PreprocessConfig::default()
+            },
+        );
+        let local = LocalRouteDecision {
+            route_kind: LocalRouteKind::ToolBackedInspection,
+            enabled_tools: Vec::new(),
+            context_needs: Vec::new(),
+            output_style: LocalOutputStyle::Default,
+            fallback_required: true,
+            fallback_reason: Some("missing_required_local_tool".into()),
+            source_intent: SmartIntentClass::Inspect,
+            confidence_bps: 9000,
+            estimated_tokens_saved: 0,
+        };
+        let record = ObservationRecord::from_decision(
+            &decision,
+            ObservationContext {
+                ai_session_id: None,
+                conversation_id: None,
+                history_id: None,
+                decision_path: "local_route_fallback".into(),
+                route_turn_used: true,
+                route_turn_hints_present: false,
+                route_turn_hints_injected: false,
+                fallback_reason: local.fallback_reason.clone(),
+                local_route: LocalRouteMetrics {
+                    local_route_kind: Some(local.route_kind.as_str().to_string()),
+                    local_route_used: false,
+                    route_turn_skipped_count: 0,
+                    route_turn_fallback_count: 1,
+                    local_route_latency_ms: 1,
+                    route_turn_latency_ms: 2,
+                    estimated_tokens_saved: 0,
+                },
+            },
+        );
+        assert_eq!(
+            record.fallback_reason.as_deref(),
+            Some("missing_required_local_tool")
+        );
     }
 }

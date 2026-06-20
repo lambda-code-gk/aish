@@ -119,6 +119,12 @@ pub struct RouteTurnPreprocessorHints {
     pub preprocessor_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preprocessor_reason_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_bps: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_gate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety_requires_approval: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -250,6 +256,7 @@ mod tests {
                     failure_kind: None,
                     preprocessor_intent: Some("inspect".into()),
                     preprocessor_reason_codes: vec!["git_context".into()],
+                    ..Default::default()
                 }),
             },
             cli_overrides: RouteTurnCliOverrides::default(),
@@ -264,6 +271,39 @@ mod tests {
             }
             _ => panic!("expected route_turn"),
         }
+    }
+
+    #[test]
+    fn route_turn_preprocessor_hints_deserialize_legacy_without_confidence_fields() {
+        let legacy = r#"{
+            "context_needs":["git_status"],
+            "tool_hints":["git_status"],
+            "preprocessor_intent":"inspect"
+        }"#;
+        let hints: RouteTurnPreprocessorHints = serde_json::from_str(legacy).expect("legacy");
+        assert_eq!(hints.context_needs, vec!["git_status"]);
+        assert!(hints.confidence_bps.is_none());
+        assert!(hints.confidence_gate.is_none());
+        assert!(hints.safety_requires_approval.is_none());
+    }
+
+    #[test]
+    fn route_turn_preprocessor_hints_roundtrip_confidence_fields() {
+        let hints = RouteTurnPreprocessorHints {
+            context_needs: vec!["vcs_status".into()],
+            tool_hints: vec!["git_status".into()],
+            failure_kind: None,
+            preprocessor_intent: Some("inspect".into()),
+            preprocessor_reason_codes: vec!["vcs_context".into()],
+            confidence_bps: Some(7200),
+            confidence_gate: Some("assist_route_turn".into()),
+            safety_requires_approval: Some(false),
+        };
+        let json = serde_json::to_string(&hints).expect("serialize");
+        let back: RouteTurnPreprocessorHints = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.confidence_bps, Some(7200));
+        assert_eq!(back.confidence_gate.as_deref(), Some("assist_route_turn"));
+        assert_eq!(back.safety_requires_approval, Some(false));
     }
 
     #[test]

@@ -313,7 +313,7 @@ fn assist_preprocessor_toml(model_path: &std::path::Path) -> String {
 mode = "assist"
 model_path = "{}"
 max_observation_bytes = 2048
-assist_threshold_bps = 5000
+assist_threshold = 0.50
 "#,
         model_path.display()
     )
@@ -383,8 +383,8 @@ fn git_diff_consultation_injects_context_needs() {
         .last_route_turn_conversation()
         .and_then(|c| c.preprocessor_hints)
         .expect("preprocessor hints");
-    assert!(hints.context_needs.iter().any(|n| n == "git_status"));
-    assert!(hints.context_needs.iter().any(|n| n == "git_diff"));
+    assert!(hints.context_needs.iter().any(|n| n == "vcs_status"));
+    assert!(hints.context_needs.iter().any(|n| n == "vcs_diff"));
 }
 
 #[test]
@@ -481,7 +481,7 @@ max_observation_bytes = 2048
         .last_route_turn_conversation()
         .and_then(|c| c.preprocessor_hints)
         .expect("hints on unsafe git consult");
-    assert!(hints.context_needs.iter().any(|n| n == "git_diff"));
+    assert!(hints.context_needs.iter().any(|n| n == "vcs_diff"));
 }
 
 #[test]
@@ -501,6 +501,8 @@ fn local_route_skips_route_turn_for_high_confidence_safe_input() {
 mode = "gate"
 model_path = "{}"
 max_observation_bytes = 4096
+[ask]
+tools = "@read-only"
 "#,
             model_path.display()
         ),
@@ -509,7 +511,7 @@ max_observation_bytes = 4096
     assert_eq!(
         *server.route_turn_count.lock().expect("lock"),
         0,
-        "high confidence safe git inspect should use local route"
+        "high confidence safe tool-backed inspection should use local route when vcs tools are allowed"
     );
     assert!(server.last_route_turn_conversation().is_none());
 }
