@@ -6,6 +6,7 @@ use aibe_protocol::ClientResponse;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
+use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::inbound::SubscribeConnectionLines;
 use crate::ports::outbound::MemorySubscription;
 
@@ -38,6 +39,7 @@ pub async fn push_memory_subscription_until_disconnect(
     mut subscription: MemorySubscription,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     lines: Arc<Mutex<SubscribeConnectionLines>>,
+    shutdown: Option<Arc<ShutdownCoordinator>>,
 ) -> anyhow::Result<()> {
     use aibe_protocol::ErrorCode;
 
@@ -76,6 +78,15 @@ pub async fn push_memory_subscription_until_disconnect(
                     Ok(Some(_)) => {}
                     Err(e) => return Err(e.into()),
                 }
+            }
+            () = async {
+                if let Some(shutdown) = &shutdown {
+                    shutdown.wait().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {
+                break;
             }
         }
     }

@@ -26,6 +26,7 @@ async fn unknown_llm_profile_returns_invalid_request() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             registry,
             ToolsConfig::default(),
             Vec::new(),

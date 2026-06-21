@@ -162,4 +162,21 @@ timeout 30s "$AI_BIN" mem show --socket "$AIBE_SOCKET_PATH" --no-start \
 grep -q '\[aibe contextual memory\]' "$STDOUT_FILE" || fail "mem show must include prompt block header"
 grep -q 'smoke goal' "$STDOUT_FILE" || fail "mem show must include saved goal text"
 
+echo "smoke-mock: aibe status..."
+timeout 30s env HOME="$SMOKE_DIR" AIBE_CONFIG="$AIBE_CONFIG" AIBE_SOCKET_PATH="$AIBE_SOCKET_PATH" \
+  "$AIBE_BIN" status --format json >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q '"socket_ping":true' "$STDOUT_FILE" || fail "aibe status must report socket_ping true"
+
+echo "smoke-mock: aibe restart..."
+timeout 60s env HOME="$SMOKE_DIR" AIBE_CONFIG="$AIBE_CONFIG" AIBE_SOCKET_PATH="$AIBE_SOCKET_PATH" AIBE_BIN="$AIBE_BIN" \
+  "$AIBE_BIN" restart >"$STDOUT_FILE" 2>"$STDERR_FILE"
+timeout 30s env HOME="$SMOKE_DIR" AIBE_CONFIG="$AIBE_CONFIG" AIBE_SOCKET_PATH="$AIBE_SOCKET_PATH" \
+  "$AIBE_BIN" status --format json >"$STDOUT_FILE" 2>"$STDERR_FILE"
+grep -q '"socket_ping":true' "$STDOUT_FILE" || fail "aibe must be running after restart"
+
+echo "smoke-mock: aibe stop..."
+timeout 30s env HOME="$SMOKE_DIR" AIBE_CONFIG="$AIBE_CONFIG" AIBE_SOCKET_PATH="$AIBE_SOCKET_PATH" \
+  "$AIBE_BIN" stop >"$STDOUT_FILE" 2>"$STDERR_FILE"
+AIBE_PID=""
+
 echo "smoke-mock: ok"

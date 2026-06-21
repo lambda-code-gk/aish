@@ -8,6 +8,7 @@ use tokio::io::BufReader;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
+use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
 
 pub type SubscribeConnectionLines = tokio::io::Lines<BufReader<OwnedReadHalf>>;
@@ -27,8 +28,9 @@ pub trait ClientRequestHandler: Send + Sync {
         body: MemorySubscribeRequestBody,
         writer: Arc<Mutex<OwnedWriteHalf>>,
         lines: Arc<Mutex<SubscribeConnectionLines>>,
+        shutdown: Option<Arc<ShutdownCoordinator>>,
     ) -> anyhow::Result<()> {
-        let _ = (body, writer, lines);
+        let _ = (body, writer, lines, shutdown);
         Err(anyhow::anyhow!("memory_subscribe is not supported"))
     }
 }

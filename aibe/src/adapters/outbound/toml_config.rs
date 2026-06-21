@@ -30,6 +30,14 @@ impl TomlConfig {
         Self { path }
     }
 
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    pub fn resolve_path_for_display() -> PathBuf {
+        Self::resolve_path()
+    }
+
     fn resolve_path() -> PathBuf {
         if let Ok(p) = std::env::var("AIBE_CONFIG") {
             return PathBuf::from(p);

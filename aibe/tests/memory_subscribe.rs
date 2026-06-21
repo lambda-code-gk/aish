@@ -147,6 +147,7 @@ async fn memory_subscribe_receives_apply_over_dedicated_socket() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             ToolsConfig::default(),
             Vec::new(),
@@ -239,6 +240,7 @@ async fn memory_subscribe_rejects_other_rpc_on_same_connection() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             ToolsConfig::default(),
             Vec::new(),

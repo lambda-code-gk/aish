@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 
 use crate::adapters::inbound::unix_socket_server;
@@ -11,7 +12,7 @@ use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
     ConversationStore as FilesystemConversationStore, EnvLlmCallTracer,
-    FilesystemFeatureRegistryLoader, StaticCapabilityPolicy,
+    FilesystemFeatureRegistryLoader, StaticCapabilityPolicy, TomlConfig,
 };
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
@@ -22,15 +23,19 @@ use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
 use crate::application::contextual_pack_arc;
 use crate::application::request_service::RequestService;
+use crate::daemon::{build_current_pid_record, default_pid_file_path, write_pid_file};
 use crate::domain::{FeatureEligibilityContext, FeatureRegistry};
 use crate::ports::inbound::ClientRequestHandler;
+use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{
     ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, LlmCallTracer, MemoryConfig,
     ProfileRegistry, ToolsConfig,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     socket_path: PathBuf,
+    config_path: PathBuf,
     profile_registry: ProfileRegistry,
     tools_config: ToolsConfig,
     external_commands: Vec<ExternalCommandConfig>,
@@ -96,22 +101,60 @@ pub async fn run(
         memory_config.recipes_enabled(),
     );
 
-    let handler: Arc<dyn ClientRequestHandler> =
-        Arc::new(RequestService::new_with_turns_and_packs(
-            profile_registry,
-            tool_registry,
-            tools_config,
-            terminator,
-            Arc::clone(&active_turns),
-            router_profile,
-            conversation_store,
-            Arc::clone(&capability_policy),
-            rpc_extension,
-            turn_hook,
-            feature_registry,
-            feature_eligibility,
-            llm_tracer,
-        ));
+    let request_service = Arc::new(RequestService::new_with_turns_and_packs(
+        profile_registry,
+        tool_registry,
+        tools_config,
+        terminator,
+        Arc::clone(&active_turns),
+        router_profile,
+        conversation_store,
+        Arc::clone(&capability_policy),
+        rpc_extension,
+        turn_hook,
+        feature_registry,
+        feature_eligibility,
+        llm_tracer,
+    ));
+    let handler: Arc<dyn ClientRequestHandler> = request_service.clone();
 
-    unix_socket_server::run(socket_path, handler).await
+    let pid_file_path = default_pid_file_path();
+    let pid_record = build_current_pid_record(config_path.clone(), socket_path.clone())
+        .map_err(|e| anyhow::anyhow!("pid file: {e}"))?;
+    write_pid_file(&pid_file_path, &pid_record).map_err(|e| anyhow::anyhow!("pid file: {e}"))?;
+
+    let shutdown = ShutdownCoordinator::new();
+    install_signal_handlers(Arc::clone(&shutdown), Arc::clone(&request_service));
+
+    let run_result = unix_socket_server::run(socket_path.clone(), handler, shutdown).await;
+
+    crate::daemon::cleanup_runtime_artifacts(&pid_file_path, &socket_path);
+    run_result
+}
+
+fn install_signal_handlers(
+    shutdown: Arc<ShutdownCoordinator>,
+    request_service: Arc<RequestService>,
+) {
+    tokio::spawn(async move {
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        tokio::select! {
+            _ = sigterm.recv() => {}
+            _ = sigint.recv() => {}
+        }
+        request_service.cancel_all_active_turns().await;
+        shutdown.trigger();
+    });
+}
+
+/// config path を解決する（composition root 用）。
+pub fn resolve_config_path() -> PathBuf {
+    TomlConfig::resolve_path_for_display()
 }

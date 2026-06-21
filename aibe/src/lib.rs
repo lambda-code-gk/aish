@@ -12,6 +12,9 @@ pub mod ports;
 #[cfg(feature = "memory")]
 pub mod plugin_memory;
 
+pub use adapters::inbound::control_plane::{run_restart, run_status, run_stop};
+pub use clap_cli::StatusFormat;
+
 /// 常駐サーバのエントリポイント。
 pub fn run() -> ! {
     if let Err(e) = try_run() {
@@ -28,14 +31,18 @@ fn try_run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    daemon::cleanup_stale_pid_file_before_start(&config.socket_path);
+
     let profile_registry = adapters::outbound::build_profile_registry(&config.llm)?;
     let tools_config = config.tools.clone();
     let external_commands = config.external_commands.clone();
+    let config_path = application::server::resolve_config_path();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     rt.block_on(application::server::run(
         config.socket_path,
+        config_path,
         profile_registry,
         tools_config,
         external_commands,

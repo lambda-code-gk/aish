@@ -229,6 +229,7 @@ async fn server_starts_with_broken_kinds_toml_when_memory_disabled() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             ToolsConfig::default(),
             Vec::new(),

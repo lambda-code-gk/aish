@@ -145,6 +145,13 @@ impl RequestService {
             .await
     }
 
+    pub async fn cancel_all_active_turns(&self) {
+        let guard = self.active_turns.lock().await;
+        for cancel in guard.values() {
+            cancel.cancel();
+        }
+    }
+
     pub async fn handle_with_events(
         &self,
         request: ClientRequest,
@@ -344,6 +351,7 @@ impl RequestService {
         body: MemorySubscribeRequestBody,
         writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
         lines: Arc<Mutex<crate::ports::inbound::SubscribeConnectionLines>>,
+        shutdown: Option<Arc<crate::ports::inbound::ShutdownCoordinator>>,
     ) -> anyhow::Result<()> {
         use crate::application::memory_subscribe_transport::{
             push_memory_subscription_until_disconnect, write_subscribe_response_line,
@@ -366,6 +374,7 @@ impl RequestService {
             subscription,
             writer,
             lines,
+            shutdown,
         )
         .await
     }
@@ -402,7 +411,8 @@ impl ClientRequestHandler for RequestService {
         body: aibe_protocol::MemorySubscribeRequestBody,
         writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
         lines: Arc<Mutex<crate::ports::inbound::SubscribeConnectionLines>>,
+        shutdown: Option<Arc<crate::ports::inbound::ShutdownCoordinator>>,
     ) -> anyhow::Result<()> {
-        RequestService::handle_memory_subscribe(self, body, writer, lines).await
+        RequestService::handle_memory_subscribe(self, body, writer, lines, shutdown).await
     }
 }

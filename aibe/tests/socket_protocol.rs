@@ -28,6 +28,7 @@ async fn ping_and_agent_turn_over_unix_socket() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             ToolsConfig::default(),
             Vec::new(),

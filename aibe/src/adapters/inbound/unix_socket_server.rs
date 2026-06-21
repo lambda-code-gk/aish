@@ -3,33 +3,79 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
+use tokio::time::{sleep_until, Instant};
 
 use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
 use crate::ports::inbound::ClientRequestHandler;
+use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
+
+pub const DEFAULT_SHUTDOWN_DRAIN: Duration = Duration::from_secs(30);
 
 pub async fn run(
     socket_path: PathBuf,
     handler: Arc<dyn ClientRequestHandler>,
+    shutdown: Arc<ShutdownCoordinator>,
 ) -> anyhow::Result<()> {
     prepare_socket_path(&socket_path)?;
     let listener = bind_unix_listener(&socket_path)?;
     eprintln!("aibe: listening on {}", socket_path.display());
 
+    let mut connections = JoinSet::new();
     loop {
-        let (stream, _) = listener.accept().await?;
-        let handler = Arc::clone(&handler);
-        tokio::spawn(async move {
-            if let Err(e) = serve_connection(stream, handler).await {
-                eprintln!("aibe: connection error: {e}");
+        tokio::select! {
+            accept = listener.accept() => {
+                let (stream, _) = accept?;
+                let handler = Arc::clone(&handler);
+                let shutdown = Arc::clone(&shutdown);
+                connections.spawn(async move {
+                    if let Err(e) = serve_connection(stream, handler, shutdown).await {
+                        eprintln!("aibe: connection error: {e}");
+                    }
+                });
             }
-        });
+            () = shutdown.wait() => {
+                break;
+            }
+        }
+    }
+
+    drop(listener);
+    drain_connections(&mut connections, DEFAULT_SHUTDOWN_DRAIN).await;
+    Ok(())
+}
+
+async fn drain_connections(connections: &mut JoinSet<()>, timeout: Duration) {
+    if connections.is_empty() {
+        return;
+    }
+    let deadline = Instant::now() + timeout;
+    loop {
+        tokio::select! {
+            next = connections.join_next() => {
+                match next {
+                    Some(Ok(())) | Some(Err(_)) => {
+                        if connections.is_empty() {
+                            return;
+                        }
+                    }
+                    None => return,
+                }
+            }
+            () = sleep_until(deadline) => {
+                connections.abort_all();
+                while connections.join_next().await.is_some() {}
+                return;
+            }
+        }
     }
 }
 
@@ -58,6 +104,7 @@ fn bind_unix_listener(path: &Path) -> anyhow::Result<UnixListener> {
 async fn serve_connection(
     stream: UnixStream,
     handler: Arc<dyn ClientRequestHandler>,
+    shutdown: Arc<ShutdownCoordinator>,
 ) -> anyhow::Result<()> {
     let (reader, writer) = stream.into_split();
     let writer = Arc::new(Mutex::new(writer));
@@ -80,7 +127,12 @@ async fn serve_connection(
             Ok(req) => {
                 if let ClientRequest::MemorySubscribe(body) = req {
                     handler
-                        .handle_memory_subscribe(body, Arc::clone(&writer), Arc::clone(&lines))
+                        .handle_memory_subscribe(
+                            body,
+                            Arc::clone(&writer),
+                            Arc::clone(&lines),
+                            Some(Arc::clone(&shutdown)),
+                        )
                         .await?;
                     break;
                 }

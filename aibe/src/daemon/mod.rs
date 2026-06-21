@@ -1,4 +1,18 @@
-//! Unix 向けの二重 fork によるデーモン化。
+//! Unix 向けデーモン化と process lifecycle primitive。
+
+mod pid_file;
+mod process;
+
+pub use pid_file::{
+    build_current_pid_record, cleanup_runtime_artifacts, cleanup_stale_pid_file_before_start,
+    current_process_start_jiffies, default_pid_file_path, default_pid_file_path_for_home,
+    is_trusted_runtime_socket, read_pid_file, remove_pid_file, remove_trusted_runtime_socket,
+    runtime_share_dir, validate_pid_record, validate_pid_record_for_paths, write_pid_file,
+    PidFileError, PidFileRecord, PidFileState,
+};
+pub use process::{
+    send_sigkill, send_sigterm, wait_for_process_exit, ProcessError, DEFAULT_STOP_WAIT,
+};
 
 use std::ffi::CString;
 use std::io;
@@ -26,7 +40,6 @@ pub fn daemonize() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        // 作成ファイルのグループ/その他権限を抑える（socket 等）
         libc::umask(0o077);
 
         let devnull = CString::new("/dev/null").unwrap();

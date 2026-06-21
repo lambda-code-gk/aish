@@ -57,6 +57,7 @@ async fn external_command_runs_via_shell_exec() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             cfg,
             external_commands,
@@ -157,6 +158,7 @@ async fn external_command_not_in_allowlist_is_denied() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             cfg,
             Vec::new(),

@@ -11,6 +11,12 @@ pub enum CompleteShell {
     Zsh,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum StatusFormat {
+    #[default]
+    Json,
+}
+
 #[derive(Parser)]
 #[command(name = "aibe", version, about = "LLM agent backend daemon")]
 pub struct AibeCli {
@@ -28,6 +34,15 @@ pub enum AibeCommand {
         #[arg(value_enum)]
         shell: CompleteShell,
     },
+    /// Gracefully stop the running daemon
+    Stop,
+    /// Gracefully restart the daemon with the current config
+    Restart,
+    /// Report daemon status
+    Status {
+        #[arg(long, value_enum, default_value_t = StatusFormat::Json)]
+        format: StatusFormat,
+    },
 }
 
 impl AibeCli {
@@ -44,5 +59,12 @@ impl AibeCli {
         CompleteEnv::with_factory(Self::command)
             .try_complete(std::env::args_os(), None)
             .unwrap_or(false)
+    }
+
+    pub fn is_control_command(&self) -> bool {
+        matches!(
+            self.command,
+            Some(AibeCommand::Stop | AibeCommand::Restart | AibeCommand::Status { .. })
+        )
     }
 }

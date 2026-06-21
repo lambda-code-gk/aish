@@ -11,6 +11,7 @@
 | ai が LLM を直叩き | キー分散・監査不能 | 依存チェック + コードレビュー |
 | aish がネットワーク | 想定外のデータ送信 | aish に HTTP クライアントを入れない |
 | デーモン socket | ローカル任意コード実行相当 | socket パス・パーミッション |
+| aibe PID file / control CLI（0046） | ローカルユーザーの daemon 停止・再起動 | PID file は `~/.local/share/aibe/run.pid`（0600）。`stop` / `restart` は PID file 検証後に SIGTERM。remote control なし |
 | 外部コマンド（CLI coding agent 含む） | ユーザー権限で任意コマンド・ファイル変更 | 設定の `command` のみ起動、`cwd` は `context.cwd`、allowlist、承認、監査、自動 git なし |
 
 ### CLI サブエージェント（0024 / 0025, 非採用）

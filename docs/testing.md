@@ -69,6 +69,18 @@ OOM を避けるため、**既定は直列**とする。
 | config `kind_files` / `recipe_files` / `feature_files` パス解決 | `aibe/src/adapters/outbound/toml_config.rs`（unit） |
 | `ai` feature off で `memory_space_id` 解決なし | `cargo build -p ai --no-default-features`（compile-time gate） |
 
+### 0046 aibe graceful restart
+
+設計: [spec/0046_aibe-graceful-restart-spec.md](spec/0046_aibe-graceful-restart-spec.md).
+
+| 観点 | テスト位置 |
+|------|------------|
+| PID file の read/write、識別子検証、stale 判定 | `aibe/src/daemon/pid_file.rs`（unit）、`aibe/src/adapters/inbound/control_plane.rs`（unit） |
+| `aibe status --format json` の必須フィールド | `aibe/tests/graceful_restart.rs`（integration） |
+| `aibe stop` / `aibe restart` が mock daemon に対して正しく動くこと | `aibe/tests/graceful_restart.rs`（integration） |
+| `MemorySubscribe` / active turn shutdown | `aibe/tests/memory_subscribe.rs`、`aibe/tests/agent_turn_tools.rs` 等の既存統合観点に追加 |
+| mock 正常系の end-to-end 確認 | `./scripts/smoke-mock.sh` もしくは同等の temp HOME / mock aibe スモーク |
+
 ### 0041 / 0042 Smart Feature Plan
 
 設計: [spec/0041_ai-smart-feature-plan-spec.md](spec/0041_ai-smart-feature-plan-spec.md)、[spec/0042_configurable-smart-features-spec.md](spec/0042_configurable-smart-features-spec.md)、[spec/0043_feature-pack-boundary-hardening-spec.md](spec/0043_feature-pack-boundary-hardening-spec.md)。

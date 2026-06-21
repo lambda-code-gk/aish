@@ -51,6 +51,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             cfg,
             Vec::new(),
@@ -183,6 +184,7 @@ async fn run_approval_audit_case(
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             cfg,
             Vec::new(),

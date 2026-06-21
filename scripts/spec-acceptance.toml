@@ -318,3 +318,84 @@ description = "prepare_turn_messages は LLM provider を呼ばない"
 test = "turn_hook_prepare_does_not_call_llm_provider"
 file_glob = "aibe/src/application/basic_memory_pack.rs"
 pending = false
+
+[[cases]]
+spec = "0046"
+phase = 1
+id = "pidfile-roundtrip"
+description = "PID file に metadata を保存し read 後も一致する"
+test = "pid_file_roundtrip_preserves_identity_and_metadata"
+file_glob = "aibe/src/daemon/pid_file.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 1
+id = "pidfile-stale"
+description = "PID 再利用または metadata 不一致を stale と判定する"
+test = "pid_file_detects_stale_or_mismatched_identity"
+file_glob = "aibe/src/daemon/pid_file.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 1
+id = "status-json"
+description = "aibe status --format json が必須フィールドを返す"
+test = "status_json_exposes_required_fields"
+file_glob = "aibe/tests/graceful_restart.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 1
+id = "status-live-socket"
+description = "stale PID file でも live socket なら running と判定する"
+test = "status_reports_stale_pid_but_live_socket_as_running"
+file_glob = "aibe/tests/graceful_restart.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 1
+id = "already-running"
+description = "live socket 応答時に aibe 起動が already running で止まる"
+test = "already_running_short_circuits_on_live_socket"
+file_glob = "aibe/tests/graceful_restart.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 2
+id = "restart-parse-failure"
+description = "新 config parse failure 時に旧 daemon へ SIGTERM を送らない"
+test = "restart_aborts_before_signaling_on_config_parse_failure"
+file_glob = "aibe/src/adapters/inbound/control_plane.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 2
+id = "stop-cleanup"
+description = "aibe stop が SIGTERM 送信と PID/socket cleanup を行う"
+test = "stop_signals_daemon_and_cleans_up_pid_file"
+file_glob = "aibe/tests/graceful_restart.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 2
+id = "restart-ready"
+description = "aibe restart が新 daemon ready まで待ってから返る"
+test = "restart_waits_for_new_daemon_readiness_before_returning"
+file_glob = "aibe/tests/graceful_restart.rs"
+pending = false
+
+[[cases]]
+spec = "0046"
+phase = 3
+id = "shutdown-drain"
+description = "shutdown で active turn cancel と接続 drain が起きる"
+test = "shutdown_cancels_active_turn_and_closes_memory_subscribe"
+file_glob = "aibe/tests/graceful_restart.rs"
+pending = false

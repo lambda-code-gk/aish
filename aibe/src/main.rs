@@ -21,6 +21,30 @@ fn main() {
         return;
     }
 
+    if let Some(AibeCommand::Stop) = cli.command {
+        if let Err(e) = aibe::run_stop() {
+            eprintln!("aibe: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(AibeCommand::Restart) = cli.command {
+        if let Err(e) = aibe::run_restart() {
+            eprintln!("aibe: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(AibeCommand::Status { format }) = cli.command {
+        if let Err(e) = aibe::run_status(format) {
+            eprintln!("aibe: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if !cli.foreground {
         if let Err(e) = aibe::daemon::daemonize() {
             eprintln!("aibe: failed to daemonize: {e}");

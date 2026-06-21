@@ -42,6 +42,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
     let server = tokio::spawn(async move {
         server::run(
             socket_for_server,
+            dir.path().join("test-config.toml"),
             profile_registry,
             cfg,
             Vec::new(),

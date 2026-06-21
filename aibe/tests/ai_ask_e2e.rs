@@ -31,6 +31,7 @@ fn ai_ask_reaches_mock_aibe() {
             );
             server::run(
                 socket_for_server,
+                dir.path().join("test-config.toml"),
                 registry,
                 ToolsConfig::default(),
                 Vec::new(),
