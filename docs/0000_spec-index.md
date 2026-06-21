@@ -41,6 +41,7 @@
 | 0044 | [0044_smart-preprocessor-spec.md](spec/0044_smart-preprocessor-spec.md) | 設計確定（実装済み） | AISH Smart Preprocessor / Local Intent Router（Phase 2.9 まで: `LocalRouteDecision` / tool enablement fast path / observation metrics） |
 | 0045 | [0045_pack-composition-spec.md](spec/0045_pack-composition-spec.md) | 設計確定 | パック構成（Pack Composition）— optional 機能の静的合成・脱着機構（0038 参照実装） |
 | 0046 | [0046_aibe-graceful-restart-spec.md](spec/0046_aibe-graceful-restart-spec.md) | 設計確定（実装済み） | aibe graceful restart（PID file / SIGTERM / stop / restart / status） |
+| 0047 | [0047_ai-interactive-prompt-input-spec.md](spec/0047_ai-interactive-prompt-input-spec.md) | 設計確定（実装済み） | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 
 ### 状態ラベルの意味
 
@@ -119,4 +120,5 @@
 | 0044 | [0044_smart-preprocessor-phase2.7-implementation-spec.md](done/0044_smart-preprocessor-phase2.7-implementation-spec.md) | 実装済み（Phase 2.7） | Smart Preprocessor `route_turn` hint wire（3軸 gate 分離 / `RouteTurnPreprocessorHints` / observation 区別 / aibe advisory） |
 | 0044 | [0044_smart-preprocessor-phase2.9-implementation-spec.md](done/0044_smart-preprocessor-phase2.9-implementation-spec.md) | 実装済み（Phase 2.9） | Smart Preprocessor local route fast path（`LocalRouteDecision` / tool enablement / observation metrics） |
 | 0046 | [0046_aibe-graceful-restart-implementation-spec.md](done/0046_aibe-graceful-restart-implementation-spec.md) | 実装済み | aibe graceful restart（PID file / SIGTERM / stop / restart / status） |
+| 0047 | [0047_ai-interactive-prompt-input-implementation-spec.md](done/0047_ai-interactive-prompt-input-implementation-spec.md) | 実装済み | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

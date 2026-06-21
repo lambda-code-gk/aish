@@ -3,11 +3,14 @@ mod aibe_config;
 mod aibe_external_commands;
 mod chat_line_editor;
 mod dynamic_completion;
+mod external_editor;
 mod file_log;
+mod interactive_prompt;
 mod local_history;
 mod memory_recipe_approval_ui;
 mod output_filter;
 pub mod project_key;
+mod prompt_comment_filter;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
 mod smart_preprocessor_model;
@@ -27,7 +30,11 @@ pub use dynamic_completion::{
     complete_preset, complete_profile, complete_session, complete_tools_token, list_profile_names,
     list_session_ids,
 };
+pub use external_editor::{
+    acquire_prompt_via_external_editor, create_prompt_temp_file, resolve_editor_command_from_env,
+};
 pub use file_log::FileLogTail;
+pub use interactive_prompt::{acquire_interactive_prompt, stdin_is_tty};
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{
     parse_memory_recipe_apply_choice, prompt_memory_recipe_apply,

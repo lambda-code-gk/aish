@@ -111,6 +111,7 @@ pub struct TurnOptions {
     name = "ai",
     version,
     about = "aibe client",
+    after_help = "Interactive prompt input:\n  Run `ai` with no arguments on a TTY to compose a prompt in an editor.\n  Editor priority: AI_EDITOR -> VISUAL -> EDITOR -> built-in mini editor.\n  Mini editor: Enter newline, Up/Down move between lines, Ctrl+Enter or Alt+Enter submit, Ctrl+C cancel.",
     arg_required_else_help = false
 )]
 pub struct AiCli {

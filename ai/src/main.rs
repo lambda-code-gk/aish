@@ -14,20 +14,20 @@ use clap::Parser;
 
 use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
-    detect_terminal_size, external_command_names, finalize_preprocessor_observation,
-    load_bundled_preprocessor_model, load_preprocessor_model, load_shell_exec_approval,
-    read_chat_line, resolve_session_error_summary, resolve_shell_log_for_ask,
-    smart_preprocessor_trace_enabled, AibeUnixClient, ChatReadLineResult, FileLogTail,
-    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
-    StdoutPresenter, YesExecCache,
+    acquire_interactive_prompt, detect_terminal_size, external_command_names,
+    finalize_preprocessor_observation, load_bundled_preprocessor_model, load_preprocessor_model,
+    load_shell_exec_approval, read_chat_line, resolve_session_error_summary,
+    resolve_shell_log_for_ask, smart_preprocessor_trace_enabled, AibeUnixClient,
+    ChatReadLineResult, FileLogTail, LocalHistoryStore, LocalRouteMetrics,
+    PreprocessorObservationDraft, ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
-    build_response_summary, build_summary, ensure_aibe_if_needed, evaluate_preprocessor,
-    execute_feature_actions_mvp, list_history, memory_cli, next_history_id, plan_ask_launch,
-    record_turn, HistoryRecordInput, HistoryReplayInput, PreprocessorRunInput,
+    build_response_summary, build_summary, classify_from_raw_args, ensure_aibe_if_needed,
+    evaluate_preprocessor, execute_feature_actions_mvp, list_history, memory_cli, next_history_id,
+    plan_ask_launch, record_turn, HistoryRecordInput, HistoryReplayInput, PreprocessorRunInput,
     PreprocessorRunOutcome, TurnCancelGuard,
 };
 use ai::clap_cli::{
@@ -41,10 +41,10 @@ use ai::domain::smart_preprocessor::{
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
     resolve_progress, resolve_tools, validate_ask_arg_order, AskArgOrderError, AskInput,
-    AskRequestError, ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter, HistoryMessage,
-    HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat,
-    OutputFormatError, RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
-    ShellLogResolveError, ToolsResolveError,
+    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter,
+    HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError,
+    OutputFormat, OutputFormatError, PromptAcquisitionResult, RequestContextInput,
+    ShellExecSessionState, ShellExecTier, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
@@ -74,6 +74,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> anyhow::Result<ExitCode> {
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let ask_invocation = classify_from_raw_args(&raw_args);
     let normalized = AiCli::normalized_args_for_completion();
     validate_normalized_ask_args(&normalized)?;
     let cli = AiCli::parse_from(normalized);
@@ -91,6 +93,7 @@ fn run() -> anyhow::Result<ExitCode> {
             turn,
             file,
             message,
+            invocation: ask_invocation,
         }),
         AiCommand::Chat { turn } => run_chat(turn),
         AiCommand::Retry { turn, history_id } => run_retry(turn, history_id),
@@ -138,6 +141,7 @@ struct AskArgs {
     turn: TurnOptions,
     file: Option<PathBuf>,
     message: Vec<String>,
+    invocation: AskInvocationSource,
 }
 
 #[derive(Debug)]
@@ -207,7 +211,18 @@ fn auto_approve_shell_exec_decision(
 
 fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
-    let message = resolve_ask_message(args.file.clone(), args.message)?;
+    let message = match resolve_ask_message(args.file.clone(), args.message, args.invocation)? {
+        ResolveAskMessageOutcome::Ready(message) => message,
+        ResolveAskMessageOutcome::Cancelled { message } => {
+            eprintln!("{message}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        ResolveAskMessageOutcome::EditorFailed { exit_code } => {
+            let code = exit_code.unwrap_or(-1);
+            eprintln!("AISH: editor exited with status {code}; cancelled.");
+            return Ok(ExitCode::from(1u8));
+        }
+    };
     let base_settings = resolve_turn_settings(&cfg, &args.turn)?;
     if args.turn.dry_run {
         let report = build_dry_run_report(
@@ -2570,7 +2585,8 @@ fn run_ping_command(
 fn resolve_ask_message(
     file: Option<PathBuf>,
     message_parts: Vec<String>,
-) -> anyhow::Result<ResolvedMessage> {
+    invocation: AskInvocationSource,
+) -> anyhow::Result<ResolveAskMessageOutcome> {
     if file.is_some() && !message_parts.is_empty() {
         anyhow::bail!("--file cannot be combined with message text");
     }
@@ -2578,37 +2594,78 @@ fn resolve_ask_message(
     if let Some(path) = file {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        return Ok(ResolvedMessage {
-            source: format!("file:{}", path.display()),
+        return Ok(finalize_message_content(
+            format!("file:{}", path.display()),
             content,
-        });
+        ));
     }
 
     if message_parts.iter().any(|part| part == "-") {
         if message_parts.len() != 1 {
             anyhow::bail!("`-` must be used alone to read stdin");
         }
-        return Ok(ResolvedMessage {
-            source: "stdin".to_string(),
-            content: read_all_stdin()?,
-        });
+        return Ok(finalize_message_content(
+            "stdin".to_string(),
+            read_all_stdin()?,
+        ));
     }
 
     if !message_parts.is_empty() {
-        return Ok(ResolvedMessage {
-            source: "argv".to_string(),
-            content: message_parts.join(" "),
-        });
+        return Ok(finalize_message_content(
+            "argv".to_string(),
+            message_parts.join(" "),
+        ));
     }
 
     if !std::io::stdin().is_terminal() {
-        return Ok(ResolvedMessage {
-            source: "pipe".to_string(),
-            content: read_all_stdin()?,
-        });
+        return Ok(finalize_message_content(
+            "pipe".to_string(),
+            read_all_stdin()?,
+        ));
+    }
+
+    if let Some(result) = acquire_interactive_prompt(invocation).map_err(|e| anyhow::anyhow!(e))? {
+        return Ok(prompt_acquisition_to_outcome(result));
     }
 
     anyhow::bail!("missing message");
+}
+
+fn finalize_message_content(source: String, content: String) -> ResolveAskMessageOutcome {
+    if ai::domain::is_substantive_prompt(&content) {
+        ResolveAskMessageOutcome::Ready(ResolvedMessage { source, content })
+    } else {
+        ResolveAskMessageOutcome::Cancelled {
+            message: "AISH: prompt is empty; cancelled.".to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ResolveAskMessageOutcome {
+    Ready(ResolvedMessage),
+    Cancelled { message: String },
+    EditorFailed { exit_code: Option<i32> },
+}
+
+fn prompt_acquisition_to_outcome(result: PromptAcquisitionResult) -> ResolveAskMessageOutcome {
+    match result {
+        PromptAcquisitionResult::Submitted { content } => {
+            ResolveAskMessageOutcome::Ready(ResolvedMessage {
+                source: "prompt".to_string(),
+                content,
+            })
+        }
+        PromptAcquisitionResult::Empty => ResolveAskMessageOutcome::Cancelled {
+            message: "AISH: prompt is empty; cancelled.".to_string(),
+        },
+        PromptAcquisitionResult::Cancelled => ResolveAskMessageOutcome::Cancelled {
+            message: "AISH: cancelled.".to_string(),
+        },
+        PromptAcquisitionResult::EditorFailed { exit_code } => {
+            ResolveAskMessageOutcome::EditorFailed { exit_code }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

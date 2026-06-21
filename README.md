@@ -186,11 +186,35 @@ cargo run -p ai
 
 ```text
 ai "message"                    # smart entry（推奨）
+ai                              # TTY 上で対話的プロンプト入力（下記参照）
 ai ask [OPTIONS] <message>      # 従来 CLI
                  [--log PATH] [--session ID] [--no-log]
                  [--socket PATH] [--no-start]
                  [--tools LIST] [--profile NAME] [--verbose-tools]
 ```
+
+#### Interactive prompt input
+
+引数なしで `ai` を TTY 上で実行すると、プロンプトを対話的に編集できます。
+
+```sh
+ai
+```
+
+エディタの優先順位:
+
+```text
+AI_EDITOR -> VISUAL -> EDITOR -> built-in mini editor
+```
+
+例:
+
+```sh
+AI_EDITOR=nvim ai
+AI_EDITOR="code --wait" ai
+```
+
+環境変数が未設定の場合は内蔵ミニエディタが起動します（`Enter` で改行、`↑`/`↓` で行移動、`Ctrl+Enter` または `Alt+Enter` で送信、`Ctrl+C` でキャンセル）。`echo ... | ai` や `ai hello` など既存の入力経路は変わりません。Linux の多くの端末では `Ctrl+Enter` が `Enter` と同じ信号になるため、送信には `Alt+Enter` を使ってください（Kitty / WezTerm 等では `Ctrl+Enter` も使えます）。
 
 - **引数順**: オプションはすべてメッセージより前。`ai ask hello --log x` はエラー。
 

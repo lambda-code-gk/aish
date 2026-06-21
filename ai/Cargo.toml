@@ -17,6 +17,9 @@ clap = { workspace = true }
 clap_complete = { workspace = true }
 ctrlc = "3"
 rustyline = "14"
+reedline = { workspace = true }
+shell-words = { workspace = true }
+tempfile = "3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex = { workspace = true }

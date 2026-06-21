@@ -399,3 +399,93 @@ description = "shutdown で active turn cancel と接続 drain が起きる"
 test = "shutdown_cancels_active_turn_and_closes_memory_subscribe"
 file_glob = "aibe/tests/graceful_restart.rs"
 pending = false
+
+[[cases]]
+spec = "0047"
+phase = 1
+id = "bare-ai-tty"
+description = "bare `ai` を TTY 実行したとき prompt UI が起動する"
+test = "bare_ai_tty_starts_prompt_mode"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 1
+id = "bare-ai-send-once"
+description = "bare `ai` の prompt 送信が aibe に 1 回だけ送られる"
+test = "bare_ai_prompt_message_is_sent_once"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 1
+id = "pipe-input"
+description = "`echo ... | ai` は pipe 入力として処理され prompt UI を出さない"
+test = "pipe_input_keeps_existing_ask_path"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 1
+id = "argv-input"
+description = "`ai hello` と `ai 'hello'` は argv 入力として処理される"
+test = "argv_input_keeps_existing_ask_path"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 1
+id = "explicit-no-prompt"
+description = "explicit 呼び出しでは prompt UI を出さない"
+test = "explicit_invocations_do_not_enter_prompt_mode"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 2
+id = "editor-precedence"
+description = "AI_EDITOR / VISUAL / EDITOR の優先順位"
+test = "editor_precedence_prefers_ai_editor_then_visual_then_editor"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 2
+id = "empty-prompt"
+description = "comment 除去後が空なら AI を呼ばない"
+test = "empty_prompt_after_comment_strip_is_rejected"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 2
+id = "abnormal-editor"
+description = "外部エディタ異常終了では AI を呼ばない"
+test = "abnormal_editor_exit_is_rejected"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 3
+id = "reedline-keys"
+description = "内蔵ミニエディタの Enter / Ctrl+Enter・Alt+Enter / Ctrl+C 契約"
+test = "reedline_prompt_editor_handles_enter_eof_and_interrupt"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
+
+[[cases]]
+spec = "0047"
+phase = 3
+id = "chat-pipe-regression"
+description = "`ai chat` と pipe 入力の回帰ガード"
+test = "chat_repl_and_pipe_input_regression_guard"
+file_glob = "ai/tests/interactive_prompt_input.rs"
+pending = false
