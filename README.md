@@ -214,7 +214,7 @@ AI_EDITOR=nvim ai
 AI_EDITOR="code --wait" ai
 ```
 
-環境変数が未設定の場合は内蔵ミニエディタが起動します（`Enter` で改行、`↑`/`↓` で行移動、`Ctrl+Enter` または `Alt+Enter` で送信、`Ctrl+C` でキャンセル）。`echo ... | ai` や `ai hello` など既存の入力経路は変わりません。Linux の多くの端末では `Ctrl+Enter` が `Enter` と同じ信号になるため、送信には `Alt+Enter` を使ってください（Kitty / WezTerm 等では `Ctrl+Enter` も使えます）。
+環境変数が未設定の場合は内蔵ミニエディタが起動します（`Enter` で改行、`↑`/`↓` で行移動、`Ctrl+D` または `Alt+Enter` で送信、`Ctrl+C` でキャンセル）。`echo ... | ai` や `ai hello` など既存の入力経路は変わりません。Kitty / WezTerm 等では `Ctrl+Enter` も送信に使えます。
 
 - **引数順**: オプションはすべてメッセージより前。`ai ask hello --log x` はエラー。
 

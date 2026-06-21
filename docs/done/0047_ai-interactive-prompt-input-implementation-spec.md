@@ -32,7 +32,7 @@
 | AC-06 | `AI_EDITOR` / `VISUAL` / `EDITOR` の優先順位で外部エディタが選ばれる | `editor_precedence_prefers_ai_editor_then_visual_then_editor` | true |
 | AC-07 | 外部エディタで comment 行除去後が空なら AI を呼ばない | `empty_prompt_after_comment_strip_is_rejected` | true |
 | AC-08 | 外部エディタが異常終了したら AI を呼ばない | `abnormal_editor_exit_is_rejected` | true |
-| AC-09 | 内蔵ミニエディタで `Enter` / `Ctrl+Enter` / `Ctrl+C` の挙動が仕様どおりになる | `reedline_prompt_editor_handles_enter_eof_and_interrupt` | true |
+| AC-09 | 内蔵ミニエディタで `Enter` / `Ctrl+D`・`Alt+Enter` / `Ctrl+C` の挙動が仕様どおりになる | `reedline_prompt_editor_handles_enter_eof_and_interrupt` | true |
 | AC-10 | `ai chat` の既存 REPL と `stdin pipe` の既存挙動が回帰しない | `chat_repl_and_pipe_input_regression_guard` | true |
 
 ### `scripts/spec-acceptance.toml` 登録案
@@ -87,7 +87,7 @@
 
 - `ai/src/adapters/inbound/reedline_prompt.rs`
   - `reedline` ベースの内蔵ミニエディタ
-  - `Enter` / `Ctrl+Enter` / `Ctrl+C` / multi-line 入力
+  - `Enter` / `Ctrl+D` / `Alt+Enter` / `Ctrl+C` / multi-line 入力
 - `ai/src/adapters/outbound/external_editor.rs`
   - shell-words で editor command を 1 回だけ分解して起動
   - 起動失敗、非 0 終了、シグナル終了、読み戻し失敗を fail-closed にする
@@ -130,7 +130,7 @@
 ### Phase 3
 
 - `ai/src/adapters/inbound/reedline_prompt.rs`
-  - `Enter` / `Ctrl+Enter` / `Ctrl+C`
+  - `Enter` / `Ctrl+D` / `Alt+Enter` / `Ctrl+C`
   - multi-line 入力
 - `ai/tests/`
   - TTY 付き bare `ai` の smoke

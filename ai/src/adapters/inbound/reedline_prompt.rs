@@ -19,7 +19,7 @@ impl Prompt for MiniEditorPrompt {
     }
 
     fn render_prompt_right(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Ctrl+Enter / Alt+Enter 送信")
+        Cow::Borrowed("Ctrl+D / Alt+Enter 送信")
     }
 
     fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<'_, str> {
@@ -44,6 +44,12 @@ fn prompt_keybindings() -> reedline::Keybindings {
         KeyModifiers::NONE,
         KeyCode::Enter,
         ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+    );
+    // Ctrl+D は本文があるとき送信（空ならキャンセル）。カーソル位置に依存しない。
+    kb.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('d'),
+        ReedlineEvent::Submit,
     );
     // Ctrl+Enter は Kitty / WezTerm 等（キーボード拡張対応端末）で区別できる。
     kb.add_binding(KeyModifiers::CONTROL, KeyCode::Enter, ReedlineEvent::Submit);
@@ -77,7 +83,7 @@ fn create_prompt_editor() -> Reedline {
 }
 
 /// TTY 上で複数行プロンプトを読み取る。
-/// `Enter` で改行、`↑`/`↓` で行移動、`Ctrl+Enter`（対応端末）または `Alt+Enter` で送信、`Ctrl+C` でキャンセル。
+/// `Enter` で改行、`↑`/`↓` で行移動、`Ctrl+D`（本文あり）または `Alt+Enter` で送信、`Ctrl+C` でキャンセル。
 pub fn acquire_prompt_via_reedline() -> std::io::Result<PromptAcquisitionResult> {
     let mut line_editor = create_prompt_editor();
     let prompt = MiniEditorPrompt;
@@ -92,6 +98,7 @@ pub fn acquire_prompt_via_reedline() -> std::io::Result<PromptAcquisitionResult>
         }
         Ok(Signal::CtrlD) => Ok(PromptAcquisitionResult::Empty),
         Ok(Signal::CtrlC) => Ok(PromptAcquisitionResult::Cancelled),
+        // Ctrl+D は Submit に束ねるため通常ここには来ない
         Ok(_) => Ok(PromptAcquisitionResult::Cancelled),
         Err(e) => Err(std::io::Error::other(e.to_string())),
     }
@@ -136,6 +143,11 @@ mod tests {
             .find_binding(KeyModifiers::CONTROL, KeyCode::Char('j'))
             .expect("ctrl-j binding");
         assert!(matches!(ctrl_j, ReedlineEvent::None));
+
+        let ctrl_d = kb
+            .find_binding(KeyModifiers::CONTROL, KeyCode::Char('d'))
+            .expect("ctrl-d binding");
+        assert!(matches!(ctrl_d, ReedlineEvent::Submit));
 
         let up = kb
             .find_binding(KeyModifiers::NONE, KeyCode::Up)

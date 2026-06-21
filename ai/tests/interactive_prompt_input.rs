@@ -11,7 +11,9 @@ use std::thread::{self, JoinHandle};
 
 use ai::application::classify_from_raw_args;
 use ai::domain::{classify_ask_invocation, AskInvocationSource, PromptAcquisitionResult};
-use aibe_protocol::{AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut};
+use aibe_protocol::{
+    AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut, RouteTurnStatus,
+};
 
 struct MockPromptServer {
     _handle: JoinHandle<()>,
@@ -43,9 +45,28 @@ impl MockPromptServer {
                     ClientRequest::Ping { .. } => ClientResponse::Pong {
                         id: "ping-1".into(),
                     },
+                    ClientRequest::RouteTurn { .. } => ClientResponse::RouteTurnResult {
+                        id: "route-1".into(),
+                        status: RouteTurnStatus::Ok,
+                        plan: serde_json::from_str(
+                            r#"{
+                              "conversation_id": "conv-prompt",
+                              "new_conversation": true,
+                              "route_kind": "chat",
+                              "require_shell_approval": false,
+                              "log_tail_escalation": false,
+                              "route_reason": "interactive prompt e2e"
+                            }"#,
+                        )
+                        .expect("plan json"),
+                    },
                     ClientRequest::AgentTurn { messages, .. } => {
-                        assert_eq!(messages.len(), 1);
-                        assert_eq!(messages[0].content, expected_message);
+                        assert!(
+                            messages
+                                .iter()
+                                .any(|m| { m.role == "user" && m.content == expected_message }),
+                            "expected user prompt in messages: {messages:?}"
+                        );
                         turns_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         ClientResponse::AgentTurnResult {
                             id: "turn-1".into(),
@@ -81,6 +102,57 @@ fn os_vec(parts: &[&str]) -> Vec<OsString> {
     parts.iter().map(|s| OsString::from(*s)).collect()
 }
 
+fn script_available() -> bool {
+    Command::new("script")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn write_isolated_ai_config(home: &std::path::Path, socket_path: &std::path::Path) {
+    let config_dir = home.join(".config/ai");
+    fs::create_dir_all(&config_dir).expect("config dir");
+    fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            r#"
+socket_path = "{}"
+[ask]
+tools = "none"
+progress = false
+"#,
+            socket_path.display()
+        ),
+    )
+    .expect("write config");
+}
+
+fn run_bare_ai_with_fake_editor(
+    editor: &std::path::Path,
+    socket_path: &std::path::Path,
+    work_dir: &std::path::Path,
+) -> std::process::Output {
+    let ai_bin = env!("CARGO_BIN_EXE_ai");
+    let transcript = work_dir.join("typescript");
+    let home = work_dir.join("home");
+    fs::create_dir_all(&home).expect("home dir");
+    write_isolated_ai_config(&home, socket_path);
+    Command::new("script")
+        .arg("-q")
+        .arg("-c")
+        .arg(ai_bin)
+        .arg(&transcript)
+        .env("HOME", &home)
+        .env("AI_EDITOR", editor)
+        .env("AIBE_SOCKET_PATH", socket_path)
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
+        .env_remove("AI_CONFIG")
+        .output()
+        .expect("run script+ai")
+}
+
 #[test]
 fn bare_ai_tty_starts_prompt_mode() {
     let invocation = classify_from_raw_args(&os_vec(&["ai"]));
@@ -92,9 +164,13 @@ fn bare_ai_tty_starts_prompt_mode() {
 
 #[test]
 fn bare_ai_prompt_message_is_sent_once() {
-    const PROMPT: &str = "from prompt via editor";
+    if !script_available() {
+        eprintln!("skip: script(1) not available for pseudo-tty");
+        return;
+    }
 
-    // bare `ai` が AI_EDITOR 経路で使う adapter と同じ取得処理
+    const PROMPT: &str = "from prompt via editor";
+    let server = MockPromptServer::new(PROMPT);
     let work = tempfile::tempdir().expect("tempdir");
     let editor = work.path().join("fake-editor.sh");
     fs::write(
@@ -105,44 +181,23 @@ fn bare_ai_prompt_message_is_sent_once() {
     let mut perms = fs::metadata(&editor).expect("meta").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&editor, perms).expect("chmod");
-    let (_draft_file, draft_path) =
-        ai::adapters::outbound::create_prompt_temp_file(Some(work.path())).expect("draft");
-    let acquired = ai::adapters::outbound::acquire_prompt_via_external_editor(
-        &[editor.to_string_lossy().into_owned()],
-        &draft_path,
-    );
-    assert_eq!(
-        acquired,
-        PromptAcquisitionResult::Submitted {
-            content: PROMPT.to_string()
-        }
-    );
 
-    // 取得した prompt が既存 ask 経路で aibe に 1 回だけ送られる
-    let server = MockPromptServer::new(PROMPT);
-    let bin = env!("CARGO_BIN_EXE_ai");
-    let output = Command::new(bin)
-        .args([
-            "ask",
-            "--no-start",
-            "--no-progress",
-            "--tools",
-            "none",
-            PROMPT,
-        ])
-        .env("AIBE_SOCKET_PATH", &server.socket_path)
-        .output()
-        .expect("ask");
+    let output = run_bare_ai_with_fake_editor(&editor, &server.socket_path, work.path());
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("ok"),
-        "expected assistant body on stdout, stderr={stderr}, stdout={stdout}"
+        output.status.success(),
+        "bare ai must exit successfully, status={:?}, stderr={stderr}, stdout={stdout}",
+        output.status
     );
     assert_eq!(
         server.agent_turn_count(),
         1,
-        "expected exactly one agent_turn, stderr={stderr}"
+        "expected exactly one agent_turn, stderr={stderr}, stdout={stdout}"
+    );
+    assert!(
+        stdout.contains("ok"),
+        "expected assistant body on stdout, stderr={stderr}, stdout={stdout}"
     );
 }
 

@@ -20,7 +20,7 @@ export PATH="$PWD/target/debug:$PATH"
 7. `ai chat` で 2 回以上 turn を打ち、各 turn の assistant 応答が逐次表示されることと、`/exit` で終了することを確認する。
 8. `ai chat` で日本語を入力し、Backspace・左右矢印で編集しても文字化けや送信エラーにならないこと。
 9. `ai history --command chat` で同一 `conversation_id` が記録されていること、`ai rerun <2nd_id>` で会話文脈が復元されることを確認する。
-10. bare `ai` を TTY で実行し、内蔵ミニエディタまたは `AI_EDITOR` で入力した内容が `ai ask` と同様に送信されること。内蔵ミニエディタでは `Enter` で改行、`↑`/`↓` で上下の行へ移動して編集できること。`Ctrl+Enter`（対応端末）または `Alt+Enter` で送信、`Ctrl+C` または空入力では AI を呼ばずキャンセルメッセージが出ること。
+10. bare `ai` を TTY で実行し、内蔵ミニエディタまたは `AI_EDITOR` で入力した内容が `ai ask` と同様に送信されること。内蔵ミニエディタでは `Enter` で改行、`↑`/`↓` で上下の行へ移動して編集できること。`Ctrl+D`（本文あり）または `Alt+Enter` で送信、`Ctrl+C` または空入力では AI を呼ばずキャンセルメッセージが出ること。
 11. `echo hello | ai` が pipe 入力のまま動き、prompt UI を出さないこと。
 
 ## 期待結果

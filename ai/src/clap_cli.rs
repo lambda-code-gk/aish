@@ -11,6 +11,7 @@ use clap_complete::{generate, shells::Bash, shells::Zsh, CompleteEnv};
 use crate::adapters::outbound::{
     complete_preset, complete_profile, complete_session, complete_tools_token,
 };
+use crate::domain::is_known_cli_head;
 use crate::domain::OutputFormat;
 
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -111,7 +112,7 @@ pub struct TurnOptions {
     name = "ai",
     version,
     about = "aibe client",
-    after_help = "Interactive prompt input:\n  Run `ai` with no arguments on a TTY to compose a prompt in an editor.\n  Editor priority: AI_EDITOR -> VISUAL -> EDITOR -> built-in mini editor.\n  Mini editor: Enter newline, Up/Down move between lines, Ctrl+Enter or Alt+Enter submit, Ctrl+C cancel.",
+    after_help = "Interactive prompt input:\n  Run `ai` with no arguments on a TTY to compose a prompt in an editor.\n  Editor priority: AI_EDITOR -> VISUAL -> EDITOR -> built-in mini editor.\n  Mini editor: Enter newline, Up/Down move between lines, Ctrl+D or Alt+Enter submit, Ctrl+C cancel.",
     arg_required_else_help = false
 )]
 pub struct AiCli {
@@ -381,31 +382,6 @@ fn command_for_shell_completion() -> Command {
     ask_opts.into_iter().fold(cmd, |cmd, arg| cmd.arg(arg))
 }
 
-fn is_known_cli_head(word: &str) -> bool {
-    matches!(
-        word,
-        "ask"
-            | "chat"
-            | "retry"
-            | "rerun"
-            | "history"
-            | "status"
-            | "doctor"
-            | "ping"
-            | "complete"
-            | "goal"
-            | "now"
-            | "idea"
-            | "mem"
-            | "context"
-            | "help"
-            | "-h"
-            | "--help"
-            | "-V"
-            | "--version"
-    )
-}
-
 /// 実行時の implicit `ask` 挿入。`ai hello` や bare `ai` を `ai ask` へ正規化する。
 fn normalize_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
     let mut args: Vec<OsString> = args.into_iter().collect();
@@ -446,6 +422,20 @@ mod tests {
 
     fn os_vec(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(|s| OsString::from(*s)).collect()
+    }
+
+    #[test]
+    fn is_known_cli_head_covers_clap_subcommands() {
+        for sub in AiCli::command().get_subcommands() {
+            assert!(
+                is_known_cli_head(sub.get_name()),
+                "add `{}` to domain::is_known_cli_head",
+                sub.get_name()
+            );
+        }
+        for flag in ["-h", "--help", "-V", "--version"] {
+            assert!(is_known_cli_head(flag), "missing {flag}");
+        }
     }
 
     #[test]

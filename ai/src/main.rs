@@ -12,14 +12,16 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 
+use ai::adapters::inbound::reedline_prompt::acquire_prompt_via_reedline;
 use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
-    acquire_interactive_prompt, detect_terminal_size, external_command_names,
-    finalize_preprocessor_observation, load_bundled_preprocessor_model, load_preprocessor_model,
-    load_shell_exec_approval, read_chat_line, resolve_session_error_summary,
-    resolve_shell_log_for_ask, smart_preprocessor_trace_enabled, AibeUnixClient,
-    ChatReadLineResult, FileLogTail, LocalHistoryStore, LocalRouteMetrics,
-    PreprocessorObservationDraft, ShellExecRenderOptions, StdoutPresenter, YesExecCache,
+    acquire_prompt_via_external_editor, create_prompt_temp_file, detect_terminal_size,
+    external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
+    load_preprocessor_model, load_shell_exec_approval, read_chat_line,
+    resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
+    smart_preprocessor_trace_enabled, AibeUnixClient, ChatReadLineResult, FileLogTail,
+    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
+    StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -27,8 +29,9 @@ use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
     build_response_summary, build_summary, classify_from_raw_args, ensure_aibe_if_needed,
     evaluate_preprocessor, execute_feature_actions_mvp, list_history, memory_cli, next_history_id,
-    plan_ask_launch, record_turn, HistoryRecordInput, HistoryReplayInput, PreprocessorRunInput,
-    PreprocessorRunOutcome, TurnCancelGuard,
+    plan_ask_launch, plan_interactive_prompt_route, record_turn, HistoryRecordInput,
+    HistoryReplayInput, InteractivePromptRoute, PreprocessorRunInput, PreprocessorRunOutcome,
+    TurnCancelGuard,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -2624,7 +2627,18 @@ fn resolve_ask_message(
         ));
     }
 
-    if let Some(result) = acquire_interactive_prompt(invocation).map_err(|e| anyhow::anyhow!(e))? {
+    if let Some(route) = plan_interactive_prompt_route(
+        invocation,
+        std::io::stdin().is_terminal(),
+        resolve_editor_command_from_env(),
+    ) {
+        let result = match route {
+            InteractivePromptRoute::ExternalEditor(command) => {
+                let (_file, path) = create_prompt_temp_file(None)?;
+                acquire_prompt_via_external_editor(&command, &path)
+            }
+            InteractivePromptRoute::BuiltinEditor => acquire_prompt_via_reedline()?,
+        };
         return Ok(prompt_acquisition_to_outcome(result));
     }
 
