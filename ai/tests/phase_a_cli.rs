@@ -282,6 +282,31 @@ fn structured_format_ignores_stream_chunks_on_stdout() {
 }
 
 #[test]
+fn ask_with_filter_hides_streaming_chunks() {
+    let server = MockSocketServer::ask_with_streaming("hello", &["partial ", "stream "], "ok");
+    let home = tempfile::tempdir().expect("home");
+    let cfg = write_ai_config(&server.socket_path, &home);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &cfg)
+        .env("HOME", home.path())
+        .env("AI_FILTER", r#"sed 's/^/ai: /'"#)
+        .args(["--no-start", "--no-progress", "hello"])
+        .output()
+        .expect("run ai");
+
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("partial "));
+    assert!(!stdout.contains("stream "));
+    assert_eq!(stdout, "ai: ok");
+}
+
+#[test]
 fn default_ask_supports_json_format_and_quiet() {
     let server = MockSocketServer::ask("hello", "assistant says hi");
     let home = tempfile::tempdir().expect("home");

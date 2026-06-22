@@ -712,7 +712,6 @@ fn execute_turn(
             smart_preprocessor_trace_enabled(settings.trace_route),
         );
     }
-    let streamed = streamed || settings.progress || settings.timeout_secs.is_some();
     let response_error = match &response {
         ClientResponse::Error { message, .. } => Some(message.clone()),
         ClientResponse::Cancelled { reason, .. } => Some(
@@ -915,7 +914,7 @@ fn run_agent_turn_core(
             },
             |chunk| {
                 if !chunk.is_empty() {
-                    if !presenter_thread.is_quiet() {
+                    if presenter_thread.assistant_stream_stdout_enabled() {
                         streamed_thread.store(true, Ordering::SeqCst);
                     }
                     presenter_thread.show_stream_chunk(&chunk);

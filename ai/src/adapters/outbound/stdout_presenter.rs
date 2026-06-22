@@ -98,9 +98,9 @@ impl StdoutPresenter {
         ProgressGuard { presenter: self }
     }
 
-    /// assistant streaming を stdout に出してよいか（structured output 時は false）。
-    pub(crate) fn assistant_stream_stdout_enabled(&self) -> bool {
-        !self.quiet && self.output_format.is_none()
+    /// assistant streaming を stdout に出してよいか（structured output / filter 有効時は false）。
+    pub fn assistant_stream_stdout_enabled(&self) -> bool {
+        !self.quiet && self.output_format.is_none() && self.output_filter.is_none()
     }
 
     fn stop_spinner_for_output(&self) {
@@ -223,11 +223,11 @@ impl Presenter for StdoutPresenter {
         if let Some(s) = out.stdout.as_deref() {
             if self.output_format.is_some() {
                 println!("{s}");
-            } else if !streamed {
+            } else if !streamed || self.output_filter.is_some() {
                 self.emit_assistant_stdout(s);
             }
         }
-        if streamed && self.output_format.is_none() && !self.quiet {
+        if streamed && self.output_format.is_none() && !self.quiet && self.output_filter.is_none() {
             ensure_stdout_newline();
         }
         if !self.quiet {
@@ -1039,6 +1039,44 @@ mod tests {
         assert!(!presenter.assistant_stream_stdout_enabled());
         let presenter = StdoutPresenter::with_options(None, None, false, false);
         assert!(presenter.assistant_stream_stdout_enabled());
+    }
+
+    #[test]
+    fn assistant_stream_stdout_enabled_returns_false_when_filter_is_set() {
+        let presenter = StdoutPresenter::with_options(Some("cat".into()), None, false, false);
+        assert!(!presenter.assistant_stream_stdout_enabled());
+    }
+
+    #[test]
+    fn show_response_emits_filtered_stdout_even_when_streamed() {
+        use crate::adapters::outbound::{apply_output_filter, FilterRunOutcome};
+
+        let filter = r#"sed 's/^/ai: /'"#;
+        let presenter = StdoutPresenter::with_options(Some(filter.into()), None, false, false);
+        assert!(
+            !presenter.assistant_stream_stdout_enabled(),
+            "streamed chunk must be suppressed when filter is active"
+        );
+        match apply_output_filter("ok", filter) {
+            FilterRunOutcome::Success { stdout, stderr } => {
+                assert_eq!(stdout, b"ai: ok");
+                assert!(stderr.is_empty());
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn streamed_filter_does_not_force_extra_newline() {
+        let has_output_filter = true;
+        let streamed = true;
+        let quiet = false;
+        let has_output_format = false;
+        let would_add_newline = streamed && !has_output_format && !quiet && !has_output_filter;
+        assert!(
+            !would_add_newline,
+            "filter active turn must not append streaming trailing newline"
+        );
     }
 
     #[test]

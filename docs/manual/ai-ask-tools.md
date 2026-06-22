@@ -278,7 +278,9 @@ termination_strategy = "conversation_replay"
 
 ## D. output filter（`AI_FILTER` / `[ask].filter`）
 
-仕様: [0022_ai-filter-spec.md](../done/0022_ai-filter-spec.md)。mock aibe 前提（上記「共通: 隔離用設定」）。
+仕様: [0022_ai-filter-spec.md](../done/0022_ai-filter-spec.md)、streaming 整合: [0048_ai-filter-streaming-fix-spec.md](../spec/0048_ai-filter-streaming-fix-spec.md)。mock aibe 前提（上記「共通: 隔離用設定」）。
+
+filter 有効時は assistant streaming chunk を stdout に出さない。turn 終了後の final 本文だけが filter 後の stdout になる（progress spinner は stderr）。
 
 ### D1. 環境変数 filter
 
@@ -292,6 +294,20 @@ ai ask --no-start --socket "$AIBE_SOCKET_PATH" hello
 
 - stdout が `ai: ok`（mock の assistant 本文 `ok` に prefix）。末尾改行は `sed` 任せ
 - stderr に `ai: tools enabled:` 行（filter 対象外）
+
+### D1b. streaming 付き filter（0048）
+
+mock aibe が `AssistantStreaming` を返す通常経路でも、filter 有効時は chunk が stdout に混ざらない。
+
+```bash
+export AI_FILTER='sed "s/^/ai: /"'
+ai ask --no-start --socket "$AIBE_SOCKET_PATH" hello
+```
+
+期待:
+
+- stdout に `partial` 等の streaming chunk が出ない
+- stdout が `ai: ok`（final 本文のみ filter 適用）。余計な末尾改行は filter 任せ
 
 ### D2. config filter
 

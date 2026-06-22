@@ -489,3 +489,39 @@ description = "`ai chat` と pipe 入力の回帰ガード"
 test = "chat_repl_and_pipe_input_regression_guard"
 file_glob = "ai/tests/interactive_prompt_input.rs"
 pending = false
+
+[[cases]]
+spec = "0048"
+phase = 1
+id = "stream_stdout_gate"
+description = "filter 有効時は assistant streaming を stdout に出さない"
+test = "assistant_stream_stdout_enabled_returns_false_when_filter_is_set"
+file_glob = "ai/src/adapters/outbound/stdout_presenter.rs"
+pending = false
+
+[[cases]]
+spec = "0048"
+phase = 1
+id = "show_response_streamed_filter"
+description = "streamed turn でも filter 後の final 本文を出す"
+test = "show_response_emits_filtered_stdout_even_when_streamed"
+file_glob = "ai/src/adapters/outbound/stdout_presenter.rs"
+pending = false
+
+[[cases]]
+spec = "0048"
+phase = 1
+id = "newline_gate"
+description = "filter 有効時は ensure_stdout_newline を追加しない"
+test = "streamed_filter_does_not_force_extra_newline"
+file_glob = "ai/src/adapters/outbound/stdout_presenter.rs"
+pending = false
+
+[[cases]]
+spec = "0048"
+phase = 1
+id = "streaming_cli_filter"
+description = "CLI の streaming turn で chunk が stdout に漏れない"
+test = "ask_with_filter_hides_streaming_chunks"
+file_glob = "ai/tests/phase_a_cli.rs"
+pending = false

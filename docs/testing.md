@@ -264,6 +264,16 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **integration** | `aibe-client/tests/route_turn.rs` | `route_turn` の socket 往復 |
 | **manual** | [manual/ai-ask-tools.md](manual/ai-ask-tools.md) | `AI_FILTER` / config filter の stdout 変換、stderr 非対象、失敗時 warning |
 
+### 0048 output filter と streaming の検証観点
+
+設計書: [0048_ai-filter-streaming-fix-spec.md](spec/0048_ai-filter-streaming-fix-spec.md)。
+
+| 種別 | ファイル | 担保する観点 |
+|------|----------|--------------|
+| **unit** | `ai/src/adapters/outbound/stdout_presenter.rs` | filter 有効時の streaming stdout 抑止、`streamed=true` でも final filter 出力、余計な改行なし |
+| **integration** | `ai/tests/phase_a_cli.rs` | streaming 付き `ask` で chunk が stdout に漏れない |
+| **manual** | [manual/ai-ask-tools.md](manual/ai-ask-tools.md) | D1b streaming 付き filter |
+
 ## モック・フィクスチャ
 
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
