@@ -22,10 +22,25 @@ struct CommandSpanState {
     next_index: u32,
     active_index: Option<u32>,
     replay_enabled: bool,
-    /// control `start` より先に届いた PTY 出力（replay 用に span へ寄せる）
+    /// control `start` より先に届いた PTY 出力。入力行 echo が見つかったときだけ、その後ろを span へ移す。
     pending_stdout: String,
     /// span 先頭の「プロンプト + 入力行」echo を replay 記録から除く（hook の command 文字列）
     strip_echo_line: Option<String>,
+    pending_end: Option<PendingCommandEnd>,
+    queued_start: Option<QueuedCommandStart>,
+}
+
+#[derive(Debug)]
+struct PendingCommandEnd {
+    exit_code: Option<i32>,
+    finished_at: String,
+}
+
+#[derive(Debug)]
+struct QueuedCommandStart {
+    index: u32,
+    started_at: String,
+    command: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -48,8 +63,8 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
         if data.is_empty() {
             return Ok(());
         }
-        if let Some(index) = span.active_index {
-            let data = strip_shell_echo_from_span_output(span, data, false);
+        if span.active_index.is_some() {
+            let (data, index) = self.advance_queued_start_on_echo(data, span)?;
             if data.is_empty() {
                 return Ok(());
             }
@@ -71,9 +86,63 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
         Ok(())
     }
 
-    fn flush_pending_stdout(
+    fn append_stdout_to_active(
+        &mut self,
+        data: &str,
+        span: &mut CommandSpanState,
+    ) -> Result<(), InteractiveShellError> {
+        let Some(index) = span.active_index else {
+            return Ok(());
+        };
+        let data = strip_shell_echo_from_span_output(span, data);
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.log
+            .append(&LogEvent::stdout_indexed(&data, index))
+            .map_err(|e| InteractiveShellError::Failed(e.to_string()))
+    }
+
+    fn advance_queued_start_on_echo(
+        &mut self,
+        data: &str,
+        span: &mut CommandSpanState,
+    ) -> Result<(String, u32), InteractiveShellError> {
+        let Some(index) = span.active_index else {
+            return Ok((data.to_string(), 0));
+        };
+        let Some(queued) = span.queued_start.as_ref() else {
+            if span.pending_end.is_some() {
+                if let Some((before, after)) = split_before_any_prompt_echo(data) {
+                    self.append_stdout_to_active(&before, span)?;
+                    self.finish_active_span(span)?;
+                    span.pending_stdout.push_str(&after);
+                    return Ok((String::new(), 0));
+                }
+            }
+            let data = strip_shell_echo_from_span_output(span, data);
+            return Ok((data, index));
+        };
+        let Some((before, after)) = split_before_shell_echo(data, &queued.command) else {
+            let data = strip_shell_echo_from_span_output(span, data);
+            return Ok((data, index));
+        };
+
+        self.append_stdout_to_active(&before, span)?;
+        self.finish_active_span(span)?;
+        let queued = span.queued_start.take().expect("queued start");
+        self.start_span(span, queued.index, queued.started_at, queued.command)?;
+        span.strip_echo_line = None;
+        let Some(index) = span.active_index else {
+            return Ok((String::new(), 0));
+        };
+        Ok((after, index))
+    }
+
+    fn flush_pending_stdout_after_echo(
         &mut self,
         span: &mut CommandSpanState,
+        command: &str,
     ) -> Result<(), InteractiveShellError> {
         let Some(index) = span.active_index else {
             return Ok(());
@@ -82,12 +151,49 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
             return Ok(());
         }
         let pending = std::mem::take(&mut span.pending_stdout);
-        let data = strip_shell_echo_from_span_output(span, &pending, true);
+        let Some(data) = extract_after_shell_echo(&pending, command) else {
+            return Ok(());
+        };
+        span.strip_echo_line = None;
         if data.is_empty() {
             return Ok(());
         }
         self.log
             .append(&LogEvent::stdout_indexed(&data, index))
+            .map_err(|e| InteractiveShellError::Failed(e.to_string()))
+    }
+
+    fn start_span(
+        &mut self,
+        span: &mut CommandSpanState,
+        index: u32,
+        started_at: String,
+        command: String,
+    ) -> Result<(), InteractiveShellError> {
+        span.active_index = Some(index);
+        span.strip_echo_line = Some(command.clone());
+        self.log
+            .append(&LogEvent::shell_command_start(index, &started_at, &command))
+            .map_err(|e| InteractiveShellError::Failed(e.to_string()))
+    }
+
+    fn finish_active_span(
+        &mut self,
+        span: &mut CommandSpanState,
+    ) -> Result<(), InteractiveShellError> {
+        let Some(index) = span.active_index.take() else {
+            return Ok(());
+        };
+        let Some(end) = span.pending_end.take() else {
+            return Ok(());
+        };
+        span.strip_echo_line = None;
+        self.log
+            .append(&LogEvent::command_end(
+                index,
+                end.exit_code,
+                &end.finished_at,
+            ))
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))
     }
 
@@ -113,25 +219,26 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
                 };
                 span.next_index = span.next_index.saturating_add(1);
                 let index = span.next_index;
-                span.active_index = Some(index);
-                span.strip_echo_line = Some(command.clone());
-                self.log
-                    .append(&LogEvent::shell_command_start(
+                let started_at = rfc3339_now();
+                if span.active_index.is_some() && span.pending_end.is_some() {
+                    span.queued_start = Some(QueuedCommandStart {
                         index,
-                        &rfc3339_now(),
-                        &command,
-                    ))
-                    .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
-                self.flush_pending_stdout(span)?;
+                        started_at,
+                        command,
+                    });
+                } else {
+                    self.start_span(span, index, started_at, command.clone())?;
+                    self.flush_pending_stdout_after_echo(span, &command)?;
+                }
             }
             "end" => {
-                let Some(index) = span.active_index.take() else {
+                if span.active_index.is_none() {
                     return Ok(());
-                };
-                span.strip_echo_line = None;
-                self.log
-                    .append(&LogEvent::command_end(index, msg.exit_code, &rfc3339_now()))
-                    .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+                }
+                span.pending_end = Some(PendingCommandEnd {
+                    exit_code: msg.exit_code,
+                    finished_at: rfc3339_now(),
+                });
             }
             _ => {}
         }
@@ -789,6 +896,7 @@ fn relay_master_fd<L: SessionLog>(
 
     loop {
         if let Some(status) = wait_nonblocking(child)? {
+            drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
             drain_master_output(
                 &mut master_file,
                 &mut stdout,
@@ -799,6 +907,7 @@ fn relay_master_fd<L: SessionLog>(
             )?;
             flush_line(pty, &mut line_buf, &mut span)?;
             drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
+            pty.finish_active_span(&mut span)?;
             return Ok(status);
         }
 
@@ -862,16 +971,20 @@ fn relay_master_fd<L: SessionLog>(
 
         match master_file.read(&mut buf) {
             Ok(0) => {
+                drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 flush_line(pty, &mut line_buf, &mut span)?;
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
+                pty.finish_active_span(&mut span)?;
                 return wait_blocking(child);
             }
             Ok(n) => {
                 relay_master_chunk(&buf[..n], &mut stdout, pty, &mut line_buf, &mut span)?;
             }
             Err(e) => {
+                drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 flush_line(pty, &mut line_buf, &mut span)?;
                 if e.raw_os_error() == Some(libc::EIO) {
+                    pty.finish_active_span(&mut span)?;
                     return wait_blocking(child);
                 }
                 return Err(InteractiveShellError::Failed(e.to_string()));
@@ -1021,20 +1134,12 @@ fn flush_line<L: SessionLog>(
     flush_logged_line(pty, line_buf, span, false)
 }
 
-/// span 記録から PTY の入力行 echo を 1 行だけ除く。`from_end` は `pending_stdout` flush 向け。
-fn strip_shell_echo_from_span_output(
-    span: &mut CommandSpanState,
-    data: &str,
-    from_end: bool,
-) -> String {
+/// span 記録から PTY の入力行 echo を 1 行だけ除く。
+fn strip_shell_echo_from_span_output(span: &mut CommandSpanState, data: &str) -> String {
     let Some(command) = span.strip_echo_line.as_ref() else {
         return data.to_string();
     };
-    let (filtered, stripped) = if from_end {
-        strip_last_shell_echo_line(data, command)
-    } else {
-        strip_first_shell_echo_line(data, command)
-    };
+    let (filtered, stripped) = strip_first_shell_echo_line(data, command);
     if stripped {
         span.strip_echo_line = None;
         return filtered;
@@ -1042,28 +1147,52 @@ fn strip_shell_echo_from_span_output(
     filtered
 }
 
-/// 末尾の 1 行だけが shell の入力行 echo なら除く（`start` 前に溜まった pending 向け）。
-fn strip_last_shell_echo_line(data: &str, command: &str) -> (String, bool) {
+fn extract_after_shell_echo(data: &str, command: &str) -> Option<String> {
     if command.is_empty() {
-        return (data.to_string(), false);
+        return None;
     }
-    let had_trailing_newline = data.ends_with('\n');
-    let body = data.trim_end_matches('\n');
-    if body.is_empty() {
-        return (data.to_string(), false);
+    let mut offset = 0;
+    for line in data.split_inclusive('\n') {
+        let display_line = line.trim_end_matches(['\r', '\n']);
+        if line_looks_like_shell_echo(display_line, command) {
+            return Some(data[offset + line.len()..].to_string());
+        }
+        offset += line.len();
     }
-    let (prefix, last_line) = match body.rfind('\n') {
-        Some(pos) => (&body[..=pos], &body[pos + 1..]),
-        None => ("", body),
-    };
-    if !line_looks_like_shell_echo(last_line, command) {
-        return (data.to_string(), false);
+    None
+}
+
+fn split_before_shell_echo(data: &str, command: &str) -> Option<(String, String)> {
+    if command.is_empty() {
+        return None;
     }
-    let mut out = prefix.to_string();
-    if had_trailing_newline && !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+    let mut offset = 0;
+    for line in data.split_inclusive('\n') {
+        let display_line = line.trim_end_matches(['\r', '\n']);
+        if line_looks_like_shell_echo(display_line, command) {
+            return Some((
+                data[..offset].to_string(),
+                data[offset + line.len()..].to_string(),
+            ));
+        }
+        offset += line.len();
     }
-    (out, true)
+    None
+}
+
+fn split_before_any_prompt_echo(data: &str) -> Option<(String, String)> {
+    let mut offset = 0;
+    for line in data.split_inclusive('\n') {
+        let display_line = line.trim_end_matches(['\r', '\n']);
+        if line_looks_like_any_prompt_echo(display_line) {
+            return Some((
+                data[..offset].to_string(),
+                data[offset + line.len()..].to_string(),
+            ));
+        }
+        offset += line.len();
+    }
+    None
 }
 
 /// 先頭の 1 行だけが shell の入力行 echo なら除く。
@@ -1099,6 +1228,15 @@ fn line_looks_like_shell_echo(line: &str, command: &str) -> bool {
         line.as_bytes().get(boundary.wrapping_sub(1)),
         None | Some(b' ') | Some(b'\t') | Some(b'$')
     )
+}
+
+fn line_looks_like_any_prompt_echo(line: &str) -> bool {
+    let line = line.trim_end_matches('\r');
+    ['$', '#', '%', '>'].iter().any(|marker| {
+        line.rsplit_once(*marker)
+            .map(|(_, command)| !command.trim().is_empty())
+            .unwrap_or(false)
+    })
 }
 
 #[cfg(test)]
@@ -1178,6 +1316,7 @@ mod tests {
         pty.append_stdout("hi", &mut span).expect("stdout");
         pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
             .expect("end");
+        pty.finish_active_span(&mut span).expect("finish");
         assert!(span.active_index.is_none());
 
         let content = std::fs::read_to_string(log_path).expect("read");
@@ -1197,14 +1336,16 @@ mod tests {
             next_index: 0,
             active_index: None,
             replay_enabled: true,
-            pending_stdout: "honda@host:~/labo/aish$ ls\n".to_string(),
             ..CommandSpanState::default()
         };
         pty.handle_control_line(r#"{"event":"start","command":"ls"}"#, &mut span)
             .expect("start");
+        pty.append_stdout("honda@host:~/labo/aish$ ls\n", &mut span)
+            .expect("echo");
         pty.append_stdout("AGENTS.md\n", &mut span).expect("stdout");
         pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
             .expect("end");
+        pty.finish_active_span(&mut span).expect("finish");
 
         let content = std::fs::read_to_string(log_path).expect("read");
         assert!(
@@ -1215,28 +1356,59 @@ mod tests {
     }
 
     #[test]
-    fn strip_first_shell_echo_line_matches_prompt_suffix() {
-        let (out, stripped) =
-            strip_first_shell_echo_line("honda@cfxz6-1:~/labo/aish$ ls\nAGENTS.md\n", "ls");
-        assert!(stripped);
-        assert_eq!(out, "AGENTS.md\n");
+    fn replay_show_excludes_unindexed_shell_output_before_start() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        {
+            let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+            let mut pty = PtyShell::new(&mut log);
+            let mut span = CommandSpanState {
+                next_index: 0,
+                active_index: None,
+                replay_enabled: true,
+                ..CommandSpanState::default()
+            };
+            pty.append_stdout("startup banner\nhonda@host:~/aish$ ", &mut span)
+                .expect("startup");
+            pty.handle_control_line(r#"{"event":"start","command":"printf ok"}"#, &mut span)
+                .expect("start");
+            pty.append_stdout("printf ok\n", &mut span).expect("echo");
+            pty.append_stdout("ok\n", &mut span).expect("stdout");
+            pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
+                .expect("end");
+            pty.finish_active_span(&mut span).expect("finish");
+        }
+
+        let events = crate::adapters::outbound::read_log_events(&log_path).expect("events");
+        let out = crate::application::replay_show(&events, 1, false).expect("show");
+        assert_eq!(out, "ok\n");
     }
 
     #[test]
-    fn strip_first_shell_echo_line_keeps_real_output() {
-        let (out, stripped) = strip_first_shell_echo_line("AGENTS.md\n", "ls");
-        assert!(!stripped);
-        assert_eq!(out, "AGENTS.md\n");
-    }
+    fn replay_show_keeps_fast_output_that_arrives_before_start_control() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        {
+            let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+            let mut pty = PtyShell::new(&mut log);
+            let mut span = CommandSpanState {
+                next_index: 0,
+                active_index: None,
+                replay_enabled: true,
+                ..CommandSpanState::default()
+            };
+            pty.append_stdout("startup\nhonda@host:~/aish$ printf ok\nok\n", &mut span)
+                .expect("pending");
+            pty.handle_control_line(r#"{"event":"start","command":"printf ok"}"#, &mut span)
+                .expect("start");
+            pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
+                .expect("end");
+            pty.finish_active_span(&mut span).expect("finish");
+        }
 
-    #[test]
-    fn strip_last_shell_echo_line_removes_trailing_prompt() {
-        let (out, stripped) = strip_last_shell_echo_line(
-            "To run a command as administrator.\n\nhonda@host:~/aish$ ls\n",
-            "ls",
-        );
-        assert!(stripped);
-        assert_eq!(out, "To run a command as administrator.\n\n");
+        let events = crate::adapters::outbound::read_log_events(&log_path).expect("events");
+        let out = crate::application::replay_show(&events, 1, false).expect("show");
+        assert_eq!(out, "ok\n");
     }
 
     #[test]

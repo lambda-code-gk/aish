@@ -71,7 +71,9 @@ fn shell_replay_show_includes_command_output() {
 
     {
         let mut stdin = child.stdin.take().expect("stdin");
-        stdin.write_all(b"ls\n").expect("write ls");
+        stdin
+            .write_all(b"echo aish-only-output\n")
+            .expect("write echo");
         thread::sleep(Duration::from_millis(250));
         stdin.write_all(b"exit\n").expect("write exit");
     }
@@ -100,12 +102,5 @@ fn shell_replay_show_includes_command_output() {
         String::from_utf8_lossy(&replay.stderr)
     );
     let replay_stdout = String::from_utf8_lossy(&replay.stdout);
-    assert!(
-        replay_stdout.contains("Cargo.toml") || replay_stdout.contains("AGENTS.md"),
-        "expected ls output in replay show, got: {replay_stdout:?}"
-    );
-    assert!(
-        !replay_stdout.contains("$ ls"),
-        "replay show must not include echoed prompt line, got: {replay_stdout:?}"
-    );
+    assert_eq!(replay_stdout, "aish-only-output\n");
 }

@@ -74,7 +74,12 @@ pub fn replay_show(
         }
         return Ok(ensure_trailing_newline(span.stderr));
     }
-    Ok(ensure_trailing_newline(span.stdout))
+    let stdout = if span.kind == CommandKind::Shell {
+        strip_shell_prompt_echo_prefix(&span.stdout, &span.command)
+    } else {
+        span.stdout
+    };
+    Ok(ensure_trailing_newline(stdout))
 }
 
 /// 端末表示で次のプロンプトと連結しないよう、記録どおりの本文の末尾に改行がなければ付与する。
@@ -175,6 +180,29 @@ fn render_list(spans: &[ReplaySpanView], format: OutputFormat) -> String {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn strip_shell_prompt_echo_prefix(data: &str, command: &str) -> String {
+    if command.is_empty() {
+        return data.to_string();
+    }
+    let mut offset = 0;
+    for line in data.split_inclusive('\n') {
+        let display_line = line.trim_end_matches(['\r', '\n']);
+        if line_looks_like_prompt_echo(display_line, command) {
+            return data[offset + line.len()..].to_string();
+        }
+        offset += line.len();
+    }
+    data.to_string()
+}
+
+fn line_looks_like_prompt_echo(line: &str, command: &str) -> bool {
+    let Some(prefix) = line.strip_suffix(command) else {
+        return false;
+    };
+    let prompt = prefix.trim_end();
+    prompt.ends_with('$') || prompt.ends_with('#') || prompt.ends_with('%') || prompt.ends_with('>')
 }
 
 /// TSV / picker 表示向けに 1 行へ潰す。記録済み文字列の意味は変えず、区切り文字だけ無害化する。
@@ -338,6 +366,28 @@ mod tests {
         ];
         let out = replay_show(&events, 1, false).expect("show");
         assert_eq!(out, "line1\nline2\n");
+    }
+
+    #[test]
+    fn replay_show_strips_legacy_shell_prompt_echo_prefix() {
+        let events = vec![
+            LogEvent::shell_command_start(1, "2026-01-01T00:00:00Z", "ls"),
+            LogEvent::stdout_indexed("startup banner\nhonda@host:~/aish$ ls\nAGENTS.md\n", 1),
+            LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+        ];
+        let out = replay_show(&events, 1, false).expect("show");
+        assert_eq!(out, "AGENTS.md\n");
+    }
+
+    #[test]
+    fn replay_show_keeps_shell_output_that_only_matches_command_text() {
+        let events = vec![
+            LogEvent::shell_command_start(1, "2026-01-01T00:00:00Z", "ls"),
+            LogEvent::stdout_indexed("ls\nactual output\n", 1),
+            LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+        ];
+        let out = replay_show(&events, 1, false).expect("show");
+        assert_eq!(out, "ls\nactual output\n");
     }
 
     #[test]

@@ -183,12 +183,9 @@ mod tests {
     fn replay_show_accepts_long_index_flag() {
         let cli = AishCli::parse_from(["aish", "replay", "show", "--index", "-2"]);
         let AishCommand::Replay {
-            command:
-                ReplayCommand::Show {
-                    index,
-                    index_long,
-                    ..
-                },
+            command: ReplayCommand::Show {
+                index, index_long, ..
+            },
         } = cli.command
         else {
             panic!("expected replay show");
