@@ -1,6 +1,6 @@
 //! 1 コマンド実行とログ追記ユースケース。
 
-use crate::domain::{sanitize_log_text, CommandSpec, LogEvent};
+use crate::domain::{rfc3339_now, CommandKind, CommandSpec, LogEvent};
 use crate::ports::outbound::{LogError, SessionLog, ShellError, ShellExecutor};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,23 +31,31 @@ where
     }
 
     pub fn run(&mut self, command: CommandSpec) -> Result<ExecuteResult, ExecuteError> {
-        self.log.append(&LogEvent::command_start(&command))?;
+        const COMMAND_INDEX: u32 = 1;
+        let started_at = rfc3339_now();
+        self.log.append(&LogEvent::command_start_span(
+            &command,
+            COMMAND_INDEX,
+            &started_at,
+            CommandKind::Exec,
+        ))?;
 
         let result = self.shell.run(&command)?;
 
         if !result.stdout.is_empty() {
-            self.log.append(&LogEvent::Stdout {
-                data: sanitize_log_text(&result.stdout),
-            })?;
+            self.log
+                .append(&LogEvent::stdout_indexed(&result.stdout, COMMAND_INDEX))?;
         }
         if !result.stderr.is_empty() {
-            self.log.append(&LogEvent::Stderr {
-                data: sanitize_log_text(&result.stderr),
-            })?;
+            self.log
+                .append(&LogEvent::stderr_indexed(&result.stderr, COMMAND_INDEX))?;
         }
-        self.log.append(&LogEvent::Exit {
-            code: result.exit_code,
-        })?;
+        let finished_at = rfc3339_now();
+        self.log.append(&LogEvent::command_end(
+            COMMAND_INDEX,
+            result.exit_code,
+            &finished_at,
+        ))?;
 
         Ok(ExecuteResult {
             exit_code: result.exit_code,

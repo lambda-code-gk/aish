@@ -9,9 +9,91 @@ if command -v ai >/dev/null 2>&1; then eval "$(ai complete bash)"; fi
 if command -v aibe >/dev/null 2>&1; then eval "$(aibe complete bash)"; fi
 "#;
 
+const BASH_REPLAY_SNIPPET: &str = r#"
+_aish_json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '"%s"' "$s"
+}
+_aish_replay_emit() {
+  local fifo="${AISH_CONTROL_FIFO:-}"
+  [[ -n "$fifo" && -p "$fifo" ]] || return 0
+  printf '%s\n' "$1" >"$fifo" 2>/dev/null || true
+}
+_aish_replay_debug() {
+  [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return 0
+  [[ -n "${_AISH_LINE_STARTED:-}" ]] && return 0
+  case "$BASH_COMMAND" in
+    _aish_*|trap*|":" ) return ;;
+  esac
+  local line="${READLINE_LINE:-$BASH_COMMAND}"
+  _aish_replay_emit "{\"event\":\"start\",\"command\":$(_aish_json_escape "$line")}"
+  _AISH_LINE_STARTED=1
+}
+_aish_replay_precmd() {
+  local code=$?
+  if [[ -n "${AISH_CONTROL_FIFO:-}" && -n "${_AISH_LINE_STARTED:-}" ]]; then
+    _aish_replay_emit "{\"event\":\"end\",\"exit_code\":$code}"
+    unset _AISH_LINE_STARTED
+  fi
+}
+_aish_replay_install_hooks() {
+  [[ -n "${_AISH_REPLAY_READY:-}" ]] && return 0
+  _AISH_REPLAY_READY=1
+  trap '_aish_replay_debug' DEBUG
+}
+if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
+  # rcfile 評価中に DEBUG が有効だと直後の PROMPT_COMMAND 代入自体が span 化され control pipe が詰まる。
+  trap - DEBUG 2>/dev/null || true
+  PROMPT_COMMAND="_aish_replay_install_hooks;_aish_replay_precmd${PROMPT_COMMAND:+;}$PROMPT_COMMAND"
+fi
+"#;
+
 const ZSH_SNIPPET: &str = r#"if command -v aish >/dev/null 2>&1; then eval "$(aish complete zsh)"; fi
 if command -v ai >/dev/null 2>&1; then eval "$(ai complete zsh)"; fi
 if command -v aibe >/dev/null 2>&1; then eval "$(aibe complete zsh)"; fi
+"#;
+
+const ZSH_REPLAY_SNIPPET: &str = r#"
+_aish_json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '"%s"' "$s"
+}
+_aish_replay_emit() {
+  local fifo="${AISH_CONTROL_FIFO:-}"
+  [[ -n "$fifo" && -p "$fifo" ]] || return 0
+  printf '%s\n' "$1" >"$fifo" 2>/dev/null || true
+}
+_aish_replay_preexec() {
+  emulate -L zsh
+  [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return
+  _aish_replay_emit "{\"event\":\"start\",\"command\":$(_aish_json_escape "$1")}"
+  _AISH_HAVE_START=1
+}
+_aish_replay_precmd() {
+  local code=$?
+  [[ -n "${AISH_CONTROL_FIFO:-}" && -n "${_AISH_HAVE_START:-}" ]] || return
+  _aish_replay_emit "{\"event\":\"end\",\"exit_code\":$code}"
+  unset _AISH_HAVE_START
+}
+_aish_replay_install_hooks() {
+  [[ -n "${_AISH_REPLAY_READY:-}" ]] && return
+  _AISH_REPLAY_READY=1
+  preexec_functions+=(_aish_replay_preexec)
+  precmd_functions+=(_aish_replay_precmd)
+}
+if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
+  precmd_functions+=(_aish_replay_install_hooks)
+fi
 "#;
 
 /// 子シェル種別。
@@ -82,6 +164,7 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
         ));
     }
     body.push_str(BASH_SNIPPET);
+    body.push_str(BASH_REPLAY_SNIPPET);
     fs::write(dst, body)
 }
 
@@ -95,12 +178,13 @@ fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
         ));
     }
     body.push_str(ZSH_SNIPPET);
+    body.push_str(ZSH_REPLAY_SNIPPET);
     fs::write(dst, body)
 }
 
 fn shell_quote(path: &Path) -> String {
     let s = path.to_string_lossy();
-    format!("'{s}'")
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -121,5 +205,31 @@ mod tests {
         write_bash_wrapper(&rc, Path::new("/nonexistent/.bashrc")).expect("write");
         let content = fs::read_to_string(rc).expect("read");
         assert!(content.contains("aish complete bash"));
+    }
+
+    #[test]
+    fn bash_replay_hooks_defer_debug_trap_until_first_prompt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rc = dir.path().join("rc");
+        write_bash_wrapper(&rc, Path::new("/nonexistent/.bashrc")).expect("write");
+        let content = fs::read_to_string(rc).expect("read");
+        assert!(content.contains("_aish_replay_install_hooks"));
+        assert!(content.contains("trap - DEBUG"));
+        let before_install = content
+            .split("_aish_replay_install_hooks()")
+            .next()
+            .expect("install_hooks");
+        assert!(
+            !before_install.contains("trap '_aish_replay_debug' DEBUG"),
+            "DEBUG trap must not be set before deferred install"
+        );
+    }
+
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert_eq!(
+            shell_quote(Path::new("/home/foo'bar/.bashrc")),
+            "'/home/foo'\\''bar/.bashrc'"
+        );
     }
 }

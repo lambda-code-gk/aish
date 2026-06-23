@@ -76,6 +76,13 @@
 
 完全な秘匿ではない。パスワードプロンプト直後の入力などは今後拡張する。
 
+### aish command output replay（`0049`）
+
+- replay は **記録済みの redacted ログ**をそのまま出す。replay 時に `sanitize_log_text` を再適用しない（秘匿情報の復元経路を増やさない）
+- `aish shell` の control channel はセッション dir 内 FIFO（`control.fifo`、0600）を使う。hook は継承 FD ではなく emit ごとの open-write-close とし、`ls` 等の子プロセスが control へ書けないようにする
+- `AISH_SESSION_DIR/current_log` は canonicalize 後に session dir 配下であることを検証し、symlink escape を拒否する
+- `log.jsonl` は 0600 相当で作成・追記する（既存方針の維持）
+
 ### ai → aibe の context
 
 - 渡すのは **必要最小限** のログ tail（上限は `aibe::ShellLogTail::MAX_BYTES`。ai はこの定数のみ参照しリテラル直書きしない）

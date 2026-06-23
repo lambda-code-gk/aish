@@ -15,6 +15,7 @@
 | [ai-ux.md](ai-ux.md) | `ai chat` / progress / timeout / `--yes-exec` の手動確認 |
 | [ai-smart-entry.md](ai-smart-entry.md) | `ai '...'` の smart entry / `--new` / `AI_SESSION_ID` |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
+| [aish-command-output-replay.md](aish-command-output-replay.md) | `aish replay list/show/pick`（過去出力の再表示） |
 | [tab-completion.md](tab-completion.md) | CLI Tab 補完（bash / zsh / PATH / cargo run / aish shell） |
 | [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |
 | [codex-spec-impl-review-loop.md](codex-spec-impl-review-loop.md) | Codex 指示書→実装レビューの 7 ステップ運用手順 |

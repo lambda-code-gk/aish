@@ -525,3 +525,93 @@ description = "CLI の streaming turn で chunk が stdout に漏れない"
 test = "ask_with_filter_hides_streaming_chunks"
 file_glob = "ai/tests/phase_a_cli.rs"
 pending = false
+
+[[cases]]
+spec = "0049"
+phase = 1
+id = "log_event_serde_backward_compat"
+description = "旧 JSONL の deserialize と span roundtrip を保証する"
+test = "log_event_serde_is_backward_compatible"
+file_glob = "aish/src/domain/log_event.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 1
+id = "exec_span_metadata"
+description = "aish exec が command span metadata を記録する"
+test = "exec_command_span_records_index_and_timestamps"
+file_glob = "aish/tests/exec_log.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 1
+id = "shell_span_metadata"
+description = "shell hook / control channel が command span を記録する"
+test = "shell_command_span_records_index_and_timestamps"
+file_glob = "aish/src/adapters/outbound/pty_shell.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 2
+id = "current_log_escape_guard"
+description = "AISH_SESSION_DIR/current_log の escape を拒否する"
+test = "replay_current_log_resolution_rejects_escape"
+file_glob = "aish/src/adapters/outbound/session_info.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 2
+id = "list_complete_spans"
+description = "replay list が complete span のみを一覧する"
+test = "replay_list_shows_only_complete_spans"
+file_glob = "aish/src/application/replay.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 2
+id = "show_stream_contract"
+description = "replay show が recorded stdout/stderr をそのまま出す"
+test = "replay_show_emits_recorded_streams_without_resanitizing"
+file_glob = "aish/src/application/replay.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 2
+id = "show_shell_stderr_error"
+description = "shell span に対する --stderr は失敗する"
+test = "replay_show_rejects_shell_stderr"
+file_glob = "aish/src/application/replay.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 3
+id = "pick_fzf_preferred"
+description = "fzf があれば優先的に使う"
+test = "replay_pick_prefers_fzf_when_available"
+file_glob = "aish/src/adapters/outbound/replay_picker.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 3
+id = "pick_builtin_fallback"
+description = "fzf が無くても内蔵 fallback で選べる"
+test = "replay_pick_falls_back_to_builtin_selector"
+file_glob = "aish/src/adapters/outbound/replay_picker.rs"
+pending = false
+
+[[cases]]
+spec = "0049"
+phase = 3
+id = "pick_non_tty_fail_closed"
+description = "non-TTY では fail-closed になる"
+test = "replay_pick_rejects_non_tty"
+file_glob = "aish/src/adapters/outbound/replay_picker.rs"
+pending = false

@@ -1,5 +1,6 @@
-//! セッション dir から `SessionInfo` を読む。
+//! replay 用のログパス解決と `current_log` の安全検証。
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use crate::domain::SessionInfo;
@@ -12,6 +13,20 @@ pub enum SessionReadError {
     NotFound(String),
     #[error("invalid session directory: {0}")]
     Invalid(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReplayLogResolveError {
+    #[error(transparent)]
+    Session(#[from] SessionReadError),
+    #[error("--log PATH is required when AISH_SESSION_DIR is not set")]
+    LogPathRequired,
+    #[error("log path is not a regular file: {0}")]
+    NotRegularFile(String),
+    #[error("log path is unreadable: {0}: {1}")]
+    Unreadable(String, String),
+    #[error("current_log resolves outside AISH_SESSION_DIR")]
+    SymlinkEscape,
 }
 
 pub fn session_dir_from_env() -> Result<PathBuf, SessionReadError> {
@@ -57,6 +72,71 @@ pub fn read_session_info(session_dir: &Path) -> Result<SessionInfo, SessionReadE
     })
 }
 
+pub fn resolve_replay_log_path(log_cli: Option<&Path>) -> Result<PathBuf, ReplayLogResolveError> {
+    if let Some(path) = log_cli {
+        return open_explicit_log_path(path);
+    }
+    let session_dir = session_dir_from_env().map_err(ReplayLogResolveError::Session)?;
+    open_session_current_log(&session_dir, "current_log")
+}
+
+fn open_explicit_log_path(path: &Path) -> Result<PathBuf, ReplayLogResolveError> {
+    let meta = std::fs::metadata(path).map_err(|e| {
+        ReplayLogResolveError::Unreadable(path.display().to_string(), e.to_string())
+    })?;
+    if !meta.is_file() {
+        return Err(ReplayLogResolveError::NotRegularFile(
+            path.display().to_string(),
+        ));
+    }
+    File::open(path).map_err(|e| {
+        ReplayLogResolveError::Unreadable(path.display().to_string(), e.to_string())
+    })?;
+    Ok(path.to_path_buf())
+}
+
+fn open_session_current_log(
+    session_dir: &Path,
+    link_name: &str,
+) -> Result<PathBuf, ReplayLogResolveError> {
+    let session_dir = session_dir.canonicalize().map_err(|e| {
+        ReplayLogResolveError::Unreadable(session_dir.display().to_string(), e.to_string())
+    })?;
+    let current_log = session_dir.join(link_name);
+
+    let meta = std::fs::metadata(&current_log).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ReplayLogResolveError::Unreadable(current_log.display().to_string(), "not found".into())
+        } else {
+            ReplayLogResolveError::Unreadable(current_log.display().to_string(), e.to_string())
+        }
+    })?;
+    if meta.is_dir() {
+        return Err(ReplayLogResolveError::NotRegularFile(
+            current_log.display().to_string(),
+        ));
+    }
+
+    let resolved = current_log.canonicalize().map_err(|e| {
+        ReplayLogResolveError::Unreadable(current_log.display().to_string(), e.to_string())
+    })?;
+    if !resolved.starts_with(&session_dir) {
+        return Err(ReplayLogResolveError::SymlinkEscape);
+    }
+
+    if !resolved.is_file() {
+        return Err(ReplayLogResolveError::NotRegularFile(
+            resolved.display().to_string(),
+        ));
+    }
+
+    File::open(&resolved).map_err(|e| {
+        ReplayLogResolveError::Unreadable(resolved.display().to_string(), e.to_string())
+    })?;
+
+    Ok(resolved)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -75,5 +155,17 @@ mod tests {
         let info = read_session_info(&session).expect("read");
         assert_eq!(info.session_id, "002f15d02b54");
         assert!(info.log_file.ends_with("log.jsonl"));
+    }
+
+    #[test]
+    fn replay_current_log_resolution_rejects_escape() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let session = root.path().join("002f15d02b54");
+        fs::create_dir(&session).expect("mkdir");
+        fs::write(root.path().join("outside.jsonl"), "x").expect("write outside");
+        symlink("../outside.jsonl", session.join("current_log")).expect("escape link");
+
+        let err = open_session_current_log(&session, "current_log").expect_err("escape");
+        assert!(matches!(err, ReplayLogResolveError::SymlinkEscape));
     }
 }

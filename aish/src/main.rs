@@ -6,14 +6,18 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use aish::adapters::inbound::{AishCli, AishCommand};
+use aish::adapters::inbound::{AishCli, AishCommand, ReplayCommand};
 use aish::adapters::outbound::toml_config::AishConfig;
 use aish::adapters::outbound::{
-    create_shell_session, prune_old_sessions, read_session_info, resolve_sessions_parent,
-    session_dir_from_env, JsonlFileLog, ProcessShell, PtyShell, SessionReadError,
-    SessionStoreError,
+    create_shell_session, pick_entry, prune_old_sessions, read_log_events, read_session_info,
+    require_interactive_tty, resolve_replay_log_path, resolve_sessions_parent,
+    session_dir_from_env, JsonlFileLog, PickerEntry, ProcessShell, PtyShell, ReplayLogReadError,
+    ReplayLogResolveError, SessionReadError, SessionStoreError,
 };
-use aish::application::{format_session, ExecuteAndRecord, RunShell};
+use aish::application::{
+    format_picker_line, format_session, replay_list, replay_show, replay_span_views,
+    resolve_replay_index, ExecuteAndRecord, ReplayError, RunShell,
+};
 use aish::domain::{CommandSpec, LogEvent};
 use aish::ports::outbound::SessionLog;
 
@@ -41,6 +45,7 @@ fn run() -> anyhow::Result<u8> {
         } => run_exec(log, command),
         AishCommand::Shell { format: _ } => run_shell(),
         AishCommand::Session { format } => run_session(format.into()),
+        AishCommand::Replay { command } => run_replay(command),
         AishCommand::Complete { shell } => {
             AishCli::run_complete(shell)?;
             Ok(0)
@@ -56,6 +61,69 @@ fn run_session(format: aish::domain::OutputFormat) -> anyhow::Result<u8> {
         .write_all(out.as_bytes())
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(0)
+}
+
+fn run_replay(command: ReplayCommand) -> anyhow::Result<u8> {
+    match command {
+        ReplayCommand::List { log, index, format } => {
+            let path = resolve_replay_log_path(log.as_deref()).map_err(replay_resolve_to_anyhow)?;
+            let events = read_log_events(&path).map_err(replay_read_to_anyhow)?;
+            let out = replay_list(&events, index, format.into()).map_err(replay_to_anyhow)?;
+            io::stdout()
+                .write_all(out.as_bytes())
+                .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(0)
+        }
+        ReplayCommand::Show {
+            log,
+            index,
+            index_long,
+            stderr,
+        } => {
+            let spec = index
+                .or(index_long)
+                .ok_or_else(|| anyhow::anyhow!(ReplayError::IndexRequired))?;
+            let path = resolve_replay_log_path(log.as_deref()).map_err(replay_resolve_to_anyhow)?;
+            let events = read_log_events(&path).map_err(replay_read_to_anyhow)?;
+            let views = replay_span_views(&events).map_err(replay_to_anyhow)?;
+            let index = resolve_replay_index(&views, spec).map_err(replay_to_anyhow)?;
+            let out = replay_show(&events, index, stderr).map_err(replay_to_anyhow)?;
+            io::stdout()
+                .write_all(out.as_bytes())
+                .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(0)
+        }
+        ReplayCommand::Pick { log, index, stderr } => {
+            require_interactive_tty().map_err(replay_picker_to_anyhow)?;
+            let path = resolve_replay_log_path(log.as_deref()).map_err(replay_resolve_to_anyhow)?;
+            let events = read_log_events(&path).map_err(replay_read_to_anyhow)?;
+            let picked = if let Some(index) = index {
+                if !replay_span_views(&events)
+                    .map_err(replay_to_anyhow)?
+                    .iter()
+                    .any(|view| view.index == index)
+                {
+                    return Err(anyhow::anyhow!(ReplayError::IndexNotFound(index)));
+                }
+                index
+            } else {
+                let views = replay_span_views(&events).map_err(replay_to_anyhow)?;
+                let entries: Vec<PickerEntry> = views
+                    .iter()
+                    .map(|view| PickerEntry {
+                        index: view.index,
+                        line: format_picker_line(view),
+                    })
+                    .collect();
+                pick_entry(&entries).map_err(replay_picker_to_anyhow)?
+            };
+            let out = replay_show(&events, picked, stderr).map_err(replay_to_anyhow)?;
+            io::stdout()
+                .write_all(out.as_bytes())
+                .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(0)
+        }
+    }
 }
 
 fn run_exec(log: Option<PathBuf>, command: Vec<String>) -> anyhow::Result<u8> {
@@ -113,6 +181,22 @@ fn session_read_to_anyhow(e: SessionReadError) -> anyhow::Error {
     anyhow::anyhow!(e)
 }
 
+fn replay_resolve_to_anyhow(e: ReplayLogResolveError) -> anyhow::Error {
+    anyhow::anyhow!(e)
+}
+
+fn replay_to_anyhow(e: ReplayError) -> anyhow::Error {
+    anyhow::anyhow!(e)
+}
+
+fn replay_read_to_anyhow(e: ReplayLogReadError) -> anyhow::Error {
+    anyhow::anyhow!(e)
+}
+
+fn replay_picker_to_anyhow(e: aish::adapters::outbound::ReplayPickerError) -> anyhow::Error {
+    anyhow::anyhow!(e)
+}
+
 #[cfg(test)]
 mod cli_tests {
     use clap::CommandFactory;
@@ -123,5 +207,11 @@ mod cli_tests {
     fn cli_includes_complete_subcommand() {
         let cmd = AishCli::command();
         assert!(cmd.find_subcommand("complete").is_some());
+    }
+
+    #[test]
+    fn cli_includes_replay_subcommand() {
+        let cmd = AishCli::command();
+        assert!(cmd.find_subcommand("replay").is_some());
     }
 }

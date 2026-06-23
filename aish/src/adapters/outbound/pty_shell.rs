@@ -9,7 +9,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 use crate::adapters::outbound::ShellRcLayout;
-use crate::domain::sanitize_log_text;
+use crate::domain::{rfc3339_now, LogEvent};
 use crate::ports::outbound::{InteractiveShellError, InteractiveShellRunner, SessionLog};
 
 /// マスタ PTY と stdin/stdout を中継し、出力を `SessionLog` に追記する。
@@ -17,20 +17,125 @@ pub struct PtyShell<'a, L: SessionLog> {
     log: &'a mut L,
 }
 
+#[derive(Debug, Default)]
+struct CommandSpanState {
+    next_index: u32,
+    active_index: Option<u32>,
+    replay_enabled: bool,
+    /// control `start` より先に届いた PTY 出力（replay 用に span へ寄せる）
+    pending_stdout: String,
+    /// span 先頭の「プロンプト + 入力行」echo を replay 記録から除く（hook の command 文字列）
+    strip_echo_line: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ControlMessage {
+    event: String,
+    command: Option<String>,
+    exit_code: Option<i32>,
+}
+
 impl<'a, L: SessionLog> PtyShell<'a, L> {
     pub fn new(log: &'a mut L) -> Self {
         Self { log }
     }
 
-    fn append_stdout(&mut self, data: &str) -> Result<(), InteractiveShellError> {
+    fn append_stdout(
+        &mut self,
+        data: &str,
+        span: &mut CommandSpanState,
+    ) -> Result<(), InteractiveShellError> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        if let Some(index) = span.active_index {
+            let data = strip_shell_echo_from_span_output(span, data, false);
+            if data.is_empty() {
+                return Ok(());
+            }
+            let event = LogEvent::stdout_indexed(&data, index);
+            self.log
+                .append(&event)
+                .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+        } else if span.replay_enabled {
+            span.pending_stdout.push_str(data);
+        } else {
+            let event = LogEvent::Stdout {
+                data: crate::domain::sanitize_log_text(data),
+                command_index: None,
+            };
+            self.log
+                .append(&event)
+                .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn flush_pending_stdout(
+        &mut self,
+        span: &mut CommandSpanState,
+    ) -> Result<(), InteractiveShellError> {
+        let Some(index) = span.active_index else {
+            return Ok(());
+        };
+        if span.pending_stdout.is_empty() {
+            return Ok(());
+        }
+        let pending = std::mem::take(&mut span.pending_stdout);
+        let data = strip_shell_echo_from_span_output(span, &pending, true);
         if data.is_empty() {
             return Ok(());
         }
         self.log
-            .append(&crate::domain::LogEvent::Stdout {
-                data: sanitize_log_text(data),
-            })
+            .append(&LogEvent::stdout_indexed(&data, index))
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))
+    }
+
+    fn handle_control_line(
+        &mut self,
+        line: &str,
+        span: &mut CommandSpanState,
+    ) -> Result<(), InteractiveShellError> {
+        if !span.replay_enabled {
+            return Ok(());
+        }
+        let msg: ControlMessage = match serde_json::from_str(line.trim()) {
+            Ok(msg) => msg,
+            Err(_) => return Ok(()),
+        };
+        match msg.event.as_str() {
+            "start" => {
+                if span.active_index.is_some() {
+                    return Ok(());
+                }
+                let Some(command) = msg.command.filter(|c| !c.is_empty()) else {
+                    return Ok(());
+                };
+                span.next_index = span.next_index.saturating_add(1);
+                let index = span.next_index;
+                span.active_index = Some(index);
+                span.strip_echo_line = Some(command.clone());
+                self.log
+                    .append(&LogEvent::shell_command_start(
+                        index,
+                        &rfc3339_now(),
+                        &command,
+                    ))
+                    .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+                self.flush_pending_stdout(span)?;
+            }
+            "end" => {
+                let Some(index) = span.active_index.take() else {
+                    return Ok(());
+                };
+                span.strip_echo_line = None;
+                self.log
+                    .append(&LogEvent::command_end(index, msg.exit_code, &rfc3339_now()))
+                    .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -41,25 +146,47 @@ impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
         let session_dir = session_dir
             .canonicalize()
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
-        let session_dir_c = CString::new(session_dir.into_os_string().into_vec())
-            .map_err(|_| InteractiveShellError::Failed("AISH_SESSION_DIR contains NUL".into()))?;
 
         let (master, slave) = open_pty_pair()?;
         sync_pty_winsize_from_stdin(master)?;
-        let rc_layout = crate::adapters::outbound::prepare_interactive_rc(shell)
-            .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
+        let rc_layout = match crate::adapters::outbound::prepare_interactive_rc(shell) {
+            Ok(layout) => layout,
+            Err(err) => {
+                eprintln!("aish: replay hooks unavailable: {err}");
+                None
+            }
+        };
+        let replay_enabled = rc_layout.is_some();
+        let control_channel = if replay_enabled {
+            Some(open_control_fifo(&session_dir)?)
+        } else {
+            None
+        };
+        let session_dir_c = CString::new(session_dir.into_os_string().into_vec())
+            .map_err(|_| InteractiveShellError::Failed("AISH_SESSION_DIR contains NUL".into()))?;
 
         match unsafe { libc::fork() } {
             -1 => Err(InteractiveShellError::Failed("fork failed".into())),
             0 => {
-                child_exec_shell(master, slave, &shell_c, &session_dir_c, rc_layout.as_ref());
+                child_exec_shell(
+                    master,
+                    slave,
+                    &shell_c,
+                    &session_dir_c,
+                    rc_layout.as_ref(),
+                    control_channel.as_ref().map(|(_, path)| path.as_path()),
+                );
                 unreachable!();
             }
             child => {
                 unsafe {
                     libc::close(slave);
                 }
-                run_shell_parent(master, child, self)
+                let control_read = control_channel.map(|(read_fd, fifo_path)| {
+                    set_fd_nonblocking(read_fd);
+                    (read_fd, fifo_path)
+                });
+                run_shell_parent(master, child, self, control_read, replay_enabled)
             }
         }
     }
@@ -69,6 +196,8 @@ fn run_shell_parent<L: SessionLog>(
     master: RawFd,
     child: libc::pid_t,
     pty: &mut PtyShell<'_, L>,
+    control_channel: Option<(RawFd, std::path::PathBuf)>,
+    replay_enabled: bool,
 ) -> Result<i32, InteractiveShellError> {
     // 親 TTY のローカル echo と PTY 内シェルの echo が重ならないよう raw にする。
     let _stdin_tty =
@@ -83,7 +212,12 @@ fn run_shell_parent<L: SessionLog>(
         relay_stdin_to_pty(libc::STDIN_FILENO, stdin_master, shutdown_read);
     });
 
-    let relay_result = relay_master_fd(master, child, pty);
+    let control_read = control_channel.as_ref().map(|(fd, _)| *fd);
+    let relay_result = relay_master_fd(master, child, pty, control_read, replay_enabled);
+    if let Some((fd, fifo_path)) = control_channel {
+        close_raw_fd(fd);
+        let _ = std::fs::remove_file(fifo_path);
+    }
     signal_stdin_relay_shutdown(shutdown_write);
     stdin_thread.join().expect("stdin relay thread panicked");
     relay_result
@@ -150,6 +284,7 @@ fn child_exec_shell(
     shell: &CString,
     session_dir: &CString,
     rc_layout: Option<&ShellRcLayout>,
+    control_fifo: Option<&Path>,
 ) {
     unsafe {
         libc::close(master);
@@ -157,6 +292,18 @@ fn child_exec_shell(
 
     if let Err(e) = setup_controlling_tty(slave) {
         child_die(&e.to_string());
+    }
+
+    if let Some(fifo_path) = control_fifo {
+        let fifo_key = CString::new("AISH_CONTROL_FIFO").expect("static key");
+        let fifo_value = path_to_cstring(fifo_path);
+        let rc = unsafe { libc::setenv(fifo_key.as_ptr(), fifo_value.as_ptr(), 1) };
+        if rc != 0 {
+            child_die(&format!(
+                "setenv(AISH_CONTROL_FIFO): {}",
+                std::io::Error::last_os_error()
+            ));
+        }
     }
 
     let ask_log_key = CString::new("AI_ASK_LOG").expect("static key");
@@ -574,21 +721,84 @@ fn setup_controlling_tty(slave: RawFd) -> Result<(), InteractiveShellError> {
     Ok(())
 }
 
+fn open_control_fifo(
+    session_dir: &Path,
+) -> Result<(RawFd, std::path::PathBuf), InteractiveShellError> {
+    let fifo_path = session_dir.join("control.fifo");
+    if fifo_path.exists() {
+        std::fs::remove_file(&fifo_path).map_err(|e| {
+            InteractiveShellError::Failed(format!("remove stale control fifo: {e}"))
+        })?;
+    }
+    let path_c = path_to_cstring(&fifo_path);
+    if unsafe { libc::mkfifo(path_c.as_ptr(), 0o600) } != 0 {
+        return Err(InteractiveShellError::Failed(format!(
+            "mkfifo: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    // O_RDWR: 読み取り専用だと書き込み側がいない間 POLLHUP が常時立ち poll が忙しいループになる。
+    // 親は読むだけだが、自プロセスで書き込み端も開いておく（Linux FIFO の定番パターン）。
+    let read_fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_RDWR | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
+    };
+    if read_fd < 0 {
+        let _ = std::fs::remove_file(&fifo_path);
+        return Err(InteractiveShellError::Failed(format!(
+            "open(control fifo): {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok((read_fd, fifo_path))
+}
+
+fn set_fd_nonblocking(fd: RawFd) {
+    if fd < 0 {
+        return;
+    }
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return;
+    }
+    let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+}
+
 fn relay_master_fd<L: SessionLog>(
     master: RawFd,
     child: libc::pid_t,
     pty: &mut PtyShell<'_, L>,
+    control_read: Option<RawFd>,
+    replay_enabled: bool,
 ) -> Result<i32, InteractiveShellError> {
     let winch = WinchMonitor::install().ok();
     let mut master_file = unsafe { std::fs::File::from_raw_fd(master) };
     let mut stdout = std::io::stdout().lock();
     let mut buf = [0u8; 4096];
     let mut line_buf = String::new();
+    let mut control_buf = String::new();
+    let mut span = CommandSpanState {
+        next_index: 0,
+        active_index: None,
+        replay_enabled,
+        ..CommandSpanState::default()
+    };
+    let control_fd = control_read.unwrap_or(-1);
 
     loop {
         if let Some(status) = wait_nonblocking(child)? {
-            drain_master_output(&mut master_file, &mut stdout, pty, &mut line_buf, &mut buf)?;
-            flush_line(pty, &mut line_buf)?;
+            drain_master_output(
+                &mut master_file,
+                &mut stdout,
+                pty,
+                &mut line_buf,
+                &mut buf,
+                &mut span,
+            )?;
+            flush_line(pty, &mut line_buf, &mut span)?;
+            drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
             return Ok(status);
         }
 
@@ -598,13 +808,23 @@ fn relay_master_fd<L: SessionLog>(
             events: libc::POLLIN,
             revents: 0,
         }];
-        if let Some(ref monitor) = winch {
+        if control_fd >= 0 {
+            poll_fds.push(libc::pollfd {
+                fd: control_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        let winch_index = if let Some(ref monitor) = winch {
             poll_fds.push(libc::pollfd {
                 fd: monitor.fd(),
                 events: libc::POLLIN,
                 revents: 0,
             });
-        }
+            Some(poll_fds.len() - 1)
+        } else {
+            None
+        };
 
         let rc = unsafe { libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, -1) };
         if rc < 0 {
@@ -617,11 +837,18 @@ fn relay_master_fd<L: SessionLog>(
             )));
         }
 
-        if poll_fds.len() > 1
-            && poll_fds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
-        {
-            if let Some(ref monitor) = winch {
-                monitor.drain_and_sync(master_raw)?;
+        if let Some(idx) = winch_index {
+            if poll_fds[idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                if let Some(ref monitor) = winch {
+                    monitor.drain_and_sync(master_raw)?;
+                }
+            }
+        }
+
+        if control_fd >= 0 {
+            let control_idx = 1;
+            if poll_fds[control_idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
             }
         }
 
@@ -629,16 +856,21 @@ fn relay_master_fd<L: SessionLog>(
             continue;
         }
 
+        if control_fd >= 0 {
+            drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
+        }
+
         match master_file.read(&mut buf) {
             Ok(0) => {
-                flush_line(pty, &mut line_buf)?;
+                flush_line(pty, &mut line_buf, &mut span)?;
+                drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 return wait_blocking(child);
             }
             Ok(n) => {
-                relay_master_chunk(&buf[..n], &mut stdout, pty, &mut line_buf)?;
+                relay_master_chunk(&buf[..n], &mut stdout, pty, &mut line_buf, &mut span)?;
             }
             Err(e) => {
-                flush_line(pty, &mut line_buf)?;
+                flush_line(pty, &mut line_buf, &mut span)?;
                 if e.raw_os_error() == Some(libc::EIO) {
                     return wait_blocking(child);
                 }
@@ -648,11 +880,51 @@ fn relay_master_fd<L: SessionLog>(
     }
 }
 
+fn drain_control_input<L: SessionLog>(
+    pty: &mut PtyShell<'_, L>,
+    control_fd: RawFd,
+    control_buf: &mut String,
+    span: &mut CommandSpanState,
+) -> Result<(), InteractiveShellError> {
+    if control_fd < 0 {
+        return Ok(());
+    }
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = unsafe { libc::read(control_fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if n < 0 {
+            if os_error_is_eintr() {
+                continue;
+            }
+            if std::io::Error::last_os_error().raw_os_error() == Some(libc::EAGAIN) {
+                break;
+            }
+            break;
+        }
+        if n == 0 {
+            break;
+        }
+        control_buf.push_str(&String::from_utf8_lossy(&buf[..n as usize]));
+        while let Some(pos) = control_buf.find('\n') {
+            let line: String = control_buf.drain(..pos).collect();
+            if !control_buf.is_empty() {
+                control_buf.remove(0);
+            }
+            let line = line.trim_end_matches('\r');
+            if !line.is_empty() {
+                pty.handle_control_line(line, span)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn relay_master_chunk<L: SessionLog>(
     chunk: &[u8],
     stdout: &mut std::io::StdoutLock<'_>,
     pty: &mut PtyShell<'_, L>,
     line_buf: &mut String,
+    span: &mut CommandSpanState,
 ) -> Result<(), InteractiveShellError> {
     stdout
         .write_all(chunk)
@@ -660,11 +932,14 @@ fn relay_master_chunk<L: SessionLog>(
     stdout
         .flush()
         .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
-    for ch in String::from_utf8_lossy(chunk).chars() {
-        if ch == '\n' || ch == '\r' {
-            flush_line(pty, line_buf)?;
-        } else {
-            line_buf.push(ch);
+    let text = String::from_utf8_lossy(chunk);
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' if chars.peek() == Some(&'\n') => continue,
+            '\r' => line_buf.clear(),
+            '\n' => flush_logged_line(pty, line_buf, span, true)?,
+            ch => line_buf.push(ch),
         }
     }
     Ok(())
@@ -676,11 +951,12 @@ fn drain_master_output<L: SessionLog>(
     pty: &mut PtyShell<'_, L>,
     line_buf: &mut String,
     buf: &mut [u8],
+    span: &mut CommandSpanState,
 ) -> Result<(), InteractiveShellError> {
     loop {
         match master_file.read(buf) {
             Ok(0) => break,
-            Ok(n) => relay_master_chunk(&buf[..n], stdout, pty, line_buf)?,
+            Ok(n) => relay_master_chunk(&buf[..n], stdout, pty, line_buf, span)?,
             Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
             Err(e) => return Err(InteractiveShellError::Failed(e.to_string())),
         }
@@ -716,15 +992,113 @@ fn exit_code_from_status(status: libc::c_int) -> i32 {
     }
 }
 
-fn flush_line<L: SessionLog>(
+fn flush_logged_line<L: SessionLog>(
     pty: &mut PtyShell<'_, L>,
     line_buf: &mut String,
+    span: &mut CommandSpanState,
+    include_newline: bool,
 ) -> Result<(), InteractiveShellError> {
-    if !line_buf.is_empty() {
-        pty.append_stdout(line_buf)?;
+    if include_newline {
+        if line_buf.is_empty() {
+            pty.append_stdout("\n", span)?;
+        } else {
+            line_buf.push('\n');
+            pty.append_stdout(line_buf, span)?;
+            line_buf.clear();
+        }
+    } else if !line_buf.is_empty() {
+        pty.append_stdout(line_buf, span)?;
         line_buf.clear();
     }
     Ok(())
+}
+
+fn flush_line<L: SessionLog>(
+    pty: &mut PtyShell<'_, L>,
+    line_buf: &mut String,
+    span: &mut CommandSpanState,
+) -> Result<(), InteractiveShellError> {
+    flush_logged_line(pty, line_buf, span, false)
+}
+
+/// span 記録から PTY の入力行 echo を 1 行だけ除く。`from_end` は `pending_stdout` flush 向け。
+fn strip_shell_echo_from_span_output(
+    span: &mut CommandSpanState,
+    data: &str,
+    from_end: bool,
+) -> String {
+    let Some(command) = span.strip_echo_line.as_ref() else {
+        return data.to_string();
+    };
+    let (filtered, stripped) = if from_end {
+        strip_last_shell_echo_line(data, command)
+    } else {
+        strip_first_shell_echo_line(data, command)
+    };
+    if stripped {
+        span.strip_echo_line = None;
+        return filtered;
+    }
+    filtered
+}
+
+/// 末尾の 1 行だけが shell の入力行 echo なら除く（`start` 前に溜まった pending 向け）。
+fn strip_last_shell_echo_line(data: &str, command: &str) -> (String, bool) {
+    if command.is_empty() {
+        return (data.to_string(), false);
+    }
+    let had_trailing_newline = data.ends_with('\n');
+    let body = data.trim_end_matches('\n');
+    if body.is_empty() {
+        return (data.to_string(), false);
+    }
+    let (prefix, last_line) = match body.rfind('\n') {
+        Some(pos) => (&body[..=pos], &body[pos + 1..]),
+        None => ("", body),
+    };
+    if !line_looks_like_shell_echo(last_line, command) {
+        return (data.to_string(), false);
+    }
+    let mut out = prefix.to_string();
+    if had_trailing_newline && !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    (out, true)
+}
+
+/// 先頭の 1 行だけが shell の入力行 echo なら除く。
+fn strip_first_shell_echo_line(data: &str, command: &str) -> (String, bool) {
+    if command.is_empty() {
+        return (data.to_string(), false);
+    }
+    let Some((first, rest)) = data.split_once('\n') else {
+        if line_looks_like_shell_echo(data, command) {
+            return (String::new(), true);
+        }
+        return (data.to_string(), false);
+    };
+    if line_looks_like_shell_echo(first, command) {
+        return (rest.to_string(), true);
+    }
+    (data.to_string(), false)
+}
+
+fn line_looks_like_shell_echo(line: &str, command: &str) -> bool {
+    let line = line.trim_end_matches('\r');
+    if line == command {
+        return true;
+    }
+    if !line.ends_with(command) {
+        return false;
+    }
+    if line.len() == command.len() {
+        return true;
+    }
+    let boundary = line.len() - command.len();
+    matches!(
+        line.as_bytes().get(boundary.wrapping_sub(1)),
+        None | Some(b' ') | Some(b'\t') | Some(b'$')
+    )
 }
 
 #[cfg(test)]
@@ -784,6 +1158,140 @@ mod tests {
         let mut status: libc::c_int = 0;
         let pid = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
         assert!(pid <= 0, "child should be reaped (waitpid returned {pid})");
+    }
+
+    #[test]
+    fn shell_command_span_records_index_and_timestamps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut span = CommandSpanState {
+            next_index: 0,
+            active_index: None,
+            replay_enabled: true,
+            ..CommandSpanState::default()
+        };
+        pty.handle_control_line(r#"{"event":"start","command":"echo hi"}"#, &mut span)
+            .expect("start");
+        assert_eq!(span.active_index, Some(1));
+        pty.append_stdout("hi", &mut span).expect("stdout");
+        pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
+            .expect("end");
+        assert!(span.active_index.is_none());
+
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(content.contains(r#""event":"command_start""#));
+        assert!(content.contains(r#""command_index":1"#));
+        assert!(content.contains(r#""event":"command_end""#));
+        assert!(content.contains("hi"));
+    }
+
+    #[test]
+    fn shell_command_span_strips_prompt_echo_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut span = CommandSpanState {
+            next_index: 0,
+            active_index: None,
+            replay_enabled: true,
+            pending_stdout: "honda@host:~/labo/aish$ ls\n".to_string(),
+            ..CommandSpanState::default()
+        };
+        pty.handle_control_line(r#"{"event":"start","command":"ls"}"#, &mut span)
+            .expect("start");
+        pty.append_stdout("AGENTS.md\n", &mut span).expect("stdout");
+        pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
+            .expect("end");
+
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(
+            !content.contains("honda@host"),
+            "prompt echo must not be logged: {content}"
+        );
+        assert!(content.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn strip_first_shell_echo_line_matches_prompt_suffix() {
+        let (out, stripped) =
+            strip_first_shell_echo_line("honda@cfxz6-1:~/labo/aish$ ls\nAGENTS.md\n", "ls");
+        assert!(stripped);
+        assert_eq!(out, "AGENTS.md\n");
+    }
+
+    #[test]
+    fn strip_first_shell_echo_line_keeps_real_output() {
+        let (out, stripped) = strip_first_shell_echo_line("AGENTS.md\n", "ls");
+        assert!(!stripped);
+        assert_eq!(out, "AGENTS.md\n");
+    }
+
+    #[test]
+    fn strip_last_shell_echo_line_removes_trailing_prompt() {
+        let (out, stripped) = strip_last_shell_echo_line(
+            "To run a command as administrator.\n\nhonda@host:~/aish$ ls\n",
+            "ls",
+        );
+        assert!(stripped);
+        assert_eq!(out, "To run a command as administrator.\n\n");
+    }
+
+    #[test]
+    fn relay_master_chunk_preserves_newlines_in_log() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut line_buf = String::new();
+        let mut span = CommandSpanState {
+            next_index: 1,
+            active_index: Some(1),
+            replay_enabled: true,
+            ..CommandSpanState::default()
+        };
+        let mut stdout = std::io::stdout().lock();
+        relay_master_chunk(
+            b"line1\nline2\n",
+            &mut stdout,
+            &mut pty,
+            &mut line_buf,
+            &mut span,
+        )
+        .expect("relay");
+        assert!(line_buf.is_empty());
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(content.contains(r#""data":"line1\n""#), "{content}");
+        assert!(content.contains(r#""data":"line2\n""#), "{content}");
+    }
+
+    #[test]
+    fn relay_master_chunk_logs_crlf_lines() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut line_buf = String::new();
+        let mut span = CommandSpanState {
+            next_index: 1,
+            active_index: Some(1),
+            replay_enabled: true,
+            ..CommandSpanState::default()
+        };
+        let mut stdout = std::io::stdout().lock();
+        relay_master_chunk(
+            b"AGENTS.md  Cargo.toml\r\nCargo.lock  LICENSE\r\n",
+            &mut stdout,
+            &mut pty,
+            &mut line_buf,
+            &mut span,
+        )
+        .expect("relay");
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(content.contains("AGENTS.md  Cargo.toml"), "{content}");
+        assert!(content.contains("Cargo.lock  LICENSE"), "{content}");
     }
 
     #[test]

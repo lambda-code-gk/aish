@@ -43,6 +43,7 @@
 | 0046 | [0046_aibe-graceful-restart-spec.md](spec/0046_aibe-graceful-restart-spec.md) | 設計確定（実装済み） | aibe graceful restart（PID file / SIGTERM / stop / restart / status） |
 | 0047 | [0047_ai-interactive-prompt-input-spec.md](spec/0047_ai-interactive-prompt-input-spec.md) | 設計確定（実装済み） | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 | 0048 | [0048_ai-filter-streaming-fix-spec.md](spec/0048_ai-filter-streaming-fix-spec.md) | 設計確定（実装済み） | `ai` output filter と assistant streaming の整合化 |
+| 0049 | [0049_aish-command-output-replay-spec.md](spec/0049_aish-command-output-replay-spec.md) | 設計確定（実装済み） | `aish` command output replay（`replay list/show/pick`、shell span 記録） |
 
 ### 状態ラベルの意味
 
@@ -123,4 +124,5 @@
 | 0046 | [0046_aibe-graceful-restart-implementation-spec.md](done/0046_aibe-graceful-restart-implementation-spec.md) | 実装済み | aibe graceful restart（PID file / SIGTERM / stop / restart / status） |
 | 0047 | [0047_ai-interactive-prompt-input-implementation-spec.md](done/0047_ai-interactive-prompt-input-implementation-spec.md) | 実装済み | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 | 0048 | [0048_ai-filter-streaming-fix-implementation-spec.md](done/0048_ai-filter-streaming-fix-implementation-spec.md) | 実装済み | `ai` output filter と assistant streaming の整合化（設計: [0048](spec/0048_ai-filter-streaming-fix-spec.md)） |
+| 0049 | [0049_aish-command-output-replay-implementation-spec.md](done/0049_aish-command-output-replay-implementation-spec.md) | 実装済み | `aish` command output replay（設計: [0049](spec/0049_aish-command-output-replay-spec.md)） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

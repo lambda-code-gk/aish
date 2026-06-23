@@ -128,6 +128,10 @@ cat /tmp/exec-test.jsonl
 - ログファイルのパーミッションが `600`
 - `command_start` に API キー形式が平文で残らない（0012）
 
+## replay（0049）
+
+過去コマンド出力の再表示: [aish-command-output-replay.md](aish-command-output-replay.md)
+
 ## CLI オプション（ai）
 
 | オプション | 意味 |

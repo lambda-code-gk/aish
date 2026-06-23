@@ -43,6 +43,57 @@ pub struct AishCli {
     pub command: AishCommand,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum ReplayListFormatArg {
+    #[default]
+    Tsv,
+    Json,
+}
+
+impl From<ReplayListFormatArg> for OutputFormat {
+    fn from(value: ReplayListFormatArg) -> Self {
+        match value {
+            ReplayListFormatArg::Tsv => OutputFormat::Tsv,
+            ReplayListFormatArg::Json => OutputFormat::Json,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum ReplayCommand {
+    /// List replayable command spans
+    List {
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        log: Option<PathBuf>,
+        #[arg(long)]
+        index: Option<u32>,
+        #[arg(long, value_enum, default_value_t = ReplayListFormatArg::Tsv)]
+        format: ReplayListFormatArg,
+    },
+    /// Show recorded output for a command span
+    Show {
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        log: Option<PathBuf>,
+        /// Command span index (`-1` = last entry in `replay list`)
+        #[arg(value_name = "INDEX", allow_hyphen_values = true)]
+        index: Option<i64>,
+        /// Same as positional `INDEX`
+        #[arg(long = "index", allow_hyphen_values = true, value_name = "INDEX")]
+        index_long: Option<i64>,
+        #[arg(long)]
+        stderr: bool,
+    },
+    /// Interactively pick a command span and show its output
+    Pick {
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        log: Option<PathBuf>,
+        #[arg(long)]
+        index: Option<u32>,
+        #[arg(long)]
+        stderr: bool,
+    },
+}
+
 #[derive(Subcommand)]
 pub enum AishCommand {
     /// Run a command and append events to a JSONL log
@@ -70,6 +121,11 @@ pub enum AishCommand {
         #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
         format: OutputFormatArg,
     },
+    /// Replay recorded command output without re-execution
+    Replay {
+        #[command(subcommand)]
+        command: ReplayCommand,
+    },
     /// Generate shell completion scripts (bash or zsh)
     Complete {
         #[arg(value_enum)]
@@ -91,5 +147,53 @@ impl AishCli {
         CompleteEnv::with_factory(Self::command)
             .try_complete(std::env::args_os(), None)
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn replay_show_accepts_positional_index() {
+        let cli = AishCli::parse_from(["aish", "replay", "show", "3"]);
+        let AishCommand::Replay {
+            command: ReplayCommand::Show { index, .. },
+        } = cli.command
+        else {
+            panic!("expected replay show");
+        };
+        assert_eq!(index, Some(3));
+    }
+
+    #[test]
+    fn replay_show_accepts_negative_positional_index() {
+        let cli = AishCli::parse_from(["aish", "replay", "show", "-1"]);
+        let AishCommand::Replay {
+            command: ReplayCommand::Show { index, .. },
+        } = cli.command
+        else {
+            panic!("expected replay show");
+        };
+        assert_eq!(index, Some(-1));
+    }
+
+    #[test]
+    fn replay_show_accepts_long_index_flag() {
+        let cli = AishCli::parse_from(["aish", "replay", "show", "--index", "-2"]);
+        let AishCommand::Replay {
+            command:
+                ReplayCommand::Show {
+                    index,
+                    index_long,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected replay show");
+        };
+        assert_eq!(index, None);
+        assert_eq!(index_long, Some(-2));
     }
 }
