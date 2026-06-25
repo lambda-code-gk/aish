@@ -14,7 +14,10 @@ use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
 use aibe::domain::FeatureRegistry;
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};
-use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProtocolMessage, RequestContext};
+use aibe_protocol::{
+    ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, ProtocolMessage,
+    RequestContext, ToolRiskClass,
+};
 
 fn service() -> RequestService {
     let tools_config = ToolsConfig::default();
@@ -172,5 +175,46 @@ async fn empty_shell_log_tail_does_not_inject_prefix() {
     match res {
         ClientResponse::AgentTurnResult { .. } => {}
         other => panic!("expected ok: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn aibe_does_not_read_aish_session_dir_for_client_tools() {
+    // 重要: 本テスト中 AISH_SESSION_DIR を読みに行く I/O は走らない。
+    // aibe は client_tools を受けても session dir をオープンせず、
+    // turn は read-only client tool のみで完結する。
+    let prev = std::env::var("AISH_SESSION_DIR").ok();
+    std::env::remove_var("AISH_SESSION_DIR");
+
+    let res = service()
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "turn-1".into(),
+                messages: user_hi(),
+                tools: vec![],
+                client_tools: vec![ClientProvidedToolSpec {
+                    name: "aish.replay_show".into(),
+                    description: "show".into(),
+                    parameters: serde_json::json!({"type":"object"}),
+                    risk_class: ToolRiskClass::ReadOnly,
+                    max_output_bytes: 8192,
+                }],
+                context: RequestContext {
+                    cwd: Some("/tmp".into()),
+                    ..Default::default()
+                },
+                llm_profile: None,
+            },
+            None,
+        )
+        .await;
+
+    if let Some(v) = prev {
+        std::env::set_var("AISH_SESSION_DIR", v);
+    }
+
+    match res {
+        ClientResponse::AgentTurnResult { .. } => {}
+        other => panic!("expected agent turn result: {other:?}"),
     }
 }

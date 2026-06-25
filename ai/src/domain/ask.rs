@@ -50,9 +50,9 @@ pub enum AskRequestError {
 }
 
 impl AskInput {
-    /// ツール有効時は絶対 cwd が必須。aibe 送信直前に変換する。
+    /// ツールまたは client tool 有効時は絶対 cwd が必須。aibe 送信直前に変換する。
     pub fn into_request(self) -> Result<AskRequest, AskRequestError> {
-        if self.tools.is_empty() {
+        if self.tools.is_empty() && self.client_tools.is_empty() {
             return Ok(AskRequest {
                 user_message: self.user_message,
                 shell_log_tail: self.shell_log_tail,
@@ -108,6 +108,34 @@ mod tests {
             conversation_id: None,
         };
         assert!(input.into_request().is_ok());
+    }
+
+    #[test]
+    fn into_request_requires_cwd_with_client_tools_only() {
+        use aibe_protocol::{ClientProvidedToolSpec, ToolRiskClass};
+
+        let input = AskInput {
+            user_message: "hi".into(),
+            shell_log_tail: None,
+            client_cwd: None,
+            tools: vec![],
+            client_tools: vec![ClientProvidedToolSpec {
+                name: "aish.replay_show".into(),
+                description: "show".into(),
+                parameters: serde_json::json!({"type":"object"}),
+                risk_class: ToolRiskClass::ReadOnly,
+                max_output_bytes: 8192,
+            }],
+            replay_events: vec![],
+            replay_manifest_block: None,
+            llm_profile: None,
+            ai_session_id: None,
+            conversation_id: None,
+        };
+        assert_eq!(
+            input.into_request().unwrap_err(),
+            AskRequestError::MissingClientCwd
+        );
     }
 
     #[test]

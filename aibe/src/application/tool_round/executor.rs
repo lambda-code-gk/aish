@@ -190,6 +190,10 @@ impl ToolRoundExecutor {
                         "tool_not_allowed",
                         format!("client tool not read_only: {}", tc.name),
                     )
+                } else if let Err(message) =
+                    aibe_protocol::validate_client_tool_arguments(spec, &tc.arguments)
+                {
+                    rejected_tool_result(tc, "tool_not_allowed", message)
                 } else if let Some(gate) = tool_ctx.client_tool_gate() {
                     let result = tokio::select! {
                         res = gate.request_client_tool(&tc.id, &tc.name, &tc.arguments) => res,

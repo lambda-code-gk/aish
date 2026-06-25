@@ -482,57 +482,7 @@ impl ClientRequestHandler for RequestService {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-    use crate::adapters::outbound::tools::build_registry;
-    use crate::adapters::outbound::{
-        ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
-        InProcessMemorySubscriptionBroker, MockLlm, StaticCapabilityPolicy,
-    };
-    use crate::application::contextual_pack_arc;
-    use crate::domain::FeatureRegistry;
-    use crate::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
-    use aibe_protocol::{
-        ClientProvidedToolSpec, ClientRequest, ClientResponse, ProtocolMessage, RequestContext,
-        ToolRiskClass,
-    };
-    use std::sync::Arc;
-
-    fn service() -> RequestService {
-        let tools_config = ToolsConfig::default();
-        let profile_registry = ProfileRegistry::single(
-            "default",
-            Arc::new(MockLlm::new()),
-            TerminationCapability::summary_prompt_only(),
-        );
-        let tool_registry = build_registry(&tools_config, &[]);
-        let (rpc_extension, turn_hook) = contextual_pack_arc(
-            Arc::new(EmptyContextualMemoryStore),
-            Arc::new(FilesystemMemorySpaceResolver),
-            crate::adapters::outbound::shared_builtin_loader(),
-            crate::adapters::outbound::shared_baseline_recipe_loader(),
-            Arc::new(InProcessMemorySubscriptionBroker::new()),
-            StaticCapabilityPolicy::local_full(),
-            profile_registry.clone(),
-            Arc::new(crate::ports::outbound::NoopLlmCallTracer),
-        );
-        RequestService::new(
-            profile_registry,
-            tool_registry,
-            tools_config,
-            Arc::new(ToolRoundTerminatorOrchestrator::new(
-                ToolsConfig::default().termination_strategy,
-            )),
-            "default".to_string(),
-            Arc::new(ConversationStore::new(
-                std::env::temp_dir().join("aibe-request-service-tests"),
-            )),
-            StaticCapabilityPolicy::local_full(),
-            rpc_extension,
-            turn_hook,
-            FeatureRegistry::empty(),
-        )
-    }
+    use aibe_protocol::{ClientProvidedToolSpec, ToolRiskClass};
 
     #[test]
     fn validate_client_tools_accepts_read_only_aish_namespace() {
@@ -573,34 +523,6 @@ mod tests {
             },
         ] {
             assert!(validate_client_tools(vec![spec]).is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn aibe_does_not_read_aish_session_dir_for_client_tools() {
-        let req = ClientRequest::AgentTurn {
-            id: "turn-1".into(),
-            messages: vec![ProtocolMessage {
-                role: "user".into(),
-                content: "hi".into(),
-            }],
-            tools: vec![],
-            client_tools: vec![ClientProvidedToolSpec {
-                name: "aish.replay_show".into(),
-                description: "show".into(),
-                parameters: serde_json::json!({"type":"object"}),
-                risk_class: ToolRiskClass::ReadOnly,
-                max_output_bytes: 8192,
-            }],
-            context: RequestContext {
-                cwd: Some("/tmp".into()),
-                ..Default::default()
-            },
-            llm_profile: None,
-        };
-        match service().handle(req, None).await {
-            ClientResponse::AgentTurnResult { .. } => {}
-            other => panic!("expected agent turn result: {other:?}"),
         }
     }
 }

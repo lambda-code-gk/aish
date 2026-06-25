@@ -498,3 +498,58 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     let y = if m <= 2 { y + 1 } else { y };
     (y as i32, m, d)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_exec_events() -> Vec<LogEvent> {
+        vec![
+            LogEvent::command_start_span(
+                &CommandSpec {
+                    program: "echo".to_string(),
+                    args: vec!["hello".to_string()],
+                },
+                1,
+                "2026-01-01T00:00:00Z",
+                CommandKind::Exec,
+            ),
+            LogEvent::stdout_indexed("hello\n", 1),
+            LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+        ]
+    }
+
+    #[test]
+    fn replay_list_shows_only_complete_spans() {
+        let mut events = sample_exec_events();
+        events.push(LogEvent::shell_command_start(
+            2,
+            "2026-01-01T00:00:00Z",
+            "partial",
+        ));
+
+        let spans = complete_spans_from_events(&events);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].index, 1);
+        assert_eq!(spans[0].stdout, "hello\n");
+    }
+
+    #[test]
+    fn replay_show_emits_recorded_streams_without_resanitizing() {
+        let events = sample_exec_events();
+        let out = replay_show(&events, 1, false).expect("show");
+        assert_eq!(out, "hello\n");
+    }
+
+    #[test]
+    fn replay_show_rejects_shell_stderr() {
+        let events = vec![
+            LogEvent::shell_command_start(1, "2026-01-01T00:00:00Z", "echo hi"),
+            LogEvent::stdout_indexed("hi\n", 1),
+            LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+        ];
+
+        let err = replay_show(&events, 1, true).expect_err("shell stderr");
+        assert!(matches!(err, ReplayError::ShellStderrNotSupported));
+    }
+}

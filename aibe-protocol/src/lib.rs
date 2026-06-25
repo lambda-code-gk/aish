@@ -1,5 +1,6 @@
 //! aibe ↔ クライアント間の wire 契約（NDJSON / serde）。
 
+mod client_tool_validation;
 mod executed_tool;
 mod memory;
 mod memory_space;
@@ -7,6 +8,7 @@ mod request;
 mod response;
 mod tool_name;
 
+pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
 pub use executed_tool::{
     ExecutedToolCall, ExecutedToolStatus, ShellExecApprovalOutcome, ToolApprovalState,
     ToolRiskClass,

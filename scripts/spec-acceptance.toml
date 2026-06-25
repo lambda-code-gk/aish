@@ -568,7 +568,7 @@ phase = 2
 id = "list_complete_spans"
 description = "replay list が complete span のみを一覧する"
 test = "replay_list_shows_only_complete_spans"
-file_glob = "aish/src/application/replay.rs"
+file_glob = "aish-replay/src/lib.rs"
 pending = false
 
 [[cases]]
@@ -577,7 +577,7 @@ phase = 2
 id = "show_stream_contract"
 description = "replay show が recorded stdout/stderr をそのまま出す"
 test = "replay_show_emits_recorded_streams_without_resanitizing"
-file_glob = "aish/src/application/replay.rs"
+file_glob = "aish-replay/src/lib.rs"
 pending = false
 
 [[cases]]
@@ -586,7 +586,7 @@ phase = 2
 id = "show_shell_stderr_error"
 description = "shell span に対する --stderr は失敗する"
 test = "replay_show_rejects_shell_stderr"
-file_glob = "aish/src/application/replay.rs"
+file_glob = "aish-replay/src/lib.rs"
 pending = false
 
 [[cases]]
@@ -640,7 +640,7 @@ phase = 1
 id = "aibe_no_session_dir_read"
 description = "aibe が AISH_SESSION_DIR を直接読まない"
 test = "aibe_does_not_read_aish_session_dir_for_client_tools"
-file_glob = "aibe/src/application/request_service.rs"
+file_glob = "aibe/tests/request_tool_validation.rs"
 pending = false
 
 [[cases]]

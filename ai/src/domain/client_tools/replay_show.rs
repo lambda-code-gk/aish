@@ -1,7 +1,9 @@
 //! `aish.replay_show` client tool の実行と wrapper 生成。
 
 use aibe_client::ClientToolCallRequest;
-use aibe_protocol::{ClientToolErrorKind, ClientToolResult, ClientToolResultStatus};
+use aibe_protocol::{
+    validate_client_tool_call, ClientToolErrorKind, ClientToolResult, ClientToolResultStatus,
+};
 use aish_replay::{
     ensure_trailing_newline, replay_show, replay_span_views, sanitize_single_line_field, LogEvent,
 };
@@ -15,11 +17,14 @@ pub enum ReplayShowStream {
 }
 
 impl ReplayShowStream {
-    pub fn parse(raw: Option<&str>) -> Self {
+    pub fn parse(raw: Option<&str>) -> Result<Self, ReplayShowError> {
         match raw {
-            Some("stderr") => Self::Stderr,
-            Some("stdout") => Self::Stdout,
-            _ => Self::Both,
+            None | Some("both") => Ok(Self::Both),
+            Some("stderr") => Ok(Self::Stderr),
+            Some("stdout") => Ok(Self::Stdout),
+            Some(other) => Err(ReplayShowError::InvalidArguments(format!(
+                "invalid stream: {other}"
+            ))),
         }
     }
 }
@@ -48,12 +53,11 @@ pub fn parse_replay_show_args(arguments: &Value) -> Result<ReplayShowArgs, Repla
         .get("index")
         .and_then(Value::as_i64)
         .ok_or_else(|| ReplayShowError::InvalidArguments("missing index".into()))?;
-    let stream = ReplayShowStream::parse(arguments.get("stream").and_then(Value::as_str));
+    let stream = ReplayShowStream::parse(arguments.get("stream").and_then(Value::as_str))?;
     let tail_bytes = arguments
         .get("tail_bytes")
         .and_then(Value::as_u64)
-        .unwrap_or(8192)
-        .clamp(1, 16_384) as usize;
+        .unwrap_or(8192) as usize;
     Ok(ReplayShowArgs {
         index,
         stream,
@@ -65,6 +69,8 @@ pub fn execute_replay_show(
     request: &ClientToolCallRequest,
     events: &[LogEvent],
 ) -> Result<ClientToolResult, ReplayShowError> {
+    validate_client_tool_call("aish.replay_show", &request.arguments)
+        .map_err(ReplayShowError::InvalidArguments)?;
     let args = parse_replay_show_args(&request.arguments)?;
     let views = replay_span_views(events)
         .map_err(|_| ReplayShowError::InvalidArguments("no spans".into()))?;
@@ -113,16 +119,12 @@ pub fn execute_replay_show(
         error_kind: None,
         content: format!(
             "[untrusted terminal output]\n\
-tool: aish.replay_show\n\
-index: {}\n\
-command: {}\n\
-exit_code: {}\n\
-stream: {}\n\
-truncated: {}\n\
-tail_bytes: {}\n\n{}",
+tool=aish.replay_show index={} command=\"{}\" exit_code={} stream={} truncated={} tail_bytes={}\n\n{}",
             index,
             sanitize_single_line_field(&span.command),
-            span.exit_code.map(|c| c.to_string()).unwrap_or_default(),
+            span.exit_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string()),
             match args.stream {
                 ReplayShowStream::Stdout => "stdout",
                 ReplayShowStream::Stderr => "stderr",
@@ -207,8 +209,25 @@ mod tests {
         )
         .expect("execute");
         assert!(result.content.starts_with("[untrusted terminal output]"));
-        assert!(result.content.contains("tool: aish.replay_show"));
-        assert!(result.content.contains("stream: both"));
+        assert!(result.content.contains("tool=aish.replay_show"));
+        assert!(result.content.contains("stream=both"));
+    }
+
+    #[test]
+    fn replay_show_rejects_out_of_range_tail_bytes() {
+        let err = execute_replay_show(
+            &request(serde_json::json!({"index": 1, "tail_bytes": 99999})),
+            &[],
+        )
+        .expect_err("tail_bytes");
+        assert!(matches!(err, ReplayShowError::InvalidArguments(_)));
+    }
+
+    #[test]
+    fn replay_show_rejects_unknown_stream() {
+        let err = parse_replay_show_args(&serde_json::json!({"index": 1, "stream": "bogus"}))
+            .expect_err("stream");
+        assert!(matches!(err, ReplayShowError::InvalidArguments(_)));
     }
 
     #[test]

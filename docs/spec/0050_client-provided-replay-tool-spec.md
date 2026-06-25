@@ -445,6 +445,8 @@ replay output は、モデルにとって最も危険な入力の 1 つである
 `spec = "0050"` として追加し、初期値は **すべて `pending = true`** とする。  
 未到達の AC は `#[ignore]` 付きテストを先に置き、実装後に `pending = false` へ切り替える。
 
+> **注記**: AC-12（`verify.sh` ゲート）は **登録しない**。`cargo test` から `verify.sh` を呼ぶと workspace の build lock を奪い合い循環実行になるため、運用ゲート（手動/CI）として確認する。下記の登録案は実装時に最終的なテスト関数名・パスへ揃える（正本は `scripts/spec-acceptance.toml`）。
+
 | Phase | id | description | test | file_glob | pending |
 |------|----|-------------|------|-----------|---------|
 | 1 | `protocol_client_tools_roundtrip` | `AgentTurn.client_tools` が roundtrip する | `agent_turn_client_tools_roundtrip` | `aibe-protocol/src/request.rs` | true |

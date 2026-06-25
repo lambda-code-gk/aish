@@ -28,7 +28,7 @@
 
 ## Overview
 
-aish ワークスペースは **5 つのクレート**で構成されます。
+aish ワークスペースは **6 つのクレート**で構成されます。
 
 | クレート | 種別 | 役割 |
 |---------|------|------|
@@ -36,6 +36,7 @@ aish ワークスペースは **5 つのクレート**で構成されます。
 | **aibe-client** | ライブラリ | Unix socket の `ping` / `ensure_running` / `agent_turn` transport（承認往復含む）、既定 socket パス |
 | **aibe** | ライブラリ + バイナリ | LLM プロバイダ呼び出し、ツール付きエージェントループ、Unix domain socket サーバ |
 | **aish** | バイナリ | シェル起動・コマンド実行、入出力を JSONL ログに記録（**ネットワークなし**） |
+| **aish-replay** | ライブラリ | aish ログ JSONL の共有パーサ・コマンド span 抽出（`aish replay` と `ai` の `aish.replay_show` で再利用） |
 | **ai** | バイナリ | `aibe-client` + `aibe-protocol` 経由で aibe に接続し応答を表示。aish ログを任意でコンテキストに利用（**LLM を直接呼ばない**） |
 
 設計の正本は [docs/architecture.md](docs/architecture.md) です。

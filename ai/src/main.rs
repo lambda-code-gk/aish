@@ -20,8 +20,8 @@ use ai::adapters::outbound::{
     load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
     resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
     smart_preprocessor_trace_enabled, AibeUnixClient, ChatReadLineResult, FileLogTail,
-    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ReplaySourceError,
-    ShellExecRenderOptions, StdoutPresenter, YesExecCache,
+    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
+    StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -646,9 +646,20 @@ fn execute_turn(
         &settings.shell_log_choice,
         settings.shell_log_mode.advertises_manifest(),
     ) {
-        (ShellLogChoice::Path(path), true) => {
-            load_replay_events(path).map_err(|e: ReplaySourceError| anyhow::anyhow!(e))?
-        }
+        (ShellLogChoice::Path(path), true) => match load_replay_events(path) {
+            Ok(events) => events,
+            Err(err) => {
+                if settings.shell_log_mode == ShellLogMode::Manifest {
+                    return Err(anyhow::anyhow!(err));
+                }
+                if !settings.quiet {
+                    eprintln!(
+                        "ai: replay manifest unavailable ({err}); falling back to shell_log_tail"
+                    );
+                }
+                Vec::new()
+            }
+        },
         _ => Vec::new(),
     };
     let replay_manifest_block = if replay_events.is_empty() {
