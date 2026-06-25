@@ -37,6 +37,7 @@ use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
     MemoryCliOptions, NowCommand, OutputFormatArg, TurnOptions,
 };
+use ai::domain::client_tools::replay_show::replay_client_tool_callback;
 use ai::domain::smart_preprocessor::{
     build_local_route_context_summary, local_output_style_system_hint, LocalRouteDecision,
     LocalToolHint, PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
@@ -586,18 +587,29 @@ fn execute_turn(
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
-    let shell_log_tail_text = if let Some(text) = shell_log_override {
-        Some(text)
-    } else {
-        match &shell_log_choice {
-            ShellLogChoice::Path(path) => Some(
-                FileLogTail::new(path.clone())
-                    .tail_bytes(settings.log_tail_bytes)
-                    .map_err(|e: LogReadError| anyhow::anyhow!(e))?,
-            ),
-            ShellLogChoice::None => None,
+    let replay_ctx = ai::application::replay_manifest::build_turn_replay_context(
+        settings.shell_log_mode,
+        &shell_log_choice,
+        shell_log_override,
+        || match &shell_log_choice {
+            ShellLogChoice::Path(path) => FileLogTail::new(path.clone())
+                .tail_bytes(settings.log_tail_bytes)
+                .map(Some)
+                .map_err(|e: LogReadError| e.to_string()),
+            ShellLogChoice::None => Ok(None),
+        },
+        |path| load_replay_events(path).map_err(|e| e.to_string()),
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
+    if let Some(msg) = replay_ctx.manifest_fallback.as_ref() {
+        if !settings.quiet {
+            eprintln!("ai: replay manifest unavailable ({msg}); falling back to shell_log_tail");
         }
-    };
+    }
+    let shell_log_tail_text = replay_ctx.shell_log_tail;
+    let replay_events = replay_ctx.replay_events;
+    let replay_manifest_block = replay_ctx.replay_manifest_block;
+    let client_tools = replay_ctx.client_tools;
 
     if let ShellLogChoice::Path(ref path) = shell_log_choice {
         if !settings.quiet {
@@ -641,37 +653,6 @@ fn execute_turn(
         .iter()
         .map(|t| t.as_str().to_string())
         .collect();
-
-    let replay_events = match (
-        &settings.shell_log_choice,
-        settings.shell_log_mode.advertises_manifest(),
-    ) {
-        (ShellLogChoice::Path(path), true) => match load_replay_events(path) {
-            Ok(events) => events,
-            Err(err) => {
-                if settings.shell_log_mode == ShellLogMode::Manifest {
-                    return Err(anyhow::anyhow!(err));
-                }
-                if !settings.quiet {
-                    eprintln!(
-                        "ai: replay manifest unavailable ({err}); falling back to shell_log_tail"
-                    );
-                }
-                Vec::new()
-            }
-        },
-        _ => Vec::new(),
-    };
-    let replay_manifest_block = if replay_events.is_empty() {
-        None
-    } else {
-        Some(ai::application::replay_manifest::render_manifest_block(
-            &replay_events,
-        ))
-    };
-    let client_tools = ai::application::replay_manifest::replay_manifest_client_tools_enabled(
-        !replay_events.is_empty() && settings.shell_log_mode.advertises_manifest(),
-    );
 
     let ask_input = AskInput {
         user_message: message.content.clone(),
@@ -852,7 +833,7 @@ fn execute_turn(
 fn run_agent_turn_sync(
     socket_path: PathBuf,
     request: ClientRequest,
-    _replay_events: Vec<aish_replay::LogEvent>,
+    replay_events: Vec<aish_replay::LogEvent>,
     presenter: Arc<StdoutPresenter>,
     history_dir: PathBuf,
     session_id: Option<String>,
@@ -864,7 +845,7 @@ fn run_agent_turn_sync(
     run_agent_turn_core(
         socket_path,
         request,
-        _replay_events,
+        replay_events,
         presenter,
         history_dir,
         session_id,
@@ -880,7 +861,7 @@ fn run_agent_turn_sync(
 fn run_agent_turn_async(
     socket_path: PathBuf,
     request: ClientRequest,
-    _replay_events: Vec<aish_replay::LogEvent>,
+    replay_events: Vec<aish_replay::LogEvent>,
     presenter: Arc<StdoutPresenter>,
     history_dir: PathBuf,
     session_id: Option<String>,
@@ -893,7 +874,7 @@ fn run_agent_turn_async(
     run_agent_turn_core(
         socket_path,
         request,
-        _replay_events,
+        replay_events,
         presenter,
         history_dir,
         session_id,
@@ -909,7 +890,7 @@ fn run_agent_turn_async(
 fn run_agent_turn_core(
     socket_path: PathBuf,
     request: ClientRequest,
-    _replay_events: Vec<aish_replay::LogEvent>,
+    replay_events: Vec<aish_replay::LogEvent>,
     presenter: Arc<StdoutPresenter>,
     history_dir: PathBuf,
     session_id: Option<String>,
@@ -927,6 +908,10 @@ fn run_agent_turn_core(
     let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut cancel_source: Option<TurnCancelSource> = None;
 
+    let use_client_tools = matches!(
+        &request,
+        ClientRequest::AgentTurn { client_tools, .. } if !client_tools.is_empty()
+    );
     let (tx, rx) = mpsc::channel();
     let presenter_thread = Arc::clone(&presenter);
     let history_dir_thread = history_dir.clone();
@@ -948,39 +933,26 @@ fn run_agent_turn_core(
         } else {
             None
         };
-        let response = match worker_client.agent_turn_request_stream(
-            request,
-            |event: AgentTurnProgressEvent| {
-                if progress {
-                    let phase = progress_phase_name(event.phase);
-                    presenter_thread.show_progress(&phase, event.message.as_deref());
-                }
-            },
-            |chunk| {
-                if !chunk.is_empty() {
-                    if presenter_thread.assistant_stream_stdout_enabled() {
-                        streamed_thread.store(true, Ordering::SeqCst);
-                    }
-                    presenter_thread.show_stream_chunk(&chunk);
-                }
-            },
-            |prompt: ShellExecApprovalPrompt| {
-                let tier = ai::domain::classify_shell_exec_tier(&prompt.command, &prompt.args);
-                let invocation =
-                    ai::domain::canonical_shell_exec_invocation(&prompt.command, &prompt.args);
-                let session_allowed = {
-                    let session = shell_exec_state_thread.lock().expect("shell exec session");
-                    session.session_shell_allowed()
-                };
+        let response = {
+            let shell_exec_handler =
+                |prompt: ShellExecApprovalPrompt| -> ShellExecApprovalDecision {
+                    let tier = ai::domain::classify_shell_exec_tier(&prompt.command, &prompt.args);
+                    let invocation =
+                        ai::domain::canonical_shell_exec_invocation(&prompt.command, &prompt.args);
+                    let session_allowed = {
+                        let session = shell_exec_state_thread.lock().expect("shell exec session");
+                        session.session_shell_allowed()
+                    };
 
-                {
-                    let mut session = shell_exec_state_thread.lock().expect("shell exec session");
-                    if session_allowed && tier != ShellExecTier::Destructive {
-                        if let Some(Ok(cache)) = yes_exec_cache.as_ref() {
-                            if let Some(scope) =
-                                cache.should_auto_approve(&prompt.command, &prompt.args, tier)
-                            {
-                                let origin = match scope {
+                    {
+                        let mut session =
+                            shell_exec_state_thread.lock().expect("shell exec session");
+                        if session_allowed && tier != ShellExecTier::Destructive {
+                            if let Some(Ok(cache)) = yes_exec_cache.as_ref() {
+                                if let Some(scope) =
+                                    cache.should_auto_approve(&prompt.command, &prompt.args, tier)
+                                {
+                                    let origin = match scope {
                                     ai::domain::ShellExecRememberScope::ExactInvocation => {
                                         aibe_protocol::ShellExecApprovalOrigin::SessionCacheExactInvocation
                                     }
@@ -988,111 +960,153 @@ fn run_agent_turn_core(
                                         aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName
                                     }
                                 };
-                                return auto_approve_shell_exec_decision(
-                                    &prompt,
-                                    tier,
-                                    origin,
-                                    &mut session,
-                                    silent_shell_exec_thread,
-                                );
+                                    return auto_approve_shell_exec_decision(
+                                        &prompt,
+                                        tier,
+                                        origin,
+                                        &mut session,
+                                        silent_shell_exec_thread,
+                                    );
+                                }
                             }
-                        }
-                        let exact_key = ai::domain::exact_shell_exec_key(&prompt.command, &prompt.args);
-                        if session.has_exact(&exact_key) {
-                            return auto_approve_shell_exec_decision(
+                            let exact_key =
+                                ai::domain::exact_shell_exec_key(&prompt.command, &prompt.args);
+                            if session.has_exact(&exact_key) {
+                                return auto_approve_shell_exec_decision(
                                 &prompt,
                                 tier,
                                 aibe_protocol::ShellExecApprovalOrigin::SessionCacheExactInvocation,
                                 &mut session,
                                 silent_shell_exec_thread,
                             );
-                        }
-                        let command_key = ai::domain::command_shell_exec_key(&prompt.command, tier);
-                        if session.has_command(&command_key) {
-                            return auto_approve_shell_exec_decision(
-                                &prompt,
-                                tier,
-                                aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName,
-                                &mut session,
-                                silent_shell_exec_thread,
-                            );
-                        }
-                        if let Some(patterns) = auto_patterns.as_ref() {
-                            if let Some((_, origin)) =
-                                ai::domain::match_shell_exec_auto_approve_pattern(
-                                    &invocation,
-                                    tier,
-                                    patterns,
-                                )
-                            {
+                            }
+                            let command_key =
+                                ai::domain::command_shell_exec_key(&prompt.command, tier);
+                            if session.has_command(&command_key) {
                                 return auto_approve_shell_exec_decision(
                                     &prompt,
                                     tier,
-                                    origin,
+                                    aibe_protocol::ShellExecApprovalOrigin::SessionCacheCommandName,
+                                    &mut session,
+                                    silent_shell_exec_thread,
+                                );
+                            }
+                            if let Some(patterns) = auto_patterns.as_ref() {
+                                if let Some((_, origin)) =
+                                    ai::domain::match_shell_exec_auto_approve_pattern(
+                                        &invocation,
+                                        tier,
+                                        patterns,
+                                    )
+                                {
+                                    return auto_approve_shell_exec_decision(
+                                        &prompt,
+                                        tier,
+                                        origin,
+                                        &mut session,
+                                        silent_shell_exec_thread,
+                                    );
+                                }
+                            }
+                            if tier == ShellExecTier::ReadOnly {
+                                return auto_approve_shell_exec_decision(
+                                    &prompt,
+                                    tier,
+                                    aibe_protocol::ShellExecApprovalOrigin::SessionAllowed,
                                     &mut session,
                                     silent_shell_exec_thread,
                                 );
                             }
                         }
-                        if tier == ShellExecTier::ReadOnly {
-                            return auto_approve_shell_exec_decision(
-                                &prompt,
-                                tier,
-                                aibe_protocol::ShellExecApprovalOrigin::SessionAllowed,
-                                &mut session,
-                                silent_shell_exec_thread,
-                            );
-                        }
                     }
-                }
 
-                let decision = ai::adapters::outbound::prompt_shell_exec_approval(
-                    prompt.clone(),
-                    tier,
-                    session_allowed,
-                );
-                if decision.approved {
-                    let mut session = shell_exec_state_thread.lock().expect("shell exec session");
-                    session.allow_session_shell();
-                    if let Some(scope) = decision.remember_scope {
-                        if tier != ShellExecTier::Destructive {
-                            match scope {
-                                ai::domain::ShellExecRememberScope::ExactInvocation => {
-                                    session.remember_exact(ai::domain::exact_shell_exec_key(
-                                        &prompt.command,
-                                        &prompt.args,
-                                    ));
+                    let decision = ai::adapters::outbound::prompt_shell_exec_approval(
+                        prompt.clone(),
+                        tier,
+                        session_allowed,
+                    );
+                    if decision.approved {
+                        let mut session =
+                            shell_exec_state_thread.lock().expect("shell exec session");
+                        session.allow_session_shell();
+                        if let Some(scope) = decision.remember_scope {
+                            if tier != ShellExecTier::Destructive {
+                                match scope {
+                                    ai::domain::ShellExecRememberScope::ExactInvocation => {
+                                        session.remember_exact(ai::domain::exact_shell_exec_key(
+                                            &prompt.command,
+                                            &prompt.args,
+                                        ));
+                                    }
+                                    ai::domain::ShellExecRememberScope::CommandName => {
+                                        session.remember_command(
+                                            ai::domain::command_shell_exec_key(
+                                                &prompt.command,
+                                                tier,
+                                            ),
+                                        );
+                                    }
                                 }
-                                ai::domain::ShellExecRememberScope::CommandName => {
-                                    session.remember_command(ai::domain::command_shell_exec_key(
-                                        &prompt.command,
-                                        tier,
-                                    ));
+                                if let Some(Ok(cache)) = yes_exec_cache.as_mut() {
+                                    let _ =
+                                        cache.remember(&prompt.command, &prompt.args, tier, scope);
                                 }
-                            }
-                            if let Some(Ok(cache)) = yes_exec_cache.as_mut() {
-                                let _ = cache.remember(
-                                    &prompt.command,
-                                    &prompt.args,
-                                    tier,
-                                    scope,
-                                );
                             }
                         }
                     }
-                }
-                ShellExecApprovalDecision {
-                    approved: decision.approved,
-                    approval_origin: decision.approval_origin,
-                }
-            },
-        ) {
-            Ok(resp) => resp,
-            Err(e) => ClientResponse::Error {
-                id: turn_id_thread.clone(),
-                code: aibe_protocol::ErrorCode::InternalError,
-                message: e.to_string(),
-            },
+                    ShellExecApprovalDecision {
+                        approved: decision.approved,
+                        approval_origin: decision.approval_origin,
+                    }
+                };
+            let result = if use_client_tools {
+                worker_client.agent_turn_request_stream_with_client_tools(
+                    request,
+                    |event: AgentTurnProgressEvent| {
+                        if progress {
+                            let phase = progress_phase_name(event.phase);
+                            presenter_thread.show_progress(&phase, event.message.as_deref());
+                        }
+                    },
+                    |chunk| {
+                        if !chunk.is_empty() {
+                            if presenter_thread.assistant_stream_stdout_enabled() {
+                                streamed_thread.store(true, Ordering::SeqCst);
+                            }
+                            presenter_thread.show_stream_chunk(&chunk);
+                        }
+                    },
+                    replay_client_tool_callback(replay_events),
+                    shell_exec_handler,
+                )
+            } else {
+                worker_client.agent_turn_request_stream(
+                    request,
+                    |event: AgentTurnProgressEvent| {
+                        if progress {
+                            let phase = progress_phase_name(event.phase);
+                            presenter_thread.show_progress(&phase, event.message.as_deref());
+                        }
+                    },
+                    |chunk| {
+                        if !chunk.is_empty() {
+                            if presenter_thread.assistant_stream_stdout_enabled() {
+                                streamed_thread.store(true, Ordering::SeqCst);
+                            }
+                            presenter_thread.show_stream_chunk(&chunk);
+                        }
+                    },
+                    shell_exec_handler,
+                )
+            };
+            match result {
+                Ok(resp) => resp,
+                Err(e) => ClientResponse::Error {
+                    id: turn_id_thread.clone(),
+                    code: aibe_protocol::ErrorCode::InternalError,
+                    message: e.to_string(),
+                },
+            }
         };
         let _ = tx.send(response);
     });

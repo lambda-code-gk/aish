@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::adapters::outbound::llm_backend::HttpBackendContext;
+use crate::domain::{logical_tool_name, tool_name_for_provider};
 use crate::domain::{ChatMessage, LlmStepResult, MessageRole, ToolCall};
 use crate::ports::outbound::{LlmError, LlmGenerationParams, LlmProvider, ToolDefinition};
 
@@ -274,7 +275,7 @@ fn resolve_tool_name(messages: &[ChatMessage], tool_call_id: &str) -> String {
 fn tool_call_to_part(tc: &ToolCall) -> Part {
     let mut fc = Map::new();
     fc.insert("id".into(), json!(tc.id));
-    fc.insert("name".into(), json!(tc.name));
+    fc.insert("name".into(), json!(tool_name_for_provider(&tc.name)));
     fc.insert("args".into(), tc.arguments.clone());
 
     let mut part_obj = Map::new();
@@ -321,7 +322,7 @@ fn parse_candidate_parts(parts: &[Value], turn_index: usize) -> Result<LlmStepRe
 
             tool_calls.push(ToolCall {
                 id,
-                name: name_str.to_string(),
+                name: logical_tool_name(name_str).unwrap_or(name_str).to_string(),
                 arguments: args,
                 provider_extras,
             });

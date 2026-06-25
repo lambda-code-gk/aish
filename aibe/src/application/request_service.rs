@@ -442,6 +442,10 @@ fn validate_client_tools(
                 spec.name
             ));
         }
+        let mut spec = spec;
+        spec.max_output_bytes = spec
+            .max_output_bytes
+            .min(aibe_protocol::MAX_TOOL_OUTPUT_BYTES as u32);
         out.push(spec);
     }
     Ok(out)

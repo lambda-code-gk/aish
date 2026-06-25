@@ -26,7 +26,8 @@
 
 1. `AISH_SESSION_DIR` を外した状態で `ai ask` を実行する。
 2. `shell_log_mode=off` でも `ai ask` 自体は継続できることを確認する。
-3. `manifest` mode では manifest が欠けたときに `shell_log_tail` へ倒れることを確認する。
+3. `manifest` mode では manifest が作れなければ turn を **error で終了**し、`shell_log_tail` へ fallback しないことを確認する。
+4. `hybrid` mode では manifest が作れなければ `shell_log_tail` へ fallback し、turn は継続できることを確認する。
 
 ## 手順 4: shared parser の確認
 

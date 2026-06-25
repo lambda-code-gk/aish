@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::adapters::outbound::llm_backend::HttpBackendContext;
+use crate::domain::{logical_tool_name, tool_name_for_provider};
 use crate::domain::{ChatMessage, LlmStepResult, ToolCall};
 use crate::ports::outbound::{LlmError, LlmGenerationParams, LlmProvider, ToolDefinition};
 
@@ -166,7 +167,7 @@ fn to_api_messages(messages: &[ChatMessage]) -> Vec<ApiMessage> {
                             id: tc.id.clone(),
                             r#type: "function".to_string(),
                             function: ApiFunctionCall {
-                                name: tc.name.clone(),
+                                name: tool_name_for_provider(&tc.name),
                                 arguments: tc.arguments.to_string(),
                             },
                         })
@@ -192,7 +193,9 @@ fn parse_tool_calls(message: &ApiMessage) -> Result<Vec<ToolCall>, LlmError> {
             let args: Value = serde_json::from_str(&c.function.arguments).unwrap_or(Value::Null);
             Ok(ToolCall {
                 id: c.id.clone(),
-                name: c.function.name.clone(),
+                name: logical_tool_name(&c.function.name)
+                    .unwrap_or(c.function.name.as_str())
+                    .to_string(),
                 arguments: args,
                 provider_extras: None,
             })

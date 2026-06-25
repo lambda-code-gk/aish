@@ -11,9 +11,7 @@ use aibe_client::{
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use crate::domain::classify_shell_exec_tier;
-use crate::domain::client_tools::replay_show::{
-    execute_replay_show, replay_show_error_kind, replay_tool_error_to_result,
-};
+use crate::domain::client_tools::replay_show::replay_client_tool_callback;
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext,
     MemoryKindListRequestBody, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
@@ -201,27 +199,7 @@ impl AgentClient for AibeUnixClient {
             wire,
             |_| {},
             |_| {},
-            {
-                let events = request.replay_events.clone();
-                move |prompt| {
-                    if prompt.name == "aish.replay_show" {
-                        match execute_replay_show(&prompt, &events) {
-                            Ok(result) => Some(result),
-                            Err(err) => Some(replay_tool_error_to_result(
-                                &prompt,
-                                replay_show_error_kind(&err),
-                                err.to_string(),
-                            )),
-                        }
-                    } else {
-                        Some(replay_tool_error_to_result(
-                            &prompt,
-                            aibe_protocol::ClientToolErrorKind::ToolNotAllowed,
-                            format!("unsupported client tool: {}", prompt.name),
-                        ))
-                    }
-                }
-            },
+            replay_client_tool_callback(request.replay_events.clone()),
             |prompt| {
                 let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
                 let decision = prompt_shell_exec_approval(prompt, tier, false);

@@ -58,7 +58,7 @@
 
 ### 実装済みマスク（aish）
 
-`aish` はログ追記前に `sanitize_log_text` を通す（`aish/src/domain/sanitize.rs`）。
+`aish` はログ追記前に `sanitize_log_text` を通す（`aish-replay` crate、経由して `aish` の domain から re-export）。
 
 | 適用先 | タイミング |
 |--------|------------|

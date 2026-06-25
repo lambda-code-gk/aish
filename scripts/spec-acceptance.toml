@@ -532,7 +532,7 @@ phase = 1
 id = "log_event_serde_backward_compat"
 description = "旧 JSONL の deserialize と span roundtrip を保証する"
 test = "log_event_serde_is_backward_compatible"
-file_glob = "aish/src/domain/log_event.rs"
+file_glob = "aish-replay/src/lib.rs"
 pending = false
 
 [[cases]]
@@ -713,4 +713,67 @@ id = "error_kind_matrix"
 description = "client tool の error kind を区別する"
 test = "client_tool_error_kinds_cover_missing_session_and_span_states"
 file_glob = "ai/src/domain/client_tools/replay_show.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "replay_client_tool_wiring"
+description = "main turn path の client tool callback が replay_show を実行する"
+test = "agent_turn_request_stream_with_replay_client_tool_returns_real_replay_output"
+file_glob = "ai/tests/replay_client_tool_wiring.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "replay_client_tool_callback"
+description = "replay_client_tool_callback が executor に到達する"
+test = "replay_client_tool_callback_returns_untrusted_output"
+file_glob = "ai/src/domain/client_tools/replay_show.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "shell_log_mode_turn_context"
+description = "shell_log_mode が tail/manifest/client_tools 行列を制御する"
+test = "build_turn_replay_context_respects_shell_log_mode_matrix"
+file_glob = "ai/src/application/replay_manifest.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "manifest_limit_and_preview"
+description = "manifest が最新 N 件に制限され stderr_preview を含む"
+test = "render_manifest_block_limits_to_latest_spans_with_stderr_preview"
+file_glob = "ai/src/application/replay_manifest.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "canonical_client_tool_schema"
+description = "LLM 向け client tool schema は aibe 正本を使う"
+test = "client_tool_definitions_ignores_client_supplied_schema"
+file_glob = "aibe/src/application/client_tool_defs.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "client_tool_result_server_clamp"
+description = "aibe が client tool result を server-side で truncate する"
+test = "client_tool_result_clamped_by_aibe_max_output_bytes"
+file_glob = "aibe/src/application/client_tool_defs.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "provider_safe_tool_name_mapping"
+description = "aish.replay_show と aish_replay_show の双方向マッピング"
+test = "provider_tool_name_maps_aish_replay_show_bidirectionally"
+file_glob = "aibe/src/domain/client_tool_names.rs"
 pending = false

@@ -4,8 +4,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::application::client_tool_defs::limit_client_tool_result;
 use crate::application::tool_defs::{client_tool_definitions, definitions_for};
 use crate::application::tool_round::rejected::rejected_tool_result;
+use crate::domain::logical_tool_name;
 use crate::domain::{
     is_known_tool, Capability, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName,
     ToolResult, ToolRiskClass, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
@@ -174,16 +176,19 @@ impl ToolRoundExecutor {
         next_conversation.push(step.assistant.clone());
 
         for tc in &step.tool_calls {
+            let logical_name = logical_tool_name(&tc.name)
+                .unwrap_or(tc.name.as_str())
+                .to_string();
             if let Some(events) = events.as_ref() {
                 events
                     .progress(
                         tool_ctx.turn_id(),
                         aibe_protocol::ProgressPhase::ToolCall,
-                        Some(tc.name.clone()),
+                        Some(logical_name.clone()),
                     )
                     .await;
             }
-            let (record, result) = if let Some(spec) = tool_ctx.client_tool_spec(tc.name.as_str()) {
+            let (record, result) = if let Some(spec) = tool_ctx.client_tool_spec(&logical_name) {
                 if spec.risk_class != aibe_protocol::ToolRiskClass::ReadOnly {
                     rejected_tool_result(
                         tc,
@@ -196,7 +201,7 @@ impl ToolRoundExecutor {
                     rejected_tool_result(tc, "tool_not_allowed", message)
                 } else if let Some(gate) = tool_ctx.client_tool_gate() {
                     let result = tokio::select! {
-                        res = gate.request_client_tool(&tc.id, &tc.name, &tc.arguments) => res,
+                        res = gate.request_client_tool(&tc.id, &logical_name, &tc.arguments) => res,
                         _ = async {
                             if let Some(cancel) = cancellation {
                                 cancel.wait().await;
@@ -207,6 +212,11 @@ impl ToolRoundExecutor {
                     };
                     match result {
                         Some(result) => {
+                            let max_bytes = spec
+                                .max_output_bytes
+                                .min(aibe_protocol::MAX_TOOL_OUTPUT_BYTES as u32)
+                                as usize;
+                            let content = limit_client_tool_result(&result.content, max_bytes);
                             let is_error = result.status != ClientToolResultStatus::Ok;
                             let error_code = result
                                 .error_kind
@@ -220,17 +230,17 @@ impl ToolRoundExecutor {
                             let record = if is_error {
                                 ExecutedToolCall::err(
                                     tc.id.clone(),
-                                    tc.name.clone(),
+                                    logical_name.clone(),
                                     tc.arguments.clone(),
                                     error_code,
-                                    result.content.clone(),
+                                    content.clone(),
                                 )
                             } else {
                                 ExecutedToolCall::ok(
                                     tc.id.clone(),
-                                    tc.name.clone(),
+                                    logical_name.clone(),
                                     tc.arguments.clone(),
-                                    result.content.clone(),
+                                    content.clone(),
                                 )
                             }
                             .with_audit(
@@ -242,7 +252,7 @@ impl ToolRoundExecutor {
                                 record,
                                 ToolResult {
                                     tool_call_id: tc.id.clone(),
-                                    content: result.content,
+                                    content,
                                     is_error,
                                 },
                             )

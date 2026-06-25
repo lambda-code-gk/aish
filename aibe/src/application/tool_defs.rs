@@ -2,10 +2,16 @@
 
 use serde_json::json;
 
-use aibe_protocol::{ClientProvidedToolSpec, SHELL_EXEC};
+use aibe_protocol::SHELL_EXEC;
 
 use crate::domain::ToolName;
 use crate::ports::outbound::ToolDefinition;
+
+pub use crate::application::client_tool_defs::client_tool_definitions;
+pub use crate::domain::{
+    logical_tool_name, provider_tool_name, tool_name_for_provider, AISH_REPLAY_SHOW_LOGICAL,
+    AISH_REPLAY_SHOW_PROVIDER,
+};
 
 pub use crate::domain::{is_known_tool, KNOWN_TOOLS, READ_FILE};
 pub use crate::domain::{GIT_DIFF, GIT_STATUS, GREP, LIST_DIR};
@@ -21,17 +27,6 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
             GIT_DIFF => Some(git_diff_definition()),
             GIT_STATUS => Some(git_status_definition()),
             _ => None,
-        })
-        .collect()
-}
-
-pub fn client_tool_definitions(client_tools: &[ClientProvidedToolSpec]) -> Vec<ToolDefinition> {
-    client_tools
-        .iter()
-        .map(|spec| ToolDefinition {
-            name: spec.name.clone(),
-            description: spec.description.clone(),
-            parameters: spec.parameters.clone(),
         })
         .collect()
 }

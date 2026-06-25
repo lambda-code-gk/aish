@@ -3,6 +3,7 @@
 mod agent_turn_context;
 mod capability;
 mod client_cwd;
+mod client_tool_names;
 mod contextual_memory;
 mod feature_registry;
 mod llm_step;
@@ -24,6 +25,10 @@ pub use capability::{
     Capability,
 };
 pub use client_cwd::{ClientCwd, ClientCwdError};
+pub use client_tool_names::{
+    logical_tool_name, provider_tool_name, tool_name_for_provider, AISH_REPLAY_SHOW_LOGICAL,
+    AISH_REPLAY_SHOW_PROVIDER,
+};
 pub use contextual_memory::{
     format_memory_block, is_standard_kind, query_matches_idea_on_demand,
     resolve_entries_for_prompt, resolve_memory_operation_add, validate_kind,

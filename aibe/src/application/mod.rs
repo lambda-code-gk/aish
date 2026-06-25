@@ -1,5 +1,6 @@
 pub mod agent_turn;
 pub mod basic_memory_pack;
+pub mod client_tool_defs;
 pub mod llm_call_trace;
 pub mod llm_error;
 pub mod memory_runtime;

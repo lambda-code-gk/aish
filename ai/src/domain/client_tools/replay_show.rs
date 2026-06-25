@@ -146,6 +146,30 @@ pub fn replay_show_error_kind(err: &ReplayShowError) -> ClientToolErrorKind {
     }
 }
 
+/// turn-local replay events で `aish.replay_show` を実行する client tool callback。
+pub fn replay_client_tool_callback(
+    events: Vec<LogEvent>,
+) -> impl Fn(ClientToolCallRequest) -> Option<ClientToolResult> {
+    move |prompt| {
+        if prompt.name == "aish.replay_show" {
+            match execute_replay_show(&prompt, &events) {
+                Ok(result) => Some(result),
+                Err(err) => Some(replay_tool_error_to_result(
+                    &prompt,
+                    replay_show_error_kind(&err),
+                    err.to_string(),
+                )),
+            }
+        } else {
+            Some(replay_tool_error_to_result(
+                &prompt,
+                ClientToolErrorKind::ToolNotAllowed,
+                format!("unsupported client tool: {}", prompt.name),
+            ))
+        }
+    }
+}
+
 pub fn replay_tool_error_to_result(
     request: &ClientToolCallRequest,
     kind: ClientToolErrorKind,
@@ -186,6 +210,34 @@ mod tests {
             name: "aish.replay_show".into(),
             arguments,
         }
+    }
+
+    #[test]
+    fn replay_client_tool_callback_returns_untrusted_output() {
+        let events = vec![
+            LogEvent::command_start_span(
+                &aish_replay::CommandSpec {
+                    program: "echo".into(),
+                    args: vec!["hello".into()],
+                },
+                1,
+                "2026-01-01T00:00:00Z",
+                aish_replay::CommandKind::Exec,
+            ),
+            LogEvent::stdout_indexed("hello\n", 1),
+            LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+        ];
+        let callback = replay_client_tool_callback(events);
+        let result = callback(ClientToolCallRequest {
+            id: "id-1".into(),
+            turn_id: "turn-1".into(),
+            call_id: "call-1".into(),
+            name: "aish.replay_show".into(),
+            arguments: serde_json::json!({"index": 1, "tail_bytes": 8192}),
+        })
+        .expect("callback must dispatch to executor");
+        assert!(result.content.starts_with("[untrusted terminal output]"));
+        assert!(!result.content.contains("client tool unavailable"));
     }
 
     #[test]

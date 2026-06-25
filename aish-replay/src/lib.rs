@@ -124,6 +124,18 @@ pub struct ReplaySpanView {
     pub command: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReplayManifestEntry {
+    pub index: u32,
+    pub exit_code: Option<i32>,
+    pub command: String,
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
+    pub failed: bool,
+    pub stdout_preview: String,
+    pub stderr_preview: String,
+}
+
 #[derive(Debug, Clone)]
 struct ReplaySpan {
     index: u32,
@@ -192,6 +204,20 @@ pub fn replay_show(
     Ok(ensure_trailing_newline(stdout))
 }
 
+pub fn replay_manifest_entries(
+    events: &[LogEvent],
+    preview_bytes: usize,
+) -> Result<Vec<ReplayManifestEntry>, ReplayError> {
+    let spans = complete_spans_from_events(events);
+    if spans.is_empty() {
+        return Err(ReplayError::NoSpans);
+    }
+    Ok(spans
+        .into_iter()
+        .map(|span| span.into_manifest_entry(preview_bytes))
+        .collect())
+}
+
 pub fn replay_span_views(events: &[LogEvent]) -> Result<Vec<ReplaySpanView>, ReplayError> {
     let spans = complete_spans_from_events(events);
     if spans.is_empty() {
@@ -240,6 +266,25 @@ impl ReplaySpan {
             command: self.command,
         }
     }
+
+    fn into_manifest_entry(self, preview_bytes: usize) -> ReplayManifestEntry {
+        let stdout_display = if self.kind == CommandKind::Shell {
+            strip_shell_prompt_echo_prefix(&self.stdout, &self.command)
+        } else {
+            self.stdout
+        };
+        let failed = self.exit_code != Some(0);
+        ReplayManifestEntry {
+            index: self.index,
+            exit_code: self.exit_code,
+            command: self.command,
+            stdout_bytes: stdout_display.len(),
+            stderr_bytes: self.stderr.len(),
+            failed,
+            stdout_preview: preview_field(&stdout_display, preview_bytes),
+            stderr_preview: preview_field(&self.stderr, preview_bytes),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,6 +330,20 @@ fn render_list(spans: &[ReplaySpanView], format: OutputFormat) -> String {
             out
         }
     }
+}
+
+fn preview_field(text: &str, max_bytes: usize) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    if text.len() <= max_bytes {
+        return sanitize_single_line_field(text);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    sanitize_single_line_field(&text[..end])
 }
 
 fn shell_quote(value: &str) -> String {
@@ -517,6 +576,31 @@ mod tests {
             LogEvent::stdout_indexed("hello\n", 1),
             LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
         ]
+    }
+
+    #[test]
+    fn log_event_serde_is_backward_compatible() {
+        let legacy = r#"{"event":"command_start","command":"echo","args":["hi"],"command_index":1,"started_at":"2026-01-01T00:00:00Z","kind":"exec"}"#;
+        let event: LogEvent = serde_json::from_str(legacy).expect("deserialize legacy");
+        match event {
+            LogEvent::CommandStart {
+                command,
+                args,
+                command_index,
+                kind,
+                ..
+            } => {
+                assert_eq!(command, "echo");
+                assert_eq!(args, vec!["hi".to_string()]);
+                assert_eq!(command_index, Some(1));
+                assert_eq!(kind, Some(CommandKind::Exec));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        let events = sample_exec_events();
+        let roundtrip = serde_json::to_string(&events[0]).expect("serialize");
+        let parsed: LogEvent = serde_json::from_str(&roundtrip).expect("roundtrip");
+        assert_eq!(parsed, events[0]);
     }
 
     #[test]

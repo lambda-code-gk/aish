@@ -284,18 +284,18 @@ tool=aish.replay_show index=12 command="git status" exit_code=0 stream=both trun
 2. `shell_log_mode=manifest` / `hybrid` かつ manifest が有効なら `client_tools` に `aish.replay_show` を広告する
 3. `shell_log_mode=tail` / `hybrid` かつ fallback が必要なら `shell_log_tail` を `RequestContext.shell_log_tail` へ載せる
 4. `shell_log_mode=off` ではどちらも送らない
-5. manifest が無効なら `shell_log_mode` に従って tail のみ、または no-op fallback で turn を進める
+5. manifest が無効なら `hybrid` では `shell_log_tail` へ fallback して turn を進める。`manifest` モードでは turn 開始時に error とする（tail fallback しない）
 
 ### 8.2 shell_log_tail 互換
 
 `shell_log_tail` は `tail` / `hybrid` モードの fallback として残す。
 
-- manifest が未生成
-- current log の検証に失敗
+- manifest が未生成（`hybrid` のみ fallback）
+- current log の検証に失敗（`hybrid` のみ fallback）
 - 旧セッションで replay span が incomplete
 - tool call に失敗して detail が取れない
 
-`manifest` モードでは fallback に落とさず、必要なら `ClientToolResult.status=Error` とする。
+`manifest` モードでは turn 開始時に manifest 必須。作れなければ error で終了し、tail へ fallback しない。client tool 実行時の `ClientToolResult.status=Error` は span 不在等の別経路である。
 
 ### 8.3 manifest の中身
 
@@ -313,10 +313,11 @@ manifest は model にそのまま渡す大きな文脈ではなく、`aish.repl
 
 ```text
 [replay manifest]
-#1 exit=0 command="git status"
-#2 exit=1 command="cargo test -j 1"
-#3 exit=0 command="echo done"
+#39 exit=101 stdout=2048B stderr=18420B failed=true command="cargo test" stderr_preview="error[E0432]: ..."
+#40 exit=0 stdout=9120B stderr=0B failed=false command="git diff"
 ```
+
+manifest は最新 30 span に制限する（定数 `DEFAULT_REPLAY_MANIFEST_LIMIT`）。
 
 #### ルール
 
