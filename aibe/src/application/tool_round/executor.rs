@@ -4,16 +4,17 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::application::tool_defs::definitions_for;
+use crate::application::tool_defs::{client_tool_definitions, definitions_for};
 use crate::application::tool_round::rejected::rejected_tool_result;
 use crate::domain::{
     is_known_tool, Capability, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName,
-    ToolRiskClass, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+    ToolResult, ToolRiskClass, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
 };
 use crate::ports::outbound::{
     LlmCallTracer, LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
     TurnCancellation, TurnEventSink,
 };
+use aibe_protocol::{ClientProvidedToolSpec, ClientToolResultStatus};
 
 /// 1 ラウンドの結果。max-round 終端は `AgentTurnService` + terminator が担当。
 #[derive(Debug, Clone)]
@@ -74,16 +75,19 @@ impl ToolRoundExecutor {
     }
 
     /// 1 回: LLM（tools 付き）→ tool 実行 → conversation 更新。
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_one_round(
         &self,
         conversation: &[ChatMessage],
         allowed_tools: &[ToolName],
+        client_tools: &[ClientProvidedToolSpec],
         tool_ctx: &ToolExecutionContext,
         executed_so_far: &[ExecutedToolCall],
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<&Arc<TurnCancellation>>,
     ) -> Result<RoundOutcome, LlmError> {
-        let tool_defs = definitions_for(allowed_tools);
+        let mut tool_defs = definitions_for(allowed_tools);
+        tool_defs.extend(client_tool_definitions(client_tools));
         self.llm_tracer.start("tool_round", None, None);
         let started = Instant::now();
         let step = if let Some(cancel) = cancellation {
@@ -179,7 +183,76 @@ impl ToolRoundExecutor {
                     )
                     .await;
             }
-            let (record, result) = if !is_known_tool(&tc.name) {
+            let (record, result) = if let Some(spec) = tool_ctx.client_tool_spec(tc.name.as_str()) {
+                if spec.risk_class != aibe_protocol::ToolRiskClass::ReadOnly {
+                    rejected_tool_result(
+                        tc,
+                        "tool_not_allowed",
+                        format!("client tool not read_only: {}", tc.name),
+                    )
+                } else if let Some(gate) = tool_ctx.client_tool_gate() {
+                    let result = tokio::select! {
+                        res = gate.request_client_tool(&tc.id, &tc.name, &tc.arguments) => res,
+                        _ = async {
+                            if let Some(cancel) = cancellation {
+                                cancel.wait().await;
+                            }
+                        } => {
+                            return Ok(RoundOutcome::Cancelled { executed });
+                        }
+                    };
+                    match result {
+                        Some(result) => {
+                            let is_error = result.status != ClientToolResultStatus::Ok;
+                            let error_code = result
+                                .error_kind
+                                .as_ref()
+                                .map(|kind| kind.clone().as_str())
+                                .unwrap_or(if is_error {
+                                    "client_tool_error"
+                                } else {
+                                    "client_tool_ok"
+                                });
+                            let record = if is_error {
+                                ExecutedToolCall::err(
+                                    tc.id.clone(),
+                                    tc.name.clone(),
+                                    tc.arguments.clone(),
+                                    error_code,
+                                    result.content.clone(),
+                                )
+                            } else {
+                                ExecutedToolCall::ok(
+                                    tc.id.clone(),
+                                    tc.name.clone(),
+                                    tc.arguments.clone(),
+                                    result.content.clone(),
+                                )
+                            }
+                            .with_audit(
+                                aibe_protocol::ToolRiskClass::ReadOnly,
+                                ToolApprovalState::ExplicitClientOptIn,
+                                false,
+                            );
+                            (
+                                record,
+                                ToolResult {
+                                    tool_call_id: tc.id.clone(),
+                                    content: result.content,
+                                    is_error,
+                                },
+                            )
+                        }
+                        None => rejected_tool_result(
+                            tc,
+                            "tool_timeout",
+                            "client tool request unavailable".into(),
+                        ),
+                    }
+                } else {
+                    rejected_tool_result(tc, "tool_timeout", "client tool gate unavailable".into())
+                }
+            } else if !is_known_tool(&tc.name) {
                 rejected_tool_result(
                     tc,
                     "tool_not_implemented",
@@ -394,6 +467,7 @@ mod tests {
             .run_one_round(
                 &[ChatMessage::user("hi")],
                 &[ToolName::read_file()],
+                &[],
                 &tool_ctx(),
                 &[],
                 None,
@@ -435,6 +509,7 @@ mod tests {
             .run_one_round(
                 &[ChatMessage::user("read")],
                 &[ToolName::read_file()],
+                &[],
                 &tool_ctx(),
                 &[],
                 None,
@@ -475,6 +550,7 @@ mod tests {
             .run_one_round(
                 &[ChatMessage::user("run")],
                 &[ToolName::read_file()],
+                &[],
                 &tool_ctx(),
                 &[],
                 None,
@@ -516,6 +592,7 @@ mod tests {
             .run_one_round(
                 &[ChatMessage::user("list")],
                 &[ToolName::read_file()],
+                &[],
                 &tool_ctx(),
                 &[],
                 None,
@@ -555,6 +632,7 @@ mod tests {
             .run_one_round(
                 &[ChatMessage::user("read")],
                 &[ToolName::read_file()],
+                &[],
                 &tool_ctx(),
                 &[],
                 None,
@@ -611,6 +689,7 @@ mod tests {
             .run_one_round(
                 &[ChatMessage::user("read both")],
                 &[ToolName::read_file()],
+                &[],
                 &tool_ctx(),
                 &prior,
                 None,

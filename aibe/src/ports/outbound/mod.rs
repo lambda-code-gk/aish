@@ -1,4 +1,5 @@
 pub mod capability_policy;
+pub mod client_tool;
 pub mod command_policy;
 pub mod config;
 pub mod contextual_memory_store;
@@ -23,6 +24,7 @@ pub mod turn_hook;
 pub use llm_call_tracer::{LlmCallTracer, NoopLlmCallTracer};
 
 pub use capability_policy::{CapabilityDenied, CapabilityPolicy};
+pub use client_tool::{empty_tool_result, ClientToolGate};
 pub use command_policy::CommandPolicy;
 pub use config::{
     default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,

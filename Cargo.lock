@@ -17,6 +17,7 @@ version = "0.1.0"
 dependencies = [
  "aibe-client",
  "aibe-protocol",
+ "aish-replay",
  "anyhow",
  "clap",
  "clap_complete",
@@ -83,6 +84,7 @@ dependencies = [
 name = "aish"
 version = "0.1.0"
 dependencies = [
+ "aish-replay",
  "anyhow",
  "clap",
  "clap_complete",
@@ -93,6 +95,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "aish-replay"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

@@ -3,13 +3,17 @@
 use std::path::Path;
 
 use aibe_client::{
-    agent_turn as transport_agent_turn, agent_turn_with_events,
+    agent_turn as transport_agent_turn, agent_turn_with_client_tools, agent_turn_with_events,
     memory_request as transport_memory_request, route_turn as transport_route_turn,
-    send_cancel_request, AgentTurnProgressEvent, ClientError, ShellExecApprovalDecision,
+    send_cancel_request, AgentTurnProgressEvent, ClientError, ClientToolCallRequest,
+    ShellExecApprovalDecision,
 };
 
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use crate::domain::classify_shell_exec_tier;
+use crate::domain::client_tools::replay_show::{
+    execute_replay_show, replay_show_error_kind, replay_tool_error_to_result,
+};
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext,
     MemoryKindListRequestBody, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
@@ -46,6 +50,7 @@ impl AibeUnixClient {
                 .iter()
                 .map(|t| t.as_str().to_string())
                 .collect(),
+            client_tools: request.client_tools.clone(),
             context: {
                 let mut ctx = request.request_context.clone();
                 ctx.shell_log_tail = request.shell_log_tail.clone();
@@ -73,6 +78,25 @@ impl AibeUnixClient {
             request,
             on_progress,
             on_stream,
+            on_approval,
+        )
+        .map_err(map_client_error)
+    }
+
+    pub fn agent_turn_request_stream_with_client_tools(
+        &self,
+        request: ClientRequest,
+        on_progress: impl FnMut(AgentTurnProgressEvent),
+        on_stream: impl FnMut(String),
+        on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<aibe_protocol::ClientToolResult>,
+        on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+    ) -> Result<ClientResponse, AgentError> {
+        agent_turn_with_client_tools(
+            self.socket_path(),
+            request,
+            on_progress,
+            on_stream,
+            on_client_tool,
             on_approval,
         )
         .map_err(map_client_error)
@@ -162,15 +186,51 @@ impl AibeUnixClient {
 impl AgentClient for AibeUnixClient {
     fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
         let wire = Self::to_client_request(request);
-        transport_agent_turn(self.socket_path(), wire, |prompt| {
-            let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
-            let decision = prompt_shell_exec_approval(prompt, tier, false);
-            ShellExecApprovalDecision {
-                approved: decision.approved,
-                approval_origin: decision.approval_origin,
-            }
-        })
-        .map_err(map_client_error)
+        if request.client_tools.is_empty() {
+            return transport_agent_turn(self.socket_path(), wire, |prompt| {
+                let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
+                let decision = prompt_shell_exec_approval(prompt, tier, false);
+                ShellExecApprovalDecision {
+                    approved: decision.approved,
+                    approval_origin: decision.approval_origin,
+                }
+            })
+            .map_err(map_client_error);
+        }
+        self.agent_turn_request_stream_with_client_tools(
+            wire,
+            |_| {},
+            |_| {},
+            {
+                let events = request.replay_events.clone();
+                move |prompt| {
+                    if prompt.name == "aish.replay_show" {
+                        match execute_replay_show(&prompt, &events) {
+                            Ok(result) => Some(result),
+                            Err(err) => Some(replay_tool_error_to_result(
+                                &prompt,
+                                replay_show_error_kind(&err),
+                                err.to_string(),
+                            )),
+                        }
+                    } else {
+                        Some(replay_tool_error_to_result(
+                            &prompt,
+                            aibe_protocol::ClientToolErrorKind::ToolNotAllowed,
+                            format!("unsupported client tool: {}", prompt.name),
+                        ))
+                    }
+                }
+            },
+            |prompt| {
+                let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
+                let decision = prompt_shell_exec_approval(prompt, tier, false);
+                ShellExecApprovalDecision {
+                    approved: decision.approved,
+                    approval_origin: decision.approval_origin,
+                }
+            },
+        )
     }
 }
 
@@ -293,8 +353,11 @@ mod tests {
             client_cwd: Some("/tmp".into()),
             tools: vec![ToolName::read_file()],
             llm_profile: None,
+            client_tools: vec![],
             ai_session_id: Some("sess".into()),
             conversation_id: Some("conv".into()),
+            replay_events: vec![],
+            replay_manifest_block: None,
             request_context: RequestContextInput {
                 system_instruction: Some("be brief".into()),
                 ..Default::default()

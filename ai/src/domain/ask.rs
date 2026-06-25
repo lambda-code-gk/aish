@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use aibe_protocol::ToolName;
+use aibe_protocol::{ClientProvidedToolSpec, ToolName};
+use aish_replay::LogEvent;
 use thiserror::Error;
 
 use super::RequestContextInput;
@@ -16,6 +17,9 @@ pub struct AskInput {
     pub client_cwd: Option<PathBuf>,
     /// 展開・検証済みツール名。
     pub tools: Vec<ToolName>,
+    pub client_tools: Vec<ClientProvidedToolSpec>,
+    pub replay_events: Vec<LogEvent>,
+    pub replay_manifest_block: Option<String>,
     pub llm_profile: Option<String>,
     pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
@@ -29,6 +33,9 @@ pub struct AskRequest {
     /// ツール有効時は必須。無効時は未送信でよい。
     pub client_cwd: Option<PathBuf>,
     pub tools: Vec<ToolName>,
+    pub client_tools: Vec<ClientProvidedToolSpec>,
+    pub replay_events: Vec<LogEvent>,
+    pub replay_manifest_block: Option<String>,
     pub llm_profile: Option<String>,
     pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
@@ -51,6 +58,9 @@ impl AskInput {
                 shell_log_tail: self.shell_log_tail,
                 client_cwd: self.client_cwd,
                 tools: self.tools,
+                client_tools: self.client_tools,
+                replay_events: self.replay_events,
+                replay_manifest_block: self.replay_manifest_block,
                 llm_profile: self.llm_profile,
                 ai_session_id: self.ai_session_id,
                 conversation_id: self.conversation_id,
@@ -68,6 +78,9 @@ impl AskInput {
             shell_log_tail: self.shell_log_tail,
             client_cwd: Some(client_cwd),
             tools: self.tools,
+            client_tools: self.client_tools,
+            replay_events: self.replay_events,
+            replay_manifest_block: self.replay_manifest_block,
             llm_profile: self.llm_profile,
             ai_session_id: self.ai_session_id,
             conversation_id: self.conversation_id,
@@ -87,6 +100,9 @@ mod tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
             llm_profile: None,
             ai_session_id: None,
             conversation_id: None,
@@ -101,6 +117,9 @@ mod tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![ToolName::read_file()],
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
             llm_profile: None,
             ai_session_id: None,
             conversation_id: None,
@@ -118,6 +137,9 @@ mod tests {
             shell_log_tail: None,
             client_cwd: Some("/tmp".into()),
             tools: vec![ToolName::read_file(), ToolName::shell_exec()],
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
             llm_profile: None,
             ai_session_id: None,
             conversation_id: None,

@@ -8,6 +8,7 @@ use crate::memory::{
     MemoryQueryDto, MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeStatus,
     MemorySubscribeStatus,
 };
+use crate::{ClientToolErrorKind, ClientToolResultStatus};
 
 /// NDJSON 1 行のレスポンス。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +45,13 @@ pub enum ClientResponse {
         tool_call_id: String,
         command: String,
         args: Vec<String>,
+    },
+    ClientToolCallRequested {
+        id: String,
+        turn_id: String,
+        call_id: String,
+        name: String,
+        arguments: serde_json::Value,
     },
     Cancelled {
         id: String,
@@ -211,10 +219,33 @@ pub enum ErrorCode {
     MaxToolRounds,
 }
 
+impl ClientToolResultStatus {
+    pub fn is_ok(self) -> bool {
+        matches!(self, Self::Ok)
+    }
+}
+
+impl ClientToolErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotInAishShell => "not_in_aish_shell",
+            Self::SessionDirMissing => "session_dir_missing",
+            Self::LogFileMissing => "log_file_missing",
+            Self::SpanNotFound => "span_not_found",
+            Self::SpanIncomplete => "span_incomplete",
+            Self::InvalidArguments => "invalid_arguments",
+            Self::OutputTooLarge => "output_too_large",
+            Self::ToolNotSupported => "tool_not_supported",
+            Self::ToolNotAllowed => "tool_not_allowed",
+            Self::ToolTimeout => "tool_timeout",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AgentTurnStatus, ToolName};
+    use crate::{AgentTurnStatus, ClientToolResult, ToolName};
 
     #[test]
     fn error_code_serde_roundtrip() {
@@ -397,6 +428,114 @@ mod tests {
         assert!(
             matches!(back, ClientResponse::Cancelled { id, turn_id, reason } if id == "c1" && turn_id == "t1" && reason.as_deref() == Some("user requested"))
         );
+    }
+
+    #[test]
+    fn client_tool_call_and_result_roundtrip() {
+        let request = ClientResponse::ClientToolCallRequested {
+            id: "call-1".into(),
+            turn_id: "turn-1".into(),
+            call_id: "tool-1".into(),
+            name: "aish.replay_show".into(),
+            arguments: serde_json::json!({
+                "index": 1,
+                "stream": "both",
+                "tail_bytes": 8192
+            }),
+        };
+        let request_json = serde_json::to_string(&request).expect("serialize request");
+        let back_request: ClientResponse =
+            serde_json::from_str(&request_json).expect("deserialize request");
+        assert!(matches!(
+            back_request,
+            ClientResponse::ClientToolCallRequested { .. }
+        ));
+
+        let result = ClientToolResult {
+            id: "call-1".into(),
+            turn_id: "turn-1".into(),
+            call_id: "tool-1".into(),
+            status: ClientToolResultStatus::Ok,
+            error_kind: None,
+            content: "[untrusted terminal output]\nhello\n".into(),
+        };
+        let result_json = serde_json::to_string(&result).expect("serialize result");
+        let back_result: ClientToolResult =
+            serde_json::from_str(&result_json).expect("deserialize result");
+        assert_eq!(back_result.status, ClientToolResultStatus::Ok);
+        assert!(back_result
+            .content
+            .starts_with("[untrusted terminal output]"));
+    }
+
+    #[test]
+    fn client_tool_call_requested_roundtrip() {
+        let resp = ClientResponse::ClientToolCallRequested {
+            id: "call-1".into(),
+            turn_id: "turn-1".into(),
+            call_id: "tool-1".into(),
+            name: "aish.replay_show".into(),
+            arguments: serde_json::json!({
+                "index": 1,
+                "stream": "both",
+                "tail_bytes": 8192
+            }),
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientResponse::ClientToolCallRequested {
+                id,
+                turn_id,
+                call_id,
+                name,
+                arguments,
+            } => {
+                assert_eq!(id, "call-1");
+                assert_eq!(turn_id, "turn-1");
+                assert_eq!(call_id, "tool-1");
+                assert_eq!(name, "aish.replay_show");
+                assert_eq!(arguments["stream"], "both");
+            }
+            _ => panic!("expected client_tool_call_requested"),
+        }
+    }
+
+    #[test]
+    fn client_tool_result_roundtrip() {
+        let result = ClientToolResult {
+            id: "call-1".into(),
+            turn_id: "turn-1".into(),
+            call_id: "tool-1".into(),
+            status: ClientToolResultStatus::Ok,
+            error_kind: None,
+            content: "[untrusted terminal output]\nhello\n".into(),
+        };
+        let json = serde_json::to_string(&result).expect("serialize");
+        let back: ClientToolResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.status, ClientToolResultStatus::Ok);
+        assert!(back.content.starts_with("[untrusted terminal output]"));
+    }
+
+    #[test]
+    fn client_tool_error_kinds_roundtrip() {
+        for kind in [
+            ClientToolErrorKind::NotInAishShell,
+            ClientToolErrorKind::SessionDirMissing,
+            ClientToolErrorKind::LogFileMissing,
+            ClientToolErrorKind::SpanNotFound,
+            ClientToolErrorKind::SpanIncomplete,
+            ClientToolErrorKind::InvalidArguments,
+            ClientToolErrorKind::OutputTooLarge,
+            ClientToolErrorKind::ToolNotSupported,
+            ClientToolErrorKind::ToolNotAllowed,
+            ClientToolErrorKind::ToolTimeout,
+        ] {
+            let json = serde_json::to_string(&kind).expect("serialize");
+            let back: ClientToolErrorKind = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, kind);
+            assert!(!kind.as_str().is_empty());
+        }
     }
 
     #[test]

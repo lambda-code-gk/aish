@@ -66,6 +66,9 @@ fn ai_ask_reaches_mock_aibe() {
             ai_session_id: None,
             conversation_id: None,
             request_context: ai::domain::RequestContextInput::default(),
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
         },
     )
     .expect("ask");

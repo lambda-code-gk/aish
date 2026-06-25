@@ -246,6 +246,7 @@ fn shutdown_cancels_active_turn_and_closes_memory_subscribe() {
                 content: "hello".into(),
             }],
             tools: vec![],
+            client_tools: vec![],
             context: Default::default(),
             llm_profile: None,
         };

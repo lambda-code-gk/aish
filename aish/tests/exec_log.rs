@@ -101,6 +101,26 @@ fn replay_show_rejects_shell_stderr_via_application() {
 }
 
 #[test]
+fn shared_replay_parser_matches_aish_replay_output() {
+    let events = vec![
+        LogEvent::command_start_span(
+            &CommandSpec {
+                program: "echo".into(),
+                args: vec!["hello".into()],
+            },
+            1,
+            "2026-01-01T00:00:00Z",
+            aish::domain::CommandKind::Exec,
+        ),
+        LogEvent::stdout_indexed("hello\n", 1),
+        LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+    ];
+    let shared = aish_replay::replay_show(&events, 1, false).expect("shared");
+    let app = replay_show(&events, 1, false).expect("app");
+    assert_eq!(shared, app);
+}
+
+#[test]
 fn replay_current_log_resolution_rejects_escape() {
     let root = tempfile::tempdir().expect("tempdir");
     let session = root.path().join("002f15d02b54");

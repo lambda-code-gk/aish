@@ -77,6 +77,9 @@ fn resolve_read_only_sends_safe_tools_to_aibe() {
             client_cwd: Some("/tmp".into()),
             ai_session_id: None,
             conversation_id: None,
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
             request_context: RequestContextInput::default(),
         },
     )
@@ -163,6 +166,9 @@ fn ask_with_filter_completes() {
             client_cwd: Some("/tmp".into()),
             ai_session_id: None,
             conversation_id: None,
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
             request_context: RequestContextInput::default(),
         },
     )
@@ -198,6 +204,9 @@ fn ask_passes_pre_resolved_request_context() {
             client_cwd: Some("/tmp".into()),
             ai_session_id: None,
             conversation_id: None,
+            client_tools: vec![],
+            replay_events: vec![],
+            replay_manifest_block: None,
             request_context: ctx,
         },
     )

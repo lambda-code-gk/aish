@@ -6,6 +6,7 @@ use crate::memory::{
     MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
     MemoryRecipeRunRequestBody, MemorySubscribeRequestBody,
 };
+use crate::ToolRiskClass;
 
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +29,8 @@ pub enum ClientRequest {
         #[serde(default)]
         tools: Vec<String>,
         #[serde(default)]
+        client_tools: Vec<ClientProvidedToolSpec>,
+        #[serde(default)]
         context: RequestContext,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         llm_profile: Option<String>,
@@ -45,6 +48,8 @@ pub enum ClientRequest {
         approved: bool,
         approval_origin: ShellExecApprovalOrigin,
     },
+    /// `client_tool` 実行結果（同一 socket 接続上）。
+    ClientToolResult(ClientToolResult),
     /// contextual memory の書き込み。
     MemoryApply(MemoryApplyRequestBody),
     /// contextual memory の読み取り。
@@ -97,6 +102,48 @@ pub struct RequestContext {
     /// クライアントが解決済みの contextual memory space。注入時の解決順 1 位（0035）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_space_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClientProvidedToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub risk_class: ToolRiskClass,
+    pub max_output_bytes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientToolResultStatus {
+    Ok,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientToolErrorKind {
+    NotInAishShell,
+    SessionDirMissing,
+    LogFileMissing,
+    SpanNotFound,
+    SpanIncomplete,
+    InvalidArguments,
+    OutputTooLarge,
+    ToolNotSupported,
+    ToolNotAllowed,
+    ToolTimeout,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClientToolResult {
+    pub id: String,
+    pub turn_id: String,
+    pub call_id: String,
+    pub status: ClientToolResultStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<ClientToolErrorKind>,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -364,6 +411,64 @@ mod tests {
                 assert_eq!(cli_overrides.tools.as_ref().map(Vec::len), Some(1));
             }
             _ => panic!("expected route_turn"),
+        }
+    }
+
+    #[test]
+    fn agent_turn_client_tools_roundtrip() {
+        let req = ClientRequest::AgentTurn {
+            id: "t1".into(),
+            messages: vec![ProtocolMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            tools: vec![],
+            client_tools: vec![ClientProvidedToolSpec {
+                name: "aish.replay_show".into(),
+                description: "show replay".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "index": { "type": "integer" }
+                    },
+                    "required": ["index"]
+                }),
+                risk_class: ToolRiskClass::ReadOnly,
+                max_output_bytes: 8192,
+            }],
+            context: RequestContext {
+                cwd: Some("/tmp/proj".into()),
+                ..Default::default()
+            },
+            llm_profile: Some("fast".into()),
+        };
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: ClientRequest = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            ClientRequest::AgentTurn {
+                client_tools,
+                llm_profile,
+                ..
+            } => {
+                assert_eq!(client_tools.len(), 1);
+                assert_eq!(client_tools[0].name, "aish.replay_show");
+                assert_eq!(llm_profile.as_deref(), Some("fast"));
+            }
+            _ => panic!("expected agent_turn"),
+        }
+    }
+
+    #[test]
+    fn agent_turn_client_tools_default_to_empty() {
+        let req: ClientRequest = serde_json::from_str(
+            r#"{"type":"agent_turn","id":"1","messages":[{"role":"user","content":"hi"}]}"#,
+        )
+        .expect("parse");
+        match req {
+            ClientRequest::AgentTurn { client_tools, .. } => {
+                assert!(client_tools.is_empty());
+            }
+            _ => panic!("expected agent_turn"),
         }
     }
 

@@ -10,6 +10,7 @@ mod memory_recipe_approval_ui;
 mod output_filter;
 pub mod project_key;
 mod prompt_comment_filter;
+mod replay_source;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
 mod smart_preprocessor_model;
@@ -39,6 +40,7 @@ pub use memory_recipe_approval_ui::{
     stdin_ready_for_memory_recipe_apply,
 };
 pub use output_filter::{apply_output_filter, format_filter_exit_status, FilterRunOutcome};
+pub use replay_source::{load_replay_events, ReplaySourceError};
 pub use shell_exec_approval_ui::{
     approval_prompt_stderr_lines, emit_auto_approved_shell_exec,
     escape_for_shell_exec_approval_display, format_auto_approved_shell_exec_line,

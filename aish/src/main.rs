@@ -68,7 +68,7 @@ fn run_replay(command: ReplayCommand) -> anyhow::Result<u8> {
         ReplayCommand::List { log, index, format } => {
             let path = resolve_replay_log_path(log.as_deref()).map_err(replay_resolve_to_anyhow)?;
             let events = read_log_events(&path).map_err(replay_read_to_anyhow)?;
-            let out = replay_list(&events, index, format.into()).map_err(replay_to_anyhow)?;
+            let out = replay_list(&events, index, format).map_err(replay_to_anyhow)?;
             io::stdout()
                 .write_all(out.as_bytes())
                 .map_err(|e| anyhow::anyhow!(e))?;

@@ -8,10 +8,13 @@ use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, Capability, ChatMessage, ToolName, SHELL_EXEC};
 use crate::ports::outbound::{
-    CapabilityPolicy, LlmCallTracer, LlmProvider, ShellExecApprovalGate, TerminationCapability,
-    ToolExecutionContext, ToolRoundTerminator, TurnCancellation, TurnEventSink, TurnHook,
+    CapabilityPolicy, ClientToolGate, LlmCallTracer, LlmProvider, ShellExecApprovalGate,
+    TerminationCapability, ToolExecutionContext, ToolRoundTerminator, TurnCancellation,
+    TurnEventSink, TurnHook,
 };
-use aibe_protocol::{AgentTurnStatus, ClientResponse, ErrorCode, ProgressPhase};
+use aibe_protocol::{
+    AgentTurnStatus, ClientProvidedToolSpec, ClientResponse, ErrorCode, ProgressPhase,
+};
 
 use crate::application::protocol_convert::protocol_message_out_from_chat;
 
@@ -66,6 +69,7 @@ impl AgentTurnService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         id: String,
@@ -74,8 +78,41 @@ impl AgentTurnService {
         context: AgentTurnContext,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
     ) -> ClientResponse {
-        self.run_with_events(id, messages, tools, context, approval_gate, None, None)
-            .await
+        self.run_with_client_tools(
+            id,
+            messages,
+            tools,
+            Vec::new(),
+            context,
+            approval_gate,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_with_client_tools(
+        &self,
+        id: String,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolName>,
+        client_tools: Vec<ClientProvidedToolSpec>,
+        context: AgentTurnContext,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+    ) -> ClientResponse {
+        self.run_with_client_tools_and_events(
+            id,
+            messages,
+            tools,
+            client_tools,
+            context,
+            approval_gate,
+            client_tool_gate,
+            None,
+            None,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -86,6 +123,33 @@ impl AgentTurnService {
         tools: Vec<ToolName>,
         context: AgentTurnContext,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
+    ) -> ClientResponse {
+        self.run_with_client_tools_and_events(
+            id,
+            messages,
+            tools,
+            Vec::new(),
+            context,
+            approval_gate,
+            None,
+            events,
+            cancellation,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_with_client_tools_and_events(
+        &self,
+        id: String,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolName>,
+        client_tools: Vec<ClientProvidedToolSpec>,
+        context: AgentTurnContext,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
@@ -121,7 +185,7 @@ impl AgentTurnService {
             .prepare_turn_messages(&context, prepped.clone())
             .unwrap_or(prepped);
 
-        if tools.is_empty() {
+        if tools.is_empty() && client_tools.is_empty() {
             return self
                 .finish_text_only(
                     id,
@@ -136,20 +200,36 @@ impl AgentTurnService {
             return ClientResponse::error(id, ErrorCode::InvalidRequest, e.to_string());
         }
 
-        let mut tool_ctx = ToolExecutionContext::new(
-            context
-                .client_cwd
-                .clone()
-                .expect("validate_tools_enabled ensures cwd"),
-        )
+        let Some(client_cwd) = context.client_cwd.clone() else {
+            let message = if tools.is_empty() {
+                "cwd is required when client tools are advertised"
+            } else {
+                "cwd is required when tools are enabled"
+            };
+            return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
+        };
+
+        let mut tool_ctx = ToolExecutionContext::new(client_cwd)
         .with_turn_id(id.clone())
         .with_capability_policy(Arc::clone(&self.capability_policy));
         if let Some(gate) = approval_gate {
             tool_ctx = tool_ctx.with_approval_gate(gate);
         }
+        if let Some(gate) = client_tool_gate {
+            tool_ctx = tool_ctx.with_client_tool_gate(gate);
+        }
+        tool_ctx = tool_ctx.with_client_tools(client_tools.clone());
 
-        self.run_with_tools(id, conversation, tools, tool_ctx, events, cancellation)
-            .await
+        self.run_with_tools(
+            id,
+            conversation,
+            tools,
+            client_tools,
+            tool_ctx,
+            events,
+            cancellation,
+        )
+        .await
     }
 
     async fn finish_text_only(
@@ -285,11 +365,13 @@ impl AgentTurnService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_with_tools(
         &self,
         id: String,
         mut conversation: Vec<ChatMessage>,
         allowed_tools: Vec<ToolName>,
+        client_tools: Vec<ClientProvidedToolSpec>,
         tool_ctx: ToolExecutionContext,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
@@ -326,6 +408,7 @@ impl AgentTurnService {
                 .run_one_round(
                     &conversation,
                     &allowed_tools,
+                    &client_tools,
                     &tool_ctx,
                     &executed,
                     events.clone(),

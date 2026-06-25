@@ -12,13 +12,13 @@ use crate::domain::{
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    CapabilityPolicy, ConversationStore, LlmCallTracer, ProfileRegistry, RouterConfig,
-    RpcExtension, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig, TurnCancellation,
-    TurnEventSink, TurnHook,
+    CapabilityPolicy, ClientToolGate, ConversationStore, LlmCallTracer, ProfileRegistry,
+    RouterConfig, RpcExtension, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig,
+    TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
-    ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody, ProtocolMessage,
-    RequestContext,
+    ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody,
+    ProtocolMessage, RequestContext, ToolRiskClass,
 };
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -141,7 +141,17 @@ impl RequestService {
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
     ) -> ClientResponse {
-        self.handle_with_events(request, approval_gate, None, None)
+        self.handle_with_client_tool_gate(request, approval_gate, None)
+            .await
+    }
+
+    pub async fn handle_with_client_tool_gate(
+        &self,
+        request: ClientRequest,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+    ) -> ClientResponse {
+        self.handle_with_events(request, approval_gate, client_tool_gate, None, None)
             .await
     }
 
@@ -156,6 +166,7 @@ impl RequestService {
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
@@ -205,6 +216,11 @@ impl RequestService {
                 ErrorCode::InvalidRequest,
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
+            ClientRequest::ClientToolResult(_) => ClientResponse::error(
+                String::new(),
+                ErrorCode::InvalidRequest,
+                "client_tool_result must be sent during an active agent_turn",
+            ),
             ClientRequest::MemoryApply(body) => self.rpc_extension.memory_apply(body),
             ClientRequest::MemoryQuery(body) => self.rpc_extension.memory_query(body),
             ClientRequest::MemoryKindList(body) => self.rpc_extension.memory_kind_list(body),
@@ -220,6 +236,7 @@ impl RequestService {
                 id,
                 messages,
                 tools,
+                client_tools,
                 context,
                 llm_profile,
             } => {
@@ -255,6 +272,12 @@ impl RequestService {
                     Ok(names) => names,
                     Err(e) => {
                         return ClientResponse::error(id, ErrorCode::ToolNotAllowed, e.to_string());
+                    }
+                };
+                let client_tools = match validate_client_tools(client_tools) {
+                    Ok(tools) => tools,
+                    Err(message) => {
+                        return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
                     }
                 };
 
@@ -303,12 +326,14 @@ impl RequestService {
                 }
 
                 let response = agent_turn
-                    .run_with_events(
+                    .run_with_client_tools_and_events(
                         id,
                         run_messages.clone(),
                         tools,
+                        client_tools.clone(),
                         ctx,
                         approval_gate,
+                        client_tool_gate,
                         events,
                         cancellation.clone(),
                     )
@@ -394,16 +419,53 @@ fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientC
     }
 }
 
+fn validate_client_tools(
+    client_tools: Vec<ClientProvidedToolSpec>,
+) -> Result<Vec<ClientProvidedToolSpec>, String> {
+    let mut out = Vec::new();
+    for spec in client_tools {
+        if !spec.name.starts_with("aish.") {
+            return Err(format!(
+                "client tool must use aish. namespace: {}",
+                spec.name
+            ));
+        }
+        if spec.risk_class != ToolRiskClass::ReadOnly {
+            return Err(format!("client tool must be read_only: {}", spec.name));
+        }
+        if spec.name != "aish.replay_show" {
+            return Err(format!("unsupported client tool: {}", spec.name));
+        }
+        if spec.max_output_bytes == 0 {
+            return Err(format!(
+                "client tool max_output_bytes must be > 0: {}",
+                spec.name
+            ));
+        }
+        out.push(spec);
+    }
+    Ok(out)
+}
+
 #[async_trait]
 impl ClientRequestHandler for RequestService {
     async fn handle_with_events(
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
-        RequestService::handle_with_events(self, request, approval_gate, events, cancellation).await
+        RequestService::handle_with_events(
+            self,
+            request,
+            approval_gate,
+            client_tool_gate,
+            events,
+            cancellation,
+        )
+        .await
     }
 
     async fn handle_memory_subscribe(
@@ -414,5 +476,131 @@ impl ClientRequestHandler for RequestService {
         shutdown: Option<Arc<crate::ports::inbound::ShutdownCoordinator>>,
     ) -> anyhow::Result<()> {
         RequestService::handle_memory_subscribe(self, body, writer, lines, shutdown).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
+    use crate::adapters::outbound::tools::build_registry;
+    use crate::adapters::outbound::{
+        ConversationStore, EmptyContextualMemoryStore, FilesystemMemorySpaceResolver,
+        InProcessMemorySubscriptionBroker, MockLlm, StaticCapabilityPolicy,
+    };
+    use crate::application::contextual_pack_arc;
+    use crate::domain::FeatureRegistry;
+    use crate::ports::outbound::{ProfileRegistry, TerminationCapability, ToolsConfig};
+    use aibe_protocol::{
+        ClientProvidedToolSpec, ClientRequest, ClientResponse, ProtocolMessage, RequestContext,
+        ToolRiskClass,
+    };
+    use std::sync::Arc;
+
+    fn service() -> RequestService {
+        let tools_config = ToolsConfig::default();
+        let profile_registry = ProfileRegistry::single(
+            "default",
+            Arc::new(MockLlm::new()),
+            TerminationCapability::summary_prompt_only(),
+        );
+        let tool_registry = build_registry(&tools_config, &[]);
+        let (rpc_extension, turn_hook) = contextual_pack_arc(
+            Arc::new(EmptyContextualMemoryStore),
+            Arc::new(FilesystemMemorySpaceResolver),
+            crate::adapters::outbound::shared_builtin_loader(),
+            crate::adapters::outbound::shared_baseline_recipe_loader(),
+            Arc::new(InProcessMemorySubscriptionBroker::new()),
+            StaticCapabilityPolicy::local_full(),
+            profile_registry.clone(),
+            Arc::new(crate::ports::outbound::NoopLlmCallTracer),
+        );
+        RequestService::new(
+            profile_registry,
+            tool_registry,
+            tools_config,
+            Arc::new(ToolRoundTerminatorOrchestrator::new(
+                ToolsConfig::default().termination_strategy,
+            )),
+            "default".to_string(),
+            Arc::new(ConversationStore::new(
+                std::env::temp_dir().join("aibe-request-service-tests"),
+            )),
+            StaticCapabilityPolicy::local_full(),
+            rpc_extension,
+            turn_hook,
+            FeatureRegistry::empty(),
+        )
+    }
+
+    #[test]
+    fn validate_client_tools_accepts_read_only_aish_namespace() {
+        let tools = validate_client_tools(vec![ClientProvidedToolSpec {
+            name: "aish.replay_show".into(),
+            description: "show".into(),
+            parameters: serde_json::json!({"type":"object"}),
+            risk_class: ToolRiskClass::ReadOnly,
+            max_output_bytes: 8192,
+        }])
+        .expect("valid");
+        assert_eq!(tools.len(), 1);
+    }
+
+    #[test]
+    fn validate_client_tools_rejects_non_namespace_and_dangerous_names() {
+        for spec in [
+            ClientProvidedToolSpec {
+                name: "replay_show".into(),
+                description: "show".into(),
+                parameters: serde_json::json!({}),
+                risk_class: ToolRiskClass::ReadOnly,
+                max_output_bytes: 8192,
+            },
+            ClientProvidedToolSpec {
+                name: "aish.shell_exec".into(),
+                description: "shell".into(),
+                parameters: serde_json::json!({}),
+                risk_class: ToolRiskClass::ReadOnly,
+                max_output_bytes: 8192,
+            },
+            ClientProvidedToolSpec {
+                name: "aish.replay_show".into(),
+                description: "show".into(),
+                parameters: serde_json::json!({}),
+                risk_class: ToolRiskClass::WriteLike,
+                max_output_bytes: 8192,
+            },
+        ] {
+            assert!(validate_client_tools(vec![spec]).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn aibe_does_not_read_aish_session_dir_for_client_tools() {
+        let req = ClientRequest::AgentTurn {
+            id: "turn-1".into(),
+            messages: vec![ProtocolMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            tools: vec![],
+            client_tools: vec![ClientProvidedToolSpec {
+                name: "aish.replay_show".into(),
+                description: "show".into(),
+                parameters: serde_json::json!({"type":"object"}),
+                risk_class: ToolRiskClass::ReadOnly,
+                max_output_bytes: 8192,
+            }],
+            context: RequestContext {
+                cwd: Some("/tmp".into()),
+                ..Default::default()
+            },
+            llm_profile: None,
+        };
+        match service().handle(req, None).await {
+            ClientResponse::AgentTurnResult { .. } => {}
+            other => panic!("expected agent turn result: {other:?}"),
+        }
     }
 }

@@ -1,6 +1,8 @@
 //! 質問 → aibe → 表示ユースケース。
 
+use aibe_protocol::ClientProvidedToolSpec;
 use aibe_protocol::{ClientResponse, SHELL_LOG_TAIL_MAX_BYTES};
+use aish_replay::LogEvent;
 use std::path::PathBuf;
 
 use crate::domain::{AskInput, AskRequestError, RequestContextInput, ResolvedTools};
@@ -25,6 +27,9 @@ pub struct AskRunOptions {
     pub client_cwd: Option<PathBuf>,
     pub ai_session_id: Option<String>,
     pub conversation_id: Option<String>,
+    pub client_tools: Vec<ClientProvidedToolSpec>,
+    pub replay_events: Vec<LogEvent>,
+    pub replay_manifest_block: Option<String>,
     pub request_context: RequestContextInput,
 }
 
@@ -77,6 +82,9 @@ where
             shell_log_tail,
             client_cwd: options.client_cwd,
             tools: options.resolved_tools.allowlist.into_names(),
+            client_tools: options.client_tools,
+            replay_events: options.replay_events,
+            replay_manifest_block: options.replay_manifest_block,
             llm_profile: options.llm_profile,
             ai_session_id: options.ai_session_id,
             conversation_id: options.conversation_id,
@@ -113,5 +121,84 @@ where
                 Err(e.into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{AskRequest, ResolvedTools, ToolAllowlist, ToolsStartupLine};
+    use crate::ports::outbound::{AgentClient, LogReadError, Presenter, ShellLogSource};
+
+    struct MockClient;
+
+    impl AgentClient for MockClient {
+        fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
+            assert!(request.replay_manifest_block.is_none());
+            Ok(ClientResponse::AgentTurnResult {
+                id: "turn-1".into(),
+                status: aibe_protocol::AgentTurnStatus::Ok,
+                assistant_message: aibe_protocol::ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: "ok".into(),
+                },
+                tool_calls: vec![],
+            })
+        }
+    }
+
+    struct MockPresenter;
+
+    impl Presenter for MockPresenter {
+        fn show_tools_startup(&self, _line: &ToolsStartupLine) {}
+        fn show_external_commands(&self, _lines: &[String]) {}
+        fn show_progress(&self, _phase: &str, _message: Option<&str>) {}
+        fn show_stream_chunk(&self, _chunk: &str) {}
+        fn show_response(&self, _response: &ClientResponse, _verbose_tools: bool, _progress: bool) {
+        }
+        fn show_error(&self, _message: &str) {}
+    }
+
+    struct MockLog;
+
+    impl ShellLogSource for MockLog {
+        fn tail_bytes(&self, _max_bytes: usize) -> Result<String, LogReadError> {
+            Ok("tail".into())
+        }
+    }
+
+    #[test]
+    fn shell_log_tail_fallback_keeps_turn_running_without_manifest() {
+        let ask = Ask::new(&MockClient, &MockPresenter, Some(&MockLog));
+        let outcome = ask
+            .run(
+                "hello".into(),
+                AskRunOptions {
+                    resolved_tools: ResolvedTools {
+                        allowlist: ToolAllowlist::default(),
+                        startup: ToolsStartupLine {
+                            enabled_list: "none".into(),
+                            source_hint: None,
+                            warn_shell: false,
+                        },
+                    },
+                    verbose_tools: false,
+                    llm_profile: None,
+                    external_command_names: vec![],
+                    shell_log_tail_bytes: 4,
+                    client_cwd: None,
+                    ai_session_id: None,
+                    conversation_id: None,
+                    client_tools: vec![],
+                    replay_events: vec![],
+                    replay_manifest_block: None,
+                    request_context: RequestContextInput::default(),
+                },
+            )
+            .expect("ask");
+        assert!(matches!(
+            outcome.response,
+            ClientResponse::AgentTurnResult { .. }
+        ));
     }
 }

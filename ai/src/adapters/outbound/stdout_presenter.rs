@@ -315,6 +315,10 @@ pub fn render_response(
             stdout: None,
             stderr: vec!["ai: internal error: unexpected shell_exec approval prompt".into()],
         },
+        ClientResponse::ClientToolCallRequested { .. } => PresenterOutput {
+            stdout: None,
+            stderr: Vec::new(),
+        },
         ClientResponse::Cancelled { reason, .. } => PresenterOutput {
             stdout: None,
             stderr: vec![match reason {
@@ -506,6 +510,20 @@ impl ResponseView {
             },
             ClientResponse::ShellExecApprovalPrompt { id, .. } => Self {
                 response_type: "shell_exec_approval_prompt".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::ClientToolCallRequested { id, .. } => Self {
+                response_type: "client_tool_call_requested".to_string(),
                 id: id.clone(),
                 status: None,
                 assistant_message: None,

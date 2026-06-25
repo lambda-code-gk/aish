@@ -390,7 +390,7 @@ impl LlmProvider for GeminiLlm {
         let declarations: Vec<FunctionDeclaration> = tools
             .iter()
             .map(|t| FunctionDeclaration {
-                name: t.name.as_str().to_string(),
+                name: t.name.clone(),
                 description: t.description.clone(),
                 parameters: t.parameters.clone(),
             })

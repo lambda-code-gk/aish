@@ -5,7 +5,10 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
-use aibe_protocol::{ClientRequest, ClientResponse, ProgressPhase, ShellExecApprovalOrigin};
+use aibe_protocol::{
+    ClientRequest, ClientResponse, ClientToolResult, ClientToolResultStatus, ProgressPhase,
+    ShellExecApprovalOrigin,
+};
 
 use crate::unix_connect::connect_unix_stream;
 
@@ -26,6 +29,15 @@ pub struct ShellExecApprovalPrompt {
 pub struct ShellExecApprovalDecision {
     pub approved: bool,
     pub approval_origin: ShellExecApprovalOrigin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientToolCallRequest {
+    pub id: String,
+    pub turn_id: String,
+    pub call_id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,8 +139,26 @@ fn read_response_from_reader<R: BufRead>(reader: &mut R) -> Result<ClientRespons
 pub fn agent_turn_with_events_on_stream(
     stream: UnixStream,
     request: ClientRequest,
+    on_progress: impl FnMut(AgentTurnProgressEvent),
+    on_stream: impl FnMut(String),
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+) -> Result<ClientResponse, ClientError> {
+    agent_turn_with_client_tools_on_stream(
+        stream,
+        request,
+        on_progress,
+        on_stream,
+        |_| None,
+        on_approval,
+    )
+}
+
+pub fn agent_turn_with_client_tools_on_stream(
+    stream: UnixStream,
+    request: ClientRequest,
     mut on_progress: impl FnMut(AgentTurnProgressEvent),
     mut on_stream: impl FnMut(String),
+    mut on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<ClientToolResult>,
     mut on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
 ) -> Result<ClientResponse, ClientError> {
     let mut writer = stream;
@@ -169,6 +199,35 @@ pub fn agent_turn_with_events_on_stream(
                 )
                 .map_err(ClientError::Connect)?;
             }
+            ClientResponse::ClientToolCallRequested {
+                id,
+                turn_id,
+                call_id,
+                name,
+                arguments,
+            } => {
+                let Some(result) = on_client_tool(ClientToolCallRequest {
+                    id: id.clone(),
+                    turn_id: turn_id.clone(),
+                    call_id: call_id.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                }) else {
+                    let result = ClientToolResult {
+                        id,
+                        turn_id,
+                        call_id,
+                        status: ClientToolResultStatus::Error,
+                        error_kind: None,
+                        content: "client tool unavailable".into(),
+                    };
+                    send_request(&mut writer, &ClientRequest::ClientToolResult(result))
+                        .map_err(ClientError::Connect)?;
+                    continue;
+                };
+                send_request(&mut writer, &ClientRequest::ClientToolResult(result))
+                    .map_err(ClientError::Connect)?;
+            }
             cancelled @ ClientResponse::Cancelled { .. } => return Ok(cancelled),
             final_resp => return Ok(final_resp),
         }
@@ -194,6 +253,25 @@ pub fn agent_turn_on_stream(
     agent_turn_with_events_on_stream(stream, request, |_| {}, |_| {}, on_approval)
 }
 
+pub fn agent_turn_with_client_tools(
+    socket_path: &Path,
+    request: ClientRequest,
+    on_progress: impl FnMut(AgentTurnProgressEvent),
+    on_stream: impl FnMut(String),
+    on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<ClientToolResult>,
+    on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+) -> Result<ClientResponse, ClientError> {
+    let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
+    agent_turn_with_client_tools_on_stream(
+        stream,
+        request,
+        on_progress,
+        on_stream,
+        on_client_tool,
+        on_approval,
+    )
+}
+
 /// `agent_turn` を送り、承認 prompt があれば `on_approval` で応答する。
 pub fn agent_turn(
     socket_path: &std::path::Path,
@@ -207,6 +285,8 @@ pub fn agent_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::thread;
 
     #[test]
     fn send_request_serializes_ping() {
@@ -217,5 +297,117 @@ mod tests {
             .read_line(&mut line)
             .expect("read");
         assert!(line.contains(r#""type":"ping""#));
+    }
+
+    #[test]
+    fn client_tool_roundtrip_sends_request_and_result() {
+        let (client, server) = UnixStream::pair().expect("pair");
+        let handle = thread::spawn(move || {
+            let mut writer = server.try_clone().expect("clone");
+            let mut reader = BufReader::new(server);
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read request");
+            let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse request");
+            match req {
+                ClientRequest::AgentTurn { client_tools, .. } => {
+                    assert_eq!(client_tools.len(), 1);
+                }
+                other => panic!("unexpected request: {other:?}"),
+            }
+            let prompt = ClientResponse::ClientToolCallRequested {
+                id: "prompt-1".into(),
+                turn_id: "turn-1".into(),
+                call_id: "call-1".into(),
+                name: "aish.replay_show".into(),
+                arguments: serde_json::json!({"index": 1}),
+            };
+            writeln!(
+                writer,
+                "{}",
+                serde_json::to_string(&prompt).expect("serialize prompt")
+            )
+            .expect("write prompt");
+            writer.flush().expect("flush prompt");
+
+            line.clear();
+            reader
+                .read_line(&mut line)
+                .expect("read client tool result");
+            let result_req: ClientRequest =
+                serde_json::from_str(line.trim()).expect("parse result");
+            match result_req {
+                ClientRequest::ClientToolResult(result) => {
+                    assert_eq!(result.call_id, "call-1");
+                    assert_eq!(result.status, ClientToolResultStatus::Ok);
+                }
+                other => panic!("unexpected result request: {other:?}"),
+            }
+
+            let final_resp = ClientResponse::AgentTurnResult {
+                id: "turn-1".into(),
+                status: aibe_protocol::AgentTurnStatus::Ok,
+                assistant_message: aibe_protocol::ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: "done".into(),
+                },
+                tool_calls: vec![],
+            };
+            writeln!(
+                writer,
+                "{}",
+                serde_json::to_string(&final_resp).expect("serialize final")
+            )
+            .expect("write final");
+            writer.flush().expect("flush final");
+        });
+
+        let request = ClientRequest::AgentTurn {
+            id: "turn-1".into(),
+            messages: vec![aibe_protocol::ProtocolMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            tools: vec![],
+            client_tools: vec![aibe_protocol::ClientProvidedToolSpec {
+                name: "aish.replay_show".into(),
+                description: "show".into(),
+                parameters: serde_json::json!({"type":"object"}),
+                risk_class: aibe_protocol::ToolRiskClass::ReadOnly,
+                max_output_bytes: 8192,
+            }],
+            context: aibe_protocol::RequestContext {
+                cwd: Some("/tmp".into()),
+                ..Default::default()
+            },
+            llm_profile: None,
+        };
+        let result = agent_turn_with_client_tools_on_stream(
+            client,
+            request,
+            |_| {},
+            |_| {},
+            |call| {
+                assert_eq!(call.name, "aish.replay_show");
+                Some(ClientToolResult {
+                    id: call.id,
+                    turn_id: call.turn_id,
+                    call_id: call.call_id,
+                    status: ClientToolResultStatus::Ok,
+                    error_kind: None,
+                    content: "[untrusted terminal output]\nindex: 1\n".into(),
+                })
+            },
+            |_| ShellExecApprovalDecision {
+                approved: true,
+                approval_origin: ShellExecApprovalOrigin::UiYes,
+            },
+        )
+        .expect("agent turn");
+
+        handle.join().expect("server thread");
+        match result {
+            ClientResponse::AgentTurnResult { .. } => {}
+            other => panic!("expected prompt response, got {other:?}"),
+        }
     }
 }

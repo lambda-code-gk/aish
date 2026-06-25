@@ -69,6 +69,7 @@ async fn unknown_message_role_rejected_at_protocol_entry() {
                     content: "hi".into(),
                 }],
                 tools: vec![],
+                client_tools: vec![],
                 context: RequestContext::default(),
                 llm_profile: None,
             },
@@ -92,6 +93,7 @@ async fn unknown_tool_rejected_at_protocol_entry() {
                 id: "1".into(),
                 messages: user_hi(),
                 tools: vec!["nope".into()],
+                client_tools: vec![],
                 context: RequestContext {
                     cwd: Some("/tmp".into()),
                     ..Default::default()
@@ -115,6 +117,7 @@ async fn missing_cwd_takes_priority_over_unknown_tool() {
                 id: "1".into(),
                 messages: user_hi(),
                 tools: vec!["nope".into(), "read_file".into()],
+                client_tools: vec![],
                 context: RequestContext::default(),
                 llm_profile: None,
             },
@@ -135,6 +138,7 @@ async fn text_only_without_cwd_is_ok() {
                 id: "1".into(),
                 messages: user_hi(),
                 tools: vec![],
+                client_tools: vec![],
                 context: RequestContext::default(),
                 llm_profile: None,
             },
@@ -155,6 +159,7 @@ async fn empty_shell_log_tail_does_not_inject_prefix() {
                 id: "1".into(),
                 messages: user_hi(),
                 tools: vec![],
+                client_tools: vec![],
                 context: RequestContext {
                     shell_log_tail: Some("".into()),
                     ..Default::default()

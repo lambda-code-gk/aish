@@ -24,6 +24,7 @@ pub struct AiConfig {
     pub ask_filter: Option<String>,
     pub ask_console_hints: Option<bool>,
     pub ask_progress: Option<bool>,
+    pub shell_log_mode: Option<String>,
     pub history_dir: PathBuf,
     pub history_max_entries: usize,
     pub log_tail_bytes: Option<usize>,
@@ -73,6 +74,7 @@ impl AiConfig {
             ask_filter: None,
             ask_console_hints: None,
             ask_progress: None,
+            shell_log_mode: None,
             history_dir: Self::default_history_dir(),
             history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
             log_tail_bytes: None,
@@ -106,6 +108,7 @@ impl AiConfig {
                         cfg.ask_console_hints = ask.console_hints;
                         cfg.ask_progress = ask.progress;
                     }
+                    cfg.shell_log_mode = file.shell_log_mode.filter(|s| !s.is_empty());
                     if let Some(history_dir) = file.history_dir {
                         cfg.history_dir = expand_home(history_dir);
                     }
@@ -218,6 +221,7 @@ struct FileConfig {
     context: Option<ContextSection>,
     memory: Option<MemorySection>,
     ask: Option<AskSection>,
+    shell_log_mode: Option<String>,
     history_dir: Option<String>,
     history_max_entries: Option<usize>,
     log_tail_bytes: Option<usize>,

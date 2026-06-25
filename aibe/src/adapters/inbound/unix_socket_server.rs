@@ -12,10 +12,13 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time::{sleep_until, Instant};
 
+use crate::adapters::inbound::client_tool_gate::ConnectionClientToolGate;
 use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::inbound::ShutdownCoordinator;
-use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
+use crate::ports::outbound::{
+    ClientToolGate, ShellExecApprovalGate, TurnCancellation, TurnEventSink,
+};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
 
 pub const DEFAULT_SHUTDOWN_DRAIN: Duration = Duration::from_secs(30);
@@ -138,6 +141,7 @@ async fn serve_connection(
                 }
                 let mut cancellation: Option<Arc<TurnCancellation>> = None;
                 let mut gate: Option<Arc<dyn ShellExecApprovalGate>> = None;
+                let mut client_tool_gate: Option<Arc<dyn ClientToolGate>> = None;
                 let mut events: Option<Arc<dyn TurnEventSink>> = None;
                 if let ClientRequest::AgentTurn { id, .. } = &req {
                     let cancel = Arc::new(TurnCancellation::new());
@@ -152,12 +156,21 @@ async fn serve_connection(
                             Some(Arc::clone(&sink)),
                             Some(Arc::clone(&cancel)),
                         ));
+                    let tool_gate: Arc<dyn ClientToolGate> =
+                        Arc::new(ConnectionClientToolGate::new(
+                            id.clone(),
+                            Arc::clone(&writer),
+                            Arc::clone(&lines),
+                            Some(Arc::clone(&sink)),
+                            Some(Arc::clone(&cancel)),
+                        ));
                     cancellation = Some(cancel);
                     gate = Some(approval_gate);
+                    client_tool_gate = Some(tool_gate);
                     events = Some(sink);
                 }
                 handler
-                    .handle_with_events(req, gate, events, cancellation)
+                    .handle_with_events(req, gate, client_tool_gate, events, cancellation)
                     .await
             }
             Err(e) => ClientResponse::error(

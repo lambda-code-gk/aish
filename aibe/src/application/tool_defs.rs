@@ -2,10 +2,12 @@
 
 use serde_json::json;
 
+use aibe_protocol::{ClientProvidedToolSpec, SHELL_EXEC};
+
 use crate::domain::ToolName;
 use crate::ports::outbound::ToolDefinition;
 
-pub use crate::domain::{is_known_tool, KNOWN_TOOLS, READ_FILE, SHELL_EXEC};
+pub use crate::domain::{is_known_tool, KNOWN_TOOLS, READ_FILE};
 pub use crate::domain::{GIT_DIFF, GIT_STATUS, GREP, LIST_DIR};
 
 pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
@@ -23,9 +25,20 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
         .collect()
 }
 
+pub fn client_tool_definitions(client_tools: &[ClientProvidedToolSpec]) -> Vec<ToolDefinition> {
+    client_tools
+        .iter()
+        .map(|spec| ToolDefinition {
+            name: spec.name.clone(),
+            description: spec.description.clone(),
+            parameters: spec.parameters.clone(),
+        })
+        .collect()
+}
+
 fn shell_exec_definition() -> ToolDefinition {
     ToolDefinition {
-        name: ToolName::shell_exec(),
+        name: SHELL_EXEC.to_string(),
         description: "Run a subprocess command. Only commands listed in server config are allowed."
             .to_string(),
         parameters: json!({
@@ -45,7 +58,7 @@ fn shell_exec_definition() -> ToolDefinition {
 
 fn read_file_definition() -> ToolDefinition {
     ToolDefinition {
-        name: ToolName::read_file(),
+        name: READ_FILE.to_string(),
         description: "Read a text file under configured allowed roots.".to_string(),
         parameters: json!({
             "type": "object",
@@ -61,7 +74,7 @@ fn read_file_definition() -> ToolDefinition {
 
 fn list_dir_definition() -> ToolDefinition {
     ToolDefinition {
-        name: ToolName::list_dir(),
+        name: LIST_DIR.to_string(),
         description: "List directory contents without running a shell command.".to_string(),
         parameters: json!({
             "type": "object",
@@ -81,7 +94,7 @@ fn list_dir_definition() -> ToolDefinition {
 
 fn grep_definition() -> ToolDefinition {
     ToolDefinition {
-        name: ToolName::grep(),
+        name: GREP.to_string(),
         description: "Search text files with a regular expression without spawning a shell."
             .to_string(),
         parameters: json!({
@@ -103,7 +116,7 @@ fn grep_definition() -> ToolDefinition {
 
 fn git_diff_definition() -> ToolDefinition {
     ToolDefinition {
-        name: ToolName::git_diff(),
+        name: GIT_DIFF.to_string(),
         description: "Show git diff output for the current repository without mutating state."
             .to_string(),
         parameters: json!({
@@ -120,7 +133,7 @@ fn git_diff_definition() -> ToolDefinition {
 
 fn git_status_definition() -> ToolDefinition {
     ToolDefinition {
-        name: ToolName::git_status(),
+        name: GIT_STATUS.to_string(),
         description: "Show git status output for the current repository without mutating state."
             .to_string(),
         parameters: json!({

@@ -9,7 +9,7 @@ use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
 /// LLM に渡すツール定義。
 #[derive(Debug, Clone)]
 pub struct ToolDefinition {
-    pub name: ToolName,
+    pub name: String,
     pub description: String,
     pub parameters: Value,
 }

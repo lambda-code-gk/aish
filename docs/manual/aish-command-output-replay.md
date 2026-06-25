@@ -5,6 +5,7 @@
 ## 前提
 
 - `cargo build -p aish`
+- `aish-replay` は `aish replay` と `ai` の共有 parser なので、`aish` 側で確認した replay span は `ai` 側の `aish.replay_show` でも同じ index を指す
 - `aish shell` の手動確認は **TTY** が必要
 - `aish replay pick` は stdin / stdout / stderr が TTY のときのみ
 

@@ -9,6 +9,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
 use crate::ports::inbound::ShutdownCoordinator;
+use crate::ports::outbound::ClientToolGate;
 use crate::ports::outbound::{ShellExecApprovalGate, TurnCancellation, TurnEventSink};
 
 pub type SubscribeConnectionLines = tokio::io::Lines<BufReader<OwnedReadHalf>>;
@@ -19,6 +20,7 @@ pub trait ClientRequestHandler: Send + Sync {
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse;

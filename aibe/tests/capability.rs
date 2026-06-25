@@ -375,6 +375,7 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
                     content: "run echo".into(),
                 }],
                 tools: vec![SHELL_EXEC.into()],
+                client_tools: vec![],
                 context: RequestContext {
                     cwd: Some(cwd.to_string_lossy().into_owned()),
                     ..Default::default()
@@ -454,6 +455,7 @@ async fn memory_only_profile_denies_shell_execute() {
                     content: "run echo".into(),
                 }],
                 tools: vec![SHELL_EXEC.into()],
+                client_tools: vec![],
                 context: RequestContext {
                     cwd: Some(cwd.to_string_lossy().into_owned()),
                     ..Default::default()
@@ -577,6 +579,7 @@ async fn local_full_allows_text_only_agent_turn() {
                     content: "hi".into(),
                 }],
                 tools: vec![],
+                client_tools: vec![],
                 context: RequestContext::default(),
                 llm_profile: None,
             },

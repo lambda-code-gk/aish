@@ -9,7 +9,10 @@ use std::sync::Arc;
 
 use crate::domain::Capability;
 use crate::domain::ClientCwd;
-use crate::ports::outbound::{CapabilityDenied, CapabilityPolicy, ShellExecApprovalGate};
+use crate::ports::outbound::{
+    CapabilityDenied, CapabilityPolicy, ClientToolGate, ShellExecApprovalGate,
+};
+use aibe_protocol::ClientProvidedToolSpec;
 
 /// 1 回の `agent_turn` に紐づく実行コンテキスト。
 #[derive(Clone)]
@@ -18,7 +21,9 @@ pub struct ToolExecutionContext {
     client_cwd: ClientCwd,
     turn_id: String,
     approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+    client_tool_gate: Option<Arc<dyn ClientToolGate>>,
     capability_policy: Option<Arc<dyn CapabilityPolicy>>,
+    client_tools: Vec<ClientProvidedToolSpec>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -27,10 +32,12 @@ impl std::fmt::Debug for ToolExecutionContext {
             .field("client_cwd", &self.client_cwd)
             .field("turn_id", &self.turn_id)
             .field("approval_gate", &self.approval_gate.is_some())
+            .field("client_tool_gate", &self.client_tool_gate.is_some())
             .field(
                 "capability_policy",
                 &self.capability_policy.as_ref().map(|p| p.profile_name()),
             )
+            .field("client_tools", &self.client_tools.len())
             .finish()
     }
 }
@@ -40,8 +47,10 @@ impl PartialEq for ToolExecutionContext {
         self.client_cwd == other.client_cwd
             && self.turn_id == other.turn_id
             && self.approval_gate.is_some() == other.approval_gate.is_some()
+            && self.client_tool_gate.is_some() == other.client_tool_gate.is_some()
             && self.capability_policy.as_ref().map(|p| p.profile_name())
                 == other.capability_policy.as_ref().map(|p| p.profile_name())
+            && self.client_tools == other.client_tools
     }
 }
 
@@ -53,7 +62,9 @@ impl ToolExecutionContext {
             client_cwd,
             turn_id: String::new(),
             approval_gate: None,
+            client_tool_gate: None,
             capability_policy: None,
+            client_tools: Vec::new(),
         }
     }
 
@@ -67,8 +78,18 @@ impl ToolExecutionContext {
         self
     }
 
+    pub fn with_client_tool_gate(mut self, gate: Arc<dyn ClientToolGate>) -> Self {
+        self.client_tool_gate = Some(gate);
+        self
+    }
+
     pub fn with_capability_policy(mut self, policy: Arc<dyn CapabilityPolicy>) -> Self {
         self.capability_policy = Some(policy);
+        self
+    }
+
+    pub fn with_client_tools(mut self, tools: Vec<ClientProvidedToolSpec>) -> Self {
+        self.client_tools = tools;
         self
     }
 
@@ -93,6 +114,14 @@ impl ToolExecutionContext {
 
     pub fn approval_gate(&self) -> Option<&Arc<dyn ShellExecApprovalGate>> {
         self.approval_gate.as_ref()
+    }
+
+    pub fn client_tool_gate(&self) -> Option<&Arc<dyn ClientToolGate>> {
+        self.client_tool_gate.as_ref()
+    }
+
+    pub fn client_tool_spec(&self, name: &str) -> Option<&ClientProvidedToolSpec> {
+        self.client_tools.iter().find(|spec| spec.name == name)
     }
 
     /// 相対パス解決・`allowed_roots` の `.` 展開の基準ディレクトリ。

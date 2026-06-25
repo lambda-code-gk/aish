@@ -1,6 +1,7 @@
 mod ask;
 mod ask_arg_order;
 mod ask_invocation;
+pub mod client_tools;
 mod console_context;
 mod console_hint;
 mod history;

@@ -8,6 +8,16 @@ pub enum OutputFormat {
     Env,
 }
 
+impl From<OutputFormat> for aish_replay::OutputFormat {
+    fn from(value: OutputFormat) -> Self {
+        match value {
+            OutputFormat::Tsv => Self::Tsv,
+            OutputFormat::Json => Self::Json,
+            OutputFormat::Env => Self::Env,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OutputFormatError {
     #[error("unknown --format {0:?} (expected tsv, json, or env)")]

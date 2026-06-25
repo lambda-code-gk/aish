@@ -44,6 +44,7 @@
 | 0047 | [0047_ai-interactive-prompt-input-spec.md](spec/0047_ai-interactive-prompt-input-spec.md) | 設計確定（実装済み） | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 | 0048 | [0048_ai-filter-streaming-fix-spec.md](spec/0048_ai-filter-streaming-fix-spec.md) | 設計確定（実装済み） | `ai` output filter と assistant streaming の整合化 |
 | 0049 | [0049_aish-command-output-replay-spec.md](spec/0049_aish-command-output-replay-spec.md) | 設計確定（実装済み） | `aish` command output replay（`replay list/show/pick`、shell span 記録） |
+| 0050 | [0050_client-provided-replay-tool-spec.md](spec/0050_client-provided-replay-tool-spec.md) | 設計確定 | Client-Provided Replay Tool（`aish.replay_show`、turn-local read-only client tool、hybrid manifest + `shell_log_tail`） |
 
 ### 状態ラベルの意味
 
@@ -56,7 +57,9 @@
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
-（なし）
+| 番号 | ファイル | 状態 | 概要 |
+|------|----------|------|------|
+| 0050 | [0050_client-provided-replay-tool-implementation-spec.md](tasks/0050_client-provided-replay-tool-implementation-spec.md) | 実装指示書 | Client-Provided Replay Tool（設計: [0050](spec/0050_client-provided-replay-tool-spec.md)） |
 
 ## 実装済み指示書（docs/done/）
 

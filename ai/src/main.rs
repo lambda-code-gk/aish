@@ -17,11 +17,11 @@ use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
     acquire_prompt_via_external_editor, create_prompt_temp_file, detect_terminal_size,
     external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
-    load_preprocessor_model, load_shell_exec_approval, read_chat_line,
+    load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
     resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
     smart_preprocessor_trace_enabled, AibeUnixClient, ChatReadLineResult, FileLogTail,
-    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
-    StdoutPresenter, YesExecCache,
+    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ReplaySourceError,
+    ShellExecRenderOptions, StdoutPresenter, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -31,7 +31,7 @@ use ai::application::{
     evaluate_preprocessor, execute_feature_actions_mvp, list_history, memory_cli, next_history_id,
     plan_ask_launch, plan_interactive_prompt_route, record_turn, HistoryRecordInput,
     HistoryReplayInput, InteractivePromptRoute, PreprocessorRunInput, PreprocessorRunOutcome,
-    TurnCancelGuard,
+    ShellLogMode, TurnCancelGuard,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -167,6 +167,7 @@ struct ResolvedTurnSettings {
     session_id: Option<String>,
     ai_session_id: String,
     shell_log_choice: ShellLogChoice,
+    shell_log_mode: ShellLogMode,
     output_filter: Option<String>,
     output_filter_meta: FilterMetadata,
     llm_profile: Option<String>,
@@ -641,6 +642,26 @@ fn execute_turn(
         .map(|t| t.as_str().to_string())
         .collect();
 
+    let replay_events = match (
+        &settings.shell_log_choice,
+        settings.shell_log_mode.advertises_manifest(),
+    ) {
+        (ShellLogChoice::Path(path), true) => {
+            load_replay_events(path).map_err(|e: ReplaySourceError| anyhow::anyhow!(e))?
+        }
+        _ => Vec::new(),
+    };
+    let replay_manifest_block = if replay_events.is_empty() {
+        None
+    } else {
+        Some(ai::application::replay_manifest::render_manifest_block(
+            &replay_events,
+        ))
+    };
+    let client_tools = ai::application::replay_manifest::replay_manifest_client_tools_enabled(
+        !replay_events.is_empty() && settings.shell_log_mode.advertises_manifest(),
+    );
+
     let ask_input = AskInput {
         user_message: message.content.clone(),
         shell_log_tail: shell_log_tail_text.clone(),
@@ -648,11 +669,15 @@ fn execute_turn(
             .clone()
             .or_else(|| std::env::current_dir().ok()),
         tools: plan.resolved_tools.allowlist.clone().into_names(),
+        client_tools,
+        replay_events,
+        replay_manifest_block: replay_manifest_block.clone(),
         llm_profile: settings.llm_profile.clone(),
         ai_session_id: Some(settings.ai_session_id.clone()),
         conversation_id: conversation_id.clone(),
     };
     let mut request = ask_input.into_request()?;
+    let replay_events = request.replay_events.clone();
     let memory_space_id =
         resolve_turn_memory_space_id(cfg, request.client_cwd.as_deref(), &settings.ai_session_id);
     request.request_context = build_request_context(
@@ -662,6 +687,7 @@ fn execute_turn(
         conversation_id.clone(),
         &settings.console_hint,
         memory_space_id,
+        replay_manifest_block.clone(),
     );
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
@@ -676,6 +702,7 @@ fn execute_turn(
         run_agent_turn_async(
             plan.socket_path.clone(),
             client_request,
+            replay_events.clone(),
             presenter.clone(),
             cfg.history_dir.clone(),
             settings.session_id.clone(),
@@ -689,6 +716,7 @@ fn execute_turn(
         run_agent_turn_sync(
             plan.socket_path.clone(),
             client_request,
+            replay_events,
             presenter.clone(),
             cfg.history_dir.clone(),
             settings.session_id.clone(),
@@ -813,6 +841,7 @@ fn execute_turn(
 fn run_agent_turn_sync(
     socket_path: PathBuf,
     request: ClientRequest,
+    _replay_events: Vec<aish_replay::LogEvent>,
     presenter: Arc<StdoutPresenter>,
     history_dir: PathBuf,
     session_id: Option<String>,
@@ -824,6 +853,7 @@ fn run_agent_turn_sync(
     run_agent_turn_core(
         socket_path,
         request,
+        _replay_events,
         presenter,
         history_dir,
         session_id,
@@ -839,6 +869,7 @@ fn run_agent_turn_sync(
 fn run_agent_turn_async(
     socket_path: PathBuf,
     request: ClientRequest,
+    _replay_events: Vec<aish_replay::LogEvent>,
     presenter: Arc<StdoutPresenter>,
     history_dir: PathBuf,
     session_id: Option<String>,
@@ -851,6 +882,7 @@ fn run_agent_turn_async(
     run_agent_turn_core(
         socket_path,
         request,
+        _replay_events,
         presenter,
         history_dir,
         session_id,
@@ -866,6 +898,7 @@ fn run_agent_turn_async(
 fn run_agent_turn_core(
     socket_path: PathBuf,
     request: ClientRequest,
+    _replay_events: Vec<aish_replay::LogEvent>,
     presenter: Arc<StdoutPresenter>,
     history_dir: PathBuf,
     session_id: Option<String>,
@@ -1103,6 +1136,7 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         ClientRequest::MemoryKindList(body) => Ok(body.id.clone()),
         ClientRequest::MemoryRecipeRun(body) => Ok(body.id.clone()),
         ClientRequest::MemorySubscribe(body) => Ok(body.id.clone()),
+        ClientRequest::ClientToolResult(body) => Ok(body.id.clone()),
     }
 }
 
@@ -1209,13 +1243,14 @@ fn build_request_context(
     conversation_id: Option<String>,
     console_hint: &ConsoleHintReport,
     memory_space_id: Option<String>,
+    replay_manifest_block: Option<String>,
 ) -> RequestContextInput {
     let terminal_size = if console_hint.effective {
         detect_terminal_size()
     } else {
         None
     };
-    RequestContextInput {
+    let mut ctx = RequestContextInput {
         shell_log_tail,
         cwd: client_cwd.map(|p| p.display().to_string()),
         ai_session_id: Some(ai_session_id),
@@ -1223,7 +1258,14 @@ fn build_request_context(
         memory_space_id,
         ..Default::default()
     }
-    .with_console_system_instruction(terminal_size, console_hint.effective)
+    .with_console_system_instruction(terminal_size, console_hint.effective);
+    if let Some(block) = replay_manifest_block {
+        ctx.system_instruction = Some(match ctx.system_instruction.take() {
+            Some(existing) if !existing.is_empty() => format!("{existing}\n\n{block}"),
+            _ => block,
+        });
+    }
+    ctx
 }
 
 fn request_from_messages(
@@ -1240,6 +1282,7 @@ fn request_from_messages(
             .into_iter()
             .map(|t| t.as_str().to_string())
             .collect(),
+        client_tools: request.client_tools,
         context,
         llm_profile: request.llm_profile,
     })
@@ -1269,6 +1312,7 @@ fn exit_code_for_response(
         | ClientResponse::AssistantStreaming { .. }
         | ClientResponse::RouteTurnResult { .. }
         | ClientResponse::ShellExecApprovalPrompt { .. }
+        | ClientResponse::ClientToolCallRequested { .. }
         | ClientResponse::MemoryApplyResult { .. }
         | ClientResponse::MemoryQueryResult { .. }
         | ClientResponse::MemoryKindListResult { .. }
@@ -2159,6 +2203,7 @@ fn resolve_turn_settings(
             .map(Path::new),
     )
     .map_err(shell_log_resolve_to_anyhow)?;
+    let shell_log_mode = ShellLogMode::parse(cfg.shell_log_mode.as_deref());
     let output_filter = resolve_output_filter(
         std::env::var("AI_FILTER").ok(),
         preset
@@ -2206,6 +2251,7 @@ fn resolve_turn_settings(
         session_id: resolve_turn_session_id(turn.session.as_deref())?,
         ai_session_id: resolve_ai_session_id(),
         shell_log_choice,
+        shell_log_mode,
         output_filter,
         output_filter_meta,
         llm_profile,
@@ -2820,6 +2866,7 @@ mod cli_tests {
 
     use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
     use ai::adapters::outbound::LocalHistoryStore;
+    use ai::application::ShellLogMode;
     use ai::clap_cli::{AiCli, TurnOptions};
     use ai::domain::{
         resolve_console_hints, resolve_progress, ConfigToolsTokens, FilterMetadata, ShellLogChoice,
@@ -3031,6 +3078,7 @@ mod cli_tests {
             session_id: None,
             ai_session_id: "session-retry".into(),
             shell_log_choice: ShellLogChoice::None,
+            shell_log_mode: ShellLogMode::Hybrid,
             output_filter: None,
             output_filter_meta: FilterMetadata {
                 enabled: false,
@@ -3079,6 +3127,7 @@ mod cli_tests {
             session_id: None,
             ai_session_id: "session-123".into(),
             shell_log_choice: ShellLogChoice::None,
+            shell_log_mode: ShellLogMode::Hybrid,
             output_filter: None,
             output_filter_meta: FilterMetadata {
                 enabled: false,
@@ -3190,6 +3239,7 @@ mod cli_tests {
             ask_filter: None,
             ask_console_hints: None,
             ask_progress: None,
+            shell_log_mode: None,
             history_dir: dir.path().to_path_buf(),
             history_max_entries: 1,
             log_tail_bytes: None,
@@ -3252,6 +3302,7 @@ mod cli_tests {
             ask_filter: None,
             ask_console_hints: None,
             ask_progress: None,
+            shell_log_mode: None,
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
@@ -3315,6 +3366,7 @@ mod cli_tests {
             ask_filter: None,
             ask_console_hints: None,
             ask_progress: None,
+            shell_log_mode: None,
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
@@ -3392,6 +3444,7 @@ mod cli_tests {
             ask_filter: None,
             ask_console_hints: None,
             ask_progress: None,
+            shell_log_mode: None,
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
@@ -3407,6 +3460,7 @@ mod cli_tests {
             session_id: None,
             ai_session_id: "sess".into(),
             shell_log_choice: ShellLogChoice::None,
+            shell_log_mode: ShellLogMode::Hybrid,
             output_filter: None,
             output_filter_meta: FilterMetadata {
                 enabled: false,

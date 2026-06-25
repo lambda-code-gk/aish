@@ -615,3 +615,102 @@ description = "non-TTY では fail-closed になる"
 test = "replay_pick_rejects_non_tty"
 file_glob = "aish/src/adapters/outbound/replay_picker.rs"
 pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "protocol_client_tools_roundtrip"
+description = "AgentTurn.client_tools が roundtrip する"
+test = "agent_turn_client_tools_roundtrip"
+file_glob = "aibe-protocol/src/request.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "client_tool_call_result_roundtrip"
+description = "ClientToolCallRequested / ClientToolResult が roundtrip する"
+test = "client_tool_call_and_result_roundtrip"
+file_glob = "aibe-protocol/src/response.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "aibe_no_session_dir_read"
+description = "aibe が AISH_SESSION_DIR を直接読まない"
+test = "aibe_does_not_read_aish_session_dir_for_client_tools"
+file_glob = "aibe/src/application/request_service.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "shell_log_mode_matrix"
+description = "shell_log_mode が off|tail|manifest|hybrid で解決する"
+test = "shell_log_mode_resolves_off_tail_manifest_hybrid"
+file_glob = "ai/src/application/replay_manifest.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "manifest_advertisement"
+description = "manifest から aish.replay_show を広告する"
+test = "replay_manifest_advertises_aish_replay_show"
+file_glob = "ai/src/application/replay_manifest.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "replay_wrapper_metadata"
+description = "wrapper + metadata header が付く"
+test = "replay_tool_result_always_includes_untrusted_terminal_output_header"
+file_glob = "ai/src/application/client_tools/replay_show.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "stderr_rejection"
+description = "shell span の stderr 要求を拒否する"
+test = "replay_show_rejects_shell_span_stderr"
+file_glob = "ai/src/domain/client_tools/replay_show.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "tail_fallback"
+description = "manifest 無しでも shell_log_tail で継続する"
+test = "shell_log_tail_fallback_keeps_turn_running_without_manifest"
+file_glob = "ai/src/application/ask.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "shared_parser_alignment"
+description = "aish と ai の span 解釈が一致する"
+test = "shared_replay_parser_matches_aish_replay_output"
+file_glob = "aish/tests/exec_log.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "tool_rejection"
+description = "namespace なし / 危険な tool 名を reject する"
+test = "validate_client_tools_rejects_non_namespace_and_dangerous_names"
+file_glob = "aibe/src/application/request_service.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "error_kind_matrix"
+description = "client tool の error kind を区別する"
+test = "client_tool_error_kinds_cover_missing_session_and_span_states"
+file_glob = "ai/src/domain/client_tools/replay_show.rs"
+pending = false

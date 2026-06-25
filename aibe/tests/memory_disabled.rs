@@ -129,6 +129,7 @@ async fn agent_turn_skips_memory_injection_when_disabled() {
                     content: "hello".into(),
                 }],
                 tools: vec![],
+                client_tools: vec![],
                 context: RequestContext {
                     ai_session_id: Some(session_id()),
                     memory_space_id: Some("ctx_a".into()),

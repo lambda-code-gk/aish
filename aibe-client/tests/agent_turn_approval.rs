@@ -92,6 +92,7 @@ fn agent_turn_request() -> ClientRequest {
             content: "run".into(),
         }],
         tools: vec!["shell_exec".into()],
+        client_tools: vec![],
         context: Default::default(),
         llm_profile: None,
     }

@@ -8,6 +8,7 @@ license.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+aish-replay = { path = "../aish-replay" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

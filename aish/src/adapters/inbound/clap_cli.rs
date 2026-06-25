@@ -59,6 +59,15 @@ impl From<ReplayListFormatArg> for OutputFormat {
     }
 }
 
+impl From<ReplayListFormatArg> for aish_replay::OutputFormat {
+    fn from(value: ReplayListFormatArg) -> Self {
+        match value {
+            ReplayListFormatArg::Tsv => Self::Tsv,
+            ReplayListFormatArg::Json => Self::Json,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum ReplayCommand {
     /// List replayable command spans
