@@ -727,6 +727,15 @@ pending = false
 [[cases]]
 spec = "0050"
 phase = 1
+id = "run_agent_turn_client_tool_stream_branch"
+description = "client_tools 付き request は client tool stream 経路を選ぶ"
+test = "request_with_client_tools_uses_client_tool_stream"
+file_glob = "ai/src/main.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
 id = "replay_client_tool_callback"
 description = "replay_client_tool_callback が executor に到達する"
 test = "replay_client_tool_callback_returns_untrusted_output"
@@ -745,9 +754,27 @@ pending = false
 [[cases]]
 spec = "0050"
 phase = 1
+id = "manifest_mode_missing_log_errors"
+description = "manifest mode は replay history 不在時に tail fallback せず error にする"
+test = "manifest_mode_without_shell_log_choice_returns_manifest_required"
+file_glob = "ai/src/application/replay_manifest.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
 id = "manifest_limit_and_preview"
 description = "manifest が最新 N 件に制限され stderr_preview を含む"
 test = "render_manifest_block_limits_to_latest_spans_with_stderr_preview"
+file_glob = "ai/src/application/replay_manifest.rs"
+pending = false
+
+[[cases]]
+spec = "0050"
+phase = 1
+id = "manifest_budget_preserves_newest"
+description = "manifest byte budget 超過時は古い entry を削り最新 entry を残す"
+test = "render_manifest_block_truncates_old_entries_not_newest_entries"
 file_glob = "ai/src/application/replay_manifest.rs"
 pending = false
 

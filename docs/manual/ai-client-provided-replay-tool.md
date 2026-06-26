@@ -14,7 +14,8 @@
 1. `aish shell` で session を作る。
 2. `echo hello` と `cargo test -j 1` のような span を作る。
 3. `ai ask` を実行し、`shell_log_mode=manifest` または `hybrid` のときに replay manifest が system instruction 側へ合成されることを確認する。
-4. `shell_log_mode=tail` のときは replay manifest を出さず、通常の `shell log tail` だけで turn が進むことを確認する。
+4. `shell_log_mode=tail` のときは replay manifest と client replay tool を出さず、通常の `shell_log_tail` だけで turn が進むことを確認する。
+5. `shell_log_mode=off` のときは `shell_log_tail`、replay manifest、client replay tool がすべて無効になることを確認する。
 
 ## 手順 2: client tool 往復の確認
 
@@ -28,11 +29,20 @@
 2. `shell_log_mode=off` でも `ai ask` 自体は継続できることを確認する。
 3. `manifest` mode では manifest が作れなければ turn を **error で終了**し、`shell_log_tail` へ fallback しないことを確認する。
 4. `hybrid` mode では manifest が作れなければ `shell_log_tail` へ fallback し、turn は継続できることを確認する。
+5. 長い replay history では manifest block が byte budget 内に収まり、古い entry より最新 entry が優先して残ることを確認する。
 
 ## 手順 4: shared parser の確認
 
 1. `aish replay list/show` と `ai` 側の `aish.replay_show` が同じ `index` を指すことを確認する。
 2. shell span の stdout で prompt echo prefix の扱いが一致することを確認する。
+
+## shell_log_mode の意味
+
+- `off`: `shell_log_tail`、replay manifest、client replay tool をすべて送らない。replay history が無くても error にしない。
+- `tail`: `shell_log_tail` のみを送る。replay manifest と client replay tool は使わない。
+- `manifest`: replay manifest と `aish.replay_show` が必須。replay history が読めない場合は turn を error にし、`shell_log_tail` へ fallback しない。
+- `hybrid`: replay manifest と `aish.replay_show` を優先し、manifest が作れない場合は `shell_log_tail` fallback を許可する。
+- manifest block は byte budget 内で生成され、budget 超過時は古い entry から削って最新 entry を可能な限り残す。
 
 ## 補足
 

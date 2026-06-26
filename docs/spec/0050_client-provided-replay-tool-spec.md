@@ -277,8 +277,8 @@ tool=aish.replay_show index=12 command="git status" exit_code=0 stream=both trun
 |------|------|
 | `off` | replay manifest も `shell_log_tail` も使わず、`aish.replay_show` を広告しない |
 | `tail` | `shell_log_tail` のみを送る。manifest は生成しない |
-| `manifest` | replay manifest のみを送る。`shell_log_tail` は送らない |
-| `hybrid` | replay manifest と `shell_log_tail` を両方送る。既定値 |
+| `manifest` | replay manifest のみを送る。`shell_log_tail` は送らない。replay history が読めず manifest を作れない場合は turn を error にし、tail fallback しない |
+| `hybrid` | replay manifest と `shell_log_tail` を両方送る。manifest が作れない場合は `shell_log_tail` fallback を許可する。既定値 |
 
 1. `ai` は turn 開始時に replay manifest を組み立てる
 2. `shell_log_mode=manifest` / `hybrid` かつ manifest が有効なら `client_tools` に `aish.replay_show` を広告する
@@ -312,12 +312,12 @@ manifest は model にそのまま渡す大きな文脈ではなく、`aish.repl
 `ai` は turn-local context に次の text block を挿入する。
 
 ```text
-[replay manifest]
+[replay manifest: latest entries, budgeted]
 #39 exit=101 stdout=2048B stderr=18420B failed=true command="cargo test" stderr_preview="error[E0432]: ..."
 #40 exit=0 stdout=9120B stderr=0B failed=false command="git diff"
 ```
 
-manifest は最新 30 span に制限する（定数 `DEFAULT_REPLAY_MANIFEST_LIMIT`）。
+manifest は最新 30 span に制限する（定数 `DEFAULT_REPLAY_MANIFEST_LIMIT`）。さらに system instruction の 8KiB 上限で最新 entry が落ちないよう、manifest block 自体に byte budget を持たせる（既定 `DEFAULT_REPLAY_MANIFEST_MAX_BYTES = 6KiB`、preview 既定 `DEFAULT_REPLAY_MANIFEST_PREVIEW_BYTES = 120`）。budget を超える場合は古い entry から削り、最新 entry を可能な限り残す。表示順は budget 内に残った latest entries を古い→新しい順に保つ。
 
 #### ルール
 

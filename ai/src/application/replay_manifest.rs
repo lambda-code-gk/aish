@@ -10,7 +10,8 @@ use aish_replay::{
 use crate::domain::ShellLogChoice;
 
 pub const DEFAULT_REPLAY_MANIFEST_LIMIT: usize = 30;
-pub const DEFAULT_REPLAY_MANIFEST_PREVIEW_BYTES: usize = 160;
+pub const DEFAULT_REPLAY_MANIFEST_MAX_BYTES: usize = 6 * 1024;
+pub const DEFAULT_REPLAY_MANIFEST_PREVIEW_BYTES: usize = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellLogMode {
@@ -88,6 +89,12 @@ pub fn build_turn_replay_context(
                     Vec::new()
                 }
             },
+            ShellLogChoice::None if shell_log_mode == ShellLogMode::Manifest => {
+                return Err(TurnReplayContextError::ManifestRequired(
+                    "AISH shell log is unavailable; shell_log_mode=manifest requires replay history"
+                        .to_string(),
+                ));
+            }
             ShellLogChoice::None => Vec::new(),
         }
     } else {
@@ -113,15 +120,40 @@ pub fn build_turn_replay_context(
 }
 
 pub fn render_manifest_block(events: &[LogEvent]) -> String {
-    let entries =
-        replay_manifest_entries(events, DEFAULT_REPLAY_MANIFEST_PREVIEW_BYTES).unwrap_or_default();
-    let start = entries.len().saturating_sub(DEFAULT_REPLAY_MANIFEST_LIMIT);
-    let limited = &entries[start..];
-    render_manifest_entries(limited)
+    render_manifest_block_with_budget(
+        events,
+        DEFAULT_REPLAY_MANIFEST_LIMIT,
+        DEFAULT_REPLAY_MANIFEST_MAX_BYTES,
+        DEFAULT_REPLAY_MANIFEST_PREVIEW_BYTES,
+    )
+}
+
+pub fn render_manifest_block_with_budget(
+    events: &[LogEvent],
+    limit: usize,
+    max_bytes: usize,
+    preview_bytes: usize,
+) -> String {
+    if max_bytes == 0 {
+        return String::new();
+    }
+    let entries = replay_manifest_entries(events, preview_bytes).unwrap_or_default();
+    let start = entries.len().saturating_sub(limit);
+    let mut limited = entries[start..].to_vec();
+    loop {
+        let rendered = render_manifest_entries(&limited);
+        if rendered.len() <= max_bytes {
+            return rendered;
+        }
+        if limited.is_empty() {
+            return rendered[..max_bytes].to_string();
+        }
+        limited.remove(0);
+    }
 }
 
 fn render_manifest_entries(entries: &[ReplayManifestEntry]) -> String {
-    let mut out = String::from("[replay manifest]\n");
+    let mut out = String::from("[replay manifest: latest entries, budgeted]\n");
     for entry in entries {
         out.push_str(&format!(
             "#{} exit={} stdout={}B stderr={}B failed={} command=\"{}\"",
@@ -315,6 +347,32 @@ mod tests {
         assert_eq!(hybrid_fallback.shell_log_tail.as_deref(), Some("tail"));
         assert!(hybrid_fallback.replay_events.is_empty());
         assert!(hybrid_fallback.manifest_fallback.is_some());
+
+        let hybrid_without_log = build_turn_replay_context(
+            ShellLogMode::Hybrid,
+            &ShellLogChoice::None,
+            None,
+            tail_ok,
+            load_ok,
+        )
+        .expect("hybrid without log falls back to tail only");
+        assert_eq!(hybrid_without_log.shell_log_tail.as_deref(), Some("tail"));
+        assert!(hybrid_without_log.replay_events.is_empty());
+        assert!(hybrid_without_log.client_tools.is_empty());
+    }
+
+    #[test]
+    fn manifest_mode_without_shell_log_choice_returns_manifest_required() {
+        let err = build_turn_replay_context(
+            ShellLogMode::Manifest,
+            &ShellLogChoice::None,
+            None,
+            || panic!("manifest mode must not read tail"),
+            |_| panic!("no shell log path should not load replay events"),
+        )
+        .expect_err("manifest mode requires replay history");
+
+        assert!(matches!(err, TurnReplayContextError::ManifestRequired(_)));
     }
 
     #[test]
@@ -326,5 +384,19 @@ mod tests {
         assert!(!block.contains("#1 "));
         assert!(block.contains("stdout="));
         assert!(block.contains("stderr="));
+    }
+
+    #[test]
+    fn render_manifest_block_truncates_old_entries_not_newest_entries() {
+        let events = sample_events(100);
+        let block = render_manifest_block_with_budget(&events, 100, 700, 120);
+
+        assert!(block.len() <= 700);
+        assert!(block.contains("[replay manifest: latest entries, budgeted]"));
+        assert!(block.contains("#100 "));
+        assert!(!block.contains("#1 "));
+        assert!(!block.contains("#50 "));
+        assert!(block.contains("stdout_preview="));
+        assert!(block.contains("stderr_preview="));
     }
 }

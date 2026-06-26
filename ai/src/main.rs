@@ -886,6 +886,13 @@ fn run_agent_turn_async(
     )
 }
 
+fn should_use_client_tool_stream(request: &ClientRequest) -> bool {
+    matches!(
+        request,
+        ClientRequest::AgentTurn { client_tools, .. } if !client_tools.is_empty()
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_agent_turn_core(
     socket_path: PathBuf,
@@ -908,10 +915,7 @@ fn run_agent_turn_core(
     let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut cancel_source: Option<TurnCancelSource> = None;
 
-    let use_client_tools = matches!(
-        &request,
-        ClientRequest::AgentTurn { client_tools, .. } if !client_tools.is_empty()
-    );
+    let use_client_tools = should_use_client_tool_stream(&request);
     let (tx, rx) = mpsc::channel();
     let presenter_thread = Arc::clone(&presenter);
     let history_dir_thread = history_dir.clone();
@@ -2901,7 +2905,10 @@ mod cli_tests {
     };
     use ai::ports::outbound::HistoryStore;
     use aibe_client::default_socket_path;
-    use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, RouteKind, RoutePlan};
+    use aibe_protocol::{
+        ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, RouteKind, RoutePlan,
+        ToolRiskClass,
+    };
 
     #[test]
     fn ask_rejects_options_after_message() {
@@ -2966,6 +2973,40 @@ mod cli_tests {
             ),
             std::process::ExitCode::from(5)
         );
+    }
+
+    #[test]
+    fn request_with_client_tools_uses_client_tool_stream() {
+        let request = ClientRequest::AgentTurn {
+            id: "turn".into(),
+            messages: vec![],
+            tools: vec![],
+            client_tools: vec![ClientProvidedToolSpec {
+                name: "aish.replay_show".into(),
+                description: "Show replay output".into(),
+                parameters: serde_json::json!({"type": "object"}),
+                risk_class: ToolRiskClass::ReadOnly,
+                max_output_bytes: 1024,
+            }],
+            context: Default::default(),
+            llm_profile: None,
+        };
+
+        assert!(crate::should_use_client_tool_stream(&request));
+    }
+
+    #[test]
+    fn request_without_client_tools_uses_normal_stream() {
+        let request = ClientRequest::AgentTurn {
+            id: "turn".into(),
+            messages: vec![],
+            tools: vec![],
+            client_tools: vec![],
+            context: Default::default(),
+            llm_profile: None,
+        };
+
+        assert!(!crate::should_use_client_tool_stream(&request));
     }
 
     #[test]
