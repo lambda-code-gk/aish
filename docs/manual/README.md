@@ -13,6 +13,7 @@
 | [llm-profiles.md](llm-profiles.md) | LLM 接続 + プロファイル（`--profile` / 2 段 config） |
 | [ai-ask-tools.md](ai-ask-tools.md) | `ai ask` の `--tools` / 表示契約（mock + 任意で実 LLM） |
 | [ai-ux.md](ai-ux.md) | `ai chat` / progress / timeout / `--yes-exec` の手動確認 |
+| [ai-smart-observation-report.md](ai-smart-observation-report.md) | ai smart stats/recent/report の read-only 観測確認 |
 | [ai-smart-entry.md](ai-smart-entry.md) | `ai '...'` の smart entry / `--new` / `AI_SESSION_ID` |
 | [aish-shell-log.md](aish-shell-log.md) | `aish shell` と JSONL ログ |
 | [aish-command-output-replay.md](aish-command-output-replay.md) | `aish replay list/show/pick`（過去出力の再表示） |

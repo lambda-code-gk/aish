@@ -35,7 +35,7 @@ use ai::application::{
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
-    MemoryCliOptions, NowCommand, OutputFormatArg, TurnOptions,
+    MemoryCliOptions, NowCommand, OutputFormatArg, SmartCommand, TurnOptions,
 };
 use ai::domain::client_tools::replay_show::replay_client_tool_callback;
 use ai::domain::smart_preprocessor::{
@@ -132,6 +132,7 @@ fn run() -> anyhow::Result<ExitCode> {
             format,
             socket,
         } => run_ping_command(quiet, format.into(), socket),
+        AiCommand::Smart { command } => run_smart_command(command),
         AiCommand::Goal { command } => run_goal(command),
         AiCommand::Now { command } => run_now(command),
         AiCommand::Idea { command } => run_idea(command),
@@ -568,6 +569,92 @@ fn run_history(args: HistoryArgs) -> anyhow::Result<ExitCode> {
     }
     write_stdout(stdout)?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_smart_command(command: SmartCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        SmartCommand::Stats {
+            format,
+            path,
+            limit,
+            since_hours,
+            session,
+        } => {
+            let path = resolve_smart_observation_path(path);
+            let read = ai::adapters::outbound::read_smart_observation_log(&path, limit)?;
+            let records = ai::domain::filter_observations(
+                read.records,
+                session.as_deref(),
+                since_cutoff_ms(since_hours),
+            );
+            let stats = ai::domain::SmartObservationStats::from_records(
+                &records,
+                read.total_records,
+                read.invalid_lines,
+            );
+            write_stdout(stats.render(format.into())?)?;
+        }
+        SmartCommand::Recent {
+            format,
+            path,
+            limit,
+            session,
+        } => {
+            let path = resolve_smart_observation_path(path);
+            let read = ai::adapters::outbound::read_smart_observation_log(&path, limit)?;
+            let records = ai::domain::filter_observations(read.records, session.as_deref(), None);
+            write_stdout(ai::domain::render_recent(&records, format.into())?)?;
+        }
+        SmartCommand::Report {
+            path,
+            limit,
+            since_hours,
+            session,
+            include_recent,
+        } => {
+            let path = resolve_smart_observation_path(path);
+            let read = ai::adapters::outbound::read_smart_observation_log(&path, limit)?;
+            let records = ai::domain::filter_observations(
+                read.records,
+                session.as_deref(),
+                since_cutoff_ms(since_hours),
+            );
+            let stats = ai::domain::SmartObservationStats::from_records(
+                &records,
+                read.total_records,
+                read.invalid_lines,
+            );
+            let path_display = path.display().to_string();
+            write_stdout(ai::domain::render_markdown_report(
+                &stats,
+                &records,
+                ai::domain::SmartReportOptions {
+                    observation_path: &path_display,
+                    limit,
+                    since_hours,
+                    session_filter: session.as_deref(),
+                    include_recent,
+                },
+            ))?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn resolve_smart_observation_path(path: Option<PathBuf>) -> PathBuf {
+    ai::adapters::outbound::expand_observation_path(
+        path.unwrap_or_else(ai::adapters::outbound::default_observation_path),
+    )
+}
+
+fn since_cutoff_ms(since_hours: Option<u64>) -> Option<u64> {
+    let age_ms = since_hours?.saturating_mul(60 * 60 * 1000);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_millis().min(u64::MAX as u128) as u64
+        });
+    Some(now_ms.saturating_sub(age_ms))
 }
 
 #[allow(clippy::too_many_arguments)]

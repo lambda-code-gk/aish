@@ -190,6 +190,11 @@ pub enum AiCommand {
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         socket: Option<PathBuf>,
     },
+    /// Inspect Smart Preprocessor observation logs
+    Smart {
+        #[command(subcommand)]
+        command: SmartCommand,
+    },
     /// Generate shell completion scripts (bash or zsh)
     Complete {
         #[arg(value_enum)]
@@ -230,6 +235,47 @@ pub struct MemoryCliOptions {
     pub format: OutputFormatArg,
     #[arg(long)]
     pub no_start: bool,
+}
+
+#[derive(Subcommand)]
+pub enum SmartCommand {
+    /// Aggregate recent observations
+    Stats {
+        #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
+        format: OutputFormatArg,
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        path: Option<PathBuf>,
+        #[arg(long, default_value_t = 1000)]
+        limit: usize,
+        #[arg(long)]
+        since_hours: Option<u64>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Show recent observations without raw user text
+    Recent {
+        #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
+        format: OutputFormatArg,
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        path: Option<PathBuf>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Render a Markdown report for AI evaluation
+    Report {
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        path: Option<PathBuf>,
+        #[arg(long, default_value_t = 1000)]
+        limit: usize,
+        #[arg(long)]
+        since_hours: Option<u64>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        include_recent: usize,
+    },
 }
 
 #[derive(Subcommand)]

@@ -15,6 +15,7 @@ mod reports;
 mod request_context;
 mod shell_exec_approval;
 mod shell_log;
+mod smart_observation_report;
 pub mod smart_preprocessor;
 mod terminal_display;
 mod terminal_size;
@@ -55,6 +56,10 @@ pub use shell_exec_approval::{
 };
 pub use shell_log::{
     validate_session_id, ShellLogChoice, ShellLogResolveError, AI_ASK_LOG_SESSION,
+};
+pub use smart_observation_report::{
+    filter_observations, render_markdown_report, render_recent, SmartObservationLine,
+    SmartObservationStats, SmartReportOptions,
 };
 pub use smart_preprocessor::{
     run_preprocessor, should_short_circuit, PreprocessConfig, PreprocessInput, SmartConfidenceGate,

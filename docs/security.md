@@ -117,6 +117,11 @@
 - `--dry-run` 等で memory 全文を不用意に露出しない（`ai` memory コマンドは意図的な表示のみ）
 - **capability 分離（0037 Phase 6）**: memory 操作（read/write/archive/recipe/subscribe）と shell execute は AIBE application boundary で別 capability。shell 承認 UI とは独立。v1 は local runtime のみで **remote authentication / token issue は未実装**。将来 mobile profile は shell execute を持たない設計（[manual/contextual-memory-multi-client.md](manual/contextual-memory-multi-client.md)）
 
+### Smart Preprocessor observation report
+
+- ai smart stats/recent/report は observation を read-only で扱い、読み取り DTO に宣言した既知の非 raw フィールドだけを出力する。未知フィールド、不正 JSON、不正 UTF-8 の内容をエラー本文や report に再掲しない。
+- TSV / ENV / Markdown ではタブ・改行を単一行へ正規化する。report は分類精度の正解データではなく、安全な運用メトリクスの共有物として扱う。
+
 ### safe tools / dangerous tools
 
 設計の上位正本: [architecture.md](architecture.md)。検証の所在: [testing.md](testing.md) の「0018 safe-tools-policy」。

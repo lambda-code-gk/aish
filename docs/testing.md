@@ -139,6 +139,14 @@ Phase 2.9（local route fast path）:
 | route kind 5種の導出 | `local_route_kind_derivation_covers_phase_targets` | `smart_preprocessor.rs` |
 | context / output_style の fast path 配線 | `apply_local_route_wires_context_and_output_style_messages` | `ai/src/main.rs` |
 
+### 0051 Smart observation report
+
+| 観点 | テスト位置 |
+|------|------------|
+| 空・欠損・不正行・未知フィールド・末尾 limit | ai/src/adapters/outbound/smart_observation_log_reader.rs |
+| distribution / count / latency / filter | ai/src/domain/smart_observation_report.rs |
+| stats/recent/report CLI と raw 非出力 | ai/tests/smart_observation_cli.rs |
+
 Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`chat` の transcript は `ai` 側で成功 turn ごとに追記し、`history` payload の `request_messages` に保存する。`retry` / `rerun` は payload に transcript があればそれを再生する。`--yes-exec` は [`ai/tests/yes_exec_integration.rs`](../ai/tests/yes_exec_integration.rs) で非 TTY 含め検証する。history GC は `history_max_entries`（既定 500、`0` で無効）で [`local_history.rs`](../ai/src/adapters/outbound/local_history.rs) が prune する。streaming の multi-delta forward は [`aibe/tests/agent_turn_streaming.rs`](../aibe/tests/agent_turn_streaming.rs) を参照する。
 
 ### 0017 以降のクレート別テスト配置

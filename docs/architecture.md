@@ -185,6 +185,7 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
   - `gate` — 高信頼かつ安全な `simple_chat` のみ `route_turn` 短絡候補（`retry` / `rerun` / `memory_lookup` は transcript または memory 経路が必要なため短絡対象外）
 - **安全**: classifier / gate は shell approval・memory policy・CLI 明示値を bypass しない。raw shell log / LLM 出力全文は分類器入力に入れない。
 - **観測**: append-only NDJSON（`~/.local/share/ai/smart_preprocessor/observation.jsonl` 既定）。学習機構は持たない。
+- **観測レポート（0051）**: ai smart stats/recent/report は末尾の bounded な非空行だけを read-only で読む。不正行は invalid_lines に数え、既知 DTO フィールドだけを集計・表示するため raw user text と未知フィールドは出力しない。path の ~/ は既存 config と同じ HOME 規則で展開する。
 - **memory.enabled=false**（0043）: composition root は `FeatureRegistry::empty()` を渡す。`route_turn` は feature catalog / trigger マージ / `feature_actions` を返さない（LLM が返しても strip）。
 
 詳細: [spec/0041](spec/0041_ai-smart-feature-plan-spec.md)、[spec/0042](spec/0042_configurable-smart-features-spec.md)、[spec/0043](spec/0043_feature-pack-boundary-hardening-spec.md)。

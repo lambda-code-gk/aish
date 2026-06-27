@@ -13,6 +13,7 @@ mod prompt_comment_filter;
 mod replay_source;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
+mod smart_observation_log_reader;
 mod smart_preprocessor_model;
 pub mod smart_preprocessor_observation;
 mod smart_preprocessor_trace;
@@ -47,6 +48,10 @@ pub use shell_exec_approval_ui::{
     format_shell_exec_invocation, parse_shell_exec_choice, prompt_shell_exec_approval,
 };
 pub use shell_log_resolver::resolve_shell_log_for_ask;
+pub use smart_observation_log_reader::{
+    expand_observation_path, read_smart_observation_log, SmartObservationRead,
+    SmartObservationReadError,
+};
 pub use smart_preprocessor_model::{
     bundled_model_path, load_bundled_preprocessor_model, load_preprocessor_model,
     ValidatedPreprocessorModel,

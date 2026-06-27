@@ -804,3 +804,66 @@ description = "aish.replay_show と aish_replay_show の双方向マッピング
 test = "provider_tool_name_maps_aish_replay_show_bidirectionally"
 file_glob = "aibe/src/domain/client_tool_names.rs"
 pending = false
+
+[[cases]]
+spec = "0051"
+phase = 1
+id = "reader_resilience"
+description = "不正行を数え、正常行と未知・欠損フィールドを維持する"
+test = "reader_counts_invalid_lines_and_keeps_valid_records"
+file_glob = "ai/src/adapters/outbound/smart_observation_log_reader.rs"
+pending = false
+
+[[cases]]
+spec = "0051"
+phase = 1
+id = "stats_aggregation"
+description = "distribution、count、token、latency を集計する"
+test = "stats_aggregates_distributions_counts_and_latency"
+file_glob = "ai/src/domain/smart_observation_report.rs"
+pending = false
+
+[[cases]]
+spec = "0051"
+phase = 1
+id = "stats_filters"
+description = "session と since cutoff が正常行へ適用される"
+test = "filters_session_and_since_hours"
+file_glob = "ai/src/domain/smart_observation_report.rs"
+pending = false
+
+[[cases]]
+spec = "0051"
+phase = 2
+id = "stats_json_cli"
+description = "stats JSON CLI が不正行数を含む"
+test = "smart_stats_json_cli_reports_invalid_lines"
+file_glob = "ai/tests/smart_observation_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0051"
+phase = 2
+id = "stats_tsv_cli"
+description = "stats TSV CLI が key-value 行を出す"
+test = "smart_stats_tsv_cli_uses_key_value_rows"
+file_glob = "ai/tests/smart_observation_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0051"
+phase = 2
+id = "recent_safe_cli"
+description = "recent JSON CLI は既知の安全なフィールドだけを出す"
+test = "smart_recent_json_cli_outputs_only_known_safe_fields"
+file_glob = "ai/tests/smart_observation_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0051"
+phase = 2
+id = "report_safe_cli"
+description = "report Markdown は raw user text 相当を出さない"
+test = "smart_report_cli_outputs_markdown_without_raw_user_text"
+file_glob = "ai/tests/smart_observation_cli.rs"
+pending = false
