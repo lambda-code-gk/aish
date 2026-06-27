@@ -1,5 +1,5 @@
-# 将来: Codex が [permissions.*] を安定サポートしたときの aish-subagent 例。
-# 現行のプロジェクト設定は .codex/config.toml の sandbox_mode を参照。
+# permission profile を追加する場合の aish-subagent 例。
+# 現行のMCP sandboxは scripts/codex-mcp-wrapper.sh が workspace-write に固定する。
 #
 # ユーザー層 ~/.codex/config.toml にマージする追記案:
 

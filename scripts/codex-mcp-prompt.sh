@@ -11,24 +11,16 @@
 #
 #   CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
 #
-# 権限: .codex/config.toml の aish-subagent（cwd 内読書き + workspace_roots）
+# 権限: scripts/codex-mcp-wrapper.sh が workspace-write + network off に固定する。
 set -euo pipefail
 
 TASK="${CODEX_TASK:-subagent}"
 EXTRA_ROOTS="${CODEX_EXTRA_ROOTS:-}"
 
 cat <<EOF
-Role: ${TASK} for aish workspace (Codex subagent). You may read and edit within allowed paths.
-
-## 境界（プロジェクト \`.codex/config.toml\`）
-
-- **cwd**（このリポジトリ）内は **読取・編集可**（\`sandbox_mode = workspace-write\`）。shell / 検索で広く調べてよい。
-- **リポジトリ外**は原則触らない（将来 \`workspace_roots\` で明示許可 — 例: \`docs/codex.config.example.toml\`）。
-- \`git commit\` / \`git push\` は **ユーザーが明示したときのみ**。
-- API キー・実設定をリポジトリに書かない。\`.env\` / credentials は触らない。
-- 出力は **日本語**。推測は「推測」と明記。
-- ドキュメント（既定）: **設計書** → \`docs/spec/00xx_<topic>-spec.md\`、**実装指示書** → \`docs/tasks/00xx_<topic>-implementation-spec.md\`（設計と**同じ番号**）。完了コミット時に実装指示書のみ \`docs/done/\` へ移動。一覧は \`docs/0000_spec-index.md\`。
-- **新規機能**: 設計前に **パック構成（Pack Composition）** の適用可否を検討する（\`docs/spec/0045_pack-composition-spec.md\` §6）。設計書に「パック構成の適用」（Yes/No/部分 + 理由）を書く。動的プラグインではない。
+Role: ${TASK} for aish workspace (Codex subagent).
+Follow the repository AGENTS.md and the task body that follows.
+Work only inside the sandbox writable roots; the repository root is the default writable root.
 EOF
 
 if [[ -n "$EXTRA_ROOTS" ]]; then

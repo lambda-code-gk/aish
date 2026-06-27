@@ -32,10 +32,9 @@ Codex: repo 内を自律調査・編集・テスト
 | 引数 | 値 |
 |------|-----|
 | `cwd` | リポジトリルート |
-| `profile` | `subagent` / `spec` / `review` / `audit` |
 | `approval-policy` | `never` |
-| `config` | `{"approval_policy":"never"}` |
-| `sandbox` | **`danger-full-access`（必須）** — 省略すると bwrap EPERM で失敗 |
+| `config` | 通常: `{"approval_policy":"never","model_reasoning_effort":"medium"}`、review: effort `low` |
+| `sandbox` | `workspace-write` |
 | `prompt` | 上記連結全文 |
 | `developer-instructions` | 下記 |
 
@@ -45,14 +44,15 @@ Codex: repo 内を自律調査・編集・テスト
 
 ## 権限
 
-- プロジェクト [`.codex/config.toml`](../.codex/config.toml): `sandbox_mode = workspace-write`、`network_access = false`
+- `scripts/codex-mcp-wrapper.sh`: `sandbox_mode = workspace-write`、`network_access = false`
+- プロジェクト [`.codex/config.toml`](../.codex/config.toml): workspace-write 時のネットワークを無効化
 - **cwd 内**: 読取・編集可
 - **外**: 原則不可（将来 `workspace_roots` — `docs/codex.config.example.toml`）
 
 ## `developer-instructions` 骨子
 
 ```text
-Subagent for aish. Project .codex/config.toml uses workspace-write sandbox; stay in repo cwd unless user allows extra paths.
+Subagent for aish. The MCP wrapper uses workspace-write sandbox; stay in repo cwd unless user allows extra paths.
 Explore with shell/tools; edits allowed in workspace. Do not access paths outside the repo without explicit user allowance. Do not commit secrets or write API keys to the repo.
 Do not git commit or git push unless the user message explicitly requests it.
 Output in Japanese. Mark 推測 explicitly.
@@ -94,6 +94,6 @@ For new optional features: evaluate Pack Composition applicability per docs/spec
 
 ## MCP 障害（bwrap）
 
-Ubuntu 24.04: bwrap EPERM → CLI は `.codex/config.toml` の `use_legacy_landlock`。MCP は `scripts/codex-mcp-wrapper.sh`（Landlock 併用不可）。`./scripts/codex-fix-linux-sandbox.sh`。MCP 変更後は Cursor 再起動。
+Ubuntu 24.04: CLI / MCP wrapper は bwrap を優先し、利用不能な間だけ Landlock へフォールバックする。MCP は常に `workspace-write` で、`danger-full-access` へは切り替えない。`./scripts/codex-fix-linux-sandbox.sh` で診断し、AppArmor profile を有効化する。MCP 変更後は Cursor 再起動。
 
 それでも失敗時は親が代替し未実施を明記。

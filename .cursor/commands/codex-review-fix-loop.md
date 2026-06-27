@@ -33,7 +33,7 @@ MCP `codex` 引数:
 | 引数 | 値 |
 |------|-----|
 | `cwd` | リポジトリルート |
-| `sandbox` | **`danger-full-access`（必須）** |
+| `sandbox` | `workspace-write` |
 | `approval-policy` | `never` |
 | `config` | `{"approval_policy":"never","model_reasoning_effort":"low"}` |
 | `developer-instructions` | `.cursor/rules/50-codex-subagent.mdc` の骨子 |

@@ -141,7 +141,7 @@
 3. 続きは `codex-reply`。親が diff を絞りたいときだけ `CODEX_USE_PACKET=1`
 4. **`git commit` / `push` はユーザー明示時のみ**（Codex にも明示がない限りさせない）
 
-詳細: `docs/codex-delegation.md`（MCP は `sandbox: danger-full-access` 必須）
+詳細: `docs/codex-delegation.md`（MCP は `sandbox: workspace-write`、ネットワーク無効）
 
 ## ドキュメント
 

@@ -35,20 +35,20 @@ flowchart LR
 
 親は Codex 全文を履歴に貼らない。追い込みは `codex-reply` + 同じ `threadId`。
 
-## 権限（`.codex/config.toml`）
+## 権限
 
 リポジトリ直下の [`.codex/config.toml`](../.codex/config.toml):
 
-| 設定 | 意味 |
-|------|------|
-| `sandbox_mode = "workspace-write"` | cwd（リポジトリ）内の読取・編集・コマンド実行 |
-| `[sandbox_workspace_write] network_access = false` | シェルからのネットワーク既定オフ |
+| 設定元 | 意味 |
+|--------|------|
+| `scripts/codex-mcp-wrapper.sh` | `sandbox_mode = "workspace-write"` と network off を強制 |
+| `[sandbox_workspace_write] network_access = false` | プロジェクト設定でもシェルからのネットワークを無効化 |
 
-**Linux**: `[features] use_legacy_landlock = true` で bwrap の `loopback: Operation not permitted` を回避（本リポジトリ設定済み）。
+CLI / MCP wrapper は `umask 077` を設定し、新しく作成するセッション履歴をユーザー本人だけが読める権限にする。
 
 **将来**: Codex の `[permissions.aish-subagent]`（beta）例は [codex.config.example.toml](./codex.config.example.toml)。
 
-MCP の `codex` 呼び出しでは **`sandbox: danger-full-access` を必ず渡す**（省略すると Ubuntu で bwrap EPERM）。`workspace-write` は使わない。
+MCP の `codex` 呼び出しでは `sandbox: workspace-write` を渡す。`danger-full-access` は使わない。
 
 ## MCP 呼び出し（親エージェント）
 
@@ -89,10 +89,9 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 | 引数 | 値 |
 |------|-----|
 | `cwd` | リポジトリルート |
-| `profile` | `subagent`（既定）/ `spec` / `review` / `audit`（推論の深さ） |
 | `approval-policy` | `never` |
-| `config` | `{"approval_policy":"never"}` |
-| `sandbox` | `workspace-write`（省略時は `.codex/config.toml` の `sandbox_mode`） |
+| `config` | 通常: `{"approval_policy":"never","model_reasoning_effort":"medium"}`、review: effort `low` |
+| `sandbox` | `workspace-write` |
 | `developer-instructions` | `.cursor/rules/50-codex-subagent.mdc` 参照 |
 
 ### 5. 続き
@@ -104,13 +103,13 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 
 | 値 | 用途 |
 |----|------|
-| `subagent` | 既定。調査・実装・修正・検証など自由記述 |
-| `spec` | **設計書**を `docs/spec/` に出力。実装指示は `docs/tasks/` |
-| `review` | 変更の監査（パケット任意） |
-| `audit` | 境界・セキュリティ横断 |
+| `subagent` | 既定。調査・実装・修正・検証など自由記述（reasoning effort: medium） |
+| `spec` | **設計書**を `docs/spec/` に出力。実装指示は `docs/tasks/`（effort: medium） |
+| `review` | 変更の監査（パケット任意、effort: low） |
+| `audit` | 境界・セキュリティ横断（effort: medium） |
 | `spike` | 設計比較・調査のみ |
 
-`CODEX_TASK` は `codex-mcp-prompt.sh` の Role 行に反映されるだけ。実際の作業内容は **prompt 本文**で伝える。
+`CODEX_TASK` は `codex-mcp-prompt.sh` の Role 行に反映されるだけ。推論強度はMCPの `config` 引数で明示し、実際の作業内容は **prompt 本文**で伝える。プロジェクトローカルの `[profiles.*]` はCodex 0.134以降無視されるため使わない。
 
 ## Codex に任せてよいこと
 
@@ -141,30 +140,28 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 
 Ubuntu 24.04 などで AppArmor が unprivileged user namespace を制限していると、Codex の **bwrap** サンドボックスが失敗し、MCP からの `cat` / `rg` も同じエラーになる。
 
-**CLI（手元）**
+**CLI / Cursor MCP**
 
 ```bash
-./scripts/codex-cli.sh …   # Ubuntu: Landlock 有効
+./scripts/codex-cli.sh …
 ```
 
-`workspace-write` を明示すると permission profiles と Landlock が競合するため、プロジェクト [`.codex/config.toml`](../.codex/config.toml) には `sandbox_mode` を書かない。
-
-**Cursor MCP**
-
-- [`.cursor/mcp.json`](../.cursor/mcp.json) → `scripts/codex-mcp-wrapper.sh`（認証は `~/.codex`、`danger-full-access`）
+- CLI / MCP wrapper はbwrapを優先し、利用不能な間だけLandlockへフォールバック
+- [`.cursor/mcp.json`](../.cursor/mcp.json) → `scripts/codex-mcp-wrapper.sh`（認証は `~/.codex`、`workspace-write`）
 - 事前に `codex login`（ChatGPT または API キー）
-- **設定変更後は MCP 再接続が必須**（古い `mcp-server` プロセスは Landlock を保持したまま）
+- **設定変更後は MCP 再接続が必須**
 
 診断: `./scripts/codex-fix-linux-sandbox.sh`
 
-Landlock 有効時も失敗する場合:
+bwrap用AppArmor profileを有効化:
 
 ```bash
-sudo apt install -y apparmor-profiles apparmor-utils bubblewrap
-# プロファイルがパッケージに含まれる場合のみ:
+sudo apt-get install -y apparmor-profiles apparmor-utils bubblewrap
 sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
 sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 ```
+
+`kernel.apparmor_restrict_unprivileged_userns=0` によるシステム全体の制限解除は行わない。
 
 ## MCP がそれでも動かないとき
 

@@ -37,7 +37,7 @@ codex exec \
 | `-p` / `--profile` | `$CODEX_HOME` の Codex プロファイル（aibe `[llm.*]` の `codex_profile` と対応） |
 | `--ephemeral` | セッション永続化不要の一回限り |
 
-**Landlock（本リポジトリ Linux）**: 起動ラッパーで `codex --enable use_legacy_landlock` を付与（[scripts/codex-cli.sh](../../scripts/codex-cli.sh)）。
+**Linux sandbox（本リポジトリ）**: 起動ラッパーはbwrapを優先し、利用不能な間だけLandlockへフォールバックする（[scripts/codex-cli.sh](../../scripts/codex-cli.sh)）。
 
 **認証**: 対話 `codex login` 済みの `~/.codex/auth.json` を再利用。CI 向け `CODEX_API_KEY` は **`codex exec` のみ**（公式 Non-interactive 節）。
 
