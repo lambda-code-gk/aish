@@ -8,7 +8,10 @@ use aibe::adapters::outbound::{GeminiLlm, StaticCapabilityPolicy};
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::basic_pack_arc;
 use aibe::application::tool_round::ToolRoundExecutor;
-use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, MessageRole, ToolName};
+use aibe::domain::{
+    AgentTurnContext, ChatMessage, ClientCwd, MessageRole, ToolCall, ToolName,
+    AISH_REPLAY_SHOW_LOGICAL,
+};
 use aibe::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
 use aibe_protocol::ClientResponse;
 use serde_json::{json, Value};
@@ -82,6 +85,94 @@ async fn complete_with_tools_sends_function_declarations() {
     assert!(body["tools"][0]["functionDeclarations"]
         .as_array()
         .is_some_and(|a| !a.is_empty()));
+    let declaration = &body["tools"][0]["functionDeclarations"][0];
+    assert!(declaration.get("parameters").is_none());
+    assert_eq!(
+        declaration["parametersJsonSchema"]["properties"]["path"]["type"],
+        "string"
+    );
+}
+
+#[tokio::test]
+async fn complete_with_client_tool_preserves_additional_properties_in_json_schema() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"/v1beta/models/test-model:generateContent$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(success_body(json!([
+                { "text": "done" }
+            ]))),
+        )
+        .mount(&server)
+        .await;
+
+    let tool = aibe::application::client_tool_defs::canonical_aish_replay_show_tool_definition();
+    let llm = gemini_llm(&server);
+    let _ = llm
+        .complete_with_tools(&[ChatMessage::user("show replay")], &[tool])
+        .await
+        .expect("complete_with_tools");
+
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 1);
+    let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+    let declaration = &body["tools"][0]["functionDeclarations"][0];
+    assert_eq!(declaration["name"], "aish_replay_show");
+    assert!(declaration.get("parameters").is_none());
+    assert_eq!(
+        declaration["parametersJsonSchema"]["additionalProperties"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn client_tool_function_response_uses_same_provider_name_as_function_call() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex(r"/v1beta/models/test-model:generateContent$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(success_body(json!([
+                { "text": "done" }
+            ]))),
+        )
+        .mount(&server)
+        .await;
+
+    let tool = aibe::application::client_tool_defs::canonical_aish_replay_show_tool_definition();
+    let messages = vec![
+        ChatMessage::user("show replay"),
+        ChatMessage::assistant_with_tools(
+            "",
+            vec![ToolCall {
+                id: "call_0_0".into(),
+                name: AISH_REPLAY_SHOW_LOGICAL.into(),
+                arguments: json!({ "index": 1 }),
+                provider_extras: Some(json!({ "thoughtSignature": "sig-replay" })),
+            }],
+        ),
+        ChatMessage::tool("call_0_0", "recorded output"),
+    ];
+
+    let llm = gemini_llm(&server);
+    let _ = llm
+        .complete_with_tools(&messages, &[tool])
+        .await
+        .expect("complete_with_tools");
+
+    let requests = server.received_requests().await.expect("requests");
+    let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+    assert_eq!(
+        body["contents"][1]["parts"][0]["functionCall"]["name"],
+        "aish_replay_show"
+    );
+    assert_eq!(
+        body["contents"][2]["parts"][0]["functionResponse"]["name"],
+        "aish_replay_show"
+    );
+    assert_eq!(
+        body["contents"][2]["parts"][0]["functionResponse"]["id"],
+        "call_0_0"
+    );
 }
 
 #[tokio::test]

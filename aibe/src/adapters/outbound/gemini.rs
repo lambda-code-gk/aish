@@ -209,7 +209,7 @@ fn messages_to_contents(messages: &[ChatMessage]) -> Vec<Content> {
                     .tool_call_id
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
-                let name = resolve_tool_name(messages, &call_id);
+                let name = tool_name_for_provider(&resolve_tool_name(messages, &call_id));
                 parts.push(Part::FunctionResponse {
                     function_response: FunctionResponse {
                         id: call_id,
@@ -393,7 +393,7 @@ impl LlmProvider for GeminiLlm {
             .map(|t| FunctionDeclaration {
                 name: t.name.clone(),
                 description: t.description.clone(),
-                parameters: t.parameters.clone(),
+                parameters_json_schema: t.parameters.clone(),
             })
             .collect();
 
@@ -512,7 +512,8 @@ struct GeminiTool {
 struct FunctionDeclaration {
     name: String,
     description: String,
-    parameters: Value,
+    #[serde(rename = "parametersJsonSchema")]
+    parameters_json_schema: Value,
 }
 
 #[derive(Serialize)]

@@ -254,7 +254,7 @@ POST {base_url}/models/{model}:generateContent
         {
           "name": "read_file",
           "description": "...",
-          "parameters": { "type": "object", "properties": {} }
+          "parametersJsonSchema": { "type": "object", "properties": {} }
         }
       ]
     }
@@ -266,6 +266,8 @@ POST {base_url}/models/{model}:generateContent
   }
 }
 ```
+
+`ToolDefinition.parameters` は provider-neutral な JSON Schema である。Gemini v1beta の制限付き `parameters` は `additionalProperties` を受理しないため、adapter は完全な JSON Schema を受理する `parametersJsonSchema` へ変換する。
 
 ### リクエスト本文 — `complete`（tools なし）
 
@@ -289,6 +291,7 @@ POST {base_url}/models/{model}:generateContent
 ### 参考ルール
 
 - `functionCall.id` と `functionResponse.id` は一致させる
+- client-provided tool は `functionCall.name` と `functionResponse.name` の両方を同じ provider-safe 名へ変換する（例: `aish.replay_show` → `aish_replay_show`）
 - streaming は別 API のため本仕様では使わない
 
 ## TerminationCapability

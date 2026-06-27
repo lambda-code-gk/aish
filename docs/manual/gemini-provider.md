@@ -50,13 +50,16 @@ tools = "@read-only"
    cargo run -p ai -- ask --tools @read-only --verbose-tools \
      "Read a file named README.md from the current directory and reply with only its first line."
    ```
-4. 任意で `max_rounds = 1` にして、max-round 終端が落ちないことを確認する。
+4. `aish shell` 内または有効な replay session から同じ操作を行い、既定の `shell_log_mode=hybrid` で `aish.replay_show` が広告されても HTTP 400 にならないことを確認する。
+5. 任意で `max_rounds = 1` にして、max-round 終端が落ちないことを確認する。
 
 ## 期待結果
 
 - `agent_turn_result` の assistant 本文が表示される
 - `--verbose-tools` 使用時に tool 呼び出しの詳細が見える
 - `functionCall` / `functionResponse` の対応で turn が継続する
+- tool declaration は `parametersJsonSchema` を使い、`aish.replay_show` の `additionalProperties: false` を含んでも Gemini に拒否されない
+- `aish.replay_show` 実行後も `functionCall.name` / `functionResponse.name` がともに `aish_replay_show` となり、次ラウンドが HTTP 400 にならない
 - API key や Bearer がターミナルやログに平文で出ない
 - `max_rounds = 1` の場合も `status: max_tool_rounds` で終端する
 
