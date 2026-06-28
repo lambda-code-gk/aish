@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// memory RPC 用コンテキスト。`project_key` はサーバ導出。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]

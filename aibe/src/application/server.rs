@@ -17,11 +17,11 @@ use crate::adapters::outbound::{
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
     FilesystemContextualMemoryStore, FilesystemMemoryRecipeRegistryLoader,
-    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
+    FilesystemMemorySpaceResolver, FilesystemWorkStore, InProcessMemorySubscriptionBroker,
 };
 use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
-use crate::application::contextual_pack_arc;
+use crate::application::contextual_pack_with_work_arc;
 use crate::application::request_service::RequestService;
 use crate::daemon::{build_current_pid_record, default_pid_file_path, write_pid_file};
 use crate::domain::{FeatureEligibilityContext, FeatureRegistry};
@@ -69,7 +69,7 @@ pub async fn run(
             let recipe_loader = Arc::new(FilesystemMemoryRecipeRegistryLoader::new(
                 memory_config.clone(),
             ));
-            contextual_pack_arc(
+            contextual_pack_with_work_arc(
                 Arc::new(memory_store_impl)
                     as Arc<dyn crate::ports::outbound::ContextualMemoryStore>,
                 memory_space_resolver,
@@ -79,6 +79,9 @@ pub async fn run(
                 Arc::clone(&capability_policy),
                 profile_registry.clone(),
                 Arc::clone(&llm_tracer),
+                Arc::new(FilesystemWorkStore::with_conversation_root(
+                    conversation_store_root.clone(),
+                )) as Arc<dyn crate::ports::outbound::WorkStore>,
             )
         }
         #[cfg(not(feature = "memory"))]

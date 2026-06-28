@@ -18,6 +18,8 @@ mod shell_log_tail;
 pub mod test_support;
 mod tool;
 mod tool_execution_summary;
+#[cfg(feature = "memory")]
+mod work;
 
 pub use agent_turn_context::{AgentTurnContext, ContextError};
 pub use capability::{
@@ -69,6 +71,8 @@ pub use message::{ChatMessage, MessageRole, UnknownMessageRole};
 pub use shell_log_tail::ShellLogTail;
 pub use tool::{ToolCall, ToolResult};
 pub use tool_execution_summary::ToolExecutionSummary;
+#[cfg(feature = "memory")]
+pub use work::{WorkEntry, WorkEntryKind, WorkItem, WorkState, WorkStateError, WorkStatus};
 
 pub use aibe_protocol::{
     is_known_tool, parse_tool_names, ExecutedToolCall, ExecutedToolStatus,

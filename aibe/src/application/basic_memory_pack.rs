@@ -8,7 +8,8 @@ use crate::domain::{AgentTurnContext, ChatMessage};
 use crate::ports::outbound::{MemorySubscription, RpcExtension, TurnHook, TurnHookError};
 use aibe_protocol::{
     ClientResponse, MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
-    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody,
+    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody, WorkApplyRequestBody,
+    WorkQueryRequestBody,
 };
 
 /// `[memory] enabled = false` 時に選ばれる pack。
@@ -48,6 +49,14 @@ impl RpcExtension for BasicPack {
         body: MemorySubscribeRequestBody,
     ) -> (ClientResponse, Option<MemorySubscription>) {
         (memory_disabled_response(body.id), None)
+    }
+
+    fn work_apply(&self, body: WorkApplyRequestBody) -> ClientResponse {
+        memory_disabled_response(body.id)
+    }
+
+    fn work_query(&self, body: WorkQueryRequestBody) -> ClientResponse {
+        memory_disabled_response(body.id)
     }
 }
 
@@ -114,5 +123,42 @@ mod tests {
             }
             other => panic!("expected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn basic_pack_rejects_work_rpc_and_does_not_inject_work() {
+        let pack = BasicPack;
+        let context = aibe_protocol::MemoryContext {
+            cwd: None,
+            memory_space_id: Some("project_test".into()),
+        };
+        for response in [
+            pack.work_query(WorkQueryRequestBody {
+                id: "work-query".into(),
+                session_id: "session".into(),
+                context: context.clone(),
+            }),
+            pack.work_apply(WorkApplyRequestBody {
+                id: "work-apply".into(),
+                session_id: "session".into(),
+                context,
+                operation: aibe_protocol::WorkOperationDto::Start {
+                    goal: "goal".into(),
+                },
+            }),
+        ] {
+            match response {
+                ClientResponse::Error { message, .. } => {
+                    assert!(message
+                        .contains(crate::application::memory_runtime::MEMORY_DISABLED_MESSAGE))
+                }
+                other => panic!("expected disabled error: {other:?}"),
+            }
+        }
+        let ctx = AgentTurnContext::for_text_only(None);
+        let messages = pack
+            .prepare_turn_messages(&ctx, vec![ChatMessage::user("hi")])
+            .expect("turn hook");
+        assert_eq!(messages, vec![ChatMessage::user("hi")]);
     }
 }

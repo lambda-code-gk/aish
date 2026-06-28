@@ -1,4 +1,5 @@
 mod capability_policy;
+#[cfg(feature = "memory")]
 mod contextual_memory_store;
 mod conversation_store;
 mod env_config;
@@ -10,6 +11,8 @@ mod gemini;
 mod in_process_memory_subscription_broker;
 mod llm_backend;
 mod llm_factory;
+#[cfg(feature = "memory")]
+mod memory_space_fs;
 mod memory_space_resolver;
 mod mock_llm;
 mod openai_compatible;
@@ -17,11 +20,14 @@ mod scripted_mock_llm;
 pub mod terminator;
 mod toml_config;
 pub mod tools;
+#[cfg(feature = "memory")]
+mod work_store;
 
 pub use crate::ports::outbound::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStoreError,
 };
 pub use capability_policy::StaticCapabilityPolicy;
+#[cfg(feature = "memory")]
 pub use contextual_memory_store::{EmptyContextualMemoryStore, FilesystemContextualMemoryStore};
 pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;
@@ -42,3 +48,5 @@ pub use mock_llm::MockLlm;
 pub use openai_compatible::OpenAiCompatibleLlm;
 pub use scripted_mock_llm::{DeltaStreamingMockLlm, ScriptedMockLlm};
 pub use toml_config::TomlConfig;
+#[cfg(feature = "memory")]
+pub use work_store::FilesystemWorkStore;

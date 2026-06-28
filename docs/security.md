@@ -117,6 +117,17 @@
 - `--dry-run` 等で memory 全文を不用意に露出しない（`ai` memory コマンドは意図的な表示のみ）
 - **capability 分離（0037 Phase 6）**: memory 操作（read/write/archive/recipe/subscribe）と shell execute は AIBE application boundary で別 capability。shell 承認 UI とは独立。v1 は local runtime のみで **remote authentication / token issue は未実装**。将来 mobile profile は shell execute を持たない設計（[manual/contextual-memory-multi-client.md](manual/contextual-memory-multi-client.md)）
 
+### ai work（0052 Phase 0）
+
+- Work state は `aibe` が `memory/spaces/<memory_space_id>/work-state.json` に保存し、`ai` はローカル正本を持たない。
+- memory space directory / state file は `0700 / 0600`。generic memory と同じ `.lock` を使い、temp file + `sync_all` + rename で置換する。
+- `memory_space_id` は既存 validator / resolver 経由だけで path に変換し、Work ID は正の整数として path component に使用しない。
+- Work operation の user text は空文字・NUL・8 KiB 超過を protocol / service / persisted-state validation で拒否する。
+- 壊れた JSON、未知 schema、state invariant 違反は既存 state を上書きしない。explicit Work RPC は本文や実 path を含めない分類済み error を返す。
+- Work 内容はユーザーが明示保存する文脈であり、自動 redaction はしない。API key、token、password を goal / note / idea 等へ保存しない。
+- Work read/write は既存 `MemoryRead / MemoryWrite` capability に従い、runtime disabled / feature-off は fail-closed とする。
+- Phase 0 では active Work の通常 turn 注入は未実装。Phase 4 で synthetic user context として bounded に注入し、system instruction にはしない。
+
 ### Smart Preprocessor observation report
 
 - ai smart stats/recent/report は observation を read-only で扱い、読み取り DTO に宣言した既知の非 raw フィールドだけを出力する。未知フィールド、不正 JSON、不正 UTF-8 の内容をエラー本文や report に再掲しない。

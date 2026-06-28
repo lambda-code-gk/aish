@@ -867,3 +867,327 @@ description = "report Markdown は raw user text 相当を出さない"
 test = "smart_report_cli_outputs_markdown_without_raw_user_text"
 file_glob = "ai/tests/smart_observation_cli.rs"
 pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_protocol_roundtrip"
+description = "全 Work request / response DTO が roundtrip し unknown field を拒否する"
+test = "work_protocol_dto_roundtrip_and_rejects_unknown_fields"
+file_glob = "aibe-protocol/src/work.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_store_atomic_state"
+description = "state の保存・再読込、単調 ID、permission、破損非上書きが成立する"
+test = "work_store_persists_atomic_state_and_preserves_corrupt_file"
+file_glob = "aibe/src/adapters/outbound/work_store.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_store_concurrency"
+description = "複数 store instance の同時 mutation が lost update を起こさない"
+test = "work_store_serializes_concurrent_mutations_without_lost_updates"
+file_glob = "aibe/src/adapters/outbound/work_store.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_pack_disabled"
+description = "BasicPack が Work RPC を拒否し注入しない"
+test = "basic_pack_rejects_work_rpc_and_does_not_inject_work"
+file_glob = "aibe/src/application/basic_memory_pack.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_cli_parse"
+description = "引数なしを含む全 ai work command が parse できる"
+test = "work_subcommands_parse_successfully"
+file_glob = "ai/src/clap_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_empty_views"
+description = "dashboard / status / list の空状態が区別される"
+test = "work_dashboard_status_and_list_render_empty_state"
+file_glob = "ai/tests/work_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_cli_disabled"
+description = "runtime disabled で Work CLI が fail-closed になる"
+test = "work_cli_rejects_when_memory_is_disabled"
+file_glob = "ai/tests/memory_disabled_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 0
+id = "work_cli_feature_off"
+description = "feature-off stub が Work CLI を fail-closed にする"
+test = "work_cli_stub_rejects_when_memory_feature_is_disabled"
+file_glob = "ai/src/application/memory_stub.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_start_active"
+description = "start で active work が作られる"
+test = "work_start_creates_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_start_pauses_previous"
+description = "active 中の start が旧 work を Paused にする"
+test = "work_start_pauses_previous_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_focus"
+description = "focus が active work だけを更新する"
+test = "work_focus_updates_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_idea"
+description = "idea が active work に記録される"
+test = "work_idea_adds_entry_to_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_note"
+description = "note が active work に記録される"
+test = "work_note_adds_entry_to_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_decision"
+description = "decision が active work に記録される"
+test = "work_decision_adds_entry_to_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_defer_without_active"
+description = "active なしでも defer が Deferred work を作る"
+test = "work_defer_succeeds_without_active_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_defer_keeps_active"
+description = "defer が active と stack を変更しない"
+test = "work_defer_keeps_active_work_and_stack_unchanged"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_status_sections"
+description = "populated status に必要な section が出る"
+test = "work_status_renders_all_required_sections"
+file_glob = "ai/tests/work_cli.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 1
+id = "work_list_groups"
+description = "list が status ごとに分類される"
+test = "work_list_groups_works_by_status"
+file_glob = "ai/tests/work_cli.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 2
+id = "work_switch"
+description = "switch が active work を原子的に切り替える"
+test = "work_switch_changes_active_work_atomically"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 2
+id = "work_finish"
+description = "finish が active を Done にして unset する"
+test = "work_finish_marks_active_done_and_unsets_active"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 2
+id = "work_requires_active"
+description = "active 必須操作が state 非変更で失敗する"
+test = "work_mutations_requiring_active_fail_without_state_change"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 2
+id = "work_switch_missing"
+description = "missing work への switch が失敗する"
+test = "work_switch_rejects_missing_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 2
+id = "work_switch_done"
+description = "Done work への switch が失敗する"
+test = "work_switch_rejects_done_work"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 2
+id = "work_stack_guard"
+description = "stack 非空の root transition が失敗する"
+test = "work_root_transitions_reject_non_empty_stack"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 3
+id = "work_push"
+description = "push が parent を stack へ積み child を active にする"
+test = "work_push_stacks_parent_and_activates_child"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 3
+id = "work_nested_push"
+description = "nested push の stack と parent chain が一致する"
+test = "work_nested_push_preserves_parent_chain"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 3
+id = "work_pop"
+description = "pop が child を Done にして parent へ戻る"
+test = "work_pop_finishes_child_and_restores_parent"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 3
+id = "work_pop_empty"
+description = "empty stack の pop が state 非変更で失敗する"
+test = "work_pop_rejects_empty_stack_without_state_change"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 3
+id = "work_no_auto_merge"
+description = "child entries が parent へ自動 merge されない"
+test = "work_pop_does_not_merge_child_entries_into_parent"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 3
+id = "work_stack_display"
+description = "status/list が stack と child marker を表示する"
+test = "work_views_render_stack_and_child_marker"
+file_glob = "ai/tests/work_cli.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 4
+id = "work_injection_fields"
+description = "active goal/focus/recent decisions だけが注入される"
+test = "work_turn_hook_injects_active_goal_focus_and_recent_decisions"
+file_glob = "aibe/tests/memory_pack_turn_hook.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 4
+id = "work_injection_budget"
+description = "Work と generic memory が既存 budget を共有する"
+test = "work_and_memory_injection_share_existing_budget"
+file_glob = "aibe/tests/memory_pack_turn_hook.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 4
+id = "work_injection_exclusions"
+description = "非 active と非必須 field は通常注入されない"
+test = "work_turn_hook_excludes_non_active_and_non_required_fields"
+file_glob = "aibe/tests/memory_pack_turn_hook.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 4
+id = "work_injection_best_effort"
+description = "no-active/破損 state でも通常 turn が継続する"
+test = "work_turn_hook_is_best_effort_for_missing_or_corrupt_state"
+file_glob = "aibe/tests/memory_pack_turn_hook.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 4
+id = "work_no_client_injection"
+description = "ai が Work block を system_instruction へ重複注入しない"
+test = "work_context_is_not_added_to_client_system_instruction"
+file_glob = "ai/src/main.rs"
+pending = true
+
+[[cases]]
+spec = "0052"
+phase = 4
+id = "work_low_level_regression"
+description = "既存 low-level memory CLI が維持される"
+test = "work_feature_keeps_low_level_memory_cli_behavior"
+file_glob = "ai/tests/phase_a_cli.rs"
+pending = true

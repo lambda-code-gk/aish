@@ -228,6 +228,8 @@ fn history_retry_and_rerun_use_their_expected_sources() {
         .current_dir(&ask_cwd)
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
+        .env_remove("AISH_SESSION_DIR")
+        .env_remove("AI_ASK_LOG")
         .args(["--quiet", "--no-start", "world"])
         .output()
         .expect("run second ask");

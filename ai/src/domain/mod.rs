@@ -20,6 +20,7 @@ pub mod smart_preprocessor;
 mod terminal_display;
 mod terminal_size;
 mod tools;
+mod work;
 
 pub use ask::{AskInput, AskRequest, AskRequestError};
 pub use ask_arg_order::{validate_ask_arg_order, AskArgOrderError};
@@ -71,3 +72,4 @@ pub use tools::{
     resolve_tools, tokens_from_config_value, AskToolsConfigRaw, ConfigToolsTokens, ResolvedTools,
     ToolAllowlist, ToolsResolveError, ToolsStartupLine,
 };
+pub use work::{render_work_snapshot, WorkView};

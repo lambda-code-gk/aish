@@ -148,3 +148,28 @@ enabled = true
         "stderr={stderr}"
     );
 }
+
+#[test]
+fn work_cli_rejects_when_memory_is_disabled() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let config_path = home.path().join("config.toml");
+    fs::write(
+        &config_path,
+        r#"
+[memory]
+enabled = false
+"#,
+    )
+    .expect("write config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("HOME", home.path())
+        .env("AI_CONFIG", &config_path)
+        .env("AI_SESSION_ID", "work-disabled")
+        .args(["work", "--no-start"])
+        .output()
+        .expect("run ai work");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "stderr={stderr}");
+    assert!(stderr.contains("contextual memory is disabled"), "{stderr}");
+}

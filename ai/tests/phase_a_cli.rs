@@ -230,6 +230,7 @@ fn structured_format_ignores_stream_chunks_on_stdout() {
     let out_json = Command::new(env!("CARGO_BIN_EXE_ai"))
         .env("AI_CONFIG", &cfg_json)
         .env("HOME", home.path())
+        .env_remove("AI_FILTER")
         .args(["--format", "json", "--no-start", "--no-progress", "hello"])
         .output()
         .expect("run ai json");
@@ -248,6 +249,7 @@ fn structured_format_ignores_stream_chunks_on_stdout() {
     let out_tsv = Command::new(env!("CARGO_BIN_EXE_ai"))
         .env("AI_CONFIG", &cfg_tsv)
         .env("HOME", home.path())
+        .env_remove("AI_FILTER")
         .args(["--format", "tsv", "--no-start", "--no-progress", "hello"])
         .output()
         .expect("run ai tsv");
@@ -267,6 +269,7 @@ fn structured_format_ignores_stream_chunks_on_stdout() {
     let out_env = Command::new(env!("CARGO_BIN_EXE_ai"))
         .env("AI_CONFIG", &cfg_env)
         .env("HOME", home.path())
+        .env_remove("AI_FILTER")
         .args(["--format", "env", "--no-start", "--no-progress", "hello"])
         .output()
         .expect("run ai env");
@@ -315,6 +318,7 @@ fn default_ask_supports_json_format_and_quiet() {
     let out = Command::new(env!("CARGO_BIN_EXE_ai"))
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
+        .env_remove("AI_FILTER")
         .args(["--quiet", "--format", "json", "--no-start", "hello"])
         .output()
         .expect("run ai");
@@ -585,6 +589,8 @@ fn no_console_hint_skips_system_instruction_on_agent_turn() {
     let out = Command::new(env!("CARGO_BIN_EXE_ai"))
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
+        .env_remove("AISH_SESSION_DIR")
+        .env_remove("AI_ASK_LOG")
         .args(["--quiet", "--no-start", "--no-console-hint", "hello"])
         .output()
         .expect("run ai");
@@ -1028,4 +1034,10 @@ fn mem_run_clarify_goal_apply_denied_on_non_interactive_stdin() {
     assert!(out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("non-interactive stdin"), "stderr: {stderr}");
+}
+
+#[test]
+#[ignore = "0052 phase 4 pending"]
+fn work_feature_keeps_low_level_memory_cli_behavior() {
+    panic!("pending 0052");
 }

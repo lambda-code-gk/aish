@@ -8,6 +8,7 @@ use crate::memory::{
     MemoryQueryDto, MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeStatus,
     MemorySubscribeStatus,
 };
+use crate::work::{WorkApplyResponseBody, WorkQueryResponseBody};
 use crate::{ClientToolErrorKind, ClientToolResultStatus};
 
 /// NDJSON 1 行のレスポンス。
@@ -93,6 +94,8 @@ pub enum ClientResponse {
         memory_space_id: String,
         event: MemoryChangeEventDto,
     },
+    WorkApplyResult(WorkApplyResponseBody),
+    WorkQueryResult(WorkQueryResponseBody),
     Error {
         id: String,
         code: ErrorCode,

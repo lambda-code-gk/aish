@@ -341,7 +341,9 @@ pub fn render_response(
         | ClientResponse::MemoryKindListResult { .. }
         | ClientResponse::MemoryRecipeRunResult { .. }
         | ClientResponse::MemorySubscribeResult { .. }
-        | ClientResponse::MemoryChanged { .. } => PresenterOutput {
+        | ClientResponse::MemoryChanged { .. }
+        | ClientResponse::WorkApplyResult(_)
+        | ClientResponse::WorkQueryResult(_) => PresenterOutput {
             stdout: None,
             stderr: Vec::new(),
         },
@@ -668,6 +670,34 @@ impl ResponseView {
             ClientResponse::MemoryChanged { id, .. } => Self {
                 response_type: "memory_changed".to_string(),
                 id: id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::WorkApplyResult(body) => Self {
+                response_type: "work_apply_result".to_string(),
+                id: body.id.clone(),
+                status: Some("ok".to_string()),
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::WorkQueryResult(body) => Self {
+                response_type: "work_query_result".to_string(),
+                id: body.id.clone(),
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),

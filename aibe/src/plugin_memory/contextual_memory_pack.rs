@@ -6,15 +6,17 @@ use std::sync::Arc;
 use super::memory_recipe_service::MemoryRecipeService;
 use super::memory_service::MemoryService;
 use super::memory_subscribe_service::MemorySubscribeService;
+use super::work_service::WorkService;
 use crate::domain::{AgentTurnContext, ChatMessage, MessageRole};
 use crate::ports::outbound::{
     CapabilityPolicy, ContextualMemoryStore, LlmCallTracer, MemoryKindRegistryLoader,
     MemoryRecipeRegistryLoader, MemorySpaceResolver, MemorySubscription, MemorySubscriptionBroker,
-    ProfileRegistry, RpcExtension, TurnHook, TurnHookError,
+    ProfileRegistry, RpcExtension, TurnHook, TurnHookError, WorkStore,
 };
 use aibe_protocol::{
     ClientResponse, MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
-    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody, MEMORY_PROMPT_BUDGET_BYTES,
+    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody, WorkApplyRequestBody,
+    WorkQueryRequestBody, MEMORY_PROMPT_BUDGET_BYTES,
 };
 
 /// `[memory] enabled = true` 時に選ばれる pack。
@@ -27,10 +29,10 @@ pub struct ContextualMemoryPack {
     capability_policy: Arc<dyn CapabilityPolicy>,
     profile_registry: ProfileRegistry,
     llm_tracer: Arc<dyn LlmCallTracer>,
+    work_store: Arc<dyn WorkStore>,
 }
 
 impl ContextualMemoryPack {
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         memory_store: Arc<dyn ContextualMemoryStore>,
@@ -42,6 +44,31 @@ impl ContextualMemoryPack {
         profile_registry: ProfileRegistry,
         llm_tracer: Arc<dyn LlmCallTracer>,
     ) -> Self {
+        Self::with_work_store(
+            memory_store,
+            memory_space_resolver,
+            memory_kind_registry_loader,
+            memory_recipe_registry_loader,
+            memory_broker,
+            capability_policy,
+            profile_registry,
+            llm_tracer,
+            Arc::new(crate::ports::outbound::EmptyWorkStore),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_work_store(
+        memory_store: Arc<dyn ContextualMemoryStore>,
+        memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+        memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+        memory_recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
+        memory_broker: Arc<dyn MemorySubscriptionBroker>,
+        capability_policy: Arc<dyn CapabilityPolicy>,
+        profile_registry: ProfileRegistry,
+        llm_tracer: Arc<dyn LlmCallTracer>,
+        work_store: Arc<dyn WorkStore>,
+    ) -> Self {
         Self {
             memory_store,
             memory_space_resolver,
@@ -51,6 +78,7 @@ impl ContextualMemoryPack {
             capability_policy,
             profile_registry,
             llm_tracer,
+            work_store,
         }
     }
 
@@ -73,6 +101,14 @@ impl ContextualMemoryPack {
             Arc::clone(&self.memory_space_resolver),
             Arc::clone(&self.memory_kind_registry_loader),
             broker,
+            Arc::clone(&self.capability_policy),
+        )
+    }
+
+    fn work_service(&self) -> WorkService {
+        WorkService::new(
+            Arc::clone(&self.work_store),
+            Arc::clone(&self.memory_space_resolver),
             Arc::clone(&self.capability_policy),
         )
     }
@@ -166,6 +202,16 @@ impl RpcExtension for ContextualMemoryPack {
         );
         service.begin(body)
     }
+
+    fn work_apply(&self, body: WorkApplyRequestBody) -> ClientResponse {
+        self.work_service()
+            .apply(body.id, body.session_id, &body.context, body.operation)
+    }
+
+    fn work_query(&self, body: WorkQueryRequestBody) -> ClientResponse {
+        self.work_service()
+            .query(body.id, body.session_id, &body.context)
+    }
 }
 
 /// composition root / テスト用: `ContextualMemoryPack` を trait object として返す。
@@ -189,6 +235,35 @@ pub fn contextual_pack_arc(
         capability_policy,
         profile_registry,
         llm_tracer,
+    ));
+    (
+        Arc::clone(&pack) as Arc<dyn RpcExtension>,
+        Arc::clone(&pack) as Arc<dyn TurnHook>,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn contextual_pack_with_work_arc(
+    memory_store: Arc<dyn ContextualMemoryStore>,
+    memory_space_resolver: Arc<dyn MemorySpaceResolver>,
+    memory_kind_registry_loader: Arc<dyn MemoryKindRegistryLoader>,
+    memory_recipe_registry_loader: Arc<dyn MemoryRecipeRegistryLoader>,
+    memory_broker: Arc<dyn MemorySubscriptionBroker>,
+    capability_policy: Arc<dyn CapabilityPolicy>,
+    profile_registry: ProfileRegistry,
+    llm_tracer: Arc<dyn LlmCallTracer>,
+    work_store: Arc<dyn WorkStore>,
+) -> (Arc<dyn RpcExtension>, Arc<dyn TurnHook>) {
+    let pack = Arc::new(ContextualMemoryPack::with_work_store(
+        memory_store,
+        memory_space_resolver,
+        memory_kind_registry_loader,
+        memory_recipe_registry_loader,
+        memory_broker,
+        capability_policy,
+        profile_registry,
+        llm_tracer,
+        work_store,
     ));
     (
         Arc::clone(&pack) as Arc<dyn RpcExtension>,

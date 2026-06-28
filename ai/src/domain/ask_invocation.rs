@@ -33,6 +33,7 @@ pub fn is_known_cli_head(word: &str) -> bool {
             | "idea"
             | "mem"
             | "context"
+            | "work"
             | "help"
             | "-h"
             | "--help"

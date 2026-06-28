@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use crate::ports::outbound::MemorySubscription;
 use aibe_protocol::{
     ClientResponse, MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
-    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody,
+    MemoryRecipeRunRequestBody, MemorySubscribeRequestBody, WorkApplyRequestBody,
+    WorkQueryRequestBody,
 };
 
 /// memory 系 RPC を束ねる trait。
@@ -24,4 +25,8 @@ pub trait RpcExtension: Send + Sync {
         &self,
         body: MemorySubscribeRequestBody,
     ) -> (ClientResponse, Option<MemorySubscription>);
+
+    fn work_apply(&self, body: WorkApplyRequestBody) -> ClientResponse;
+
+    fn work_query(&self, body: WorkQueryRequestBody) -> ClientResponse;
 }

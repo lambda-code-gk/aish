@@ -35,7 +35,8 @@ use ai::application::{
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
-    MemoryCliOptions, NowCommand, OutputFormatArg, SmartCommand, TurnOptions,
+    MemoryCliOptions, NowCommand, OutputFormatArg, SmartCommand, TurnOptions, WorkCliOptions,
+    WorkCommand,
 };
 use ai::domain::client_tools::replay_show::replay_client_tool_callback;
 use ai::domain::smart_preprocessor::{
@@ -60,7 +61,8 @@ use aibe_client::{
 };
 use aibe_protocol::{
     ClientRequest, ClientResponse, ProtocolMessage, RouteKind, RoutePlan, RouteTurnCliOverrides,
-    RouteTurnConversation, RouteTurnPreprocessorHints, RouteTurnSession,
+    RouteTurnConversation, RouteTurnPreprocessorHints, RouteTurnSession, WorkEntryKindDto,
+    WorkOperationDto,
 };
 
 fn main() -> ExitCode {
@@ -138,6 +140,7 @@ fn run() -> anyhow::Result<ExitCode> {
         AiCommand::Idea { command } => run_idea(command),
         AiCommand::Mem { command } => run_mem(command),
         AiCommand::Context { command } => run_context(command),
+        AiCommand::Work { command, options } => run_work(command, options),
     }
 }
 
@@ -1252,6 +1255,8 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         ClientRequest::MemoryKindList(body) => Ok(body.id.clone()),
         ClientRequest::MemoryRecipeRun(body) => Ok(body.id.clone()),
         ClientRequest::MemorySubscribe(body) => Ok(body.id.clone()),
+        ClientRequest::WorkApply(body) => Ok(body.id.clone()),
+        ClientRequest::WorkQuery(body) => Ok(body.id.clone()),
         ClientRequest::ClientToolResult(body) => Ok(body.id.clone()),
     }
 }
@@ -1434,7 +1439,9 @@ fn exit_code_for_response(
         | ClientResponse::MemoryKindListResult { .. }
         | ClientResponse::MemoryRecipeRunResult { .. }
         | ClientResponse::MemorySubscribeResult { .. }
-        | ClientResponse::MemoryChanged { .. } => ExitCode::SUCCESS,
+        | ClientResponse::MemoryChanged { .. }
+        | ClientResponse::WorkApplyResult(_)
+        | ClientResponse::WorkQueryResult(_) => ExitCode::SUCCESS,
     }
 }
 
@@ -2514,6 +2521,69 @@ fn run_context(command: ContextCommand) -> anyhow::Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_work(command: Option<WorkCommand>, options: WorkCliOptions) -> anyhow::Result<ExitCode> {
+    let cfg = require_memory_enabled()?;
+    let memory_options = MemoryCliOptions {
+        socket: options.socket,
+        format: OutputFormatArg::Tsv,
+        no_start: options.no_start,
+    };
+    let ctx = prepare_memory_context(&memory_options, &cfg)?;
+    let client = AibeUnixClient::new(&ctx.socket_path);
+    let output = match command {
+        None => ai::application::work_cli::run_work_query(
+            &client,
+            &ctx,
+            ai::domain::WorkView::Dashboard,
+        ),
+        Some(WorkCommand::Status) => {
+            ai::application::work_cli::run_work_query(&client, &ctx, ai::domain::WorkView::Status)
+        }
+        Some(WorkCommand::List) => {
+            ai::application::work_cli::run_work_query(&client, &ctx, ai::domain::WorkView::List)
+        }
+        Some(command) => {
+            ai::application::work_cli::run_work_apply(&client, &ctx, work_operation(command))
+        }
+    }
+    .map_err(|error| anyhow::anyhow!(error))?;
+    println!("{output}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn work_operation(command: WorkCommand) -> WorkOperationDto {
+    match command {
+        WorkCommand::Start { goal } => WorkOperationDto::Start {
+            goal: join_words(goal),
+        },
+        WorkCommand::Switch { work_id } => WorkOperationDto::Switch { work_id },
+        WorkCommand::Push { goal } => WorkOperationDto::Push {
+            goal: join_words(goal),
+        },
+        WorkCommand::Pop => WorkOperationDto::Pop,
+        WorkCommand::Defer { text } => WorkOperationDto::Defer {
+            text: join_words(text),
+        },
+        WorkCommand::Idea { text } => WorkOperationDto::AddEntry {
+            kind: WorkEntryKindDto::Idea,
+            text: join_words(text),
+        },
+        WorkCommand::Note { text } => WorkOperationDto::AddEntry {
+            kind: WorkEntryKindDto::Note,
+            text: join_words(text),
+        },
+        WorkCommand::Decide { text } => WorkOperationDto::AddEntry {
+            kind: WorkEntryKindDto::Decision,
+            text: join_words(text),
+        },
+        WorkCommand::Focus { text } => WorkOperationDto::Focus {
+            text: join_words(text),
+        },
+        WorkCommand::Finish => WorkOperationDto::Finish,
+        WorkCommand::Status | WorkCommand::List => unreachable!("query command handled separately"),
+    }
 }
 
 fn run_memory_command(
@@ -3656,5 +3726,11 @@ mod cli_tests {
             .agent_messages
             .iter()
             .any(|msg| msg.role == "system" && msg.content.contains("concise")));
+    }
+
+    #[test]
+    #[ignore = "0052 phase 4 pending"]
+    fn work_context_is_not_added_to_client_system_instruction() {
+        panic!("pending 0052");
     }
 }

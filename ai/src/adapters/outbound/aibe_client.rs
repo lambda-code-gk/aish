@@ -15,11 +15,12 @@ use crate::domain::client_tools::replay_show::replay_client_tool_callback;
 use aibe_protocol::{
     ClientRequest, ClientResponse, MemoryApplyRequestBody, MemoryContext,
     MemoryKindListRequestBody, MemoryOperationDto, MemoryQueryDto, MemoryQueryRequestBody,
-    MemoryRecipeRunRequestBody, ProtocolMessage,
+    MemoryRecipeRunRequestBody, ProtocolMessage, WorkApplyRequestBody, WorkOperationDto,
+    WorkQueryRequestBody,
 };
 
 use crate::domain::AskRequest;
-use crate::ports::outbound::{AgentClient, AgentError, MemoryClient};
+use crate::ports::outbound::{AgentClient, AgentError, MemoryClient, WorkClient};
 
 pub struct AibeUnixClient {
     socket_path: std::path::PathBuf,
@@ -254,6 +255,34 @@ impl MemoryClient for AibeUnixClient {
             apply,
             user_instruction,
         ))
+    }
+}
+
+impl WorkClient for AibeUnixClient {
+    fn work_query(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(ClientRequest::WorkQuery(WorkQueryRequestBody {
+            id: correlation_id(),
+            session_id: session_id.to_string(),
+            context: context.clone(),
+        }))
+    }
+
+    fn work_apply(
+        &self,
+        session_id: &str,
+        context: &MemoryContext,
+        operation: WorkOperationDto,
+    ) -> Result<ClientResponse, AgentError> {
+        self.send_memory_request(ClientRequest::WorkApply(WorkApplyRequestBody {
+            id: correlation_id(),
+            session_id: session_id.to_string(),
+            context: context.clone(),
+            operation,
+        }))
     }
 }
 

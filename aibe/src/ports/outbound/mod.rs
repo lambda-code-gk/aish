@@ -20,6 +20,8 @@ pub mod tool_round_terminator;
 pub mod tools;
 pub mod turn_events;
 pub mod turn_hook;
+#[cfg(feature = "memory")]
+pub mod work_store;
 
 pub use llm_call_tracer::{LlmCallTracer, NoopLlmCallTracer};
 
@@ -56,3 +58,5 @@ pub use tool_round_terminator::{TerminationResult, TerminationStrategyUsed, Tool
 pub use tools::{ToolDefinition, ToolExecutor};
 pub use turn_events::{SharedTurnCancellation, TurnCancellation, TurnEventSink};
 pub use turn_hook::{TurnHook, TurnHookError};
+#[cfg(feature = "memory")]
+pub use work_store::{EmptyWorkStore, WorkStore, WorkStoreContext, WorkStoreError};

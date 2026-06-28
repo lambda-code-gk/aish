@@ -141,3 +141,27 @@ fn turn_hook_skips_empty_block() {
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].content, "hi");
 }
+
+#[test]
+#[ignore = "0052 phase 4 pending"]
+fn work_turn_hook_injects_active_goal_focus_and_recent_decisions() {
+    panic!("pending 0052");
+}
+
+#[test]
+#[ignore = "0052 phase 4 pending"]
+fn work_and_memory_injection_share_existing_budget() {
+    panic!("pending 0052");
+}
+
+#[test]
+#[ignore = "0052 phase 4 pending"]
+fn work_turn_hook_excludes_non_active_and_non_required_fields() {
+    panic!("pending 0052");
+}
+
+#[test]
+#[ignore = "0052 phase 4 pending"]
+fn work_turn_hook_is_best_effort_for_missing_or_corrupt_state() {
+    panic!("pending 0052");
+}

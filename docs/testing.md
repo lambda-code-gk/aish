@@ -188,6 +188,22 @@ Phase 2.9（local route fast path）:
 | distribution / count / latency / filter | ai/src/domain/smart_observation_report.rs |
 | stats/recent/report CLI と raw 非出力 | ai/tests/smart_observation_cli.rs |
 
+### 0052 ai work
+
+設計: [spec/0052_ai_work.md](spec/0052_ai_work.md)。受け入れ条件は [`scripts/spec-acceptance.toml`](../scripts/spec-acceptance.toml) で Phase ごとに管理する。
+
+| Phase 0 観点 | テスト位置 |
+|--------------|------------|
+| Work request / response DTO、unknown field 拒否 | `aibe-protocol/src/work.rs` |
+| atomic snapshot、permission、破損非上書き、並行 mutation | `aibe/src/adapters/outbound/work_store.rs` |
+| 実 WorkStore を使う空 query | `aibe/tests/work_rpc.rs` |
+| BasicPack の Work RPC 拒否 / injection no-op | `aibe/src/application/basic_memory_pack.rs` |
+| 全 Work subcommand parse | `ai/src/clap_cli.rs` |
+| dashboard / status / list の空表示 | `ai/tests/work_cli.rs` |
+| runtime disabled / feature-off | `ai/tests/memory_disabled_cli.rs`、`ai/src/application/memory_stub.rs` |
+
+Phase 1–4 の AC は同ファイル群に `#[ignore]` で先行配置し、該当 Phase 完了時だけ ignore と `pending` を同時に解除する。feature-off は `cargo test -p ai -j 1 --no-default-features --lib work_cli_stub_rejects_when_memory_feature_is_disabled` でも確認する。手動手順は [manual/ai-work.md](manual/ai-work.md)。
+
 Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`chat` の transcript は `ai` 側で成功 turn ごとに追記し、`history` payload の `request_messages` に保存する。`retry` / `rerun` は payload に transcript があればそれを再生する。`--yes-exec` は [`ai/tests/yes_exec_integration.rs`](../ai/tests/yes_exec_integration.rs) で非 TTY 含め検証する。history GC は `history_max_entries`（既定 500、`0` で無効）で [`local_history.rs`](../ai/src/adapters/outbound/local_history.rs) が prune する。streaming の multi-delta forward は [`aibe/tests/agent_turn_streaming.rs`](../aibe/tests/agent_turn_streaming.rs) を参照する。
 
 ### 0017 以降のクレート別テスト配置

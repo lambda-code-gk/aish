@@ -14,6 +14,7 @@ pub mod memory_stub;
 pub mod replay_manifest;
 mod smart_preprocessor;
 mod turn_cancel;
+pub mod work_cli;
 
 pub use ask::{Ask, AskError, AskOutcome, AskRunOptions};
 pub use ask_launch::{ensure_aibe_if_needed, plan_ask_launch, AskLaunchPlan};

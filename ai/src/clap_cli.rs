@@ -225,6 +225,13 @@ pub enum AiCommand {
         #[command(subcommand)]
         command: ContextCommand,
     },
+    /// Manage the current work context
+    Work {
+        #[command(subcommand)]
+        command: Option<WorkCommand>,
+        #[command(flatten)]
+        options: WorkCliOptions,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
@@ -234,6 +241,14 @@ pub struct MemoryCliOptions {
     #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
     pub format: OutputFormatArg,
     #[arg(long)]
+    pub no_start: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct WorkCliOptions {
+    #[arg(long, global = true, value_hint = clap::ValueHint::FilePath)]
+    pub socket: Option<PathBuf>,
+    #[arg(long, global = true)]
     pub no_start: bool,
 }
 
@@ -386,6 +401,55 @@ pub enum ContextCommand {
     Use { name: String },
     /// Create and switch to a new context name
     New { name: String },
+}
+
+#[derive(Subcommand)]
+pub enum WorkCommand {
+    /// Start a new work context
+    Start {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        goal: Vec<String>,
+    },
+    /// Show the current work context
+    Status,
+    /// List active, paused, deferred, and done works
+    List,
+    /// Switch active work
+    Switch { work_id: u64 },
+    /// Start a temporary child work and stack the current work
+    Push {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        goal: Vec<String>,
+    },
+    /// Close current child work and return to previous work
+    Pop,
+    /// Save off-topic work for later without changing active work
+    Defer {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
+    /// Add an idea to the current work
+    Idea {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
+    /// Add a note to the current work
+    Note {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
+    /// Add a decision to the current work
+    Decide {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
+    /// Update the current focus
+    Focus {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
+    /// Finish the current work
+    Finish,
 }
 
 impl AiCli {
@@ -562,5 +626,29 @@ mod tests {
             root_section.contains("--preset"),
             "zsh root completion should include implicit ask flags: {root_section}"
         );
+    }
+
+    #[test]
+    fn work_subcommands_parse_successfully() {
+        for args in [
+            vec!["ai", "work"],
+            vec!["ai", "work", "start", "goal"],
+            vec!["ai", "work", "status"],
+            vec!["ai", "work", "list"],
+            vec!["ai", "work", "switch", "1"],
+            vec!["ai", "work", "push", "child"],
+            vec!["ai", "work", "pop"],
+            vec!["ai", "work", "defer", "later"],
+            vec!["ai", "work", "idea", "idea"],
+            vec!["ai", "work", "note", "note"],
+            vec!["ai", "work", "decide", "decision"],
+            vec!["ai", "work", "focus", "focus"],
+            vec!["ai", "work", "finish"],
+            vec!["ai", "work", "status", "--no-start"],
+        ] {
+            AiCli::try_parse_from(args.clone()).unwrap_or_else(|error| {
+                panic!("failed to parse {args:?}: {error}");
+            });
+        }
     }
 }

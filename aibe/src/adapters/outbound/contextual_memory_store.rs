@@ -11,6 +11,9 @@ use aibe_protocol::{
     MemoryScopeDto, MemoryStatusDto,
 };
 
+use crate::adapters::outbound::memory_space_fs::{
+    acquire_space_lock, ensure_space_layout, set_permissions_0600, space_dir,
+};
 use crate::adapters::outbound::FilesystemMemoryKindRegistryLoader;
 use crate::domain::resolve_entries_for_prompt;
 use crate::domain::{
@@ -122,20 +125,12 @@ impl FilesystemContextualMemoryStore {
         Self::with_memory_config(aibe_root, memory_config)
     }
 
-    fn spaces_root(&self) -> PathBuf {
-        self.aibe_root.join("memory").join("spaces")
-    }
-
     fn space_dir(&self, memory_space_id: &str) -> PathBuf {
-        self.spaces_root().join(memory_space_id)
+        space_dir(&self.aibe_root, memory_space_id)
     }
 
     fn space_events_path(&self, memory_space_id: &str) -> PathBuf {
         self.space_dir(memory_space_id).join("events.jsonl")
-    }
-
-    fn space_lock_path(&self, memory_space_id: &str) -> PathBuf {
-        self.space_dir(memory_space_id).join(".lock")
     }
 
     fn legacy_events_path(&self, session_id: &str) -> PathBuf {
@@ -147,9 +142,7 @@ impl FilesystemContextualMemoryStore {
     }
 
     fn ensure_space_layout(&self, memory_space_id: &str) -> Result<(), ContextualMemoryStoreError> {
-        create_dir_0700(&self.spaces_root()).map_err(io_err)?;
-        create_dir_0700(&self.space_dir(memory_space_id)).map_err(io_err)?;
-        Ok(())
+        ensure_space_layout(&self.aibe_root, memory_space_id).map_err(io_err)
     }
 
     fn with_space_lock<T>(
@@ -157,15 +150,7 @@ impl FilesystemContextualMemoryStore {
         memory_space_id: &str,
         f: impl FnOnce() -> Result<T, ContextualMemoryStoreError>,
     ) -> Result<T, ContextualMemoryStoreError> {
-        self.ensure_space_layout(memory_space_id)?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .read(true)
-            .write(true)
-            .open(self.space_lock_path(memory_space_id))
-            .map_err(io_err)?;
-        let guard = SpaceLock::acquire(lock)?;
+        let guard = acquire_space_lock(&self.aibe_root, memory_space_id).map_err(io_err)?;
         let result = f();
         drop(guard);
         result
@@ -773,65 +758,6 @@ fn apply_event_raw(
 
 fn io_err(e: impl ToString) -> ContextualMemoryStoreError {
     ContextualMemoryStoreError::Io(e.to_string())
-}
-
-struct SpaceLock(File);
-
-impl SpaceLock {
-    fn acquire(file: File) -> Result<Self, ContextualMemoryStoreError> {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-            if rc != 0 {
-                return Err(io_err("failed to acquire memory space lock"));
-            }
-        }
-        Ok(Self(file))
-    }
-}
-
-impl Drop for SpaceLock {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
-        }
-    }
-}
-
-fn create_dir_0700(path: &Path) -> std::io::Result<()> {
-    if !path.exists() {
-        fs::create_dir_all(path)?;
-    }
-    set_permissions_0700(path)
-}
-
-#[cfg(unix)]
-fn set_permissions_0600(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    fs::set_permissions(path, perms)
-}
-
-#[cfg(not(unix))]
-fn set_permissions_0600(_path: &Path) -> std::io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_permissions_0700(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o700);
-    fs::set_permissions(path, perms)
-}
-
-#[cfg(not(unix))]
-fn set_permissions_0700(_path: &Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]

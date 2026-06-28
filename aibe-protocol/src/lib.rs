@@ -7,6 +7,7 @@ mod memory_space;
 mod request;
 mod response;
 mod tool_name;
+mod work;
 
 pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
 pub use executed_tool::{
@@ -41,6 +42,12 @@ pub use tool_name::{
     is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,
     sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS,
     GREP, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE, SHELL_EXEC,
+};
+pub use work::{
+    validate_work_id, validate_work_text, WorkApplyRequestBody, WorkApplyResponseBody,
+    WorkEntryDto, WorkEntryKindDto, WorkInputError, WorkItemDto, WorkMutationKindDto,
+    WorkMutationOutcomeDto, WorkOperationDto, WorkQueryRequestBody, WorkQueryResponseBody,
+    WorkSnapshotDto, WorkStatusDto, WORK_SCHEMA_VERSION, WORK_TEXT_MAX_BYTES,
 };
 
 /// `RequestContext.shell_log_tail` の truncate 上限（バイト）。

@@ -46,6 +46,7 @@
 | 0049 | [0049_aish-command-output-replay-spec.md](spec/0049_aish-command-output-replay-spec.md) | 設計確定（実装済み） | `aish` command output replay（`replay list/show/pick`、shell span 記録） |
 | 0050 | [0050_client-provided-replay-tool-spec.md](spec/0050_client-provided-replay-tool-spec.md) | 設計確定 | Client-Provided Replay Tool（`aish.replay_show`、turn-local read-only client tool、hybrid manifest + `shell_log_tail`） |
 | 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装中） | Smart Preprocessor observation の read-only stats/recent/report CLI |
+| 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装中） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 
 ### 状態ラベルの意味
 
@@ -62,6 +63,7 @@
 |------|----------|------|------|
 | 0050 | [0050_client-provided-replay-tool-implementation-spec.md](tasks/0050_client-provided-replay-tool-implementation-spec.md) | 実装指示書 | Client-Provided Replay Tool（設計: [0050](spec/0050_client-provided-replay-tool-spec.md)） |
 | 0051 | [0051_smart-observation-report-implementation-spec.md](tasks/0051_smart-observation-report-implementation-spec.md) | 実装指示書 | Smart Preprocessor Observation Report（設計: [0051](spec/0051_smart-observation-report-spec.md)） |
+| 0052 | [0052_ai-work-implementation-spec.md](tasks/0052_ai-work-implementation-spec.md) | 実装指示書 | `ai work` 作業文脈管理（設計: [0052](spec/0052_ai_work.md)） |
 
 ## 実装済み指示書（docs/done/）
 

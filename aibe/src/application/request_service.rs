@@ -227,6 +227,8 @@ impl RequestService {
             ClientRequest::MemoryRecipeRun(body) => {
                 self.rpc_extension.memory_recipe_run(body).await
             }
+            ClientRequest::WorkApply(body) => self.rpc_extension.work_apply(body),
+            ClientRequest::WorkQuery(body) => self.rpc_extension.work_query(body),
             ClientRequest::MemorySubscribe(_) => ClientResponse::error(
                 String::new(),
                 ErrorCode::InvalidRequest,

@@ -6,6 +6,7 @@ use crate::memory::{
     MemoryApplyRequestBody, MemoryKindListRequestBody, MemoryQueryRequestBody,
     MemoryRecipeRunRequestBody, MemorySubscribeRequestBody,
 };
+use crate::work::{WorkApplyRequestBody, WorkQueryRequestBody};
 use crate::ToolRiskClass;
 
 /// NDJSON 1 行のリクエスト。
@@ -60,6 +61,10 @@ pub enum ClientRequest {
     MemoryRecipeRun(MemoryRecipeRunRequestBody),
     /// memory 変更の購読（専用接続。結果後に `MemoryChanged` を push）。
     MemorySubscribe(MemorySubscribeRequestBody),
+    /// 作業文脈の原子的な更新。
+    WorkApply(WorkApplyRequestBody),
+    /// 作業文脈 snapshot の読み取り。
+    WorkQuery(WorkQueryRequestBody),
 }
 
 /// `shell_exec` 承認の provenance。

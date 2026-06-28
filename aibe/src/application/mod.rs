@@ -15,8 +15,9 @@ pub mod tool_round_terminator;
 
 #[cfg(feature = "memory")]
 pub use crate::plugin_memory::{
-    contextual_pack_arc, memory_recipe_service, memory_service, memory_subscribe_service,
-    ContextualMemoryPack, MemoryRecipeService, MemoryService, MemorySubscribeService,
+    contextual_pack_arc, contextual_pack_with_work_arc, memory_recipe_service, memory_service,
+    memory_subscribe_service, work_service, ContextualMemoryPack, MemoryRecipeService,
+    MemoryService, MemorySubscribeService, WorkService,
 };
 
 pub use crate::ports::outbound::{TurnCancellation, TurnEventSink};
