@@ -21,7 +21,7 @@ use crate::ports::outbound::{
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
 
-pub const DEFAULT_SHUTDOWN_DRAIN: Duration = Duration::from_secs(30);
+pub const DEFAULT_SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 
 pub async fn run(
     socket_path: PathBuf,

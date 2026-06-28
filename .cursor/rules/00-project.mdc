@@ -25,9 +25,19 @@ alwaysApply: true
 
 ## 変更後の確認
 
+実装中は変更箇所に対応する最小の検査を実行する。
+
+```bash
+./scripts/verify-targeted.sh --package <crate>
+```
+
+完了報告の直前に全体ゲートを実行する。失敗後は該当検査で修正を回し、最後に全体ゲートを再実行する。
+
 ```bash
 ./scripts/verify.sh
 ```
+
+targeted検証だけで完了扱いにしない。CIも `verify.sh` を使う。詳細は `docs/testing.md`。
 
 （内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh`）
 

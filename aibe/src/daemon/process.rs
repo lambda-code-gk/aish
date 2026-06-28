@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-pub const DEFAULT_STOP_WAIT: Duration = Duration::from_secs(30);
+pub const DEFAULT_STOP_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
 pub enum ProcessError {

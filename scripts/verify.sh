@@ -23,6 +23,7 @@ run() {
 }
 
 run cargo fmt --all -- --check
+run ./scripts/test-verify-targeted.sh
 run cargo clippy --workspace -- -D warnings
 
 # aibe-client 統合テストが spawn するバイナリ（workspace と同じ target を使う）
@@ -33,10 +34,10 @@ if [[ "${VERIFY_SKIP_TEST:-0}" == "1" ]]; then
 else
   # aibe-client は mock aibe 起動のため直列実行（並列だと socket / プロセスが競合しうる）
   if [[ -n "${VERIFY_TEST_JOBS:-}" ]]; then
-    run cargo test --workspace --exclude aibe-client -j "${VERIFY_TEST_JOBS}"
+    run cargo test --workspace --exclude aibe-client -j "${VERIFY_TEST_JOBS}" -- --test-threads=1
     run cargo test -p aibe-client -j "${VERIFY_TEST_JOBS}" -- --test-threads=1
   else
-    run cargo test --workspace --exclude aibe-client
+    run cargo test --workspace --exclude aibe-client -- --test-threads=1
     run cargo test -p aibe-client -- --test-threads=1
   fi
 fi

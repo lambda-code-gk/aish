@@ -34,4 +34,4 @@ AIBE=target/debug/aibe
 ## 期待結果
 
 - restart 前に無効 TOML を置いた場合、`restart` はエラーになり旧 daemon は継続する
-- 進行中の `agent_turn` がある状態で `stop` しても 30s 以内に daemon が終了する
+- 進行中の `agent_turn` がある状態で `stop` しても 5s 以内に daemon が終了する

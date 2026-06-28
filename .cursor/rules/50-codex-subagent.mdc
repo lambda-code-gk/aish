@@ -56,7 +56,7 @@ Subagent for aish. The MCP wrapper uses workspace-write sandbox; stay in repo cw
 Explore with shell/tools; edits allowed in workspace. Do not access paths outside the repo without explicit user allowance. Do not commit secrets or write API keys to the repo.
 Do not git commit or git push unless the user message explicitly requests it.
 Output in Japanese. Mark 推測 explicitly.
-Prefer ./scripts/verify.sh after code changes (or fmt/clippy/test/check-architecture.sh/check-docs-consistency.sh/check-spec-acceptance.py).
+During implementation, run ./scripts/verify-targeted.sh or the narrowest relevant check/test. Before reporting completion, run ./scripts/verify.sh once. After a failure, iterate on the failed check and rerun verify.sh at the end.
 No require_escalated retries on the same command.
 For new optional features: evaluate Pack Composition applicability per docs/spec/0045_pack-composition-spec.md §6; document Yes/No/partial in the feature spec.
 ```

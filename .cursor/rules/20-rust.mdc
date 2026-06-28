@@ -32,5 +32,7 @@ alwaysApply: false
 
 ## テスト
 
-- 単体・統合・E2E を用途に応じて追加し `cargo test --workspace` で通す
+- 実装中は `./scripts/verify-targeted.sh --package <crate>`、または対象テストを `cargo test -p <crate> --test <name> -j 1` で回す
+- 単体・統合・E2E を用途に応じて追加し、完了直前の `./scripts/verify.sh` で全体を通す
+- targeted検証だけで完了扱いにしない
 - 手動のみの検証は `docs/manual/` に手順を書く

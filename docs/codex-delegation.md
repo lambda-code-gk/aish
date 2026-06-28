@@ -114,6 +114,7 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 ## Codex に任せてよいこと
 
 - リポジトリ内の読取・編集・`cargo fmt` / `clippy` / `test` / `./scripts/check-architecture.sh`
+- 実装中の `./scripts/verify-targeted.sh` と、完了直前の `./scripts/verify.sh`
 - 設計書（`docs/spec/`）・実装指示書（`docs/tasks/`）
 - 横断調査・指摘・修正案の実装（サブエージェントとして）
 
@@ -127,6 +128,8 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 - **完了監査**: Codex の「完了」報告後、設計書の受け入れ条件と [`scripts/spec-acceptance.toml`](../scripts/spec-acceptance.toml) を照合。`pending` が残る spec では `docs/done/` 移動・index の「実装済み」更新をしない（`.cursor/rules/45-spec-completion-gates.mdc`）
 
 ## 完了ゲート（実装タスク共通）
+
+検証は二段階で行う。実装中は変更対象だけを `./scripts/verify-targeted.sh` で確認し、完了報告の直前に `./scripts/verify.sh` を実行する。全体ゲート失敗後は失敗した検査だけで修正を回し、最後に全体ゲートを再実行する。targeted検証だけでは完了扱いにしない。
 
 | 段階 | 条件 |
 |------|------|

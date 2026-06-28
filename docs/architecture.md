@@ -71,7 +71,7 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
   - フォアグラウンド: `cargo run -p aibe -- -f`（デバッグ用）
   - **graceful restart（0046）**: 設定反映は hot reload ではなく `aibe restart`（旧 daemon の SIGTERM shutdown → 新 daemon 起動）。`aibe stop` / `aibe status --format json` で control plane を操作する
   - **PID file**: `~/.local/share/aibe/run.pid`（`pid` / `config_path` / `socket_path` / `process_start_jiffies`）。stale 判定後にのみ signal を送る
-  - **shutdown**: SIGTERM / SIGINT で accept 停止 → active turn cancel → connection drain（timeout 30s）→ socket / PID file 削除
+  - **shutdown**: SIGTERM / SIGINT で accept 停止 → active turn cancel → connection drain（timeout 5s）→ socket / PID file 削除
 - **メッセージ形式**: 接続後、**1 行 1 JSON**（newline-delimited JSON）でリクエスト/レスポンスをやりとりする（stdio JSON スタイル）
 
 ## プロトコル（設計・詳細）

@@ -48,6 +48,14 @@
 
 ## 完了の定義（DoD）
 
+### 二段階検証
+
+- **実装中**: `./scripts/verify-targeted.sh` または対象クレートの `cargo check` / `cargo test -j 1` で変更箇所だけを検証する
+- **完了直前**: `./scripts/verify.sh` を1回実行する。失敗時は該当検査だけで修正を回し、最後に `verify.sh` を再実行する
+- targeted検証だけで機能を「完了」と報告しない。CIも常に `verify.sh` を使う
+
+詳細: [`docs/testing.md`](docs/testing.md)「二段階検証」。
+
 機能を「完了」と報告するには、すべてを満たすこと。
 
 1. 受け入れ条件を満たす **本番経路の実装**（仮実装・サンプル止まり禁止）

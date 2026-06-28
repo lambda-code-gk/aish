@@ -13,6 +13,9 @@ use aibe::daemon::{default_pid_file_path_for_home, write_pid_file, PidFileRecord
 use serde_json::Value;
 use tempfile::tempdir;
 
+const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+const SOCKET_DEAD_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn aibe_bin() -> PathBuf {
     if let Ok(p) = std::env::var("AIBE_BIN") {
         return PathBuf::from(p);
@@ -114,7 +117,7 @@ fn status_json_exposes_required_fields() {
     assert!(json.get("pid").is_some(), "pid key must always be present");
 
     let _ = env.run_control(&["stop"]);
-    wait_for_child(&mut child, Duration::from_secs(30));
+    wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
 }
 
 #[test]
@@ -156,7 +159,7 @@ fn already_running_short_circuits_on_live_socket() {
     assert!(stderr.contains("already running"), "stderr={stderr}");
 
     let _ = env.run_control(&["stop"]);
-    wait_for_child(&mut child, Duration::from_secs(30));
+    wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
 }
 
 #[test]
@@ -170,7 +173,7 @@ fn stop_signals_daemon_and_cleans_up_pid_file() {
     let output = env.run_control(&["stop"]);
     assert!(output.status.success(), "stop failed: {:?}", output.stderr);
 
-    wait_for_child(&mut child, Duration::from_secs(30));
+    wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
     assert!(!env.pid_file_path().exists());
     assert!(!env.socket_path.exists());
 }
@@ -195,7 +198,7 @@ fn restart_waits_for_new_daemon_readiness_before_returning() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    wait_for_child(&mut child, Duration::from_secs(30));
+    wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
     wait_for_socket(&env.socket_path);
 
     let new_pid = fs::read_to_string(&env.pid_file_path())
@@ -207,7 +210,7 @@ fn restart_waits_for_new_daemon_readiness_before_returning() {
 
     let stop = env.run_control(&["stop"]);
     assert!(stop.status.success());
-    wait_for_socket_dead(&env.socket_path, Duration::from_secs(30));
+    wait_for_socket_dead(&env.socket_path, SOCKET_DEAD_TIMEOUT);
 }
 
 fn wait_for_socket_dead(socket_path: &Path, timeout: Duration) {
@@ -274,6 +277,6 @@ fn shutdown_cancels_active_turn_and_closes_memory_subscribe() {
         saw_terminal || !socket_path.exists()
     });
 
-    wait_for_child(&mut child, Duration::from_secs(30));
+    wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
     assert!(saw_terminal);
 }
