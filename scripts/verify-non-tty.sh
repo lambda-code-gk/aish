@@ -12,6 +12,4 @@ echo "verify-non-tty: capturing output in $LOG_FILE"
 
 exec </dev/null >"$LOG_FILE" 2>&1
 cd "$ROOT"
-exec ./scripts/verify.sh "$@" &
-tail -f $LOG_FILE &
-wait
+exec ./scripts/verify.sh "$@"
