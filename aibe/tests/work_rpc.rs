@@ -4,8 +4,84 @@ use aibe::adapters::outbound::{
     FilesystemMemorySpaceResolver, FilesystemWorkStore, StaticCapabilityPolicy,
 };
 use aibe::application::WorkService;
-use aibe::ports::outbound::WorkStore;
-use aibe_protocol::{ClientResponse, MemoryContext, WorkOperationDto, WorkQueryResponseBody};
+use aibe::domain::{WorkItem, WorkStatus};
+use aibe::ports::outbound::{WorkStore, WorkStoreContext};
+use aibe_protocol::{
+    ClientResponse, MemoryContext, WorkApplyResponseBody, WorkEntryKindDto, WorkMutationOutcomeDto,
+    WorkOperationDto, WorkQueryResponseBody, WorkSnapshotDto, WorkStatusDto,
+};
+
+struct Harness {
+    _root: tempfile::TempDir,
+    store: Arc<dyn WorkStore>,
+    store_context: WorkStoreContext,
+    service: WorkService,
+    context: MemoryContext,
+}
+
+impl Harness {
+    fn new(memory_space_id: &str) -> Self {
+        let root = tempfile::tempdir().expect("tempdir");
+        let store =
+            Arc::new(FilesystemWorkStore::new(root.path().to_path_buf())) as Arc<dyn WorkStore>;
+        let store_context = WorkStoreContext {
+            memory_space_id: memory_space_id.into(),
+        };
+        Self {
+            _root: root,
+            service: WorkService::new(
+                store.clone(),
+                Arc::new(FilesystemMemorySpaceResolver),
+                StaticCapabilityPolicy::local_full(),
+            ),
+            store,
+            store_context,
+            context: MemoryContext {
+                cwd: None,
+                memory_space_id: Some(memory_space_id.into()),
+            },
+        }
+    }
+
+    fn seed_stacked_state(&self) {
+        self.store
+            .mutate(&self.store_context, &mut |state| {
+                state.next_work_id = 3;
+                state.active_work_id = Some(2);
+                state.stack = vec![1];
+                state.works = vec![
+                    work_item(1, WorkStatus::Paused, None),
+                    work_item(2, WorkStatus::Active, Some(1)),
+                ];
+                Ok(())
+            })
+            .expect("seed stacked state");
+    }
+
+    fn apply(&self, operation: WorkOperationDto) -> (WorkSnapshotDto, WorkMutationOutcomeDto) {
+        match self.service.apply(
+            "work-apply".into(),
+            "session".into(),
+            &self.context,
+            operation,
+        ) {
+            ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+                snapshot, outcome, ..
+            }) => (snapshot, outcome),
+            other => panic!("expected work apply result: {other:?}"),
+        }
+    }
+
+    fn query(&self) -> WorkSnapshotDto {
+        match self
+            .service
+            .query("work-query".into(), "session".into(), &self.context)
+        {
+            ClientResponse::WorkQueryResult(WorkQueryResponseBody { snapshot, .. }) => snapshot,
+            other => panic!("expected work query result: {other:?}"),
+        }
+    }
+}
 
 #[test]
 fn work_query_returns_empty_snapshot_from_real_store() {
@@ -50,7 +126,7 @@ fn work_apply_rejects_invalid_programmatic_operation() {
             cwd: None,
             memory_space_id: Some("project_test".into()),
         },
-        WorkOperationDto::Switch { work_id: 0 },
+        WorkOperationDto::Focus { text: " ".into() },
     );
     match response {
         ClientResponse::Error { message, .. } => assert_eq!(message, "invalid work operation"),
@@ -58,56 +134,178 @@ fn work_apply_rejects_invalid_programmatic_operation() {
     }
 }
 
+#[test]
+fn work_start_creates_active_work() {
+    let harness = Harness::new("project_start");
+    let (snapshot, outcome) = harness.apply(WorkOperationDto::Start {
+        goal: "ship phase one".into(),
+    });
+    assert_eq!(snapshot.revision, 1);
+    assert_eq!(snapshot.active_work_id, Some(1));
+    assert_eq!(outcome.work_id, Some(1));
+    assert_eq!(outcome.previous_work_id, None);
+    let active = &snapshot.works[0];
+    assert_eq!(active.goal, "ship phase one");
+    assert_eq!(active.status, WorkStatusDto::Active);
+    assert!(active.created_at_ms > 0);
+    assert_eq!(active.created_at_ms, active.updated_at_ms);
+}
+
+#[test]
+fn work_start_pauses_previous_active_work() {
+    let harness = Harness::new("project_start_twice");
+    harness.apply(WorkOperationDto::Start {
+        goal: "first".into(),
+    });
+    let (snapshot, outcome) = harness.apply(WorkOperationDto::Start {
+        goal: "second".into(),
+    });
+    assert_eq!(snapshot.active_work_id, Some(2));
+    assert_eq!(outcome.previous_work_id, Some(1));
+    assert_eq!(snapshot.works[0].status, WorkStatusDto::Paused);
+    assert_eq!(snapshot.works[1].status, WorkStatusDto::Active);
+    assert_eq!(snapshot.works[1].goal, "second");
+}
+
+#[test]
+fn work_focus_updates_active_work() {
+    let harness = Harness::new("project_focus");
+    harness.apply(WorkOperationDto::Start {
+        goal: "focus work".into(),
+    });
+    let (snapshot, outcome) = harness.apply(WorkOperationDto::Focus {
+        text: "current concern".into(),
+    });
+    assert_eq!(outcome.work_id, snapshot.active_work_id);
+    let active = snapshot.works.iter().find(|work| work.id == 1).unwrap();
+    assert_eq!(active.focus.as_deref(), Some("current concern"));
+    assert!(active.updated_at_ms >= active.created_at_ms);
+}
+
+#[test]
+fn work_idea_adds_entry_to_active_work() {
+    assert_entry(WorkEntryKindDto::Idea, "an idea", "project_idea");
+}
+
+#[test]
+fn work_note_adds_entry_to_active_work() {
+    assert_entry(WorkEntryKindDto::Note, "a note", "project_note");
+}
+
+#[test]
+fn work_decision_adds_entry_to_active_work() {
+    assert_entry(WorkEntryKindDto::Decision, "a decision", "project_decision");
+}
+
+#[test]
+fn work_defer_succeeds_without_active_work() {
+    let harness = Harness::new("project_defer_empty");
+    let (snapshot, outcome) = harness.apply(WorkOperationDto::Defer {
+        text: "later task".into(),
+    });
+    assert_eq!(snapshot.active_work_id, None);
+    assert_eq!(outcome.work_id, Some(1));
+    assert_eq!(snapshot.works[0].status, WorkStatusDto::Deferred);
+    assert_eq!(snapshot.works[0].goal, "later task");
+}
+
+#[test]
+fn work_defer_keeps_active_work_and_stack_unchanged() {
+    let harness = Harness::new("project_defer_active");
+    harness.seed_stacked_state();
+    let before = harness.query();
+    let (after, _) = harness.apply(WorkOperationDto::Defer {
+        text: "side idea".into(),
+    });
+    assert_eq!(after.active_work_id, before.active_work_id);
+    assert_eq!(after.stack, before.stack);
+    assert_eq!(&after.works[..before.works.len()], before.works.as_slice());
+    assert_eq!(after.works[2].status, WorkStatusDto::Deferred);
+}
+
+#[test]
+fn phase1_unsupported_operation_does_not_change_state() {
+    let harness = Harness::new("project_phase1_unsupported");
+    harness.apply(WorkOperationDto::Start {
+        goal: "main work".into(),
+    });
+    let before = harness.query();
+    let response = harness.service.apply(
+        "unsupported".into(),
+        "session".into(),
+        &harness.context,
+        WorkOperationDto::Finish,
+    );
+    assert!(matches!(response, ClientResponse::Error { .. }));
+    assert_eq!(harness.query(), before);
+}
+
+#[test]
+fn phase1_active_operations_fail_without_changing_empty_state() {
+    for (memory_space_id, operation) in [
+        (
+            "project_focus_without_active",
+            WorkOperationDto::Focus {
+                text: "next".into(),
+            },
+        ),
+        (
+            "project_entry_without_active",
+            WorkOperationDto::AddEntry {
+                kind: WorkEntryKindDto::Note,
+                text: "observation".into(),
+            },
+        ),
+    ] {
+        let harness = Harness::new(memory_space_id);
+        let before = harness.query();
+        let response = harness.service.apply(
+            "requires-active".into(),
+            "session".into(),
+            &harness.context,
+            operation,
+        );
+        assert!(matches!(response, ClientResponse::Error { .. }));
+        assert_eq!(harness.query(), before);
+    }
+}
+
+fn assert_entry(kind: WorkEntryKindDto, text: &str, memory_space_id: &str) {
+    let harness = Harness::new(memory_space_id);
+    harness.apply(WorkOperationDto::Start {
+        goal: "entry work".into(),
+    });
+    let (snapshot, outcome) = harness.apply(WorkOperationDto::AddEntry {
+        kind,
+        text: text.into(),
+    });
+    assert_eq!(outcome.work_id, Some(1));
+    assert_eq!(snapshot.entries.len(), 1);
+    let entry = &snapshot.entries[0];
+    assert_eq!(entry.id, 1);
+    assert_eq!(entry.work_id, 1);
+    assert_eq!(entry.kind, kind);
+    assert_eq!(entry.text, text);
+    assert!(entry.created_at_ms > 0);
+}
+
+fn work_item(id: u64, status: WorkStatus, parent_id: Option<u64>) -> WorkItem {
+    WorkItem {
+        id,
+        title: format!("work {id}"),
+        goal: format!("work {id}"),
+        status,
+        parent_id,
+        created_at_ms: id,
+        updated_at_ms: id,
+        finished_at_ms: None,
+        focus: None,
+        summary: None,
+    }
+}
+
 fn pending() {
     panic!("pending 0052");
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_start_creates_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_start_pauses_previous_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_focus_updates_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_idea_adds_entry_to_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_note_adds_entry_to_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_decision_adds_entry_to_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_defer_succeeds_without_active_work() {
-    pending();
-}
-
-#[test]
-#[ignore = "0052 phase 1 pending"]
-fn work_defer_keeps_active_work_and_stack_unchanged() {
-    pending();
 }
 
 #[test]

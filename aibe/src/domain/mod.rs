@@ -72,7 +72,9 @@ pub use shell_log_tail::ShellLogTail;
 pub use tool::{ToolCall, ToolResult};
 pub use tool_execution_summary::ToolExecutionSummary;
 #[cfg(feature = "memory")]
-pub use work::{WorkEntry, WorkEntryKind, WorkItem, WorkState, WorkStateError, WorkStatus};
+pub use work::{
+    WorkEntry, WorkEntryKind, WorkItem, WorkMutationError, WorkState, WorkStateError, WorkStatus,
+};
 
 pub use aibe_protocol::{
     is_known_tool, parse_tool_names, ExecutedToolCall, ExecutedToolStatus,

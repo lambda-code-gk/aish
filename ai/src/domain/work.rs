@@ -1,6 +1,6 @@
 //! Work snapshot の CLI 表示。
 
-use aibe_protocol::{WorkSnapshotDto, WorkStatusDto};
+use aibe_protocol::{WorkEntryKindDto, WorkSnapshotDto, WorkStatusDto};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkView {
@@ -42,10 +42,59 @@ fn render_status(snapshot: &WorkSnapshotDto) -> String {
             }
         }
     }
+    render_entries(
+        &mut out,
+        snapshot,
+        active_id,
+        WorkEntryKindDto::Decision,
+        "Decisions",
+    );
+    render_entries(
+        &mut out,
+        snapshot,
+        active_id,
+        WorkEntryKindDto::Idea,
+        "Ideas",
+    );
+    out.push_str("\nDeferred:\n");
+    let deferred: Vec<_> = snapshot
+        .works
+        .iter()
+        .filter(|work| work.status == WorkStatusDto::Deferred)
+        .collect();
+    if deferred.is_empty() {
+        out.push_str("  (none)\n");
+    } else {
+        for work in deferred {
+            out.push_str(&format!("  #{} {}\n", work.id, work.title));
+        }
+    }
     out.push_str(
         "\nSuggested next:\n  ai work focus <text>\n  ai work push <goal>\n  ai work defer <text>",
     );
     out
+}
+
+fn render_entries(
+    out: &mut String,
+    snapshot: &WorkSnapshotDto,
+    active_id: u64,
+    kind: WorkEntryKindDto,
+    label: &str,
+) {
+    out.push_str(&format!("\n{label}:\n"));
+    let entries: Vec<_> = snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.work_id == active_id && entry.kind == kind)
+        .collect();
+    if entries.is_empty() {
+        out.push_str("  (none)\n");
+    } else {
+        for entry in entries {
+            out.push_str(&format!("  - {}\n", entry.text));
+        }
+    }
 }
 
 fn render_list(snapshot: &WorkSnapshotDto) -> String {

@@ -125,8 +125,8 @@ disabled RPC、runtime disabled CLI、feature-off build / CLI の回帰を受け
 
 | Phase | 内容 | ゲート |
 |-------|------|--------|
-| 0 | **実装・AC 完了（2026-06-28、全体 verify 未完了）**。全 AC の ignored test scaffold と registry 登録、wire DTO、Work domain / store、Pack disabled 経路、CLI parse / empty state | Phase 0 AC はすべて `pending = false` |
-| 1 | `start / focus / idea / note / decide / defer`、dashboard / status / list | Phase 1 AC がすべて `pending = false` になるまで Phase 2 に進まない |
+| 0 | **実装・AC 完了（2026-06-28）**。全 AC の ignored test scaffold と registry 登録、wire DTO、Work domain / store、Pack disabled 経路、CLI parse / empty state | Phase 0 AC はすべて `pending = false` |
+| 1 | **実装・AC 完了（2026-06-28、`verify.sh` 成功）**。`start / focus / idea / note / decide / defer`、dashboard / status / list、apply CLI/error契約 | Phase 1 AC はすべて `pending = false` |
 | 2 | `switch / finish`、stack 保護、エラー契約 | Phase 2 AC がすべて `pending = false` になるまで Phase 3 に進まない |
 | 3 | `push / pop`、親子 chain、child entry 表示 | Phase 3 AC がすべて `pending = false` になるまで Phase 4 に進まない |
 | 4 | TurnHook injection、低レベル memory 回帰、docs / manual / security、全体検証 | 全 AC が `pending = false` かつ `./scripts/verify.sh` が通る |

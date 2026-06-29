@@ -1,6 +1,6 @@
 //! Work state 永続化 port。
 
-use crate::domain::WorkState;
+use crate::domain::{WorkMutationError, WorkState};
 
 #[derive(Debug, Clone)]
 pub struct WorkStoreContext {
@@ -19,6 +19,8 @@ pub enum WorkStoreError {
     Io(String),
     #[error("work mutation failed: {0}")]
     Mutation(String),
+    #[error("work operation rejected: {0}")]
+    Operation(WorkMutationError),
 }
 
 pub trait WorkStore: Send + Sync {

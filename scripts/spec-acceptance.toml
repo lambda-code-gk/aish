@@ -947,7 +947,7 @@ id = "work_start_active"
 description = "start で active work が作られる"
 test = "work_start_creates_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -956,7 +956,7 @@ id = "work_start_pauses_previous"
 description = "active 中の start が旧 work を Paused にする"
 test = "work_start_pauses_previous_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -965,7 +965,7 @@ id = "work_focus"
 description = "focus が active work だけを更新する"
 test = "work_focus_updates_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -974,7 +974,7 @@ id = "work_idea"
 description = "idea が active work に記録される"
 test = "work_idea_adds_entry_to_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -983,7 +983,7 @@ id = "work_note"
 description = "note が active work に記録される"
 test = "work_note_adds_entry_to_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -992,7 +992,7 @@ id = "work_decision"
 description = "decision が active work に記録される"
 test = "work_decision_adds_entry_to_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1001,7 +1001,7 @@ id = "work_defer_without_active"
 description = "active なしでも defer が Deferred work を作る"
 test = "work_defer_succeeds_without_active_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1010,7 +1010,7 @@ id = "work_defer_keeps_active"
 description = "defer が active と stack を変更しない"
 test = "work_defer_keeps_active_work_and_stack_unchanged"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1019,7 +1019,7 @@ id = "work_status_sections"
 description = "populated status に必要な section が出る"
 test = "work_status_renders_all_required_sections"
 file_glob = "ai/tests/work_cli.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1028,7 +1028,7 @@ id = "work_list_groups"
 description = "list が status ごとに分類される"
 test = "work_list_groups_works_by_status"
 file_glob = "ai/tests/work_cli.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"

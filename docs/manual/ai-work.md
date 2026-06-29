@@ -1,8 +1,8 @@
-# `ai work` Phase 0 手動検証
+# `ai work` Phase 1 手動検証
 
 ## 対象
 
-0052 Phase 0 の CLI 骨格、空状態表示、disabled 経路を確認する。`start` 等の mutation は Phase 1 以降の対象である。
+0052 Phase 1 の基本mutation、dashboard/status/list、disabled経路を確認する。
 
 ## 前提
 
@@ -20,7 +20,7 @@ cargo build -p aibe -p ai
 2. 空の context を選ぶ。
 
 ```bash
-export AIBE_CONTEXT_ID=work_phase0_manual
+export AIBE_CONTEXT_ID=work_phase1_manual
 ai work
 ai work status
 ai work list
@@ -28,13 +28,30 @@ ai work --help
 ```
 
 3. `ai work --help` に `start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish` が表示されることを確認する。
-4. Phase 0 では mutation が fail-closed で拒否されることを確認する。
+4. 基本操作と表示を確認する。
 
 ```bash
-ai work start "phase 0 manual"
+ai work start "phase 1 manual"
+ai work focus "current focus"
+ai work idea "try another approach"
+ai work note "observed behavior"
+ai work decide "keep one atomic store mutation"
+ai work defer "later task"
+ai work status
+ai work list
+ai work start "second root work"
 ```
 
-5. `AI_MEMORY_ENABLED=0` で拒否されることを確認する。
+5. 後続Phaseの操作がstateを変更せず拒否されることを確認する。
+
+```bash
+ai work switch 1
+ai work push "child work"
+ai work pop
+ai work finish
+```
+
+6. `AI_MEMORY_ENABLED=0` で拒否されることを確認する。
 
 ```bash
 AI_MEMORY_ENABLED=0 ai work --no-start
@@ -43,9 +60,12 @@ AI_MEMORY_ENABLED=0 ai work --no-start
 ## 期待結果
 
 - `ai work` は `No active work.` と開始導線を表示する。
-- `ai work status` は active work がないことと `start` 導線を表示する。
-- `ai work list` は Active / Paused / Deferred / Done を空分類で表示する。
-- Phase 0 の mutation は non-zero で終了し、state file を作成・変更しない。
+- `start`でactiveが作られ、二度目の`start`で旧activeがPausedになる。
+- `focus / idea / note / decide`はactive workへ保存される。
+- `defer`はactiveを変えずDeferred workを追加する。
+- populated statusはActive/Focus/Stack/Decisions/Ideas/Deferred/Suggested nextを表示する。
+- listはActive/Paused/Deferred/Doneへ分類する。
+- `switch / push / pop / finish`はnon-zeroで終了し、stateを変更しない。
 - memory disabled は既存 contextual memory と同じ error で fail-closed になる。
 
 ## 注意

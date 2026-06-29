@@ -2,13 +2,14 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use aibe_protocol::{
-    is_valid_session_id, ClientResponse, ErrorCode, MemoryContext, WorkOperationDto,
-    WorkQueryResponseBody,
+    is_valid_session_id, ClientResponse, ErrorCode, MemoryContext, WorkApplyResponseBody,
+    WorkOperationDto, WorkQueryResponseBody,
 };
 
-use crate::domain::Capability;
+use crate::domain::{Capability, WorkMutationError};
 use crate::ports::outbound::{
     CapabilityPolicy, MemorySpaceResolver, WorkStore, WorkStoreContext, WorkStoreError,
 };
@@ -68,10 +69,30 @@ impl WorkService {
         if operation.validate().is_err() {
             return invalid(id, "invalid work operation");
         }
-        if self.resolve_context(&session_id, context).is_err() {
-            return invalid(id, "invalid work context");
+        let store_ctx = match self.resolve_context(&session_id, context) {
+            Ok(ctx) => ctx,
+            Err(()) => return invalid(id, "invalid work context"),
+        };
+        let now_ms = current_time_ms();
+        let mut outcome = None;
+        let result = self.store.mutate(&store_ctx, &mut |state| {
+            let applied = state
+                .apply(&operation, now_ms)
+                .map_err(WorkStoreError::Operation)?;
+            outcome = Some(applied);
+            Ok(())
+        });
+        match (result, outcome) {
+            (Ok(state), Some(outcome)) => ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+                id,
+                snapshot: state.to_snapshot_dto(),
+                outcome,
+            }),
+            (Ok(_), None) => {
+                ClientResponse::error(id, ErrorCode::InternalError, "work state is unavailable")
+            }
+            (Err(error), _) => map_store_error(id, error),
         }
-        invalid(id, "work mutations are not available in phase 0")
     }
 
     fn resolve_context(
@@ -98,8 +119,22 @@ fn map_store_error(id: String, error: WorkStoreError) -> ClientResponse {
         WorkStoreError::InvalidMemorySpace | WorkStoreError::Validation(_) => {
             invalid(id, "invalid work state")
         }
+        WorkStoreError::Operation(error) => match error {
+            WorkMutationError::StackNotEmpty
+            | WorkMutationError::NoActiveWork
+            | WorkMutationError::UnsupportedOperation => invalid(id, &error.to_string()),
+            WorkMutationError::InvalidOperation(_) => invalid(id, "invalid work operation"),
+            WorkMutationError::InvalidState(_) => invalid(id, "invalid work state"),
+        },
         WorkStoreError::Corrupt(_) | WorkStoreError::Io(_) | WorkStoreError::Mutation(_) => {
             ClientResponse::error(id, ErrorCode::InternalError, "work state is unavailable")
         }
     }
+}
+
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
