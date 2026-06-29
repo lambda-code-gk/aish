@@ -92,6 +92,8 @@ pub enum WorkMutationError {
     StackNotEmpty,
     #[error("no active work; start one with `ai work start <goal>`")]
     NoActiveWork,
+    #[error("work stack is empty; no previous work to return to")]
+    EmptyStack,
     #[error("work #{0} was not found")]
     WorkNotFound(u64),
     #[error("work #{0} is already done; reopen is not supported yet")]
@@ -135,13 +137,8 @@ impl WorkState {
             }
             WorkOperationDto::Defer { text } => self.defer(text.clone(), now_ms),
             WorkOperationDto::Switch { work_id } => self.switch(*work_id, now_ms),
-            WorkOperationDto::Push { .. } | WorkOperationDto::Pop => {
-                if self.active_work_id.is_none() {
-                    Err(WorkMutationError::NoActiveWork)
-                } else {
-                    Err(WorkMutationError::UnsupportedOperation)
-                }
-            }
+            WorkOperationDto::Push { goal } => self.push(goal.clone(), now_ms),
+            WorkOperationDto::Pop => self.pop(now_ms),
             WorkOperationDto::Finish => self.finish(now_ms),
         }
     }
@@ -261,6 +258,80 @@ impl WorkState {
             kind: WorkMutationKindDto::Defer,
             work_id: Some(work_id),
             previous_work_id: None,
+        })
+    }
+
+    fn push(
+        &mut self,
+        goal: String,
+        now_ms: u64,
+    ) -> Result<WorkMutationOutcomeDto, WorkMutationError> {
+        let previous_work_id = self.active_work_id.ok_or(WorkMutationError::NoActiveWork)?;
+        let new_work_id = self.allocate_work_id()?;
+        if let Some(previous) = self
+            .works
+            .iter_mut()
+            .find(|work| work.id == previous_work_id)
+        {
+            previous.status = WorkStatus::Paused;
+            previous.updated_at_ms = now_ms;
+        } else {
+            return Err(
+                WorkStateError::Invalid("active work is missing during push".into()).into(),
+            );
+        }
+        self.stack.push(previous_work_id);
+        self.works.push(WorkItem {
+            id: new_work_id,
+            title: goal.clone(),
+            goal,
+            status: WorkStatus::Active,
+            parent_id: Some(previous_work_id),
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            finished_at_ms: None,
+            focus: None,
+            summary: None,
+        });
+        self.active_work_id = Some(new_work_id);
+        Ok(WorkMutationOutcomeDto {
+            kind: WorkMutationKindDto::Push,
+            work_id: Some(new_work_id),
+            previous_work_id: Some(previous_work_id),
+        })
+    }
+
+    fn pop(&mut self, now_ms: u64) -> Result<WorkMutationOutcomeDto, WorkMutationError> {
+        let active_id = self.active_work_id.ok_or(WorkMutationError::NoActiveWork)?;
+        let Some(parent_id) = self.stack.last().copied() else {
+            return Err(WorkMutationError::EmptyStack);
+        };
+        let active_index = self
+            .works
+            .iter()
+            .position(|work| work.id == active_id)
+            .ok_or_else(|| WorkStateError::Invalid("active work is missing during pop".into()))?;
+        if self.works[active_index].parent_id != Some(parent_id) {
+            return Err(
+                WorkStateError::Invalid("stack does not match current parent".into()).into(),
+            );
+        }
+        self.works[active_index].status = WorkStatus::Done;
+        self.works[active_index].updated_at_ms = now_ms;
+        self.works[active_index].finished_at_ms = Some(now_ms);
+        self.stack.pop();
+        let parent = self
+            .works
+            .iter_mut()
+            .find(|work| work.id == parent_id)
+            .ok_or_else(|| WorkStateError::Invalid("parent work is missing during pop".into()))?;
+        parent.status = WorkStatus::Active;
+        parent.updated_at_ms = now_ms;
+        self.active_work_id = Some(parent_id);
+        Ok(WorkMutationOutcomeDto {
+            kind: WorkMutationKindDto::Pop,
+            work_id: Some(active_id),
+            previous_work_id: Some(parent_id),
         })
     }
 
@@ -726,6 +797,181 @@ mod tests {
             assert_eq!(error, WorkMutationError::StackNotEmpty);
             assert_eq!(current, before);
         }
+    }
+
+    #[test]
+    fn phase3_push_creates_child_and_preserves_parent_chain() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 11,
+            next_work_id: 2,
+            active_work_id: Some(1),
+            stack: Vec::new(),
+            works: vec![work(1, WorkStatus::Active, None)],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid push state");
+        let before = state.clone();
+        let outcome = state
+            .apply(
+                &WorkOperationDto::Push {
+                    goal: "child work".into(),
+                },
+                20,
+            )
+            .expect("push should succeed");
+        assert_eq!(outcome.kind, WorkMutationKindDto::Push);
+        assert_eq!(outcome.work_id, Some(2));
+        assert_eq!(outcome.previous_work_id, Some(1));
+        assert_eq!(state.active_work_id, Some(2));
+        assert_eq!(state.stack, vec![1]);
+        assert_eq!(state.works[0].status, WorkStatus::Paused);
+        assert_eq!(state.works[1].status, WorkStatus::Active);
+        assert_eq!(state.works[1].parent_id, Some(1));
+        assert_eq!(state.works[0].updated_at_ms, 20);
+        assert_eq!(state.works[1].updated_at_ms, 20);
+        assert_eq!(state.revision, before.revision);
+    }
+
+    #[test]
+    fn phase3_nested_push_preserves_parent_chain() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 12,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: vec![1],
+            works: vec![
+                work(1, WorkStatus::Paused, None),
+                work(2, WorkStatus::Active, Some(1)),
+            ],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid nested push state");
+        let outcome = state
+            .apply(
+                &WorkOperationDto::Push {
+                    goal: "grandchild".into(),
+                },
+                21,
+            )
+            .expect("nested push should succeed");
+        assert_eq!(outcome.kind, WorkMutationKindDto::Push);
+        assert_eq!(outcome.work_id, Some(3));
+        assert_eq!(outcome.previous_work_id, Some(2));
+        assert_eq!(state.active_work_id, Some(3));
+        assert_eq!(state.stack, vec![1, 2]);
+        assert_eq!(state.works[1].status, WorkStatus::Paused);
+        assert_eq!(state.works[2].status, WorkStatus::Active);
+        assert_eq!(state.works[2].parent_id, Some(2));
+    }
+
+    #[test]
+    fn phase3_pop_finishes_child_and_restores_parent() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 13,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: vec![1],
+            works: vec![
+                work(1, WorkStatus::Paused, None),
+                WorkItem {
+                    parent_id: Some(1),
+                    ..work(2, WorkStatus::Active, Some(1))
+                },
+            ],
+            entries: vec![
+                WorkEntry {
+                    id: 1,
+                    work_id: 2,
+                    kind: WorkEntryKind::Decision,
+                    text: "child decision".into(),
+                    created_at_ms: 1,
+                },
+                WorkEntry {
+                    id: 2,
+                    work_id: 2,
+                    kind: WorkEntryKind::Note,
+                    text: "child note".into(),
+                    created_at_ms: 1,
+                },
+            ],
+        };
+        state.validate().expect("valid pop state");
+        let outcome = state
+            .apply(&WorkOperationDto::Pop, 22)
+            .expect("pop should succeed");
+        assert_eq!(outcome.kind, WorkMutationKindDto::Pop);
+        assert_eq!(outcome.work_id, Some(2));
+        assert_eq!(outcome.previous_work_id, Some(1));
+        assert_eq!(state.active_work_id, Some(1));
+        assert_eq!(state.stack, Vec::<u64>::new());
+        assert_eq!(state.works[0].status, WorkStatus::Active);
+        assert_eq!(state.works[1].status, WorkStatus::Done);
+        assert_eq!(state.works[1].finished_at_ms, Some(22));
+        assert_eq!(state.works[1].updated_at_ms, 22);
+        assert_eq!(state.entries.len(), 2);
+    }
+
+    #[test]
+    fn phase3_pop_rejects_empty_stack_without_state_change() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 14,
+            next_work_id: 2,
+            active_work_id: Some(1),
+            stack: Vec::new(),
+            works: vec![work(1, WorkStatus::Active, None)],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid empty stack state");
+        let before = state.clone();
+        let error = state
+            .apply(&WorkOperationDto::Pop, 23)
+            .expect_err("pop should fail when stack empty");
+        assert_eq!(error, WorkMutationError::EmptyStack);
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn phase3_pop_does_not_merge_child_entries_into_parent() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 15,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: vec![1],
+            works: vec![
+                work(1, WorkStatus::Paused, None),
+                WorkItem {
+                    parent_id: Some(1),
+                    ..work(2, WorkStatus::Active, Some(1))
+                },
+            ],
+            entries: vec![
+                WorkEntry {
+                    id: 1,
+                    work_id: 2,
+                    kind: WorkEntryKind::Decision,
+                    text: "child decision".into(),
+                    created_at_ms: 1,
+                },
+                WorkEntry {
+                    id: 2,
+                    work_id: 2,
+                    kind: WorkEntryKind::Idea,
+                    text: "child idea".into(),
+                    created_at_ms: 1,
+                },
+            ],
+        };
+        state.validate().expect("valid pop merge state");
+        let before = state.clone();
+        let _ = state.apply(&WorkOperationDto::Pop, 24).expect("pop");
+        assert_eq!(state.entries, before.entries);
+        assert_eq!(state.works[0].status, WorkStatus::Active);
+        assert_eq!(state.works[1].status, WorkStatus::Done);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use aibe::adapters::outbound::{
     FilesystemMemorySpaceResolver, FilesystemWorkStore, StaticCapabilityPolicy,
 };
 use aibe::application::WorkService;
-use aibe::domain::{WorkItem, WorkStatus};
+use aibe::domain::{WorkEntry, WorkEntryKind, WorkItem, WorkStatus};
 use aibe::ports::outbound::{WorkStore, WorkStoreContext};
 use aibe_protocol::{
     ClientResponse, MemoryContext, WorkApplyResponseBody, WorkEntryKindDto, WorkMutationOutcomeDto,
@@ -84,6 +84,65 @@ impl Harness {
                 Ok(())
             })
             .expect("seed finishable state");
+    }
+
+    fn seed_pushable_state(&self) {
+        self.store
+            .mutate(&self.store_context, &mut |state| {
+                state.next_work_id = 2;
+                state.active_work_id = Some(1);
+                state.stack = Vec::new();
+                state.works = vec![work_item(1, WorkStatus::Active, None)];
+                state.entries = vec![
+                    WorkEntry {
+                        id: 1,
+                        work_id: 1,
+                        kind: WorkEntryKind::Decision,
+                        text: "root decision".into(),
+                        created_at_ms: 1,
+                    },
+                    WorkEntry {
+                        id: 2,
+                        work_id: 1,
+                        kind: WorkEntryKind::Note,
+                        text: "root note".into(),
+                        created_at_ms: 1,
+                    },
+                ];
+                Ok(())
+            })
+            .expect("seed pushable state");
+    }
+
+    fn seed_nested_push_state(&self) {
+        self.store
+            .mutate(&self.store_context, &mut |state| {
+                state.next_work_id = 3;
+                state.active_work_id = Some(2);
+                state.stack = vec![1];
+                state.works = vec![
+                    work_item(1, WorkStatus::Paused, None),
+                    work_item(2, WorkStatus::Active, Some(1)),
+                ];
+                state.entries = vec![
+                    WorkEntry {
+                        id: 1,
+                        work_id: 2,
+                        kind: WorkEntryKind::Decision,
+                        text: "child decision".into(),
+                        created_at_ms: 1,
+                    },
+                    WorkEntry {
+                        id: 2,
+                        work_id: 2,
+                        kind: WorkEntryKind::Idea,
+                        text: "child idea".into(),
+                        created_at_ms: 1,
+                    },
+                ];
+                Ok(())
+            })
+            .expect("seed nested push state");
     }
 
     fn apply(&self, operation: WorkOperationDto) -> (WorkSnapshotDto, WorkMutationOutcomeDto) {
@@ -252,19 +311,14 @@ fn work_defer_keeps_active_work_and_stack_unchanged() {
 }
 
 #[test]
-fn phase1_unsupported_operation_does_not_change_state() {
+fn phase3_pop_without_active_work_fails_without_state_change() {
     let harness = Harness::new("project_phase1_unsupported");
-    harness.apply(WorkOperationDto::Start {
-        goal: "main work".into(),
-    });
     let before = harness.query();
     let response = harness.service.apply(
         "unsupported".into(),
         "session".into(),
         &harness.context,
-        WorkOperationDto::Push {
-            goal: "child".into(),
-        },
+        WorkOperationDto::Pop,
     );
     assert!(matches!(response, ClientResponse::Error { .. }));
     assert_eq!(harness.query(), before);
@@ -497,31 +551,87 @@ fn work_root_transitions_reject_non_empty_stack() {
 }
 
 #[test]
-#[ignore = "0052 phase 3 pending"]
 fn work_push_stacks_parent_and_activates_child() {
-    pending();
+    let harness = Harness::new("project_phase3_push");
+    harness.seed_pushable_state();
+    let before = harness.query();
+    let (after, outcome) = harness.apply(WorkOperationDto::Push {
+        goal: "child work".into(),
+    });
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(outcome.kind, aibe_protocol::WorkMutationKindDto::Push);
+    assert_eq!(outcome.work_id, Some(2));
+    assert_eq!(outcome.previous_work_id, Some(1));
+    assert_eq!(after.active_work_id, Some(2));
+    assert_eq!(after.stack, vec![1]);
+    assert_eq!(after.works[0].status, WorkStatusDto::Paused);
+    assert_eq!(after.works[1].status, WorkStatusDto::Active);
+    assert_eq!(after.works[1].parent_id, Some(1));
 }
 
 #[test]
-#[ignore = "0052 phase 3 pending"]
 fn work_nested_push_preserves_parent_chain() {
-    pending();
+    let harness = Harness::new("project_phase3_nested_push");
+    harness.seed_nested_push_state();
+    let (after, outcome) = harness.apply(WorkOperationDto::Push {
+        goal: "grandchild".into(),
+    });
+    assert_eq!(after.active_work_id, Some(3));
+    assert_eq!(after.stack, vec![1, 2]);
+    assert_eq!(outcome.previous_work_id, Some(2));
+    assert_eq!(after.works[1].status, WorkStatusDto::Paused);
+    assert_eq!(after.works[2].status, WorkStatusDto::Active);
+    assert_eq!(after.works[2].parent_id, Some(2));
 }
 
 #[test]
-#[ignore = "0052 phase 3 pending"]
 fn work_pop_finishes_child_and_restores_parent() {
-    pending();
+    let harness = Harness::new("project_phase3_pop");
+    harness.seed_nested_push_state();
+    let before = harness.query();
+    let (after, outcome) = harness.apply(WorkOperationDto::Pop);
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(outcome.kind, aibe_protocol::WorkMutationKindDto::Pop);
+    assert_eq!(outcome.work_id, Some(2));
+    assert_eq!(outcome.previous_work_id, Some(1));
+    assert_eq!(after.active_work_id, Some(1));
+    assert_eq!(after.stack, Vec::<u64>::new());
+    assert_eq!(after.works[0].status, WorkStatusDto::Active);
+    assert_eq!(after.works[1].status, WorkStatusDto::Done);
+    assert!(after.works[1].finished_at_ms.is_some());
+    assert_eq!(after.entries, before.entries);
 }
 
 #[test]
-#[ignore = "0052 phase 3 pending"]
 fn work_pop_rejects_empty_stack_without_state_change() {
-    pending();
+    let harness = Harness::new("project_phase3_empty_stack");
+    harness.seed_finishable_state();
+    let before = harness.query();
+    let response = harness.service.apply(
+        "pop-empty".into(),
+        "session".into(),
+        &harness.context,
+        WorkOperationDto::Pop,
+    );
+    match response {
+        ClientResponse::Error { message, .. } => {
+            assert!(message.contains("work stack is empty"), "{message}");
+        }
+        other => panic!("expected error: {other:?}"),
+    }
+    assert_eq!(harness.query(), before);
 }
 
 #[test]
-#[ignore = "0052 phase 3 pending"]
 fn work_pop_does_not_merge_child_entries_into_parent() {
-    pending();
+    let harness = Harness::new("project_phase3_no_merge");
+    harness.seed_nested_push_state();
+    let before = harness.query();
+    let (after, _) = harness.apply(WorkOperationDto::Pop);
+    assert_eq!(after.entries, before.entries);
+    assert!(after.entries.iter().all(|entry| entry.work_id == 2
+        && matches!(
+            entry.kind,
+            aibe_protocol::WorkEntryKindDto::Decision | aibe_protocol::WorkEntryKindDto::Idea
+        )));
 }

@@ -1,8 +1,8 @@
-# `ai work` Phase 2 手動検証
+# `ai work` Phase 3 手動検証
 
 ## 対象
 
-0052 Phase 2 の `switch / finish`、stack guard、disabled経路を確認する。
+0052 Phase 3 の `push / pop`、stack 表示、disabled経路を確認する。
 
 ## 前提
 
@@ -57,7 +57,9 @@ AI_MEMORY_ENABLED=0 ai work --no-start
 - `start` で active が作られ、二度目の `start` で旧 active が `Paused` になり、旧 active 停止が表示される。
 - `switch` は `Paused` / `Deferred` の work に対して active を切り替え、`Done` / missing は拒否される。
 - `finish` は stack が空のときだけ active を `Done` にして unset する。
-- `focus / idea / note / decide / push / pop` は active がないと拒否される。
+- `push` は active を stack に積んで child work を開始する。
+- `pop` は child work を `Done` にして parent へ戻り、child entries を親へ自動 merge しない。
+- `focus / idea / note / decide / finish` は active がないと拒否される。
 - memory disabled は既存 contextual memory と同じ error で fail-closed になる。
 
 ## 注意

@@ -1091,7 +1091,7 @@ id = "work_push"
 description = "push が parent を stack へ積み child を active にする"
 test = "work_push_stacks_parent_and_activates_child"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1100,7 +1100,7 @@ id = "work_nested_push"
 description = "nested push の stack と parent chain が一致する"
 test = "work_nested_push_preserves_parent_chain"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1109,7 +1109,7 @@ id = "work_pop"
 description = "pop が child を Done にして parent へ戻る"
 test = "work_pop_finishes_child_and_restores_parent"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1118,7 +1118,7 @@ id = "work_pop_empty"
 description = "empty stack の pop が state 非変更で失敗する"
 test = "work_pop_rejects_empty_stack_without_state_change"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1127,7 +1127,7 @@ id = "work_no_auto_merge"
 description = "child entries が parent へ自動 merge されない"
 test = "work_pop_does_not_merge_child_entries_into_parent"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1136,7 +1136,7 @@ id = "work_stack_display"
 description = "status/list が stack と child marker を表示する"
 test = "work_views_render_stack_and_child_marker"
 file_glob = "ai/tests/work_cli.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"

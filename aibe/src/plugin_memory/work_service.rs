@@ -122,6 +122,7 @@ fn map_store_error(id: String, error: WorkStoreError) -> ClientResponse {
         WorkStoreError::Operation(error) => match error {
             WorkMutationError::StackNotEmpty
             | WorkMutationError::NoActiveWork
+            | WorkMutationError::EmptyStack
             | WorkMutationError::WorkNotFound(_)
             | WorkMutationError::WorkAlreadyDone(_)
             | WorkMutationError::WorkAbandoned(_)

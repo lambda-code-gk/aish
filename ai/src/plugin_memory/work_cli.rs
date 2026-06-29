@@ -51,7 +51,7 @@ fn render_apply_result(
         .iter()
         .find(|work| work.id == work_id)
         .ok_or_else(invalid_response)?;
-    validate_phase1_result(operation, snapshot, outcome, work)?;
+    validate_apply_result(operation, snapshot, outcome, work)?;
     let rendered = match operation {
         WorkOperationDto::Start { goal } => {
             let paused = outcome
@@ -85,10 +85,35 @@ fn render_apply_result(
         WorkOperationDto::Finish => {
             format!("Finished work #{}:\n  {}", work.id, work.title)
         }
-        WorkOperationDto::Push { .. } | WorkOperationDto::Pop => format!(
-            "Updated work #{work_id}.\n{}",
-            render_work_snapshot(snapshot, WorkView::Status)
-        ),
+        WorkOperationDto::Push { .. } => {
+            let Some(previous_work_id) = outcome.previous_work_id else {
+                return Err(invalid_response());
+            };
+            format!(
+                "Pushed current work #{previous_work_id} to stack.\n\nStarted child work #{}:\n  {}",
+                work.id, work.title
+            )
+        }
+        WorkOperationDto::Pop => {
+            let Some(previous_work_id) = outcome.previous_work_id else {
+                return Err(invalid_response());
+            };
+            let parent = snapshot
+                .works
+                .iter()
+                .find(|candidate| candidate.id == previous_work_id)
+                .ok_or_else(invalid_response)?;
+            let mut out = format!(
+                "Closed child work #{}:\n  {}\n\nReturned to work #{}:\n  {}",
+                work.id, work.title, parent.id, parent.title
+            );
+            let child_entries = render_child_entries(snapshot, work.id);
+            if !child_entries.is_empty() {
+                out.push_str("\n\n");
+                out.push_str(&child_entries);
+            }
+            out
+        }
     };
     Ok(rendered)
 }
@@ -106,7 +131,7 @@ fn mutation_kind(operation: &WorkOperationDto) -> WorkMutationKindDto {
     }
 }
 
-fn validate_phase1_result(
+fn validate_apply_result(
     operation: &WorkOperationDto,
     snapshot: &WorkSnapshotDto,
     outcome: &aibe_protocol::WorkMutationOutcomeDto,
@@ -163,7 +188,42 @@ fn validate_phase1_result(
                 && outcome.previous_work_id.is_none()
                 && snapshot.stack.is_empty()
         }
-        WorkOperationDto::Push { .. } | WorkOperationDto::Pop => true,
+        WorkOperationDto::Push { .. } => {
+            snapshot.active_work_id == Some(work.id)
+                && work.status == WorkStatusDto::Active
+                && work.parent_id == outcome.previous_work_id
+                && outcome.previous_work_id.is_some()
+                && snapshot.stack.last().copied() == outcome.previous_work_id
+                && outcome.previous_work_id.is_none_or(|previous_id| {
+                    previous_id != work.id
+                        && snapshot.works.iter().any(|previous| {
+                            previous.id == previous_id && previous.status == WorkStatusDto::Paused
+                        })
+                })
+        }
+        WorkOperationDto::Pop => {
+            let Some(parent_id) = outcome.previous_work_id else {
+                return Err(invalid_response());
+            };
+            let Some(parent) = snapshot
+                .works
+                .iter()
+                .find(|candidate| candidate.id == parent_id)
+            else {
+                return Err(invalid_response());
+            };
+            snapshot.active_work_id == Some(parent_id)
+                && work.status == WorkStatusDto::Done
+                && work.finished_at_ms.is_some()
+                && work.parent_id == Some(parent_id)
+                && parent.status == WorkStatusDto::Active
+                && !snapshot.stack.contains(&work.id)
+                && snapshot
+                    .stack
+                    .last()
+                    .copied()
+                    .is_none_or(|last| last != work.id)
+        }
     };
     if valid {
         Ok(())
@@ -174,4 +234,37 @@ fn validate_phase1_result(
 
 fn invalid_response() -> AgentError {
     AgentError::Request("invalid work response".into())
+}
+
+fn render_child_entries(snapshot: &WorkSnapshotDto, child_work_id: u64) -> String {
+    let sections = [
+        (aibe_protocol::WorkEntryKindDto::Decision, "Child decisions"),
+        (aibe_protocol::WorkEntryKindDto::Note, "Child notes"),
+        (aibe_protocol::WorkEntryKindDto::Idea, "Child ideas"),
+    ];
+    let mut out = String::new();
+    for (kind, label) in sections {
+        let entries: Vec<_> = snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.work_id == child_work_id && entry.kind == kind)
+            .collect();
+        if entries.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(label);
+        out.push_str(":\n");
+        for entry in entries {
+            out.push_str("  - ");
+            out.push_str(&entry.text);
+            out.push('\n');
+        }
+        if out.ends_with('\n') {
+            out.pop();
+        }
+    }
+    out
 }

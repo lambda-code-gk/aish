@@ -402,6 +402,101 @@ fn work_switch_and_finish_use_apply_rpc_and_render_human_output() {
 }
 
 #[test]
+fn work_push_and_pop_use_apply_rpc_and_render_human_output() {
+    let server = WorkServer::apply(|body| {
+        assert_eq!(
+            body.operation,
+            WorkOperationDto::Push {
+                goal: "child work".into()
+            }
+        );
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 11,
+                active_work_id: Some(2),
+                stack: vec![1],
+                works: vec![
+                    work(1, "parent work", WorkStatusDto::Paused, None),
+                    WorkItemDto {
+                        parent_id: Some(1),
+                        ..work(2, "child work", WorkStatusDto::Active, None)
+                    },
+                ],
+                entries: Vec::new(),
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Push,
+                work_id: Some(2),
+                previous_work_id: Some(1),
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(
+        &home,
+        &config,
+        &["work", "push", "--no-start", "child", "work"],
+    );
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Pushed current work #1 to stack.\n\nStarted child work #2:\n  child work\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let server = WorkServer::apply(|body| {
+        assert_eq!(body.operation, WorkOperationDto::Pop);
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 12,
+                active_work_id: Some(1),
+                stack: Vec::new(),
+                works: vec![
+                    work(1, "parent work", WorkStatusDto::Active, None),
+                    WorkItemDto {
+                        parent_id: Some(1),
+                        ..work(2, "child work", WorkStatusDto::Done, None)
+                    },
+                ],
+                entries: vec![
+                    WorkEntryDto {
+                        id: 1,
+                        work_id: 2,
+                        kind: WorkEntryKindDto::Decision,
+                        text: "child decision".into(),
+                        created_at_ms: 1,
+                    },
+                    WorkEntryDto {
+                        id: 2,
+                        work_id: 2,
+                        kind: WorkEntryKindDto::Note,
+                        text: "child note".into(),
+                        created_at_ms: 1,
+                    },
+                ],
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Pop,
+                work_id: Some(2),
+                previous_work_id: Some(1),
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "pop", "--no-start"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Closed child work #2:\n  child work\n\nReturned to work #1:\n  parent work\n\nChild decisions:\n  - child decision\n\nChild notes:\n  - child note\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn work_apply_protocol_error_is_stderr_and_nonzero() {
     let server = WorkServer::apply(|body| {
         ClientResponse::error(body.id, ErrorCode::InvalidRequest, "no active work")
@@ -466,9 +561,19 @@ fn work_apply_inconsistent_success_is_rejected_without_dumping_snapshot() {
 }
 
 #[test]
-#[ignore = "0052 phase 3 pending"]
 fn work_views_render_stack_and_child_marker() {
-    panic!("pending 0052");
+    let snapshot = populated_snapshot();
+    let server = WorkServer::queries(vec![snapshot.clone(), snapshot]);
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "--no-start"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Stack:\n  #1 paused work"));
+    let output = run_work(&home, &config, &["work", "list", "--no-start"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Paused:\n  #1 paused work [stack]"));
 }
 
 fn write_config(home: &tempfile::TempDir, socket_path: &std::path::Path) -> std::path::PathBuf {
