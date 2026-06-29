@@ -242,6 +242,45 @@ fn work_start_uses_apply_rpc_and_renders_human_output() {
 }
 
 #[test]
+fn work_start_with_previous_active_renders_pause_notice() {
+    let server = WorkServer::apply(|body| {
+        assert_eq!(
+            body.operation,
+            WorkOperationDto::Start {
+                goal: "second".into()
+            }
+        );
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 2,
+                active_work_id: Some(2),
+                stack: Vec::new(),
+                works: vec![
+                    work(1, "first", WorkStatusDto::Paused, None),
+                    work(2, "second", WorkStatusDto::Active, None),
+                ],
+                entries: Vec::new(),
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Start,
+                work_id: Some(2),
+                previous_work_id: Some(1),
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "start", "--no-start", "second"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Paused previous work #1.\n\nStarted work #2:\n  second\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn work_phase1_commands_use_apply_rpc_and_render_human_output() {
     let cases = [
         (
@@ -297,6 +336,69 @@ fn work_phase1_commands_use_apply_rpc_and_render_human_output() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected_stdout);
         assert!(output.stderr.is_empty());
     }
+}
+
+#[test]
+fn work_switch_and_finish_use_apply_rpc_and_render_human_output() {
+    let server = WorkServer::apply(|body| {
+        assert_eq!(body.operation, WorkOperationDto::Switch { work_id: 3 });
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 9,
+                active_work_id: Some(3),
+                stack: Vec::new(),
+                works: vec![
+                    work(1, "paused work", WorkStatusDto::Paused, None),
+                    work(2, "old active", WorkStatusDto::Paused, None),
+                    work(3, "switched work", WorkStatusDto::Active, None),
+                ],
+                entries: Vec::new(),
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Switch,
+                work_id: Some(3),
+                previous_work_id: Some(2),
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "switch", "--no-start", "3"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Switched active work:\n  #3 switched work\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let server = WorkServer::apply(|body| {
+        assert_eq!(body.operation, WorkOperationDto::Finish);
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 10,
+                active_work_id: None,
+                stack: Vec::new(),
+                works: vec![work(1, "finished work", WorkStatusDto::Done, None)],
+                entries: Vec::new(),
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Finish,
+                work_id: Some(1),
+                previous_work_id: None,
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "finish", "--no-start"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Finished work #1:\n  finished work\n"
+    );
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -460,10 +562,26 @@ fn phase1_success_response(id: String, operation: WorkOperationDto) -> ClientRes
             Vec::new(),
             WorkMutationKindDto::Defer,
         ),
+        WorkOperationDto::Switch { .. } => (
+            Some(1),
+            WorkStatusDto::Active,
+            None,
+            Vec::new(),
+            WorkMutationKindDto::Switch,
+        ),
+        WorkOperationDto::Finish => (
+            None,
+            WorkStatusDto::Done,
+            None,
+            Vec::new(),
+            WorkMutationKindDto::Finish,
+        ),
         other => panic!("unsupported phase 1 test operation: {other:?}"),
     };
     let title = match &operation {
         WorkOperationDto::Defer { text } => text.as_str(),
+        WorkOperationDto::Finish => "finished work",
+        WorkOperationDto::Switch { .. } => "active goal",
         _ => "active goal",
     };
     ClientResponse::WorkApplyResult(WorkApplyResponseBody {

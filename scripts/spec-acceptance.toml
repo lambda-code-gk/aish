@@ -1037,7 +1037,7 @@ id = "work_switch"
 description = "switch が active work を原子的に切り替える"
 test = "work_switch_changes_active_work_atomically"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1046,7 +1046,7 @@ id = "work_finish"
 description = "finish が active を Done にして unset する"
 test = "work_finish_marks_active_done_and_unsets_active"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1055,7 +1055,7 @@ id = "work_requires_active"
 description = "active 必須操作が state 非変更で失敗する"
 test = "work_mutations_requiring_active_fail_without_state_change"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1064,7 +1064,7 @@ id = "work_switch_missing"
 description = "missing work への switch が失敗する"
 test = "work_switch_rejects_missing_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1073,7 +1073,7 @@ id = "work_switch_done"
 description = "Done work への switch が失敗する"
 test = "work_switch_rejects_done_work"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1082,7 +1082,7 @@ id = "work_stack_guard"
 description = "stack 非空の root transition が失敗する"
 test = "work_root_transitions_reject_non_empty_stack"
 file_glob = "aibe/tests/work_rpc.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"

@@ -92,6 +92,14 @@ pub enum WorkMutationError {
     StackNotEmpty,
     #[error("no active work; start one with `ai work start <goal>`")]
     NoActiveWork,
+    #[error("work #{0} was not found")]
+    WorkNotFound(u64),
+    #[error("work #{0} is already done; reopen is not supported yet")]
+    WorkAlreadyDone(u64),
+    #[error("work #{0} is abandoned and cannot be switched")]
+    WorkAbandoned(u64),
+    #[error("work #{0} is not paused or deferred")]
+    WorkNotSwitchable(u64),
     #[error("work operation is not supported")]
     UnsupportedOperation,
     #[error(transparent)]
@@ -126,10 +134,15 @@ impl WorkState {
                 self.add_entry((*kind).into(), text.clone(), now_ms)
             }
             WorkOperationDto::Defer { text } => self.defer(text.clone(), now_ms),
-            WorkOperationDto::Switch { .. }
-            | WorkOperationDto::Push { .. }
-            | WorkOperationDto::Pop
-            | WorkOperationDto::Finish => Err(WorkMutationError::UnsupportedOperation),
+            WorkOperationDto::Switch { work_id } => self.switch(*work_id, now_ms),
+            WorkOperationDto::Push { .. } | WorkOperationDto::Pop => {
+                if self.active_work_id.is_none() {
+                    Err(WorkMutationError::NoActiveWork)
+                } else {
+                    Err(WorkMutationError::UnsupportedOperation)
+                }
+            }
+            WorkOperationDto::Finish => self.finish(now_ms),
         }
     }
 
@@ -247,6 +260,74 @@ impl WorkState {
         Ok(WorkMutationOutcomeDto {
             kind: WorkMutationKindDto::Defer,
             work_id: Some(work_id),
+            previous_work_id: None,
+        })
+    }
+
+    fn switch(
+        &mut self,
+        work_id: u64,
+        now_ms: u64,
+    ) -> Result<WorkMutationOutcomeDto, WorkMutationError> {
+        if !self.stack.is_empty() {
+            return Err(WorkMutationError::StackNotEmpty);
+        }
+        let target_index = self
+            .works
+            .iter()
+            .position(|work| work.id == work_id)
+            .ok_or(WorkMutationError::WorkNotFound(work_id))?;
+        let target_status = self.works[target_index].status;
+        match target_status {
+            WorkStatus::Paused | WorkStatus::Deferred => {}
+            WorkStatus::Done => return Err(WorkMutationError::WorkAlreadyDone(work_id)),
+            WorkStatus::Abandoned => return Err(WorkMutationError::WorkAbandoned(work_id)),
+            WorkStatus::Active => return Err(WorkMutationError::WorkNotSwitchable(work_id)),
+        }
+        let previous_work_id = self.active_work_id;
+        if let Some(active_id) = previous_work_id {
+            let active = self
+                .works
+                .iter_mut()
+                .find(|work| work.id == active_id)
+                .ok_or_else(|| {
+                    WorkStateError::Invalid("active work is missing during switch".into())
+                })?;
+            active.status = WorkStatus::Paused;
+            active.updated_at_ms = now_ms;
+        }
+        let target = self.works.get_mut(target_index).ok_or_else(|| {
+            WorkStateError::Invalid("target work disappeared during switch".into())
+        })?;
+        target.status = WorkStatus::Active;
+        target.updated_at_ms = now_ms;
+        self.active_work_id = Some(work_id);
+        Ok(WorkMutationOutcomeDto {
+            kind: WorkMutationKindDto::Switch,
+            work_id: Some(work_id),
+            previous_work_id,
+        })
+    }
+
+    fn finish(&mut self, now_ms: u64) -> Result<WorkMutationOutcomeDto, WorkMutationError> {
+        if !self.stack.is_empty() {
+            return Err(WorkMutationError::StackNotEmpty);
+        }
+        let active_id = self.active_work_id.ok_or(WorkMutationError::NoActiveWork)?;
+        let active = self
+            .works
+            .iter_mut()
+            .find(|work| work.id == active_id)
+            .ok_or_else(|| {
+                WorkStateError::Invalid("active work is missing during finish".into())
+            })?;
+        active.status = WorkStatus::Done;
+        active.updated_at_ms = now_ms;
+        active.finished_at_ms = Some(now_ms);
+        self.active_work_id = None;
+        Ok(WorkMutationOutcomeDto {
+            kind: WorkMutationKindDto::Finish,
+            work_id: Some(active_id),
             previous_work_id: None,
         })
     }
@@ -466,6 +547,185 @@ mod tests {
             .expect_err("start with stack must fail");
         assert_eq!(error, WorkMutationError::StackNotEmpty);
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn phase2_switch_transitions_paused_or_deferred_work_atomically() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 3,
+            next_work_id: 4,
+            active_work_id: Some(2),
+            stack: Vec::new(),
+            works: vec![
+                work(1, WorkStatus::Paused, None),
+                work(2, WorkStatus::Active, None),
+                work(3, WorkStatus::Deferred, None),
+            ],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid switch state");
+        let before = state.clone();
+        let outcome = state
+            .apply(&WorkOperationDto::Switch { work_id: 3 }, 10)
+            .expect("switch should succeed");
+        assert_eq!(outcome.kind, WorkMutationKindDto::Switch);
+        assert_eq!(outcome.work_id, Some(3));
+        assert_eq!(outcome.previous_work_id, Some(2));
+        assert_eq!(state.active_work_id, Some(3));
+        assert_eq!(state.works[1].status, WorkStatus::Paused);
+        assert_eq!(state.works[2].status, WorkStatus::Active);
+        assert_eq!(state.works[1].updated_at_ms, 10);
+        assert_eq!(state.works[2].updated_at_ms, 10);
+        assert_eq!(state.works[0].status, WorkStatus::Paused);
+        assert_eq!(state.revision, before.revision);
+        assert_eq!(state.stack, before.stack);
+        assert_eq!(state.works[0].updated_at_ms, before.works[0].updated_at_ms);
+    }
+
+    #[test]
+    fn phase2_finish_marks_active_done_and_unsets_active() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 4,
+            next_work_id: 2,
+            active_work_id: Some(1),
+            stack: Vec::new(),
+            works: vec![work(1, WorkStatus::Active, None)],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid finish state");
+        let before = state.clone();
+        let outcome = state
+            .apply(&WorkOperationDto::Finish, 11)
+            .expect("finish should succeed");
+        assert_eq!(outcome.kind, WorkMutationKindDto::Finish);
+        assert_eq!(outcome.work_id, Some(1));
+        assert_eq!(outcome.previous_work_id, None);
+        assert_eq!(state.active_work_id, None);
+        assert_eq!(state.works[0].status, WorkStatus::Done);
+        assert_eq!(state.works[0].finished_at_ms, Some(11));
+        assert_eq!(state.works[0].updated_at_ms, 11);
+        assert_eq!(state.revision, before.revision);
+        assert_eq!(state.stack, before.stack);
+    }
+
+    #[test]
+    fn phase2_active_missing_mutations_fail_without_state_change() {
+        for operation in [
+            WorkOperationDto::Focus {
+                text: "next".into(),
+            },
+            WorkOperationDto::AddEntry {
+                kind: WorkEntryKindDto::Note,
+                text: "note".into(),
+            },
+            WorkOperationDto::Push {
+                goal: "child".into(),
+            },
+            WorkOperationDto::Pop,
+            WorkOperationDto::Finish,
+        ] {
+            let mut state = WorkState::default();
+            let before = state.clone();
+            let error = state
+                .apply(&operation, 12)
+                .expect_err("operation should require active work");
+            assert_eq!(error, WorkMutationError::NoActiveWork);
+            assert_eq!(state, before);
+        }
+    }
+
+    #[test]
+    fn phase2_switch_rejects_missing_done_or_abandoned_targets_without_state_change() {
+        let mut missing = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 7,
+            next_work_id: 2,
+            active_work_id: Some(1),
+            stack: Vec::new(),
+            works: vec![work(1, WorkStatus::Active, None)],
+            entries: Vec::new(),
+        };
+        missing.validate().expect("valid missing target state");
+        let before = missing.clone();
+        let error = missing
+            .apply(&WorkOperationDto::Switch { work_id: 99 }, 13)
+            .expect_err("missing target should fail");
+        assert_eq!(error, WorkMutationError::WorkNotFound(99));
+        assert_eq!(missing, before);
+
+        let mut done = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 8,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: Vec::new(),
+            works: vec![
+                work(1, WorkStatus::Done, None),
+                work(2, WorkStatus::Active, None),
+            ],
+            entries: Vec::new(),
+        };
+        done.validate().expect("valid done target state");
+        let before = done.clone();
+        let error = done
+            .apply(&WorkOperationDto::Switch { work_id: 1 }, 14)
+            .expect_err("done target should fail");
+        assert_eq!(error, WorkMutationError::WorkAlreadyDone(1));
+        assert_eq!(done, before);
+
+        let mut abandoned = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 9,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: Vec::new(),
+            works: vec![
+                work(1, WorkStatus::Abandoned, None),
+                work(2, WorkStatus::Active, None),
+            ],
+            entries: Vec::new(),
+        };
+        abandoned.validate().expect("valid abandoned target state");
+        let before = abandoned.clone();
+        let error = abandoned
+            .apply(&WorkOperationDto::Switch { work_id: 1 }, 15)
+            .expect_err("abandoned target should fail");
+        assert_eq!(error, WorkMutationError::WorkAbandoned(1));
+        assert_eq!(abandoned, before);
+    }
+
+    #[test]
+    fn phase2_root_transitions_reject_non_empty_stack_without_state_change() {
+        let state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 10,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: vec![1],
+            works: vec![
+                work(1, WorkStatus::Paused, None),
+                work(2, WorkStatus::Active, Some(1)),
+            ],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid stacked state");
+        for operation in [
+            WorkOperationDto::Start {
+                goal: "new root".into(),
+            },
+            WorkOperationDto::Switch { work_id: 1 },
+            WorkOperationDto::Finish,
+        ] {
+            let mut current = state.clone();
+            let before = current.clone();
+            let error = current
+                .apply(&operation, 16)
+                .expect_err("stacked root transition should fail");
+            assert_eq!(error, WorkMutationError::StackNotEmpty);
+            assert_eq!(current, before);
+        }
     }
 
     #[test]

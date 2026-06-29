@@ -58,7 +58,12 @@ fn render_apply_result(
                 .previous_work_id
                 .map(|id| format!("Paused previous work #{id}.\n\n"))
                 .unwrap_or_default();
-            format!("{paused}Started work #{work_id}:\n  {goal}\n\nActive work is now #{work_id}.")
+            let started = format!("Started work #{work_id}:\n  {goal}");
+            if outcome.previous_work_id.is_some() {
+                format!("{paused}{started}")
+            } else {
+                format!("{started}\n\nActive work is now #{work_id}.")
+            }
         }
         WorkOperationDto::Focus { text } => {
             format!("Updated focus for work #{work_id}:\n  {text}")
@@ -74,7 +79,13 @@ fn render_apply_result(
         WorkOperationDto::Defer { .. } => {
             format!("Deferred work #{work_id}:\n  {}", work.title)
         }
-        _ => format!(
+        WorkOperationDto::Switch { .. } => {
+            format!("Switched active work:\n  #{} {}", work.id, work.title)
+        }
+        WorkOperationDto::Finish => {
+            format!("Finished work #{}:\n  {}", work.id, work.title)
+        }
+        WorkOperationDto::Push { .. } | WorkOperationDto::Pop => format!(
             "Updated work #{work_id}.\n{}",
             render_work_snapshot(snapshot, WorkView::Status)
         ),
@@ -134,7 +145,25 @@ fn validate_phase1_result(
                 && work.title == *text
                 && outcome.previous_work_id.is_none()
         }
-        _ => true,
+        WorkOperationDto::Switch { .. } => {
+            snapshot.active_work_id == Some(work.id)
+                && work.status == WorkStatusDto::Active
+                && snapshot.stack.is_empty()
+                && outcome.previous_work_id.is_none_or(|previous_id| {
+                    previous_id != work.id
+                        && snapshot.works.iter().any(|previous| {
+                            previous.id == previous_id && previous.status == WorkStatusDto::Paused
+                        })
+                })
+        }
+        WorkOperationDto::Finish => {
+            snapshot.active_work_id.is_none()
+                && work.status == WorkStatusDto::Done
+                && work.finished_at_ms.is_some()
+                && outcome.previous_work_id.is_none()
+                && snapshot.stack.is_empty()
+        }
+        WorkOperationDto::Push { .. } | WorkOperationDto::Pop => true,
     };
     if valid {
         Ok(())

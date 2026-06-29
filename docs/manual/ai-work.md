@@ -1,8 +1,8 @@
-# `ai work` Phase 1 手動検証
+# `ai work` Phase 2 手動検証
 
 ## 対象
 
-0052 Phase 1 の基本mutation、dashboard/status/list、disabled経路を確認する。
+0052 Phase 2 の `switch / finish`、stack guard、disabled経路を確認する。
 
 ## 前提
 
@@ -28,24 +28,18 @@ ai work --help
 ```
 
 3. `ai work --help` に `start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish` が表示されることを確認する。
-4. 基本操作と表示を確認する。
+4. `start` と `switch` と `finish` の表示を確認する。
 
 ```bash
-ai work start "phase 1 manual"
-ai work focus "current focus"
-ai work idea "try another approach"
-ai work note "observed behavior"
-ai work decide "keep one atomic store mutation"
-ai work defer "later task"
-ai work status
-ai work list
+ai work start "phase 2 manual"
 ai work start "second root work"
+ai work switch 1
+ai work finish
 ```
 
-5. 後続Phaseの操作がstateを変更せず拒否されることを確認する。
+5. 後続Phaseの操作が state を変更せず拒否されることを確認する。stack guard は自動テストで確認済みとする。
 
 ```bash
-ai work switch 1
 ai work push "child work"
 ai work pop
 ai work finish
@@ -60,12 +54,10 @@ AI_MEMORY_ENABLED=0 ai work --no-start
 ## 期待結果
 
 - `ai work` は `No active work.` と開始導線を表示する。
-- `start`でactiveが作られ、二度目の`start`で旧activeがPausedになる。
-- `focus / idea / note / decide`はactive workへ保存される。
-- `defer`はactiveを変えずDeferred workを追加する。
-- populated statusはActive/Focus/Stack/Decisions/Ideas/Deferred/Suggested nextを表示する。
-- listはActive/Paused/Deferred/Doneへ分類する。
-- `switch / push / pop / finish`はnon-zeroで終了し、stateを変更しない。
+- `start` で active が作られ、二度目の `start` で旧 active が `Paused` になり、旧 active 停止が表示される。
+- `switch` は `Paused` / `Deferred` の work に対して active を切り替え、`Done` / missing は拒否される。
+- `finish` は stack が空のときだけ active を `Done` にして unset する。
+- `focus / idea / note / decide / push / pop` は active がないと拒否される。
 - memory disabled は既存 contextual memory と同じ error で fail-closed になる。
 
 ## 注意

@@ -208,7 +208,12 @@ Phase 2.9（local route fast path）:
 | populated dashboard/status/listのsection・分類 | `ai/tests/work_cli.rs` |
 | apply RPC、人間向けstdout、protocol errorのstderr/non-zero | `ai/tests/work_cli.rs` |
 
-Phase 2–4 の AC は同ファイル群に `#[ignore]` で先行配置し、該当 Phase 完了時だけ ignore と `pending` を同時に解除する。feature-off は `cargo test -p ai -j 1 --no-default-features --lib work_cli_stub_rejects_when_memory_feature_is_disabled` でも確認する。手動手順は [manual/ai-work.md](manual/ai-work.md)。
+| Phase 2 観点 | テスト位置 |
+|--------------|------------|
+| switch、finish、active 必須 error、missing / done / stack guard | `aibe/tests/work_rpc.rs` |
+| switch / finish の apply RPC 人間向け stdout | `ai/tests/work_cli.rs` |
+
+Phase 3–4 の AC は同ファイル群に `#[ignore]` で先行配置し、該当 Phase 完了時だけ ignore と `pending` を同時に解除する。feature-off は `cargo test -p ai -j 1 --no-default-features --lib work_cli_stub_rejects_when_memory_feature_is_disabled` でも確認する。手動手順は [manual/ai-work.md](manual/ai-work.md)。
 
 Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout` / `--yes-exec` は、主に統合テストと [`docs/manual/ai-ux.md`](manual/ai-ux.md) で確認する。`chat` の transcript は `ai` 側で成功 turn ごとに追記し、`history` payload の `request_messages` に保存する。`retry` / `rerun` は payload に transcript があればそれを再生する。`--yes-exec` は [`ai/tests/yes_exec_integration.rs`](../ai/tests/yes_exec_integration.rs) で非 TTY 含め検証する。history GC は `history_max_entries`（既定 500、`0` で無効）で [`local_history.rs`](../ai/src/adapters/outbound/local_history.rs) が prune する。streaming の multi-delta forward は [`aibe/tests/agent_turn_streaming.rs`](../aibe/tests/agent_turn_streaming.rs) を参照する。
 

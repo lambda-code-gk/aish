@@ -58,6 +58,34 @@ impl Harness {
             .expect("seed stacked state");
     }
 
+    fn seed_switchable_state(&self) {
+        self.store
+            .mutate(&self.store_context, &mut |state| {
+                state.next_work_id = 4;
+                state.active_work_id = Some(2);
+                state.stack = Vec::new();
+                state.works = vec![
+                    work_item(1, WorkStatus::Paused, None),
+                    work_item(2, WorkStatus::Active, None),
+                    work_item(3, WorkStatus::Deferred, None),
+                ];
+                Ok(())
+            })
+            .expect("seed switchable state");
+    }
+
+    fn seed_finishable_state(&self) {
+        self.store
+            .mutate(&self.store_context, &mut |state| {
+                state.next_work_id = 2;
+                state.active_work_id = Some(1);
+                state.stack = Vec::new();
+                state.works = vec![work_item(1, WorkStatus::Active, None)];
+                Ok(())
+            })
+            .expect("seed finishable state");
+    }
+
     fn apply(&self, operation: WorkOperationDto) -> (WorkSnapshotDto, WorkMutationOutcomeDto) {
         match self.service.apply(
             "work-apply".into(),
@@ -234,7 +262,9 @@ fn phase1_unsupported_operation_does_not_change_state() {
         "unsupported".into(),
         "session".into(),
         &harness.context,
-        WorkOperationDto::Finish,
+        WorkOperationDto::Push {
+            goal: "child".into(),
+        },
     );
     assert!(matches!(response, ClientResponse::Error { .. }));
     assert_eq!(harness.query(), before);
@@ -309,39 +339,161 @@ fn pending() {
 }
 
 #[test]
-#[ignore = "0052 phase 2 pending"]
 fn work_switch_changes_active_work_atomically() {
-    pending();
+    let harness = Harness::new("project_phase2_switch");
+    harness.seed_switchable_state();
+    let before = harness.query();
+    let (after, outcome) = harness.apply(WorkOperationDto::Switch { work_id: 3 });
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(outcome.kind, aibe_protocol::WorkMutationKindDto::Switch);
+    assert_eq!(outcome.work_id, Some(3));
+    assert_eq!(outcome.previous_work_id, Some(2));
+    assert_eq!(after.active_work_id, Some(3));
+    assert_eq!(after.stack, before.stack);
+    assert_eq!(after.works[0].status, WorkStatusDto::Paused);
+    assert_eq!(after.works[1].status, WorkStatusDto::Paused);
+    assert_eq!(after.works[2].status, WorkStatusDto::Active);
+    assert_eq!(after.works[1].updated_at_ms, after.works[2].updated_at_ms);
 }
 
 #[test]
-#[ignore = "0052 phase 2 pending"]
 fn work_finish_marks_active_done_and_unsets_active() {
-    pending();
+    let harness = Harness::new("project_phase2_finish");
+    harness.seed_finishable_state();
+    let before = harness.query();
+    let (after, outcome) = harness.apply(WorkOperationDto::Finish);
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(outcome.kind, aibe_protocol::WorkMutationKindDto::Finish);
+    assert_eq!(outcome.work_id, Some(1));
+    assert_eq!(outcome.previous_work_id, None);
+    assert!(after.active_work_id.is_none());
+    assert_eq!(after.works[0].status, WorkStatusDto::Done);
+    assert!(after.works[0].finished_at_ms.is_some());
+    assert_eq!(after.stack, before.stack);
 }
 
 #[test]
-#[ignore = "0052 phase 2 pending"]
 fn work_mutations_requiring_active_fail_without_state_change() {
-    pending();
+    for (memory_space_id, operation) in [
+        (
+            "project_focus_without_active",
+            WorkOperationDto::Focus {
+                text: "next".into(),
+            },
+        ),
+        (
+            "project_entry_without_active",
+            WorkOperationDto::AddEntry {
+                kind: WorkEntryKindDto::Note,
+                text: "observation".into(),
+            },
+        ),
+        (
+            "project_push_without_active",
+            WorkOperationDto::Push {
+                goal: "child".into(),
+            },
+        ),
+        ("project_pop_without_active", WorkOperationDto::Pop),
+        ("project_finish_without_active", WorkOperationDto::Finish),
+    ] {
+        let harness = Harness::new(memory_space_id);
+        let before = harness.query();
+        let response = harness.service.apply(
+            "requires-active".into(),
+            "session".into(),
+            &harness.context,
+            operation,
+        );
+        match response {
+            ClientResponse::Error { message, .. } => {
+                assert!(message.contains("no active work"), "{message}");
+            }
+            other => panic!("expected error: {other:?}"),
+        }
+        assert_eq!(harness.query(), before);
+    }
 }
 
 #[test]
-#[ignore = "0052 phase 2 pending"]
 fn work_switch_rejects_missing_work() {
-    pending();
+    let harness = Harness::new("project_phase2_missing");
+    harness.seed_switchable_state();
+    let before = harness.query();
+    let response = harness.service.apply(
+        "switch-missing".into(),
+        "session".into(),
+        &harness.context,
+        WorkOperationDto::Switch { work_id: 99 },
+    );
+    match response {
+        ClientResponse::Error { message, .. } => {
+            assert!(message.contains("work #99"), "{message}");
+            assert!(message.contains("not found"), "{message}");
+        }
+        other => panic!("expected error: {other:?}"),
+    }
+    assert_eq!(harness.query(), before);
 }
 
 #[test]
-#[ignore = "0052 phase 2 pending"]
 fn work_switch_rejects_done_work() {
-    pending();
+    let harness = Harness::new("project_phase2_done");
+    harness
+        .store
+        .mutate(&harness.store_context, &mut |state| {
+            state.next_work_id = 3;
+            state.active_work_id = Some(2);
+            state.stack = Vec::new();
+            state.works = vec![
+                work_item(1, WorkStatus::Done, None),
+                work_item(2, WorkStatus::Active, None),
+            ];
+            Ok(())
+        })
+        .expect("seed done target state");
+    let before = harness.query();
+    let response = harness.service.apply(
+        "switch-done".into(),
+        "session".into(),
+        &harness.context,
+        WorkOperationDto::Switch { work_id: 1 },
+    );
+    match response {
+        ClientResponse::Error { message, .. } => {
+            assert!(message.contains("already done"), "{message}");
+        }
+        other => panic!("expected error: {other:?}"),
+    }
+    assert_eq!(harness.query(), before);
 }
 
 #[test]
-#[ignore = "0052 phase 2 pending"]
 fn work_root_transitions_reject_non_empty_stack() {
-    pending();
+    let harness = Harness::new("project_phase2_stack");
+    harness.seed_stacked_state();
+    let before = harness.query();
+    for operation in [
+        WorkOperationDto::Start {
+            goal: "new root".into(),
+        },
+        WorkOperationDto::Switch { work_id: 1 },
+        WorkOperationDto::Finish,
+    ] {
+        let response = harness.service.apply(
+            "stacked-root".into(),
+            "session".into(),
+            &harness.context,
+            operation,
+        );
+        match response {
+            ClientResponse::Error { message, .. } => {
+                assert!(message.contains("work stack is not empty"), "{message}");
+            }
+            other => panic!("expected error: {other:?}"),
+        }
+        assert_eq!(harness.query(), before);
+    }
 }
 
 #[test]
