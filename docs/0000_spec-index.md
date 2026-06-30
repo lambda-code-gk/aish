@@ -46,7 +46,7 @@
 | 0049 | [0049_aish-command-output-replay-spec.md](spec/0049_aish-command-output-replay-spec.md) | 設計確定（実装済み） | `aish` command output replay（`replay list/show/pick`、shell span 記録） |
 | 0050 | [0050_client-provided-replay-tool-spec.md](spec/0050_client-provided-replay-tool-spec.md) | 設計確定 | Client-Provided Replay Tool（`aish.replay_show`、turn-local read-only client tool、hybrid manifest + `shell_log_tail`） |
 | 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装中） | Smart Preprocessor observation の read-only stats/recent/report CLI |
-| 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装中） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
+| 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 
 ### 状態ラベルの意味
 
@@ -63,7 +63,6 @@
 |------|----------|------|------|
 | 0050 | [0050_client-provided-replay-tool-implementation-spec.md](tasks/0050_client-provided-replay-tool-implementation-spec.md) | 実装指示書 | Client-Provided Replay Tool（設計: [0050](spec/0050_client-provided-replay-tool-spec.md)） |
 | 0051 | [0051_smart-observation-report-implementation-spec.md](tasks/0051_smart-observation-report-implementation-spec.md) | 実装指示書 | Smart Preprocessor Observation Report（設計: [0051](spec/0051_smart-observation-report-spec.md)） |
-| 0052 | [0052_ai-work-implementation-spec.md](tasks/0052_ai-work-implementation-spec.md) | 実装指示書 | `ai work` 作業文脈管理（設計: [0052](spec/0052_ai_work.md)） |
 
 ## 実装済み指示書（docs/done/）
 
@@ -119,6 +118,7 @@
 | 0038 | [0038_contextual-memory-pack-phase-d-implementation-spec.md](done/0038_contextual-memory-pack-phase-d-implementation-spec.md) | 実装済み（Phase D） | Contextual Memory Pack Phase D — `memory` feature / basic build（設計: [0038 Phase D](spec/0038_contextual-memory-pack-phase-d-spec.md)） |
 | 0039 | [0039_aish-memory-pack-externalization-implementation-spec.md](done/0039_aish-memory-pack-externalization-implementation-spec.md) | 実装済み | AISH Memory Pack Externalization — builtin kind / recipe TOML 外出し（設計: [0039](spec/0039_aish-memory-pack-externalization-spec.md)） |
 | 0040 | [0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md](done/0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md) | 実装済み | Generic Recipe CLI / AISH Name Cleanup（設計: [0040](spec/0040_generic-recipe-cli-aish-name-cleanup-spec.md)） |
+| 0052 | [0052_ai-work-implementation-spec.md](done/0052_ai-work-implementation-spec.md) | 実装済み | `ai work` 作業文脈管理（設計: [0052](spec/0052_ai_work.md)） |
 | 0041 | [0041_ai-smart-feature-plan-implementation-spec.md](done/0041_ai-smart-feature-plan-implementation-spec.md) | 実装済み | `ai` Smart Feature Plan（設計: [0041](spec/0041_ai-smart-feature-plan-spec.md)） |
 | 0042 | [0042_configurable-smart-features-implementation-spec.md](done/0042_configurable-smart-features-implementation-spec.md) | 実装済み | Configurable Smart Features（設計: [0042](spec/0042_configurable-smart-features-spec.md)） |
 | 0043 | [0043_feature-pack-boundary-hardening-implementation-spec.md](done/0043_feature-pack-boundary-hardening-implementation-spec.md) | 実装済み（Phase 1） | Feature Pack Boundary Hardening（設計: [0043](spec/0043_feature-pack-boundary-hardening-spec.md)） |

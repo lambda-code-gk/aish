@@ -130,7 +130,7 @@
 - Work 内容はユーザーが明示保存する文脈であり、自動 redaction はしない。API key、token、password を goal / note / idea 等へ保存しない。
 - Work read/write は既存 `MemoryRead / MemoryWrite` capability に従い、runtime disabled / feature-off は fail-closed とする。
 - Phase 1 / Phase 2 / Phase 3 の mutation は space lock内の単一 read-modify-write で適用し、operation error 時は state を保存しない。
-- active Work の通常 turn 注入は未実装。Phase 4 で synthetic user context として bounded に注入し、system instruction にはしない。
+- active Work の通常 turn 注入は実装済み。Work block は synthetic user context として bounded に注入し、system instruction にはしない。Work 内容は自動 redaction しない。
 
 ### Smart Preprocessor observation report
 

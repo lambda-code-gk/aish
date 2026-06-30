@@ -3050,10 +3050,12 @@ mod cli_tests {
     use clap::CommandFactory;
     use std::path::PathBuf;
 
+    use crate::ResolvedTurnSettings;
     use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
     use ai::adapters::outbound::LocalHistoryStore;
     use ai::application::ShellLogMode;
     use ai::clap_cli::{AiCli, TurnOptions};
+    use ai::domain::smart_preprocessor::{LocalRouteDecision, SmartContextNeed};
     use ai::domain::{
         resolve_console_hints, resolve_progress, ConfigToolsTokens, FilterMetadata, ShellLogChoice,
     };
@@ -3729,8 +3731,94 @@ mod cli_tests {
     }
 
     #[test]
-    #[ignore = "0052 phase 4 pending"]
     fn work_context_is_not_added_to_client_system_instruction() {
-        panic!("pending 0052");
+        use ai::domain::smart_preprocessor::{
+            LocalOutputStyle, LocalRouteDecision, LocalRouteKind, LocalToolHint, SmartContextNeed,
+            SmartIntentClass,
+        };
+
+        let local = LocalRouteDecision {
+            route_kind: LocalRouteKind::VcsInspect,
+            enabled_tools: vec![LocalToolHint::GitDiff],
+            context_needs: vec![SmartContextNeed::VcsDiff],
+            output_style: LocalOutputStyle::Concise,
+            fallback_required: false,
+            fallback_reason: None,
+            source_intent: SmartIntentClass::Inspect,
+            confidence_bps: 9000,
+            estimated_tokens_saved: 800,
+        };
+        let cfg = AiConfig {
+            socket_path: default_socket_path(),
+            context_current: None,
+            memory_enabled: true,
+            ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
+            ask_filter: None,
+            ask_console_hints: None,
+            ask_progress: None,
+            shell_log_mode: None,
+            history_dir: PathBuf::from("/tmp/ai-history-test"),
+            history_max_entries: 500,
+            log_tail_bytes: None,
+            presets: std::collections::HashMap::new(),
+            smart_preprocessor: None,
+        };
+        let settings = ResolvedTurnSettings {
+            quiet: true,
+            output_format: None,
+            preset_name: None,
+            log_tail_bytes: 1,
+            socket_path: default_socket_path(),
+            session_id: None,
+            ai_session_id: "sess".into(),
+            shell_log_choice: ShellLogChoice::None,
+            shell_log_mode: ShellLogMode::Hybrid,
+            output_filter: None,
+            output_filter_meta: FilterMetadata {
+                enabled: false,
+                source: "none".into(),
+                masked: false,
+            },
+            llm_profile: None,
+            ask_tools: ConfigToolsTokens::default(),
+            tools_cli: None,
+            no_start: false,
+            verbose_tools: false,
+            progress: false,
+            progress_spinner: false,
+            timeout_secs: None,
+            yes_exec: false,
+            silent_exec: false,
+            shell_exec_approval: None,
+            console_hint: resolve_console_hints(None, None, None, true, None),
+            trace_route: false,
+        };
+        let prep = crate::apply_smart_route_and_features(
+            &cfg,
+            "git diff を見て",
+            TurnOptions::default(),
+            &settings,
+            crate::SmartRouteOutcome {
+                conversation_id: Some("conv-1".into()),
+                route_plan: None,
+                route_fallback: false,
+                local_route: Some(local),
+                observation_draft: None,
+            },
+        );
+        assert_eq!(prep.agent_messages.len(), 3);
+        assert!(prep
+            .agent_messages
+            .iter()
+            .any(|msg| msg.role == "system" && msg.content.contains("local_context_needs")));
+        assert!(prep
+            .agent_messages
+            .iter()
+            .any(|msg| msg.role == "system" && msg.content.contains("concise")));
+        assert!(prep
+            .agent_messages
+            .iter()
+            .all(|msg| !msg.content.contains("[active work]")));
     }
 }

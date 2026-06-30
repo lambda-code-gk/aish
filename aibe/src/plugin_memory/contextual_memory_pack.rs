@@ -130,22 +130,45 @@ impl TurnHook for ContextualMemoryPack {
             .map(|m| m.content.as_str())
             .unwrap_or("");
         let cwd = context.client_cwd.as_ref().map(|c| c.as_path());
-        let block = self
-            .memory_space_resolver
-            .resolve_for_turn(session_id, context.memory_space_id.as_deref(), cwd)
+        let store_ctx = match self.memory_space_resolver.resolve_for_turn(
+            session_id,
+            context.memory_space_id.as_deref(),
+            cwd,
+        ) {
+            Ok(ctx) => ctx,
+            Err(_) => return Ok(messages),
+        };
+
+        let work_block = self
+            .work_store
+            .load(&crate::ports::outbound::WorkStoreContext {
+                memory_space_id: store_ctx.memory_space_id.clone(),
+            })
             .ok()
-            .and_then(|store_ctx| {
-                self.memory_store
-                    .resolve_for_prompt(&store_ctx, user_query, MEMORY_PROMPT_BUDGET_BYTES)
-                    .ok()
-            });
-        if let Some(block) = block {
-            if !block.content.is_empty() {
-                messages.insert(
-                    Self::memory_insert_index(&messages),
-                    ChatMessage::user(block.content),
-                );
-            }
+            .and_then(|state| state.to_prompt_block(MEMORY_PROMPT_BUDGET_BYTES));
+        let work_budget = work_block
+            .as_ref()
+            .map(|block| block.content.len())
+            .unwrap_or(0);
+        let memory_budget = MEMORY_PROMPT_BUDGET_BYTES.saturating_sub(work_budget);
+        let memory_block = if memory_budget == 0 {
+            None
+        } else {
+            self.memory_store
+                .resolve_for_prompt(&store_ctx, user_query, memory_budget)
+                .ok()
+        };
+
+        let mut injected_messages = Vec::new();
+        if let Some(block) = work_block.filter(|block| !block.content.is_empty()) {
+            injected_messages.push(ChatMessage::user(block.content));
+        }
+        if let Some(block) = memory_block.filter(|block| !block.content.is_empty()) {
+            injected_messages.push(ChatMessage::user(block.content));
+        }
+        if !injected_messages.is_empty() {
+            let idx = Self::memory_insert_index(&messages);
+            messages.splice(idx..idx, injected_messages);
         }
         Ok(messages)
     }

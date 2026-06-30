@@ -8,12 +8,14 @@ use std::os::unix::net::UnixListener;
 use std::process::Command;
 use std::thread::{self, JoinHandle};
 
+use ai::clap_cli::AiCli;
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, MemoryApplyStatus, MemoryInjectPolicyDto,
     MemoryKindDefinitionDto, MemoryOperationAdd, MemoryOperationDto, MemoryQueryStatus,
     MemoryRecipeProposalDto, MemoryRecipeStatus, MemoryScopeDto, MemoryStatusDto,
     ProtocolMessageOut,
 };
+use clap::Parser;
 use serde_json::Value;
 
 struct MockSocketServer {
@@ -1037,7 +1039,18 @@ fn mem_run_clarify_goal_apply_denied_on_non_interactive_stdin() {
 }
 
 #[test]
-#[ignore = "0052 phase 4 pending"]
 fn work_feature_keeps_low_level_memory_cli_behavior() {
-    panic!("pending 0052");
+    for args in [
+        vec!["ai", "goal", "set", "ship", "memory"],
+        vec!["ai", "now", "set", "current", "focus"],
+        vec!["ai", "idea", "add", "new", "idea"],
+        vec!["ai", "mem", "add", "custom", "memo", "text"],
+        vec!["ai", "context", "current"],
+        vec!["ai", "work", "status"],
+    ] {
+        assert!(
+            AiCli::try_parse_from(args.clone()).is_ok(),
+            "failed to parse {args:?}"
+        );
+    }
 }

@@ -1,8 +1,8 @@
 # 0052 — `ai work` 作業文脈管理 実装指示書
 
-> **種別**: 実装指示書（`docs/tasks/`）
+> **種別**: 実装指示書（`docs/done/`）
 > **設計の正本**: [0052_ai_work.md](../spec/0052_ai_work.md)
-> **状態**: 実装指示書
+> **状態**: 実装済み
 > **起票**: 2026-06-28
 > **関連**: [architecture.md](../architecture.md)、[security.md](../security.md)、[testing.md](../testing.md)、[docs/manual/](../manual/)、[`scripts/spec-acceptance.toml`](../../scripts/spec-acceptance.toml)、[`docs/0000_spec-index.md`](../0000_spec-index.md)
 

@@ -1,8 +1,8 @@
-# `ai work` Phase 3 手動検証
+# `ai work` Phase 4 手動検証
 
 ## 対象
 
-0052 Phase 3 の `push / pop`、stack 表示、disabled経路を確認する。
+0052 Phase 4 の `push / pop`、stack 表示、disabled経路、通常 turn 注入を確認する。
 
 ## 前提
 
@@ -61,6 +61,7 @@ AI_MEMORY_ENABLED=0 ai work --no-start
 - `pop` は child work を `Done` にして parent へ戻り、child entries を親へ自動 merge しない。
 - `focus / idea / note / decide / finish` は active がないと拒否される。
 - memory disabled は既存 contextual memory と同じ error で fail-closed になる。
+- 通常の `ai ...` 実行時は active work の goal / focus / recent decisions が synthetic user context として注入され、`system_instruction` に重複しない。
 
 ## 注意
 

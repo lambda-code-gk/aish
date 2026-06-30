@@ -1145,7 +1145,7 @@ id = "work_injection_fields"
 description = "active goal/focus/recent decisions だけが注入される"
 test = "work_turn_hook_injects_active_goal_focus_and_recent_decisions"
 file_glob = "aibe/tests/memory_pack_turn_hook.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1154,7 +1154,7 @@ id = "work_injection_budget"
 description = "Work と generic memory が既存 budget を共有する"
 test = "work_and_memory_injection_share_existing_budget"
 file_glob = "aibe/tests/memory_pack_turn_hook.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1163,7 +1163,7 @@ id = "work_injection_exclusions"
 description = "非 active と非必須 field は通常注入されない"
 test = "work_turn_hook_excludes_non_active_and_non_required_fields"
 file_glob = "aibe/tests/memory_pack_turn_hook.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1172,7 +1172,7 @@ id = "work_injection_best_effort"
 description = "no-active/破損 state でも通常 turn が継続する"
 test = "work_turn_hook_is_best_effort_for_missing_or_corrupt_state"
 file_glob = "aibe/tests/memory_pack_turn_hook.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1181,7 +1181,7 @@ id = "work_no_client_injection"
 description = "ai が Work block を system_instruction へ重複注入しない"
 test = "work_context_is_not_added_to_client_system_instruction"
 file_glob = "ai/src/main.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0052"
@@ -1190,4 +1190,4 @@ id = "work_low_level_regression"
 description = "既存 low-level memory CLI が維持される"
 test = "work_feature_keeps_low_level_memory_cli_behavior"
 file_glob = "ai/tests/phase_a_cli.rs"
-pending = true
+pending = false

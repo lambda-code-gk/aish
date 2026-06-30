@@ -21,7 +21,7 @@
 | [codex-linux-sandbox.md](codex-linux-sandbox.md) | Codex MCP / bwrap（Landlock 回避） |
 | [codex-spec-impl-review-loop.md](codex-spec-impl-review-loop.md) | Codex 指示書→実装レビューの 7 ステップ運用手順 |
 | [contextual-memory.md](contextual-memory.md) | contextual memory CLI 手動検証（goal / now / idea / mem / context） |
-| [ai-work.md](ai-work.md) | `ai work` 作業文脈管理（Phase 0: 空表示 / help / disabled） |
+| [ai-work.md](ai-work.md) | `ai work` 作業文脈管理（Phase 4: 空表示 / help / disabled / turn 注入） |
 | [contextual-memory-kinds-toml.md](contextual-memory-kinds-toml.md) | `kinds.toml` サンプル（registry override / custom kind） |
 | [contextual-memory-multi-client.md](contextual-memory-multi-client.md) | multi-client readiness（memory space 共有・capability・subscribe 制限） |
 | [aibe-graceful-restart.md](aibe-graceful-restart.md) | `aibe stop` / `restart` / `status`（mock 可） |

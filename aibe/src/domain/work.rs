@@ -9,6 +9,8 @@ use aibe_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::MemoryBlock;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkStatus {
@@ -525,6 +527,89 @@ impl WorkState {
             entries: self.entries.iter().map(WorkEntryDto::from).collect(),
         }
     }
+
+    pub fn to_prompt_block(&self, budget_bytes: usize) -> Option<MemoryBlock> {
+        let active_id = self.active_work_id?;
+        let active = self.works.iter().find(|work| work.id == active_id)?;
+        let header = "[active work]\n";
+        let footer = "[/active work]";
+        let footer_len = footer.len();
+        if header.len() + footer_len > budget_bytes {
+            return None;
+        }
+
+        let mut out = String::from(header);
+        if !append_work_section(
+            &mut out,
+            &format!("Goal:\n  {}\n", active.goal),
+            budget_bytes,
+            footer_len,
+        ) {
+            return Some(finalize_work_block(out, footer, budget_bytes));
+        }
+        if let Some(focus) = active.focus.as_deref() {
+            if !append_work_section(
+                &mut out,
+                &format!("Focus:\n  {}\n", focus),
+                budget_bytes,
+                footer_len,
+            ) {
+                return Some(finalize_work_block(out, footer, budget_bytes));
+            }
+        }
+
+        let recent_decisions: Vec<_> = self
+            .entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.work_id == active_id && entry.kind == WorkEntryKind::Decision)
+            .take(3)
+            .collect();
+        if !recent_decisions.is_empty() {
+            if !append_work_section(&mut out, "Recent decisions:\n", budget_bytes, footer_len) {
+                return Some(finalize_work_block(out, footer, budget_bytes));
+            }
+            for entry in recent_decisions {
+                if !append_work_section(
+                    &mut out,
+                    &format!("  - {}\n", entry.text),
+                    budget_bytes,
+                    footer_len,
+                ) {
+                    return Some(finalize_work_block(out, footer, budget_bytes));
+                }
+            }
+        }
+
+        Some(finalize_work_block(out, footer, budget_bytes))
+    }
+}
+
+fn append_work_section(
+    out: &mut String,
+    section: &str,
+    budget_bytes: usize,
+    footer_len: usize,
+) -> bool {
+    let available = budget_bytes.saturating_sub(out.len() + footer_len);
+    if available == 0 {
+        return false;
+    }
+    if section.len() <= available {
+        out.push_str(section);
+        true
+    } else {
+        let end = section.floor_char_boundary(available);
+        out.push_str(&section[..end]);
+        false
+    }
+}
+
+fn finalize_work_block(mut out: String, footer: &str, budget_bytes: usize) -> MemoryBlock {
+    if out.len() + footer.len() <= budget_bytes {
+        out.push_str(footer);
+    }
+    MemoryBlock { content: out }
 }
 
 impl From<WorkStatus> for WorkStatusDto {
