@@ -1326,3 +1326,30 @@ description = "unsupported shell では hook を入れない"
 test = "unsupported_shells_do_not_install_recall_hook"
 file_glob = "ai/src/adapters/outbound/shell_completion.rs"
 pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "recall_next_wraps"
+description = "`Alt+.` で直近 turn 内の候補が末尾から先頭へラップする"
+test = "recall_next_command_wraps_after_last_candidate"
+file_glob = "ai/tests/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "recall_prev_wraps"
+description = "`Alt+,`（`ai recall prev`）で直近 turn 内の候補が先頭から末尾へラップする"
+test = "recall_prev_command_wraps_before_first_candidate"
+file_glob = "ai/tests/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "recall_prev_hook_binding"
+description = "bash / zsh hook が `Alt+,` を `ai recall prev` に結ぶ"
+test = "ai_complete_zsh_includes_recall_hook"
+file_glob = "ai/tests/suggested_command_recall.rs"
+pending = false

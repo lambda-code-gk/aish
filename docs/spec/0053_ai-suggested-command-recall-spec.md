@@ -71,9 +71,9 @@
 2. `ai` が fenced code block を走査して shell command 候補を抽出する
 3. `ai` が候補を per-shell cache に保存する
 4. `aish shell` または `eval "$(ai complete bash|zsh)"` が、prompt hook と keybinding をインストールする
-5. ユーザーが `Alt+.` を押すと、shell hook が cache から次の候補を prompt buffer に挿入する
+5. ユーザーが `Alt+.` / `Alt+,` を押すと、shell hook が `ai recall next` / `ai recall prev` 経由で cache から候補を読み、prompt buffer に挿入する
 
-この recall は **表示の再生ではなく、prompt buffer への挿入** である。実行はユーザーが Enter したときだけ起きる。
+この recall は **表示の再生ではなく、prompt buffer への挿入** である。実行はユーザーが Enter したときだけ起きる。shell hook は JSON cache を直接解釈せず、`ai recall next` / `ai recall prev` を呼ぶ。
 
 ### 4.2 抽出ルール
 
@@ -115,31 +115,57 @@ assistant content からの抽出は、final message のみを対象にする。
 - queue は turn の出現順を保持する
 - 新しい turn の queue が届いたら、その queue が active になる
 
-#### 4.3.2 巡回
+#### 4.3.2 巡回（前進 / 逆戻り / ラップ）
 
-- `Alt+.` は active queue の次の候補を prompt に挿入する
-- 同じ key を連打すると、同一 turn の候補を順番に巡回する
-- active queue を消費しきったら、直近 turn から古い turn へ fallback する
-- ユーザーが通常の編集を始めたら、巡回状態は reset する
+巡回の対象は **直近の `ai` turn が生成した active queue のみ** とする。古い turn の queue は cache に残るが、キーバインドによる巡回対象には含めない。
+
+| 操作 | キー | CLI | 動作 |
+|------|------|-----|------|
+| 次の候補 | `Alt+.` | `ai recall next` | 候補列を前方向へ 1 つ進め、該当テキストを prompt に挿入する |
+| 前の候補 | `Alt+,` | `ai recall prev` | 候補列を後方向へ 1 つ戻し、該当テキストを prompt に挿入する |
+
+ラップアラウンド:
+
+- `Alt+.` で末尾候補の次を押すと、先頭候補に戻る
+- `Alt+,` で先頭候補の前を押すと、末尾候補に戻る
+- 候補が 1 個だけのときは、どちらのキーでも同じコマンドを挿入する
+
+カーソルモデル:
+
+- cache は `active_candidate_index`（次に `Alt+.` で挿入する index）と `recall_navigated`（いずれかの巡回キーが使われたか）を保持する
+- 新しい turn の queue が `append` されたら、`active_candidate_index = 0`、`recall_navigated = false` に reset する
+- `ai recall next` / `ai recall prev` は cache を読み書きし、stdout に挿入用テキストのみを返す
+
+**v1 で採用しないもの**:
+
+- active queue 消費後の古い turn への fallback（直近 turn 内ラップに置き換えた）
+- ユーザーが prompt を手編集したときの自動 reset（ラップアラウンドで代替。将来必要なら別途検討）
 
 #### 4.3.3 複数提案の扱い
 
 - assistant が 3 個の shell block を出したら、3 個とも queue に入れる
-- prompt への初回挿入は最も新しい active turn の 1 個目の候補とする
-- その後は `Alt+.` で次候補へ進む
+- 初回の `Alt+.` は 1 個目の候補を挿入する
+- 2 回目以降の `Alt+.` は 2 個目 → 3 個目 → 1 個目…とラップする
+- `Alt+,` は逆順にラップする（初回は末尾候補から始まる）
 
 ### 4.4 キーバインド
 
 #### 4.4.1 推奨
 
-**`Alt+.` を primary にする。**
+**`Alt+.` を前進、`Alt+,` を逆戻りの primary にする。**
 
 理由:
 
 - bash / zsh の Meta 系バインドとして自然である
-- 「最後に提案されたものをもう一度入れる」という mnemonic と合う
+- `.` / `,` がキーボード上で隣にあり、「提案コマンドを前後にたどる」操作として対称的である
 - prompt へ **挿入** するだけで、execute 系の意味を持たない
 - `READLINE_LINE` / `BUFFER` と相性が良い
+
+実装:
+
+- bash: `bind -x '"\e.": "_ai_recall_next"'` / `bind -x '"\e,": "_ai_recall_prev"'`
+- zsh: `bindkey '\e.' _ai_recall_next` / `bindkey '\e,' _ai_recall_prev`
+- 各関数は `ai recall next` / `ai recall prev` の stdout を `READLINE_LINE` / `BUFFER` へ入れる
 
 #### 4.4.2 非推奨候補との比較
 
@@ -250,7 +276,7 @@ recall が有効で候補が 1 個以上ある場合、`ai` は stderr に短い
 例:
 
 ```text
-ai: 3 suggested commands ready. Alt+. inserts the latest proposal.
+ai: 3 suggested commands ready. Alt+. / Alt+, cycle proposals.
 ```
 
 方針:
@@ -264,8 +290,8 @@ ai: 3 suggested commands ready. Alt+. inserts the latest proposal.
 
 | クレート | 責務 |
 |---------|------|
-| **ai** | assistant content からの候補抽出、cache 書き込み、stderr hint、TTY / quiet / format 判定 |
-| **aish** | rcfile 注入、shell hook の配線、`Alt+.` の binding、cache path の export |
+| **ai** | assistant content からの候補抽出、cache 書き込み、stderr hint、`ai recall next` / `ai recall prev`、TTY / quiet / format 判定 |
+| **aish** | rcfile 注入、shell hook の配線、`Alt+.` / `Alt+,` の binding、cache path の export |
 | **aibe** | 変更なし |
 
 禁止:
@@ -278,16 +304,19 @@ ai: 3 suggested commands ready. Alt+. inserts the latest proposal.
 
 | AC | 内容 | テスト関数名案 | pending |
 |----|------|----------------|---------|
-| AC-01 | `ai` が final assistant content から bash / zsh fenced block を抽出し、cache に保存する | `extract_shell_candidates_from_fenced_code_blocks` | true |
-| AC-02 | 複数 block が 1 turn にあっても queue 順を維持する | `preserve_suggested_command_queue_order_across_multiple_fences` | true |
-| AC-03 | bash で `Alt+.` が `READLINE_LINE` に候補を挿入し、history を汚さない | `bash_alt_period_inserts_suggested_command_into_readline_line` | true |
-| AC-04 | zsh で `Alt+.` が `BUFFER` に候補を挿入し、history を汚さない | `zsh_alt_period_inserts_suggested_command_into_buffer` | true |
-| AC-05 | `aish shell` と `ai complete` の両方で同じ hook が入る | `aish_shell_and_ai_complete_install_the_same_recall_hook` | true |
-| AC-06 | `--quiet` は hint を抑止するが、TTY では recall cache を維持する | `quiet_mode_suppresses_hint_without_disabling_recall_cache` | true |
-| AC-07 | `--format json|tsv|env` は hint / cache を無効化する | `structured_output_disables_suggested_command_recall` | true |
-| AC-08 | 非 TTY では recall が fail-closed になる | `non_tty_disables_suggested_command_recall` | true |
-| AC-09 | unsupported shell では hook が入らないが、`ai` の通常実行は壊れない | `unsupported_shells_do_not_install_recall_hook` | true |
-| AC-10 | 抽出候補の制御文字 / NUL / oversize が安全に拒否される | `reject_control_char_nul_and_oversized_suggested_commands` | true |
+| AC-01 | `ai` が final assistant content から bash / zsh fenced block を抽出し、cache に保存する | `extract_shell_candidates_from_fenced_code_blocks` | false |
+| AC-02 | 複数 block が 1 turn にあっても queue 順を維持する | `preserve_suggested_command_queue_order_across_multiple_fences` | false |
+| AC-03 | bash で `Alt+.` が `READLINE_LINE` に候補を挿入し、history を汚さない | `bash_alt_period_inserts_suggested_command_into_readline_line` | false |
+| AC-04 | zsh で `Alt+.` が `BUFFER` に候補を挿入し、history を汚さない | `zsh_alt_period_inserts_suggested_command_into_buffer` | false |
+| AC-05 | `aish shell` と `ai complete` の両方で同じ hook が入る | `aish_shell_and_ai_complete_install_the_same_recall_hook` | false |
+| AC-06 | `--quiet` は hint を抑止するが、TTY では recall cache を維持する | `quiet_mode_suppresses_hint_without_disabling_recall_cache` | false |
+| AC-07 | `--format json|tsv|env` は hint / cache を無効化する | `structured_output_disables_suggested_command_recall` | false |
+| AC-08 | 非 TTY では recall が fail-closed になる | `non_tty_disables_suggested_command_recall` | false |
+| AC-09 | unsupported shell では hook が入らないが、`ai` の通常実行は壊れない | `unsupported_shells_do_not_install_recall_hook` | false |
+| AC-10 | 抽出候補の制御文字 / NUL / oversize が安全に拒否される | `reject_control_char_nul_and_oversized_suggested_commands` | false |
+| AC-11 | `Alt+.` で直近 turn 内の候補が末尾から先頭へラップする | `recall_next_command_wraps_after_last_candidate` | false |
+| AC-12 | `Alt+,`（`ai recall prev`）で直近 turn 内の候補が先頭から末尾へラップする | `recall_prev_command_wraps_before_first_candidate` | false |
+| AC-13 | bash / zsh hook が `Alt+,` を `ai recall prev` に結ぶ | `bash_alt_period_inserts_suggested_command_into_readline_line` / `ai_complete_zsh_includes_recall_hook` | false |
 
 ## 6. セキュリティ
 
@@ -308,7 +337,7 @@ ai: 3 suggested commands ready. Alt+. inserts the latest proposal.
 - shell language tag の受理 / 非受理
 - prompt prefix の strip
 - multiline candidate の保持
-- queue の巡回順
+- queue の前進 / 逆戻り / ラップ（直近 turn 内）
 - oversize / NUL / control char の破棄
 - `quiet` / `format` / non-TTY の判定
 
@@ -316,14 +345,15 @@ ai: 3 suggested commands ready. Alt+. inserts the latest proposal.
 
 - bash の `READLINE_LINE` への挿入
 - zsh の `BUFFER` への挿入
-- `Alt+.` の keybinding
+- `Alt+.` / `Alt+,` の keybinding
+- `ai recall next` / `ai recall prev` の CLI 導通
 - `aish shell` rcfile 注入で hook が有効になること
 - `ai complete bash|zsh` を eval した通常 shell でも同じ hook が有効になること
 
 ### 7.3 manual
 
 - `docs/manual/ai-ux.md` へ、提案コマンド recall の手動確認手順を追加する前提とする
-- 具体的には、`ai` 実行後に stderr hint が出ること、`Alt+.` で prompt に候補が戻ること、`--quiet` と `--format` で挙動が変わることを確認する
+- 具体的には、`ai` 実行後に stderr hint が出ること、`Alt+.` / `Alt+,` で prompt に候補が戻ること、末尾 / 先頭でラップすること、`--quiet` と `--format` で挙動が変わることを確認する
 
 ## 8. 未確定事項
 
@@ -331,4 +361,4 @@ ai: 3 suggested commands ready. Alt+. inserts the latest proposal.
 
 - `AI_SUGGESTION_CACHE` の具体的なファイル名は、実装時に `aish` の session dir / temp dir 規則へ寄せる必要がある
 - `history -s` の opt-in ミラーは v1 では採用しないが、将来の拡張候補として残す余地はある
-- `Alt+.` 以外の補助キーを将来追加するかは、実際の bash / zsh 利用時の摩擦を見てから判断する
+- 手編集開始時の巡回 reset は v1 では採用しない（ラップアラウンドで代替）
