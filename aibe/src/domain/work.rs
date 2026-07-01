@@ -355,6 +355,13 @@ impl WorkState {
             WorkStatus::Paused | WorkStatus::Deferred => {}
             WorkStatus::Done => return Err(WorkMutationError::WorkAlreadyDone(work_id)),
             WorkStatus::Abandoned => return Err(WorkMutationError::WorkAbandoned(work_id)),
+            WorkStatus::Active if self.active_work_id == Some(work_id) => {
+                return Ok(WorkMutationOutcomeDto {
+                    kind: WorkMutationKindDto::Switch,
+                    work_id: Some(work_id),
+                    previous_work_id: Some(work_id),
+                });
+            }
             WorkStatus::Active => return Err(WorkMutationError::WorkNotSwitchable(work_id)),
         }
         let previous_work_id = self.active_work_id;
@@ -737,6 +744,31 @@ mod tests {
         assert_eq!(state.revision, before.revision);
         assert_eq!(state.stack, before.stack);
         assert_eq!(state.works[0].updated_at_ms, before.works[0].updated_at_ms);
+    }
+
+    #[test]
+    fn phase2_switch_to_current_active_is_idempotent() {
+        let mut state = WorkState {
+            schema_version: WORK_SCHEMA_VERSION,
+            revision: 4,
+            next_work_id: 3,
+            active_work_id: Some(2),
+            stack: Vec::new(),
+            works: vec![
+                work(1, WorkStatus::Paused, None),
+                work(2, WorkStatus::Active, None),
+            ],
+            entries: Vec::new(),
+        };
+        state.validate().expect("valid idempotent switch state");
+        let before = state.clone();
+        let outcome = state
+            .apply(&WorkOperationDto::Switch { work_id: 2 }, 11)
+            .expect("switch to current active should succeed");
+        assert_eq!(outcome.kind, WorkMutationKindDto::Switch);
+        assert_eq!(outcome.work_id, Some(2));
+        assert_eq!(outcome.previous_work_id, Some(2));
+        assert_eq!(state, before);
     }
 
     #[test]

@@ -859,3 +859,25 @@ ai work finish
 ## 18. パック構成の適用
 
 **部分適用**。新しい独立 Pack は作らず、既存 Contextual Memory Pack の client-side / server-side 境界を拡張する。memory enabled 時は `ContextualMemoryPack` が Work RPC、WorkStore、Work injection を提供し、runtime disabled 時は `BasicPack` が Work RPC を既存 memory-disabled error で拒否して injection を no-op にする。`ai --no-default-features` では既存 memory stub 経由で Work CLI を fail-closed にし、composition root は既存 memory Pack 選択箇所の 1 か所を維持する。
+
+## 19. `ai work` と低レベル memory 操作の関係
+
+`ai work` は `WorkState` / `work-state.json` を使う **first-class 作業文脈レイヤー** である。`ai goal` / `ai now` / `ai idea` / `ai mem` / `ai context` は低レベルの Contextual Memory 操作として残す。
+
+両者は無理な双方向同期を行わない。責務が異なる（work = 作業面、memory = 文脈メモリ）ため、どちらが正か曖昧になる二重書き込みを避ける。
+
+通常の `ai ...` turn では、active work block と既存 contextual memory block が必要に応じて両方注入される。
+
+## 20. 将来の multi-client 連携（設計メモ）
+
+将来的にエディタ・ブラウザ・CLI など複数クライアントが同一 aibe に接続し、同じ work context を共有する想定がある。
+
+**今回の実装範囲外** だが、以下を将来方針として記録する。
+
+- `WorkState` の変更は将来 `WorkChanged` event として通知対象になる
+- 既存の `MemoryChanged` / `MemorySubscribe` に含めるか、独立した `WorkSubscribe` を作るかは **未決**
+- multi-client UX では **active work が変わったときの通知** が重要
+- 複数クライアントが同時に work state を更新する場合、競合解決方針が必要（楽観ロック revision、last-write-wins 等）
+- 当面は単一 aibe 内の永続化共有に留める（リアルタイム購読は未実装）
+
+通知対象の mutation 例: `start`, `focus`, `decide`, `defer`, `push`, `pop`, `finish`, `switch`。

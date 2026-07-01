@@ -77,10 +77,25 @@ fn render_apply_result(
             format!("Added {label} to work #{work_id}:\n  {text}")
         }
         WorkOperationDto::Defer { .. } => {
-            format!("Deferred work #{work_id}:\n  {}", work.title)
+            let mut out = format!("Deferred work #{}:\n  {}", work.id, work.title);
+            if let Some(active_id) = snapshot.active_work_id {
+                if let Some(active) = snapshot.works.iter().find(|work| work.id == active_id) {
+                    out.push_str(&format!(
+                        "\n\nActive work remains:\n  #{} {}",
+                        active.id, active.title
+                    ));
+                }
+            } else {
+                out.push_str("\n\nNo active work.");
+            }
+            out
         }
-        WorkOperationDto::Switch { .. } => {
-            format!("Switched active work:\n  #{} {}", work.id, work.title)
+        WorkOperationDto::Switch { work_id } => {
+            if outcome.previous_work_id == Some(*work_id) {
+                format!("Already active:\n  #{} {}", work.id, work.title)
+            } else {
+                format!("Switched active work:\n  #{} {}", work.id, work.title)
+            }
         }
         WorkOperationDto::Finish => {
             format!("Finished work #{}:\n  {}", work.id, work.title)
@@ -169,16 +184,21 @@ fn validate_apply_result(
                 && work.goal == *text
                 && work.title == *text
                 && outcome.previous_work_id.is_none()
+                && snapshot
+                    .active_work_id
+                    .is_none_or(|active_id| active_id != work.id)
         }
-        WorkOperationDto::Switch { .. } => {
+        WorkOperationDto::Switch { work_id } => {
             snapshot.active_work_id == Some(work.id)
                 && work.status == WorkStatusDto::Active
                 && snapshot.stack.is_empty()
                 && outcome.previous_work_id.is_none_or(|previous_id| {
-                    previous_id != work.id
-                        && snapshot.works.iter().any(|previous| {
-                            previous.id == previous_id && previous.status == WorkStatusDto::Paused
-                        })
+                    previous_id == *work_id
+                        || (previous_id != work.id
+                            && snapshot.works.iter().any(|previous| {
+                                previous.id == previous_id
+                                    && previous.status == WorkStatusDto::Paused
+                            }))
                 })
         }
         WorkOperationDto::Finish => {

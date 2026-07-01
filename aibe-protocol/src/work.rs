@@ -40,6 +40,10 @@ pub fn validate_work_id(work_id: u64) -> Result<(), WorkInputError> {
     }
 }
 
+pub fn validate_optional_work_text(text: &str) -> Result<(), WorkInputError> {
+    validate_work_text(text)
+}
+
 fn deserialize_work_text<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -79,6 +83,17 @@ where
         validate_work_id(*work_id).map_err(D::Error::custom)?;
     }
     Ok(work_ids)
+}
+
+fn deserialize_optional_work_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    if let Some(text) = &value {
+        validate_optional_work_text(text).map_err(D::Error::custom)?;
+    }
+    Ok(value)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,7 +181,9 @@ pub enum WorkStatusDto {
 pub struct WorkItemDto {
     #[serde(deserialize_with = "deserialize_work_id")]
     pub id: u64,
+    #[serde(deserialize_with = "deserialize_work_text")]
     pub title: String,
+    #[serde(deserialize_with = "deserialize_work_text")]
     pub goal: String,
     pub status: WorkStatusDto,
     #[serde(
@@ -179,9 +196,17 @@ pub struct WorkItemDto {
     pub updated_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_work_text"
+    )]
     pub focus: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_work_text"
+    )]
     pub summary: Option<String>,
 }
 
@@ -193,6 +218,7 @@ pub struct WorkEntryDto {
     #[serde(deserialize_with = "deserialize_work_id")]
     pub work_id: u64,
     pub kind: WorkEntryKindDto,
+    #[serde(deserialize_with = "deserialize_work_text")]
     pub text: String,
     pub created_at_ms: u64,
 }
@@ -392,5 +418,20 @@ mod tests {
         ] {
             assert!(serde_json::from_str::<ClientResponse>(zero_id_response).is_err());
         }
+
+        for invalid_snapshot in [
+            r#"{"type":"work_query_result","id":"w","snapshot":{"revision":0,"stack":[],"works":[{"id":1,"title":"","goal":"goal","status":"active","created_at_ms":1,"updated_at_ms":1}],"entries":[]}}"#,
+            r#"{"type":"work_query_result","id":"w","snapshot":{"revision":0,"stack":[],"works":[{"id":1,"title":"title","goal":"   ","status":"active","created_at_ms":1,"updated_at_ms":1}],"entries":[]}}"#,
+            r#"{"type":"work_query_result","id":"w","snapshot":{"revision":0,"stack":[],"works":[{"id":1,"title":"title","goal":"goal","status":"active","created_at_ms":1,"updated_at_ms":1,"focus":""}],"entries":[]}}"#,
+            r#"{"type":"work_query_result","id":"w","snapshot":{"revision":0,"stack":[],"works":[{"id":1,"title":"title","goal":"goal","status":"active","created_at_ms":1,"updated_at_ms":1}],"entries":[{"id":1,"work_id":1,"kind":"note","text":"bad\u0000text","created_at_ms":1}]}}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<ClientResponse>(invalid_snapshot).is_err(),
+                "expected invalid snapshot: {invalid_snapshot}"
+            );
+        }
+
+        let valid_optional_focus = r#"{"type":"work_query_result","id":"w","snapshot":{"revision":0,"stack":[],"works":[{"id":1,"title":"title","goal":"goal","status":"active","created_at_ms":1,"updated_at_ms":1}],"entries":[]}}"#;
+        assert!(serde_json::from_str::<ClientResponse>(valid_optional_focus).is_ok());
     }
 }

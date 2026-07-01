@@ -364,7 +364,14 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 
 ## 手動検証ドキュメント
 
-手順は `docs/manual/<topic>.md` に書く。テンプレ:
+手順は次の 2 層に分ける。
+
+| 種別 | 置き場所 | 内容 |
+|------|----------|------|
+| ユーザー向けマニュアル | `docs/manual/<topic>.md` | 使い方・概念・典型フロー |
+| 手動検証手順 | `docs/testing/<topic>-manual-verification.md` | 実機確認の前提・手順・期待結果 |
+
+テンプレ（検証手順）:
 
 ```markdown
 # <機能名> 手動検証

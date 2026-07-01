@@ -163,6 +163,7 @@ fn work_status_renders_all_required_sections() {
             "Stack:",
             "Decisions:",
             "Ideas:",
+            "Notes:",
             "Deferred:",
             "Suggested next:",
         ] {
@@ -176,6 +177,7 @@ fn work_status_renders_all_required_sections() {
             "paused work",
             "use one store",
             "try dashboard",
+            "captured note",
             "later task",
         ] {
             assert!(stdout.contains(content), "missing {content}: {stdout}");
@@ -319,7 +321,7 @@ fn work_phase1_commands_use_apply_rpc_and_render_human_output() {
             WorkOperationDto::Defer {
                 text: "later task".into(),
             },
-            "Deferred work #1:\n  later task\n",
+            "Deferred work #1:\n  later task\n\nNo active work.\n",
         ),
     ];
 
@@ -576,6 +578,109 @@ fn work_views_render_stack_and_child_marker() {
     assert!(stdout.contains("Paused:\n  #1 paused work [stack]"));
 }
 
+#[test]
+fn work_defer_with_active_renders_active_remains() {
+    let server = WorkServer::apply(|body| {
+        assert_eq!(
+            body.operation,
+            WorkOperationDto::Defer {
+                text: "later task".into()
+            }
+        );
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 3,
+                active_work_id: Some(1),
+                stack: Vec::new(),
+                works: vec![
+                    work(1, "active goal", WorkStatusDto::Active, None),
+                    work(2, "later task", WorkStatusDto::Deferred, None),
+                ],
+                entries: Vec::new(),
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Defer,
+                work_id: Some(2),
+                previous_work_id: None,
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(
+        &home,
+        &config,
+        &["work", "defer", "--no-start", "later", "task"],
+    );
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Deferred work #2:\n  later task\n\nActive work remains:\n  #1 active goal\n"
+    );
+}
+
+#[test]
+fn work_switch_current_active_renders_already_active() {
+    let server = WorkServer::apply(|body| {
+        assert_eq!(body.operation, WorkOperationDto::Switch { work_id: 1 });
+        ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+            id: body.id,
+            snapshot: WorkSnapshotDto {
+                revision: 4,
+                active_work_id: Some(1),
+                stack: Vec::new(),
+                works: vec![work(1, "active goal", WorkStatusDto::Active, None)],
+                entries: Vec::new(),
+            },
+            outcome: WorkMutationOutcomeDto {
+                kind: WorkMutationKindDto::Switch,
+                work_id: Some(1),
+                previous_work_id: Some(1),
+            },
+        })
+    });
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "switch", "--no-start", "1"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Already active:\n  #1 active goal\n"
+    );
+}
+
+#[test]
+fn work_status_truncates_sections_with_more_line() {
+    let mut entries = Vec::new();
+    for index in 1..=6 {
+        entries.push(WorkEntryDto {
+            id: index,
+            work_id: 1,
+            kind: WorkEntryKindDto::Decision,
+            text: format!("decision {index}"),
+            created_at_ms: index,
+        });
+    }
+    let snapshot = WorkSnapshotDto {
+        revision: 1,
+        active_work_id: Some(1),
+        stack: Vec::new(),
+        works: vec![work(1, "active goal", WorkStatusDto::Active, None)],
+        entries,
+    };
+    let server = WorkServer::queries(vec![snapshot]);
+    let home = tempfile::tempdir().expect("home");
+    let config = write_config(&home, &server.socket_path);
+    let output = run_work(&home, &config, &["work", "status", "--no-start"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Decisions:\n  - decision 2"));
+    assert!(stdout.contains("  - decision 6"));
+    assert!(!stdout.contains("decision 1"));
+    assert!(stdout.contains("  ... and 1 more"));
+}
+
 fn write_config(home: &tempfile::TempDir, socket_path: &std::path::Path) -> std::path::PathBuf {
     let config = home.path().join("ai.toml");
     fs::write(
@@ -633,6 +738,13 @@ fn populated_snapshot() -> WorkSnapshotDto {
                 kind: WorkEntryKindDto::Idea,
                 text: "try dashboard".into(),
                 created_at_ms: 11,
+            },
+            WorkEntryDto {
+                id: 3,
+                work_id: 2,
+                kind: WorkEntryKindDto::Note,
+                text: "captured note".into(),
+                created_at_ms: 12,
             },
         ],
     }

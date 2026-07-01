@@ -1191,3 +1191,48 @@ description = "既存 low-level memory CLI が維持される"
 test = "work_feature_keeps_low_level_memory_cli_behavior"
 file_glob = "ai/tests/phase_a_cli.rs"
 pending = false
+
+[[cases]]
+spec = "0052"
+phase = 5
+id = "work_status_notes"
+description = "status に Notes セクションが表示される"
+test = "status_renders_notes_and_truncates_sections"
+file_glob = "ai/src/domain/work.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 5
+id = "work_status_truncation"
+description = "status の各セクションが上限超過時に ... and N more を表示する"
+test = "work_status_truncates_sections_with_more_line"
+file_glob = "ai/tests/work_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 5
+id = "work_defer_output"
+description = "defer 成功時に active remains が表示される"
+test = "work_defer_with_active_renders_active_remains"
+file_glob = "ai/tests/work_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 5
+id = "work_switch_idempotent"
+description = "現在 active な work への switch が成功する"
+test = "work_switch_to_current_active_is_idempotent"
+file_glob = "aibe/tests/work_rpc.rs"
+pending = false
+
+[[cases]]
+spec = "0052"
+phase = 5
+id = "work_response_dto_validation"
+description = "response DTO の deserialize 時に text validation が効く"
+test = "work_protocol_dto_roundtrip_and_rejects_unknown_fields"
+file_glob = "aibe-protocol/src/work.rs"
+pending = false

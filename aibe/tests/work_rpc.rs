@@ -411,6 +411,22 @@ fn work_switch_changes_active_work_atomically() {
 }
 
 #[test]
+fn work_switch_to_current_active_is_idempotent() {
+    let harness = Harness::new("project_phase2_switch_idempotent");
+    harness.seed_switchable_state();
+    let before = harness.query();
+    let (after, outcome) = harness.apply(WorkOperationDto::Switch { work_id: 2 });
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(after.active_work_id, before.active_work_id);
+    assert_eq!(after.stack, before.stack);
+    assert_eq!(after.works, before.works);
+    assert_eq!(after.entries, before.entries);
+    assert_eq!(outcome.kind, aibe_protocol::WorkMutationKindDto::Switch);
+    assert_eq!(outcome.work_id, Some(2));
+    assert_eq!(outcome.previous_work_id, Some(2));
+}
+
+#[test]
 fn work_finish_marks_active_done_and_unsets_active() {
     let harness = Harness::new("project_phase2_finish");
     harness.seed_finishable_state();
