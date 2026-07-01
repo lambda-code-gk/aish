@@ -6,14 +6,14 @@ use std::sync::Arc;
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
-    shared_baseline_recipe_loader, shared_builtin_loader, ConversationStore,
-    EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
-    MockLlm, StaticCapabilityPolicy,
+    shared_baseline_recipe_loader, shared_builtin_loader, EmptyContextualMemoryStore,
+    FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, MockLlm,
+    StaticCapabilityPolicy,
 };
+use aibe::application::contextual_pack_arc;
 use aibe::application::memory_service::MemoryService;
 use aibe::application::memory_subscribe_service::MemorySubscribeService;
 use aibe::application::RequestService;
-use aibe::application::{basic_pack_arc, contextual_pack_arc};
 use aibe::domain::FeatureRegistry;
 use aibe::domain::{LlmStepResult, ToolCall, SHELL_EXEC};
 use aibe::ports::outbound::{ProfileRegistry, ToolsConfig};

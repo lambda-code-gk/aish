@@ -57,13 +57,6 @@ impl MockSocketServer {
         Self::spawn_multi(move |req| vec![responder(req)])
     }
 
-    fn spawn_loop(
-        expected_sessions: usize,
-        responder: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,
-    ) -> Self {
-        Self::spawn_loop_inner(expected_sessions, false, responder)
-    }
-
     fn spawn_loop_allow_ping(
         expected_sessions: usize,
         responder: impl Fn(ClientRequest) -> ClientResponse + Send + Sync + 'static,

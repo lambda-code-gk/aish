@@ -3055,7 +3055,7 @@ mod cli_tests {
     use ai::adapters::outbound::LocalHistoryStore;
     use ai::application::ShellLogMode;
     use ai::clap_cli::{AiCli, TurnOptions};
-    use ai::domain::smart_preprocessor::{LocalRouteDecision, SmartContextNeed};
+
     use ai::domain::{
         resolve_console_hints, resolve_progress, ConfigToolsTokens, FilterMetadata, ShellLogChoice,
     };
@@ -3406,7 +3406,7 @@ mod cli_tests {
         assert_eq!(cli_overrides.log_tail_bytes, Some(128));
         assert!(cli_overrides.yes_exec);
         assert_eq!(
-            cli_overrides.tools.as_ref().map(Vec::as_slice),
+            cli_overrides.tools.as_deref(),
             Some(&["read_file".to_string(), "shell_exec".to_string()][..])
         );
     }
@@ -3630,8 +3630,10 @@ mod cli_tests {
         let clamped = clamp_local_tools_to_allowlist(projected, &["git_status".into()]);
         assert_eq!(clamped, vec![LocalToolHint::GitStatus]);
 
-        let mut turn = TurnOptions::default();
-        turn.tools = Some("git_status".into());
+        let turn = TurnOptions {
+            tools: Some("git_status".into()),
+            ..Default::default()
+        };
         let applied =
             crate::apply_local_route_tools(&turn, &[LocalToolHint::GitDiff, LocalToolHint::Grep]);
         assert_eq!(applied.tools.as_deref(), Some("git_status"));

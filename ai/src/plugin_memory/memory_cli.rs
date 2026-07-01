@@ -329,6 +329,135 @@ fn clear_active(
     }
 }
 
+fn format_prompt_block(
+    prompt_block: Option<&str>,
+    memory_space_id: Option<&str>,
+    format: OutputFormat,
+) -> Result<String, AgentError> {
+    let block = prompt_block.unwrap_or("");
+    let space = memory_space_id.unwrap_or("(unresolved)");
+    match format {
+        OutputFormat::Json => {
+            let payload = serde_json::json!({
+                "memory_space_id": space,
+                "prompt_block": block,
+            });
+            Ok(serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into()))
+        }
+        OutputFormat::Tsv | OutputFormat::Env => {
+            let body = if block.is_empty() { "(empty)" } else { block };
+            Ok(format!("memory_space_id: {space}\n{body}"))
+        }
+    }
+}
+
+fn format_kind_definitions(kinds: &[MemoryKindDefinitionDto], format: OutputFormat) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(kinds).unwrap_or_else(|_| "[]".into()),
+        OutputFormat::Tsv => {
+            let mut out = String::from(
+                "id\tdescription\tdefault_scope\tdefault_inject\tdefault_status\tpriority\tbuiltin\tdedicated_cli\n",
+            );
+            for k in kinds {
+                out.push_str(&format_kind_row_tsv(k));
+            }
+            out
+        }
+        OutputFormat::Env => {
+            let mut out = String::new();
+            for (index, k) in kinds.iter().enumerate() {
+                append_kind_definition_env(&mut out, index, k);
+            }
+            out
+        }
+    }
+}
+
+fn format_kind_row_tsv(k: &MemoryKindDefinitionDto) -> String {
+    format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        k.id,
+        k.description,
+        memory_scope_wire(k.default_scope),
+        memory_inject_wire(k.default_inject),
+        memory_status_wire(k.default_status),
+        k.priority,
+        k.builtin,
+        k.dedicated_cli.as_deref().unwrap_or("")
+    )
+}
+
+fn append_kind_definition_env(out: &mut String, index: usize, k: &MemoryKindDefinitionDto) {
+    let prefix = format!("kinds[{index}]");
+    append_env_line(out, &format!("{prefix}.id"), &k.id);
+    append_env_line(out, &format!("{prefix}.description"), &k.description);
+    append_env_line(
+        out,
+        &format!("{prefix}.default_scope"),
+        memory_scope_wire(k.default_scope),
+    );
+    append_env_line(
+        out,
+        &format!("{prefix}.default_inject"),
+        memory_inject_wire(k.default_inject),
+    );
+    append_env_line(
+        out,
+        &format!("{prefix}.default_status"),
+        memory_status_wire(k.default_status),
+    );
+    append_env_line(out, &format!("{prefix}.priority"), &k.priority.to_string());
+    append_env_line(out, &format!("{prefix}.builtin"), &k.builtin.to_string());
+    append_env_line(
+        out,
+        &format!("{prefix}.dedicated_cli"),
+        k.dedicated_cli.as_deref().unwrap_or(""),
+    );
+}
+
+fn memory_scope_wire(scope: MemoryScopeDto) -> &'static str {
+    match scope {
+        MemoryScopeDto::Session => "session",
+        MemoryScopeDto::Project => "project",
+        MemoryScopeDto::Global => "global",
+    }
+}
+
+fn memory_inject_wire(inject: MemoryInjectPolicyDto) -> &'static str {
+    match inject {
+        MemoryInjectPolicyDto::Pinned => "pinned",
+        MemoryInjectPolicyDto::OnDemand => "on_demand",
+        MemoryInjectPolicyDto::Manual => "manual",
+        MemoryInjectPolicyDto::Never => "never",
+    }
+}
+
+fn memory_status_wire(status: MemoryStatusDto) -> &'static str {
+    match status {
+        MemoryStatusDto::Active => "active",
+        MemoryStatusDto::Inactive => "inactive",
+        MemoryStatusDto::Open => "open",
+        MemoryStatusDto::Archived => "archived",
+    }
+}
+
+fn format_entries(entries: &[MemoryEntryDto], format: OutputFormat) -> String {
+    match format {
+        OutputFormat::Json => serde_json::to_string_pretty(entries).unwrap_or_else(|_| "[]".into()),
+        OutputFormat::Tsv | OutputFormat::Env => {
+            let mut out =
+                String::from("id\tkind\tstatus\tscope\tmemory_space_id\tlast_session_id\ttext\n");
+            for e in entries {
+                out.push_str(&format!(
+                    "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}\n",
+                    e.id, e.kind, e.status, e.scope, e.memory_space_id, e.last_session_id, e.text
+                ));
+            }
+            out
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,134 +764,5 @@ mod tests {
             .map(|kind| kind.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["note", "goal"]);
-    }
-}
-
-fn format_prompt_block(
-    prompt_block: Option<&str>,
-    memory_space_id: Option<&str>,
-    format: OutputFormat,
-) -> Result<String, AgentError> {
-    let block = prompt_block.unwrap_or("");
-    let space = memory_space_id.unwrap_or("(unresolved)");
-    match format {
-        OutputFormat::Json => {
-            let payload = serde_json::json!({
-                "memory_space_id": space,
-                "prompt_block": block,
-            });
-            Ok(serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into()))
-        }
-        OutputFormat::Tsv | OutputFormat::Env => {
-            let body = if block.is_empty() { "(empty)" } else { block };
-            Ok(format!("memory_space_id: {space}\n{body}"))
-        }
-    }
-}
-
-fn format_kind_definitions(kinds: &[MemoryKindDefinitionDto], format: OutputFormat) -> String {
-    match format {
-        OutputFormat::Json => serde_json::to_string_pretty(kinds).unwrap_or_else(|_| "[]".into()),
-        OutputFormat::Tsv => {
-            let mut out = String::from(
-                "id\tdescription\tdefault_scope\tdefault_inject\tdefault_status\tpriority\tbuiltin\tdedicated_cli\n",
-            );
-            for k in kinds {
-                out.push_str(&format_kind_row_tsv(k));
-            }
-            out
-        }
-        OutputFormat::Env => {
-            let mut out = String::new();
-            for (index, k) in kinds.iter().enumerate() {
-                append_kind_definition_env(&mut out, index, k);
-            }
-            out
-        }
-    }
-}
-
-fn format_kind_row_tsv(k: &MemoryKindDefinitionDto) -> String {
-    format!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-        k.id,
-        k.description,
-        memory_scope_wire(k.default_scope),
-        memory_inject_wire(k.default_inject),
-        memory_status_wire(k.default_status),
-        k.priority,
-        k.builtin,
-        k.dedicated_cli.as_deref().unwrap_or("")
-    )
-}
-
-fn append_kind_definition_env(out: &mut String, index: usize, k: &MemoryKindDefinitionDto) {
-    let prefix = format!("kinds[{index}]");
-    append_env_line(out, &format!("{prefix}.id"), &k.id);
-    append_env_line(out, &format!("{prefix}.description"), &k.description);
-    append_env_line(
-        out,
-        &format!("{prefix}.default_scope"),
-        memory_scope_wire(k.default_scope),
-    );
-    append_env_line(
-        out,
-        &format!("{prefix}.default_inject"),
-        memory_inject_wire(k.default_inject),
-    );
-    append_env_line(
-        out,
-        &format!("{prefix}.default_status"),
-        memory_status_wire(k.default_status),
-    );
-    append_env_line(out, &format!("{prefix}.priority"), &k.priority.to_string());
-    append_env_line(out, &format!("{prefix}.builtin"), &k.builtin.to_string());
-    append_env_line(
-        out,
-        &format!("{prefix}.dedicated_cli"),
-        k.dedicated_cli.as_deref().unwrap_or(""),
-    );
-}
-
-fn memory_scope_wire(scope: MemoryScopeDto) -> &'static str {
-    match scope {
-        MemoryScopeDto::Session => "session",
-        MemoryScopeDto::Project => "project",
-        MemoryScopeDto::Global => "global",
-    }
-}
-
-fn memory_inject_wire(inject: MemoryInjectPolicyDto) -> &'static str {
-    match inject {
-        MemoryInjectPolicyDto::Pinned => "pinned",
-        MemoryInjectPolicyDto::OnDemand => "on_demand",
-        MemoryInjectPolicyDto::Manual => "manual",
-        MemoryInjectPolicyDto::Never => "never",
-    }
-}
-
-fn memory_status_wire(status: MemoryStatusDto) -> &'static str {
-    match status {
-        MemoryStatusDto::Active => "active",
-        MemoryStatusDto::Inactive => "inactive",
-        MemoryStatusDto::Open => "open",
-        MemoryStatusDto::Archived => "archived",
-    }
-}
-
-fn format_entries(entries: &[MemoryEntryDto], format: OutputFormat) -> String {
-    match format {
-        OutputFormat::Json => serde_json::to_string_pretty(entries).unwrap_or_else(|_| "[]".into()),
-        OutputFormat::Tsv | OutputFormat::Env => {
-            let mut out =
-                String::from("id\tkind\tstatus\tscope\tmemory_space_id\tlast_session_id\ttext\n");
-            for e in entries {
-                out.push_str(&format!(
-                    "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}\n",
-                    e.id, e.kind, e.status, e.scope, e.memory_space_id, e.last_session_id, e.text
-                ));
-            }
-            out
-        }
     }
 }

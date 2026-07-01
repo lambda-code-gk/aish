@@ -1708,8 +1708,10 @@ mod tests {
             safety_bps: 1000,
             gate_bps: 8600,
         };
-        let mut gate_cfg = PreprocessConfig::default();
-        gate_cfg.mode = SmartPreprocessMode::Gate;
+        let gate_cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Gate,
+            ..Default::default()
+        };
         assert_eq!(
             apply_confidence_gate(
                 SmartIntentClass::SimpleChat,
@@ -1789,9 +1791,11 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Gate;
-        cfg.model = None;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Gate,
+            model: None,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input, &cfg);
         assert!(decision.route_turn_required);
     }
@@ -1884,8 +1888,10 @@ mod tests {
             safety_bps: 9000,
             gate_bps: 9000,
         };
-        let mut gate_cfg = PreprocessConfig::default();
-        gate_cfg.mode = SmartPreprocessMode::Gate;
+        let gate_cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Gate,
+            ..Default::default()
+        };
         assert_eq!(
             apply_confidence_gate(
                 SmartIntentClass::SimpleChat,
@@ -1955,8 +1961,10 @@ mod tests {
             ),
             SmartConfidenceGate::AssistRouteTurn
         );
-        let mut gate_cfg = PreprocessConfig::default();
-        gate_cfg.mode = SmartPreprocessMode::Gate;
+        let gate_cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Gate,
+            ..Default::default()
+        };
         assert_eq!(
             apply_confidence_gate(
                 SmartIntentClass::SimpleChat,
@@ -2012,7 +2020,7 @@ mod tests {
         input.session_error_summary = Some("permission denied".into());
         let features = build_hashed_features(&input, 4096, 17);
         assert!(!features.is_empty());
-        let names = vec!["session_error_ngram:pe".to_string()];
+        let names = ["session_error_ngram:pe".to_string()];
         let idx = hash_feature(&names[0], 4096, 17);
         assert!(features.iter().any(|f| f.index == idx));
     }

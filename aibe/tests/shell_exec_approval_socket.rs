@@ -36,11 +36,13 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
         LlmStepResult::text_only("user denied shell_exec"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut tools_cfg = ToolsConfig::default();
-    tools_cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["echo".into()],
-        approval: ShellExecApprovalMode::Ask,
+    let tools_cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -169,11 +171,13 @@ async fn run_approval_audit_case(
         LlmStepResult::text_only("done"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut tools_cfg = ToolsConfig::default();
-    tools_cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec![allowed_command.into()],
-        approval: ShellExecApprovalMode::Ask,
+    let tools_cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec![allowed_command.into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

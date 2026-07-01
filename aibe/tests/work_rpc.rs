@@ -388,10 +388,6 @@ fn work_item(id: u64, status: WorkStatus, parent_id: Option<u64>) -> WorkItem {
     }
 }
 
-fn pending() {
-    panic!("pending 0052");
-}
-
 #[test]
 fn work_switch_changes_active_work_atomically() {
     let harness = Harness::new("project_phase2_switch");

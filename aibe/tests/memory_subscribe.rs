@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::{
-    shared_builtin_loader, FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
+    FilesystemContextualMemoryStore, FilesystemMemorySpaceResolver,
     InProcessMemorySubscriptionBroker,
 };
 use aibe::application::memory_service::MemoryService;
@@ -17,8 +17,7 @@ use aibe::ports::outbound::{
     MemoryConfig, MemorySubscriptionBroker, ProfileRegistry, TerminationCapability, ToolsConfig,
 };
 use aibe_protocol::{
-    ClientResponse, MemoryChangeKind, MemoryContext, MemoryInjectPolicyDto, MemoryOperationAdd,
-    MemoryOperationDto, MemoryScopeDto, MemoryStatusDto,
+    ClientResponse, MemoryChangeKind, MemoryContext, MemoryOperationAdd, MemoryOperationDto,
 };
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

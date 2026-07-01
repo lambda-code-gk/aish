@@ -123,11 +123,13 @@ async fn shell_exec_not_allowed_returns_tool_result_and_continues() {
         LlmStepResult::text_only("gave up on curl"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["echo".into()],
-        approval: ShellExecApprovalMode::Always,
+    let cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
@@ -172,9 +174,13 @@ async fn max_rounds_zero_programmatic_acts_as_one_round_limit() {
         LlmStepResult::text_only("stopped after one tool round"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.max_rounds = 0;
-    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let cfg = ToolsConfig {
+        max_rounds: 0,
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        ..Default::default()
+    };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
         .run(
@@ -214,9 +220,13 @@ async fn max_tool_rounds_returns_agent_turn_result_with_tool_calls() {
         LlmStepResult::text_only("Tool round limit reached. Summary from reads above."),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.max_rounds = 2;
-    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let cfg = ToolsConfig {
+        max_rounds: 2,
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        ..Default::default()
+    };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
         .run(
@@ -261,12 +271,14 @@ async fn shell_exec_output_is_truncated_for_llm_and_tool_calls() {
         LlmStepResult::text_only("done"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.max_tool_output_bytes = 80;
-    cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["echo".into()],
-        approval: ShellExecApprovalMode::Always,
+    let cfg = ToolsConfig {
+        max_tool_output_bytes: 80,
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
@@ -313,9 +325,13 @@ async fn read_file_output_is_truncated_for_llm_and_tool_calls() {
         inner,
         round: AtomicUsize::new(0),
     });
-    let mut cfg = ToolsConfig::default();
-    cfg.max_tool_output_bytes = 300;
-    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let cfg = ToolsConfig {
+        max_tool_output_bytes: 300,
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        ..Default::default()
+    };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
         .run(
@@ -441,10 +457,14 @@ async fn read_file_outside_allowed_roots_returns_tool_result_and_continues() {
         LlmStepResult::text_only("cannot read that path"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
     let allowed = dir.path().join("allowed");
     fs::create_dir(&allowed).expect("mkdir");
-    cfg.read_file.allowed_roots = vec![allowed];
+    let cfg = ToolsConfig {
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![allowed],
+        },
+        ..Default::default()
+    };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
         .run(
@@ -485,11 +505,13 @@ async fn shell_exec_nonzero_exit_returns_tool_result_and_continues() {
         LlmStepResult::text_only("command failed as expected"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["false".into()],
-        approval: ShellExecApprovalMode::Always,
+    let cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["false".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
@@ -532,12 +554,14 @@ async fn shell_exec_timeout_returns_tool_result_and_continues() {
         LlmStepResult::text_only("sleep timed out"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.exec_timeout_ms = 100;
-    cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["sleep".into()],
-        approval: ShellExecApprovalMode::Always,
+    let cfg = ToolsConfig {
+        exec_timeout_ms: 100,
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["sleep".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
@@ -585,11 +609,13 @@ async fn shell_exec_runs_in_context_cwd() {
         LlmStepResult::text_only("done"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["cat".into()],
-        approval: ShellExecApprovalMode::Always,
+    let cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["cat".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let svc = default_agent_turn_service(llm, cfg);
@@ -636,8 +662,12 @@ async fn read_file_relative_path_uses_context_cwd() {
         LlmStepResult::text_only("read rel.txt"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut cfg = ToolsConfig::default();
-    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let cfg = ToolsConfig {
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        ..Default::default()
+    };
     let svc = default_agent_turn_service(llm, cfg);
     let res = svc
         .run(
@@ -717,10 +747,14 @@ async fn max_tool_rounds_conversation_replay_strategy() {
         inner,
         saw_tool_in_complete: AtomicUsize::new(0),
     });
-    let mut cfg = ToolsConfig::default();
-    cfg.max_rounds = 2;
-    cfg.termination_strategy = aibe::ports::outbound::TerminationStrategy::ConversationReplay;
-    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let cfg = ToolsConfig {
+        max_rounds: 2,
+        termination_strategy: aibe::ports::outbound::TerminationStrategy::ConversationReplay,
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        ..Default::default()
+    };
     let capability = TerminationCapability {
         plain_complete_accepts_tool_role: true,
     };
@@ -773,10 +807,14 @@ async fn max_tool_rounds_replay_fallback_to_summary() {
         inner: ScriptedMockLlm::new(steps),
         complete_calls: AtomicUsize::new(0),
     });
-    let mut cfg = ToolsConfig::default();
-    cfg.max_rounds = 2;
-    cfg.termination_strategy = aibe::ports::outbound::TerminationStrategy::ConversationReplay;
-    cfg.read_file.allowed_roots = vec![dir.path().to_path_buf()];
+    let cfg = ToolsConfig {
+        max_rounds: 2,
+        termination_strategy: aibe::ports::outbound::TerminationStrategy::ConversationReplay,
+        read_file: aibe::ports::outbound::ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        ..Default::default()
+    };
     let capability = TerminationCapability {
         plain_complete_accepts_tool_role: true,
     };

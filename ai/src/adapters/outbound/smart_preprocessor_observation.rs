@@ -415,8 +415,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Shadow;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Shadow,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input, &cfg);
         let record = obs_record(
             &decision,
@@ -456,8 +458,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Shadow;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Shadow,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input, &cfg);
         assert!(!decision.reason_codes.is_empty());
         let record = obs_record(
@@ -500,8 +504,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Shadow;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Shadow,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input, &cfg);
         let record = obs_record(
             &decision,
@@ -565,8 +571,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Shadow;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Shadow,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input, &cfg);
         let record = obs_record(
             &decision,
@@ -631,8 +639,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Assist;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Assist,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input.clone(), &cfg);
         let present_only = obs_record(
             &decision,
@@ -689,8 +699,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Assist;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Assist,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input, &cfg);
         let record = obs_record(
             &decision,
@@ -744,8 +756,10 @@ mod tests {
             cli_overrides: false,
             route_metadata: RouteMetadataInput::default(),
         };
-        let mut cfg = PreprocessConfig::default();
-        cfg.mode = SmartPreprocessMode::Gate;
+        let cfg = PreprocessConfig {
+            mode: SmartPreprocessMode::Gate,
+            ..Default::default()
+        };
         let decision = run_preprocessor(input.clone(), &cfg);
         let local = derive_local_route_decision(
             &decision,

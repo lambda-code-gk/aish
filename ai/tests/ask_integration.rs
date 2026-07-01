@@ -191,8 +191,10 @@ fn ask_passes_pre_resolved_request_context() {
         None::<&ai::adapters::outbound::FileLogTail>,
     );
     let resolved = resolve_tools(None, &ConfigToolsTokens::default()).expect("resolve");
-    let mut ctx = RequestContextInput::default();
-    ctx.system_instruction = Some("console hint body".into());
+    let ctx = RequestContextInput {
+        system_instruction: Some("console hint body".into()),
+        ..Default::default()
+    };
     ask.run(
         "ctx".to_string(),
         AskRunOptions {

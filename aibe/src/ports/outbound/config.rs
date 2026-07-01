@@ -399,8 +399,47 @@ pub enum ConfigError {
     Io(String),
 }
 
+/// `external_commands.command` が `shell_exec` allowlist に含まれることを検証する。
+pub fn validate_external_commands(
+    external_commands: &[ExternalCommandConfig],
+    allowed_commands: &[String],
+) -> Result<(), ConfigError> {
+    let mut seen_names = std::collections::HashSet::new();
+    for entry in external_commands {
+        if entry.name.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "[[external_commands]] name must not be empty".into(),
+            ));
+        }
+        if !seen_names.insert(entry.name.clone()) {
+            return Err(ConfigError::Invalid(format!(
+                "duplicate external_commands name: {}",
+                entry.name
+            )));
+        }
+        if entry.command.trim().is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "external_commands '{}' command must not be empty",
+                entry.name
+            )));
+        }
+        if !allowed_commands.iter().any(|c| c == &entry.command) {
+            return Err(ConfigError::Invalid(format!(
+                "external_commands '{}' command '{}' is not in tools.shell_exec.allowed_commands",
+                entry.name, entry.command
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 設定の読み込み。
+pub trait ConfigLoader {
+    fn load(&self) -> Result<AppConfig, ConfigError>;
+}
+
 #[cfg(test)]
-mod tests {
+mod config_tests {
     use super::*;
 
     #[test]
@@ -456,43 +495,4 @@ mod tests {
         assert_eq!(pack.mode, crate::domain::EffectiveFeatureMode::Empty);
         assert!(pack.config.feature_files.is_empty());
     }
-}
-
-/// `external_commands.command` が `shell_exec` allowlist に含まれることを検証する。
-pub fn validate_external_commands(
-    external_commands: &[ExternalCommandConfig],
-    allowed_commands: &[String],
-) -> Result<(), ConfigError> {
-    let mut seen_names = std::collections::HashSet::new();
-    for entry in external_commands {
-        if entry.name.trim().is_empty() {
-            return Err(ConfigError::Invalid(
-                "[[external_commands]] name must not be empty".into(),
-            ));
-        }
-        if !seen_names.insert(entry.name.clone()) {
-            return Err(ConfigError::Invalid(format!(
-                "duplicate external_commands name: {}",
-                entry.name
-            )));
-        }
-        if entry.command.trim().is_empty() {
-            return Err(ConfigError::Invalid(format!(
-                "external_commands '{}' command must not be empty",
-                entry.name
-            )));
-        }
-        if !allowed_commands.iter().any(|c| c == &entry.command) {
-            return Err(ConfigError::Invalid(format!(
-                "external_commands '{}' command '{}' is not in tools.shell_exec.allowed_commands",
-                entry.name, entry.command
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// 設定の読み込み。
-pub trait ConfigLoader {
-    fn load(&self) -> Result<AppConfig, ConfigError>;
 }

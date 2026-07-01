@@ -185,7 +185,7 @@ fn restart_waits_for_new_daemon_readiness_before_returning() {
 
     let mut child = env.spawn_daemon();
     wait_for_socket(&env.socket_path);
-    let old_pid = fs::read_to_string(&env.pid_file_path())
+    let old_pid = fs::read_to_string(env.pid_file_path())
         .ok()
         .and_then(|raw| serde_json::from_str::<PidFileRecord>(raw.trim()).ok())
         .map(|r| r.pid)
@@ -201,7 +201,7 @@ fn restart_waits_for_new_daemon_readiness_before_returning() {
     wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
     wait_for_socket(&env.socket_path);
 
-    let new_pid = fs::read_to_string(&env.pid_file_path())
+    let new_pid = fs::read_to_string(env.pid_file_path())
         .ok()
         .and_then(|raw| serde_json::from_str::<PidFileRecord>(raw.trim()).ok())
         .map(|r| r.pid)

@@ -246,7 +246,6 @@ fn parse_proposal_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aibe_protocol::MemoryOperationAdd;
 
     fn registry() -> &'static MemoryKindRegistry {
         super::super::baseline_memory_kind_registry()

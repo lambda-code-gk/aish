@@ -35,11 +35,13 @@ async fn external_command_runs_via_shell_exec() {
         LlmStepResult::text_only("done"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut tools_cfg = ToolsConfig::default();
-    tools_cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec!["echo".into()],
-        approval: ShellExecApprovalMode::Always,
+    let tools_cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let external_commands = vec![ExternalCommandConfig {
@@ -143,11 +145,13 @@ async fn external_command_not_in_allowlist_is_denied() {
         LlmStepResult::text_only("denied"),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
-    let mut tools_cfg = ToolsConfig::default();
-    tools_cfg.shell_exec = ShellExecConfig {
-        enabled: true,
-        allowed_commands: vec![],
-        approval: ShellExecApprovalMode::Always,
+    let tools_cfg = ToolsConfig {
+        shell_exec: ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec![],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        },
         ..Default::default()
     };
 

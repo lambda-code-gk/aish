@@ -114,7 +114,7 @@ fn memory_request_without_memory_space_id_does_not_fail() {
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
     let cwd = std::env::current_dir().expect("cwd");
 
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     // 旧クライアント相当: memory_space_id を載せない request
     let context = MemoryContext {
@@ -215,7 +215,7 @@ fn memory_query_include_prompt_block_returns_materialized_block() {
     let c = ctx("sess", "ctx_a", &cwd);
     store.apply(&c, &goal_op("block goal"), 1).expect("goal");
 
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let response = service.query(
         "q1".into(),
@@ -249,7 +249,7 @@ fn memory_query_include_prompt_block_returns_materialized_block() {
 fn memory_apply_session_scope_without_cwd_succeeds() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let response = service.apply(
         "a1".into(),
@@ -273,7 +273,7 @@ fn memory_apply_session_scope_without_cwd_succeeds() {
 fn memory_apply_project_scope_without_cwd_is_invalid() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let response = service.apply(
         "a1".into(),
@@ -296,7 +296,7 @@ fn memory_apply_project_scope_without_cwd_is_invalid() {
 fn memory_query_project_scope_without_cwd_is_invalid() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let response = service.query(
         "q1".into(),
@@ -328,7 +328,7 @@ fn memory_query_project_scope_without_cwd_is_invalid() {
 fn unsafe_session_id_is_rejected() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let cwd = std::env::current_dir().expect("cwd");
     let response = service.apply(
@@ -410,7 +410,7 @@ fn long_prompt_block_keeps_footer_and_truncates_goal_body() {
 fn memory_apply_rule_with_kind_and_text_only() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let cwd = std::env::current_dir().expect("cwd");
     let op = MemoryOperationDto::Add(MemoryOperationAdd {
@@ -446,7 +446,7 @@ fn memory_apply_rule_with_kind_and_text_only() {
 fn memory_kind_list_returns_builtin_kinds() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let response = service.kind_list(
         "k1".into(),
@@ -471,7 +471,7 @@ fn memory_kind_list_returns_builtin_kinds() {
 fn memory_apply_unregistered_kind_with_kind_and_text_only() {
     let dir = tempdir().expect("tempdir");
     let store = FilesystemContextualMemoryStore::new(dir.path().to_path_buf());
-    let resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
+    let _resolver = aibe::adapters::outbound::FilesystemMemorySpaceResolver;
     let service = memory_service(store);
     let cwd = std::env::current_dir().expect("cwd");
     let op = MemoryOperationDto::Add(MemoryOperationAdd {

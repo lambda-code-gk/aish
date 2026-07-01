@@ -346,6 +346,19 @@ fn map_client_error(e: ClientError) -> AgentError {
     }
 }
 
+fn correlation_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}-{}", std::process::id(), seq, nanos)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,17 +391,4 @@ mod tests {
         assert_eq!(context.shell_log_tail.as_deref(), Some("tail"));
         assert_eq!(context.cwd.as_deref(), Some("/tmp"));
     }
-}
-
-fn correlation_id() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{}-{}-{}", std::process::id(), seq, nanos)
 }

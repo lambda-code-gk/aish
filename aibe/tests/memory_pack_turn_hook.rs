@@ -121,6 +121,7 @@ impl WorkStore for FixedWorkStore {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 enum WorkStoreFailure {
     InvalidMemorySpace,
     Corrupt(String),

@@ -142,7 +142,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("draft.md");
         fs::write(&path, PROMPT_TEMPLATE).expect("write");
-        let script = format!("#!/bin/sh\n# leave template only\nexit 0\n");
+        let script = "#!/bin/sh\n# leave template only\nexit 0\n".to_string();
         let editor = dir.path().join("noop.sh");
         fs::write(&editor, script).expect("write editor");
         let mut perms = fs::metadata(&editor).expect("meta").permissions();
@@ -179,7 +179,7 @@ mod tests {
         let path = dir.path().join("draft.md");
         fs::write(&path, PROMPT_TEMPLATE).expect("write");
         let editor = dir.path().join("write.sh");
-        let script = format!("#!/bin/sh\ncat > \"$1\" <<'EOF'\nline 1\nline 2\nline 3\nEOF\n");
+        let script = "#!/bin/sh\ncat > \"$1\" <<'EOF'\nline 1\nline 2\nline 3\nEOF\n".to_string();
         fs::write(&editor, script).expect("write");
         let mut perms = fs::metadata(&editor).expect("meta").permissions();
         perms.set_mode(0o755);

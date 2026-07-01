@@ -212,7 +212,7 @@ mod tests {
 
     fn sample_events(count: usize) -> Vec<LogEvent> {
         (1..=count)
-            .map(|index| {
+            .flat_map(|index| {
                 vec![
                     LogEvent::command_start_span(
                         &aish_replay::CommandSpec {
@@ -228,7 +228,6 @@ mod tests {
                     LogEvent::command_end(index as u32, Some(0), "2026-01-01T00:00:01Z"),
                 ]
             })
-            .flatten()
             .collect()
     }
 

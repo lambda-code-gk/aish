@@ -178,7 +178,7 @@ async fn route_turn_saves_redacted_plan_and_reuses_latest_conversation() {
 
 #[tokio::test]
 async fn registry_merges_feature_actions_when_query_matches_trigger() {
-    let store_root = tempdir().expect("tempdir").into_path();
+    let store_root = tempdir().expect("tempdir").keep();
     let tools_config = ToolsConfig::default();
     let strategy = tools_config.termination_strategy;
     let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
@@ -249,7 +249,7 @@ async fn registry_merges_feature_actions_when_query_matches_trigger() {
 
 #[tokio::test]
 async fn registry_does_not_duplicate_memory_query_when_llm_already_returned_one() {
-    let store_root = tempdir().expect("tempdir").into_path();
+    let store_root = tempdir().expect("tempdir").keep();
     let tools_config = ToolsConfig::default();
     let strategy = tools_config.termination_strategy;
     let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
@@ -318,7 +318,7 @@ async fn registry_does_not_duplicate_memory_query_when_llm_already_returned_one(
 
 #[tokio::test]
 async fn route_turn_strips_shell_exec_from_recommended_tools() {
-    let store_root = tempdir().expect("tempdir").into_path();
+    let store_root = tempdir().expect("tempdir").keep();
     let tools_config = ToolsConfig::default();
     let strategy = tools_config.termination_strategy;
     let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
@@ -381,7 +381,7 @@ async fn route_turn_strips_shell_exec_from_recommended_tools() {
 
 #[tokio::test]
 async fn registry_skips_requires_recipe_features_when_recipes_disabled() {
-    let store_root = tempdir().expect("tempdir").into_path();
+    let store_root = tempdir().expect("tempdir").keep();
     let tools_config = ToolsConfig::default();
     let strategy = tools_config.termination_strategy;
     let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
