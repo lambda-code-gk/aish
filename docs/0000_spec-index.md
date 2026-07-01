@@ -47,6 +47,7 @@
 | 0050 | [0050_client-provided-replay-tool-spec.md](spec/0050_client-provided-replay-tool-spec.md) | 設計確定 | Client-Provided Replay Tool（`aish.replay_show`、turn-local read-only client tool、hybrid manifest + `shell_log_tail`） |
 | 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装中） | Smart Preprocessor observation の read-only stats/recent/report CLI |
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
+| 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
 
 ### 状態ラベルの意味
 
@@ -119,6 +120,7 @@
 | 0039 | [0039_aish-memory-pack-externalization-implementation-spec.md](done/0039_aish-memory-pack-externalization-implementation-spec.md) | 実装済み | AISH Memory Pack Externalization — builtin kind / recipe TOML 外出し（設計: [0039](spec/0039_aish-memory-pack-externalization-spec.md)） |
 | 0040 | [0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md](done/0040_generic-recipe-cli-aish-name-cleanup-implementation-spec.md) | 実装済み | Generic Recipe CLI / AISH Name Cleanup（設計: [0040](spec/0040_generic-recipe-cli-aish-name-cleanup-spec.md)） |
 | 0052 | [0052_ai-work-implementation-spec.md](done/0052_ai-work-implementation-spec.md) | 実装済み | `ai work` 作業文脈管理（設計: [0052](spec/0052_ai_work.md)） |
+| 0053 | [0053_ai-suggested-command-recall-implementation-spec.md](done/0053_ai-suggested-command-recall-implementation-spec.md) | 実装済み | `ai` 提案コマンド再呼び出し（設計: [0053](spec/0053_ai-suggested-command-recall-spec.md)） |
 | 0041 | [0041_ai-smart-feature-plan-implementation-spec.md](done/0041_ai-smart-feature-plan-implementation-spec.md) | 実装済み | `ai` Smart Feature Plan（設計: [0041](spec/0041_ai-smart-feature-plan-spec.md)） |
 | 0042 | [0042_configurable-smart-features-implementation-spec.md](done/0042_configurable-smart-features-implementation-spec.md) | 実装済み | Configurable Smart Features（設計: [0042](spec/0042_configurable-smart-features-spec.md)） |
 | 0043 | [0043_feature-pack-boundary-hardening-implementation-spec.md](done/0043_feature-pack-boundary-hardening-implementation-spec.md) | 実装済み（Phase 1） | Feature Pack Boundary Hardening（設計: [0043](spec/0043_feature-pack-boundary-hardening-spec.md)） |

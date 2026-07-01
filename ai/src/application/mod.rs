@@ -13,6 +13,7 @@ pub mod memory_space;
 pub mod memory_stub;
 pub mod replay_manifest;
 mod smart_preprocessor;
+mod suggested_command_recall;
 mod turn_cancel;
 pub mod work_cli;
 
@@ -30,3 +31,8 @@ pub use turn_cancel::{clear_turn_cancel, register_turn_cancel, TurnCancelGuard};
 pub use feature_executor::{execute_feature_actions_mvp, FeatureExecutionOutcome};
 pub use replay_manifest::ShellLogMode;
 pub use smart_preprocessor::{evaluate_preprocessor, PreprocessorRunInput, PreprocessorRunOutcome};
+pub use suggested_command_recall::{
+    assistant_content_from_response, persist_suggested_commands, recall_next_command,
+    recall_prev_command, resolve_recall_gating, RecallGating, RecallGatingInput,
+    RecallPersistOutcome, RecallTurnContext,
+};

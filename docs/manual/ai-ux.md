@@ -23,6 +23,28 @@ export PATH="$PWD/target/debug:$PATH"
 10. bare `ai` を TTY で実行し、内蔵ミニエディタまたは `AI_EDITOR` で入力した内容が `ai ask` と同様に送信されること。内蔵ミニエディタでは `Enter` で改行、`↑`/`↓` で上下の行へ移動して編集できること。`Ctrl+D`（本文あり）または `Alt+Enter` で送信、`Ctrl+C` または空入力では AI を呼ばずキャンセルメッセージが出ること。
 11. `echo hello | ai` が pipe 入力のまま動き、prompt UI を出さないこと。
 
+## 提案コマンド再呼び出し（0053）
+
+### 前提
+
+- `cargo build -p ai -p aish` と TTY 前提
+- `aish shell` 経由、または通常 bash / zsh で `eval "$(ai complete bash)"`（zsh は `zsh`）を読み込んだ状態
+
+### 手順
+
+1. `aish shell`（または hook 済み bash / zsh）で `ai commit` 等を実行し、assistant が ```bash ブロックで shell コマンドを提案させる。
+2. stderr に `ai: N suggested command(s) ready. Alt+. / Alt+, cycle proposals.` が出ることを確認する。
+3. プロンプトで `Alt+.` を押し、提案コマンドが入力欄に挿入され、Enter するまで実行されないことを確認する。
+4. 複数 block がある場合、`Alt+.` 連打で候補が順に巡回し、末尾の次は先頭に戻る（ラップアラウンド）ことを確認する。
+5. `Alt+,` で逆方向に巡回でき、先頭の前は末尾に戻ることを確認する。
+6. `ai ask -q ...` では hint が消え、cache は維持されること（その後 `Alt+.` / `Alt+,` で挿入可能）を確認する。
+7. `ai ask --format json ...` では hint / cache が無効化されることを確認する。
+
+### 期待結果
+
+- recall は prompt への挿入のみで、shell history を汚さない
+- `aish shell` と `ai complete` が同じ hook 文面を使う
+
 ## 期待結果
 
 - `chat` は TTY 上で Unicode 対応の行編集（Backspace・カーソル移動）を使う。

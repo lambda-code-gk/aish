@@ -17,6 +17,7 @@ mod shell_exec_approval;
 mod shell_log;
 mod smart_observation_report;
 pub mod smart_preprocessor;
+pub mod suggested_command_recall;
 mod terminal_display;
 mod terminal_size;
 mod tools;
@@ -66,6 +67,10 @@ pub use smart_preprocessor::{
     run_preprocessor, should_short_circuit, PreprocessConfig, PreprocessInput, SmartConfidenceGate,
     SmartIntentClass, SmartPreprocessDecision, SmartPreprocessMode, SmartRouteTurnHints,
     FEATURE_EXTRACTOR_VERSION,
+};
+pub use suggested_command_recall::{
+    extract_shell_candidates_from_content, SuggestedCommandCache, SuggestedCommandCandidate,
+    SuggestedCommandQueue, SUGGESTED_COMMAND_MAX_BYTES,
 };
 pub use terminal_size::TerminalSize;
 pub use tools::{

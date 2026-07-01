@@ -1236,3 +1236,93 @@ description = "response DTO の deserialize 時に text validation が効く"
 test = "work_protocol_dto_roundtrip_and_rejects_unknown_fields"
 file_glob = "aibe-protocol/src/work.rs"
 pending = false
+
+[[cases]]
+spec = "0053"
+phase = 1
+id = "extract_shell_candidates"
+description = "fenced code block から shell candidate を抽出する"
+test = "extract_shell_candidates_from_fenced_code_blocks"
+file_glob = "ai/src/domain/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 1
+id = "suggested_command_queue_order"
+description = "1 turn 内の複数 fence の queue 順を維持する"
+test = "preserve_suggested_command_queue_order_across_multiple_fences"
+file_glob = "ai/src/domain/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 1
+id = "reject_oversize_and_controls"
+description = "制御文字 / NUL / oversize を拒否する"
+test = "reject_control_char_nul_and_oversized_suggested_commands"
+file_glob = "ai/src/domain/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 1
+id = "quiet_keeps_cache"
+description = "`--quiet` は hint を止めるが cache は維持する"
+test = "quiet_mode_suppresses_hint_without_disabling_recall_cache"
+file_glob = "ai/src/application/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 1
+id = "format_disables_recall"
+description = "`--format` は hint / cache を止める"
+test = "structured_output_disables_suggested_command_recall"
+file_glob = "ai/src/application/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 1
+id = "non_tty_fail_closed"
+description = "non-TTY では recall を fail-closed にする"
+test = "non_tty_disables_suggested_command_recall"
+file_glob = "ai/src/application/suggested_command_recall.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "bash_readline_insert"
+description = "bash の `Alt+.` が `READLINE_LINE` を更新する"
+test = "bash_alt_period_inserts_suggested_command_into_readline_line"
+file_glob = "ai/src/adapters/outbound/shell_completion.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "zsh_buffer_insert"
+description = "zsh の `Alt+.` が `BUFFER` を更新する"
+test = "zsh_alt_period_inserts_suggested_command_into_buffer"
+file_glob = "ai/src/adapters/outbound/shell_completion.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "same_hook_from_aish_and_ai"
+description = "`aish shell` と `ai complete` が同じ hook を出す"
+test = "aish_shell_and_ai_complete_install_the_same_recall_hook"
+file_glob = "ai/src/adapters/outbound/shell_completion.rs"
+pending = false
+
+[[cases]]
+spec = "0053"
+phase = 2
+id = "unsupported_shell_noop"
+description = "unsupported shell では hook を入れない"
+test = "unsupported_shells_do_not_install_recall_hook"
+file_glob = "ai/src/adapters/outbound/shell_completion.rs"
+pending = false

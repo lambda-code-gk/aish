@@ -11,6 +11,7 @@ mod output_filter;
 pub mod project_key;
 mod prompt_comment_filter;
 mod replay_source;
+pub mod shell_completion;
 mod shell_exec_approval_ui;
 mod shell_log_resolver;
 mod smart_observation_log_reader;
@@ -19,6 +20,7 @@ pub mod smart_preprocessor_observation;
 mod smart_preprocessor_trace;
 mod stderr_spinner;
 mod stdout_presenter;
+mod suggested_command_recall_store;
 mod terminal_size;
 pub mod toml_config;
 mod yes_exec_cache;
@@ -42,6 +44,10 @@ pub use memory_recipe_approval_ui::{
 };
 pub use output_filter::{apply_output_filter, format_filter_exit_status, FilterRunOutcome};
 pub use replay_source::{load_replay_events, ReplaySourceError};
+pub use shell_completion::{
+    recall_env_snippet_for_shell, recall_hook_for_shell, BASH_RECALL_ENV_SNIPPET, BASH_RECALL_HOOK,
+    ZSH_RECALL_ENV_SNIPPET, ZSH_RECALL_HOOK,
+};
 pub use shell_exec_approval_ui::{
     approval_prompt_stderr_lines, emit_auto_approved_shell_exec,
     escape_for_shell_exec_approval_display, format_auto_approved_shell_exec_line,
@@ -64,6 +70,9 @@ pub use smart_preprocessor_observation::{
 pub use smart_preprocessor_trace::smart_preprocessor_trace_enabled;
 pub use stdout_presenter::{
     format_shell_exec_executed_summary, render_response, ShellExecRenderOptions, StdoutPresenter,
+};
+pub use suggested_command_recall_store::{
+    default_suggestion_cache_path, resolve_suggestion_cache_path, FileSuggestedCommandRecallStore,
 };
 pub use terminal_size::detect_terminal_size;
 pub use yes_exec_cache::YesExecCache;

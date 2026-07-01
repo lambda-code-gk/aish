@@ -19,24 +19,26 @@ use ai::adapters::outbound::{
     external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
     load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
     resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
-    smart_preprocessor_trace_enabled, AibeUnixClient, ChatReadLineResult, FileLogTail,
-    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
-    StdoutPresenter, YesExecCache,
+    resolve_suggestion_cache_path, smart_preprocessor_trace_enabled, AibeUnixClient,
+    ChatReadLineResult, FileLogTail, FileSuggestedCommandRecallStore, LocalHistoryStore,
+    LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions, StdoutPresenter,
+    YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
-    build_response_summary, build_summary, classify_from_raw_args, ensure_aibe_if_needed,
-    evaluate_preprocessor, execute_feature_actions_mvp, list_history, memory_cli, next_history_id,
-    plan_ask_launch, plan_interactive_prompt_route, record_turn, HistoryRecordInput,
-    HistoryReplayInput, InteractivePromptRoute, PreprocessorRunInput, PreprocessorRunOutcome,
-    ShellLogMode, TurnCancelGuard,
+    assistant_content_from_response, build_response_summary, build_summary, classify_from_raw_args,
+    current_time_ms, ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
+    list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
+    plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn, resolve_recall_gating,
+    HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, PreprocessorRunInput,
+    PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext, ShellLogMode, TurnCancelGuard,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
-    MemoryCliOptions, NowCommand, OutputFormatArg, SmartCommand, TurnOptions, WorkCliOptions,
-    WorkCommand,
+    MemoryCliOptions, NowCommand, OutputFormatArg, RecallCommand, SmartCommand, TurnOptions,
+    WorkCliOptions, WorkCommand,
 };
 use ai::domain::client_tools::replay_show::replay_client_tool_callback;
 use ai::domain::smart_preprocessor::{
@@ -141,6 +143,7 @@ fn run() -> anyhow::Result<ExitCode> {
         AiCommand::Mem { command } => run_mem(command),
         AiCommand::Context { command } => run_context(command),
         AiCommand::Work { command, options } => run_work(command, options),
+        AiCommand::Recall { command } => run_recall_command(command),
     }
 }
 
@@ -892,7 +895,7 @@ fn execute_turn(
         llm_profile: settings.llm_profile.clone(),
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
-        conversation_id,
+        conversation_id: conversation_id.clone(),
         ai_session_id: Some(settings.ai_session_id.clone()),
         shell_exec_approval: settings.shell_exec_approval.clone(),
         route_plan: route_plan_redacted,
@@ -910,6 +913,7 @@ fn execute_turn(
         cfg.history_max_entries,
     )
     .map_err(history_store_to_anyhow)?;
+    maybe_persist_suggested_commands(cfg, &settings, &turn_id, &conversation_id, &response)?;
     presenter.show_response(&response, settings.verbose_tools, streamed);
 
     Ok(TurnExecutionOutcome {
@@ -917,6 +921,75 @@ fn execute_turn(
         cancel_source,
         streamed,
     })
+}
+
+fn maybe_persist_suggested_commands(
+    cfg: &AiConfig,
+    settings: &ResolvedTurnSettings,
+    turn_id: &str,
+    conversation_id: &Option<String>,
+    response: &ClientResponse,
+) -> anyhow::Result<()> {
+    let Some(content) = assistant_content_from_response(response) else {
+        return Ok(());
+    };
+    let gating = resolve_recall_gating(RecallGatingInput {
+        config_enabled: cfg.suggested_command_recall,
+        config_hint: cfg.suggested_command_recall_hint,
+        max_items: cfg.suggested_command_recall_max_items,
+        quiet: settings.quiet,
+        output_format: settings.output_format,
+        stdin_tty: std::io::stdin().is_terminal(),
+        stdout_tty: std::io::stdout().is_terminal(),
+        stderr_tty: std::io::stderr().is_terminal(),
+    });
+    let cache_path = resolve_suggestion_cache_path(&settings.ai_session_id);
+    let store = FileSuggestedCommandRecallStore::new(cache_path);
+    let ctx = RecallTurnContext {
+        gating,
+        ai_session_id: settings.ai_session_id.clone(),
+        conversation_id: conversation_id.clone(),
+        turn_id: turn_id.to_string(),
+        captured_at: recall_timestamp_from_ms(current_time_ms()),
+        shell: detect_interactive_shell_name(),
+    };
+    let outcome =
+        persist_suggested_commands(&store, &ctx, content).map_err(|e| anyhow::anyhow!(e))?;
+    if let Some(hint) = outcome.hint {
+        eprintln!("{hint}");
+    }
+    Ok(())
+}
+
+fn run_recall_command(command: RecallCommand) -> anyhow::Result<ExitCode> {
+    let cache_path = std::env::var("AI_SUGGESTION_CACHE")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| resolve_suggestion_cache_path(&resolve_ai_session_id()));
+    let store = FileSuggestedCommandRecallStore::new(cache_path);
+    let cmd = match command {
+        RecallCommand::Next => recall_next_command(&store),
+        RecallCommand::Prev => recall_prev_command(&store),
+    }
+    .map_err(|e| anyhow::anyhow!(e))?;
+    if let Some(text) = cmd {
+        print!("{text}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn detect_interactive_shell_name() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .and_then(|shell| shell.rsplit('/').next().map(str::to_ascii_lowercase))
+        .filter(|name| name == "bash" || name == "zsh")
+        .unwrap_or_else(|| "bash".to_string())
+}
+
+fn recall_timestamp_from_ms(ms: u64) -> String {
+    let secs = ms / 1000;
+    format!("{secs}")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3468,6 +3541,9 @@ mod cli_tests {
             history_dir: dir.path().to_path_buf(),
             history_max_entries: 1,
             log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
             presets: std::collections::HashMap::new(),
             smart_preprocessor: None,
         };
@@ -3531,6 +3607,9 @@ mod cli_tests {
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
             presets: HashMap::new(),
             smart_preprocessor: None,
         };
@@ -3595,6 +3674,9 @@ mod cli_tests {
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
             presets: HashMap::from([("fast".into(), AiPresetConfig::default())]),
             smart_preprocessor: None,
         };
@@ -3675,6 +3757,9 @@ mod cli_tests {
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
             presets: HashMap::new(),
             smart_preprocessor: None,
         };
@@ -3763,6 +3848,9 @@ mod cli_tests {
             history_dir: PathBuf::from("/tmp/ai-history-test"),
             history_max_entries: 500,
             log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
             presets: std::collections::HashMap::new(),
             smart_preprocessor: None,
         };

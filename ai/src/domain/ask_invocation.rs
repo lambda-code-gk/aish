@@ -28,6 +28,7 @@ pub fn is_known_cli_head(word: &str) -> bool {
             | "ping"
             | "smart"
             | "complete"
+            | "recall"
             | "goal"
             | "now"
             | "idea"

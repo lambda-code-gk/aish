@@ -10,6 +10,7 @@ use clap_complete::{generate, shells::Bash, shells::Zsh, CompleteEnv};
 
 use crate::adapters::outbound::{
     complete_preset, complete_profile, complete_session, complete_tools_token,
+    recall_env_snippet_for_shell, recall_hook_for_shell,
 };
 use crate::domain::is_known_cli_head;
 use crate::domain::OutputFormat;
@@ -36,6 +37,14 @@ impl From<OutputFormatArg> for OutputFormat {
 pub enum CompleteShell {
     Bash,
     Zsh,
+}
+
+#[derive(Subcommand)]
+pub enum RecallCommand {
+    /// Print the next suggested shell command and advance the recall cursor
+    Next,
+    /// Print the previous suggested shell command and move the recall cursor backward
+    Prev,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -199,6 +208,11 @@ pub enum AiCommand {
     Complete {
         #[arg(value_enum)]
         shell: CompleteShell,
+    },
+    /// Insert the next suggested shell command for the current shell prompt
+    Recall {
+        #[command(subcommand)]
+        command: RecallCommand,
     },
     /// Manage project goal (contextual memory)
     Goal {
@@ -463,9 +477,19 @@ impl AiCli {
 
     pub fn run_complete(shell: CompleteShell) -> io::Result<()> {
         let mut cmd = command_for_shell_completion();
+        let shell_name = match shell {
+            CompleteShell::Bash => "bash",
+            CompleteShell::Zsh => "zsh",
+        };
         match shell {
             CompleteShell::Bash => generate(Bash, &mut cmd, "ai", &mut io::stdout()),
             CompleteShell::Zsh => generate(Zsh, &mut cmd, "ai", &mut io::stdout()),
+        }
+        if let Some(env) = recall_env_snippet_for_shell(shell_name) {
+            print!("{env}");
+        }
+        if let Some(hook) = recall_hook_for_shell(shell_name) {
+            print!("{hook}");
         }
         Ok(())
     }

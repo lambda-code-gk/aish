@@ -9,6 +9,18 @@ if command -v ai >/dev/null 2>&1; then eval "$(ai complete bash)"; fi
 if command -v aibe >/dev/null 2>&1; then eval "$(aibe complete bash)"; fi
 "#;
 
+const BASH_RECALL_ENV_SNIPPET: &str = r#"
+_ai_recall_export_env() {
+  local sid="${AI_SESSION_ID:-}"
+  [[ -n "$sid" ]] || return 0
+  local home="${HOME:-/tmp}"
+  export AI_SUGGESTION_CACHE="${home}/.local/share/ai/suggestions/${sid}.json"
+  export AI_SUGGESTED_COMMAND_RECALL="${AI_SUGGESTED_COMMAND_RECALL:-1}"
+  export AI_SUGGESTED_COMMAND_RECALL_HINT="${AI_SUGGESTED_COMMAND_RECALL_HINT:-1}"
+}
+_ai_recall_export_env
+"#;
+
 const BASH_REPLAY_SNIPPET: &str = r#"
 _aish_json_escape() {
   local s=$1
@@ -57,6 +69,8 @@ const ZSH_SNIPPET: &str = r#"if command -v aish >/dev/null 2>&1; then eval "$(ai
 if command -v ai >/dev/null 2>&1; then eval "$(ai complete zsh)"; fi
 if command -v aibe >/dev/null 2>&1; then eval "$(aibe complete zsh)"; fi
 "#;
+
+const ZSH_RECALL_ENV_SNIPPET: &str = BASH_RECALL_ENV_SNIPPET;
 
 const ZSH_REPLAY_SNIPPET: &str = r#"
 _aish_json_escape() {
@@ -164,6 +178,7 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
         ));
     }
     body.push_str(BASH_SNIPPET);
+    body.push_str(BASH_RECALL_ENV_SNIPPET);
     body.push_str(BASH_REPLAY_SNIPPET);
     fs::write(dst, body)
 }
@@ -178,6 +193,7 @@ fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
         ));
     }
     body.push_str(ZSH_SNIPPET);
+    body.push_str(ZSH_RECALL_ENV_SNIPPET);
     body.push_str(ZSH_REPLAY_SNIPPET);
     fs::write(dst, body)
 }
@@ -205,6 +221,7 @@ mod tests {
         write_bash_wrapper(&rc, Path::new("/nonexistent/.bashrc")).expect("write");
         let content = fs::read_to_string(rc).expect("read");
         assert!(content.contains("aish complete bash"));
+        assert!(content.contains("AI_SUGGESTION_CACHE"));
     }
 
     #[test]

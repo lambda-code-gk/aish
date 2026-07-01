@@ -28,6 +28,9 @@ pub struct AiConfig {
     pub history_dir: PathBuf,
     pub history_max_entries: usize,
     pub log_tail_bytes: Option<usize>,
+    pub suggested_command_recall: bool,
+    pub suggested_command_recall_hint: bool,
+    pub suggested_command_recall_max_items: usize,
     pub presets: HashMap<String, AiPresetConfig>,
     pub smart_preprocessor: Option<SmartPreprocessorConfig>,
 }
@@ -78,6 +81,9 @@ impl AiConfig {
             history_dir: Self::default_history_dir(),
             history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
             log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
             presets: HashMap::new(),
             smart_preprocessor: None,
         };
@@ -107,6 +113,15 @@ impl AiConfig {
                         cfg.ask_filter = ask.filter.filter(|s| !s.is_empty());
                         cfg.ask_console_hints = ask.console_hints;
                         cfg.ask_progress = ask.progress;
+                        if let Some(enabled) = ask.suggested_command_recall {
+                            cfg.suggested_command_recall = enabled;
+                        }
+                        if let Some(hint) = ask.suggested_command_recall_hint {
+                            cfg.suggested_command_recall_hint = hint;
+                        }
+                        if let Some(max_items) = ask.suggested_command_recall_max_items {
+                            cfg.suggested_command_recall_max_items = max_items;
+                        }
                     }
                     cfg.shell_log_mode = file.shell_log_mode.filter(|s| !s.is_empty());
                     if let Some(history_dir) = file.history_dir {
@@ -246,6 +261,9 @@ struct AskSection {
     filter: Option<String>,
     console_hints: Option<bool>,
     progress: Option<bool>,
+    suggested_command_recall: Option<bool>,
+    suggested_command_recall_hint: Option<bool>,
+    suggested_command_recall_max_items: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
