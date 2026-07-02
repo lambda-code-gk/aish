@@ -48,7 +48,7 @@
 | 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装済み） | Smart Preprocessor observation の read-only stats/recent/report CLI |
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
-| 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装中・Phase 1 完了） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
+| 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装中・Phase 1–2 完了） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
 
 ### 状態ラベルの意味
 
@@ -122,7 +122,7 @@
 | 0053 | [0053_ai-suggested-command-recall-implementation-spec.md](done/0053_ai-suggested-command-recall-implementation-spec.md) | 実装済み | `ai` 提案コマンド再呼び出し（設計: [0053](spec/0053_ai-suggested-command-recall-spec.md)） |
 | 0054 | [0054_safe-file-write-tools-implementation-spec.md](tasks/0054_safe-file-write-tools-implementation-spec.md) | 進行中（Phase 1–9） | Safe File Write Tools マスター（設計: [0054](spec/0054_safe-file-write-tools-spec.md)） |
 | 0054 | [0054_safe-file-write-tools-phase1-implementation-spec.md](tasks/0054_safe-file-write-tools-phase1-implementation-spec.md) | 実装済み（Phase 1） | protocol / name / config / DTO |
-| 0054 | [0054_safe-file-write-tools-phase2-implementation-spec.md](tasks/0054_safe-file-write-tools-phase2-implementation-spec.md) | 未着手（Phase 2） | safe_path / SHA-256 / read_file 移行 |
+| 0054 | [0054_safe-file-write-tools-phase2-implementation-spec.md](tasks/0054_safe-file-write-tools-phase2-implementation-spec.md) | 実装済み（Phase 2） | safe_path / SHA-256 / read_file 移行 |
 | 0054 | [0054_safe-file-write-tools-phase3-implementation-spec.md](tasks/0054_safe-file-write-tools-phase3-implementation-spec.md) | 未着手（Phase 3） | read_file metadata |
 | 0054 | [0054_safe-file-write-tools-phase4-implementation-spec.md](tasks/0054_safe-file-write-tools-phase4-implementation-spec.md) | 未着手（Phase 4） | diff / atomic / journal |
 | 0054 | [0054_safe-file-write-tools-phase5-implementation-spec.md](tasks/0054_safe-file-write-tools-phase5-implementation-spec.md) | 未着手（Phase 5） | FileChangeService / approval gate |

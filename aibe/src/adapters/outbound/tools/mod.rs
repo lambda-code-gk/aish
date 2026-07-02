@@ -6,6 +6,7 @@ mod grep;
 mod list_dir;
 mod read_file;
 mod registry;
+mod safe_path;
 mod shell_exec;
 mod subprocess;
 mod tool_output;
@@ -17,6 +18,7 @@ pub use grep::GrepTool;
 pub use list_dir::ListDirTool;
 pub use read_file::ReadFileTool;
 pub use registry::DefaultToolRegistry;
+pub use safe_path::{ReadPathPolicy, SafePathError, WritePathPolicy};
 pub use shell_exec::ShellExecTool;
 
 use std::sync::Arc;

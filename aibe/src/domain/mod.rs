@@ -6,6 +6,7 @@ mod client_cwd;
 mod client_tool_names;
 mod contextual_memory;
 mod feature_registry;
+mod file_text;
 mod llm_step;
 mod memory_kind_registry;
 mod memory_recipe;
@@ -41,6 +42,10 @@ pub use feature_registry::{
     actions_equivalent, baseline_feature_registry, feature_action_schema_prompt,
     EffectiveFeatureMode, FeatureDefinition, FeatureEligibilityContext, FeaturePackConfig,
     FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
+};
+pub use file_text::{
+    check_file_size, detect_line_ending, reject_mixed_line_endings, sha256_hex,
+    validate_utf8_bytes, FileTextError, LineEnding,
 };
 pub use llm_step::LlmStepResult;
 pub(crate) use memory_kind_registry::parse_kinds_toml_str;

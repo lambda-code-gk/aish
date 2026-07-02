@@ -24,6 +24,7 @@ tracing = { workspace = true }
 regex = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 ai = { path = "../ai" }

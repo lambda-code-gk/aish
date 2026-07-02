@@ -1,18 +1,22 @@
 // RED stubs for 0054 Safe File Write Tools.
 // Removed from #[ignore] when the corresponding phase lands.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aibe::adapters::outbound::tools::DefaultToolRegistry;
-use aibe::domain::{Capability, ToolName};
+use aibe::adapters::outbound::tools::{DefaultToolRegistry, ReadPathPolicy, WritePathPolicy};
+use aibe::domain::{
+    check_file_size, detect_line_ending, sha256_hex, validate_utf8_bytes, Capability, ClientCwd,
+    FileTextError, LineEnding, ToolName,
+};
 use aibe::ports::outbound::{
-    FileWriteApprovalMode, FileWriteConfig, ToolExecutor, ToolsConfig, DEFAULT_JOURNAL_MAX_BYTES,
-    DEFAULT_JOURNAL_RETENTION_DAYS, DEFAULT_MAX_FILE_WRITE_BYTES, DEFAULT_MAX_PATCH_BYTES,
-    DEFAULT_MAX_PREVIEW_BYTES,
+    FileWriteApprovalMode, FileWriteConfig, ReadFileConfig, ToolExecutionContext, ToolExecutor,
+    ToolsConfig, DEFAULT_JOURNAL_MAX_BYTES, DEFAULT_JOURNAL_RETENTION_DAYS,
+    DEFAULT_MAX_FILE_WRITE_BYTES, DEFAULT_MAX_PATCH_BYTES, DEFAULT_MAX_PREVIEW_BYTES,
 };
 use async_trait::async_trait;
 use serde_json::Value;
+use tempfile::tempdir;
 
 #[test]
 fn file_write_capability_roundtrip() {
@@ -97,63 +101,165 @@ fn tool_registry_rejects_duplicate_tool_name() {
 }
 
 #[test]
-#[ignore = "0054 phase 2: file_size_limit"]
 fn file_size_limit_enforced() {
-    panic!("0054 not implemented");
+    assert!(check_file_size(1024, 1024).is_ok());
+    assert_eq!(
+        check_file_size(1025, 1024),
+        Err(FileTextError::FileTooLarge)
+    );
 }
 
 #[test]
-#[ignore = "0054 phase 2: line_ending_detection"]
 fn line_ending_detection_covers_all_kinds() {
-    panic!("0054 not implemented");
+    assert_eq!(detect_line_ending("a\nb\n"), LineEnding::Lf);
+    assert_eq!(detect_line_ending("a\r\nb\r\n"), LineEnding::Crlf);
+    assert_eq!(detect_line_ending("plain"), LineEnding::None);
+    assert_eq!(detect_line_ending("a\nb\r\nc"), LineEnding::Mixed);
+}
+
+#[tokio::test]
+async fn read_file_uses_shared_safe_path_resolver() {
+    let dir = tempdir().expect("tempdir");
+    let allowed = dir.path().join("allowed");
+    std::fs::create_dir_all(&allowed).expect("mkdir");
+    std::fs::write(allowed.join("note.txt"), "shared resolver").expect("write");
+
+    let policy = ReadPathPolicy::new(vec![allowed.clone()]);
+    let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
+    let via_policy = policy
+        .resolve_read_path(&ctx, Path::new("allowed/note.txt"))
+        .await
+        .expect("policy resolve");
+
+    let tool = aibe::adapters::outbound::tools::ReadFileTool::new(
+        ReadFileConfig {
+            allowed_roots: vec![allowed],
+        },
+        4096,
+    );
+    let args = serde_json::json!({ "path": "allowed/note.txt" });
+    let (_record, result) = tool.execute("tc-read", &args, 5000, &ctx).await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(result.content, "shared resolver");
+    assert_eq!(
+        via_policy,
+        dir.path()
+            .join("allowed/note.txt")
+            .canonicalize()
+            .expect("canon")
+    );
+}
+
+#[tokio::test]
+async fn write_roots_are_independent_from_read_roots() {
+    let dir = tempdir().expect("tempdir");
+    let read_root = dir.path().join("read_area");
+    let write_root = dir.path().join("write_area");
+    std::fs::create_dir_all(&read_root).expect("mkdir read");
+    std::fs::create_dir_all(&write_root).expect("mkdir write");
+    std::fs::write(read_root.join("only_read.txt"), "secret").expect("write");
+
+    let read_policy = ReadPathPolicy::new(vec![read_root]);
+    let write_policy = WritePathPolicy::new(vec![write_root]);
+    let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
+
+    read_policy
+        .resolve_read_path(&ctx, Path::new("read_area/only_read.txt"))
+        .await
+        .expect("read should allow read root");
+
+    let write_err = write_policy
+        .resolve_write_path(&ctx, Path::new("read_area/only_read.txt"))
+        .await
+        .expect_err("write must not reuse read roots");
+    assert_eq!(write_err.code, "path_not_allowed");
 }
 
 #[test]
-#[ignore = "0054 phase 2: read_file_uses_safe_path"]
-fn read_file_uses_shared_safe_path_resolver() {
-    panic!("0054 not implemented");
-}
-
-#[test]
-#[ignore = "0054 phase 2: read_write_roots_independent"]
-fn write_roots_are_independent_from_read_roots() {
-    panic!("0054 not implemented");
-}
-
-#[test]
-#[ignore = "0054 phase 2: sha256_file_hash"]
 fn sha256_hashes_file_bytes() {
-    panic!("0054 not implemented");
+    assert_eq!(
+        sha256_hex(b"hello"),
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+    assert_eq!(sha256_hex(b""), sha256_hex(&[]));
+    assert_eq!(sha256_hex(b"abc").len(), 64);
 }
 
 #[test]
-#[ignore = "0054 phase 2: text_validation_binary"]
 fn text_validation_rejects_binary_and_invalid_utf8() {
-    panic!("0054 not implemented");
+    assert!(validate_utf8_bytes(b"text").is_ok());
+    assert_eq!(
+        validate_utf8_bytes(&[0xff, 0xfe, 0x00]),
+        Err(FileTextError::BinaryFileNotSupported)
+    );
+    assert_eq!(
+        validate_utf8_bytes(&[0xff, 0xfe]),
+        Err(FileTextError::InvalidUtf8)
+    );
+}
+
+#[tokio::test]
+async fn write_path_resolves_under_allowed_roots() {
+    let dir = tempdir().expect("tempdir");
+    let write_root = dir.path().join("writable");
+    std::fs::create_dir_all(&write_root).expect("mkdir");
+    std::fs::write(write_root.join("note.txt"), "ok").expect("write");
+
+    let policy = WritePathPolicy::new(vec![write_root.clone()]);
+    let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
+    let got = policy
+        .resolve_write_path(&ctx, Path::new("writable/note.txt"))
+        .await
+        .expect("resolve");
+    assert_eq!(
+        got,
+        write_root.join("note.txt").canonicalize().expect("canon")
+    );
 }
 
 #[test]
-#[ignore = "0054 phase 2: write_path_allowed_roots"]
-fn write_path_resolves_under_allowed_roots() {
-    panic!("0054 not implemented");
-}
-
-#[test]
-#[ignore = "0054 phase 2: write_path_rejects_parent"]
 fn write_path_rejects_parent_components() {
-    panic!("0054 not implemented");
+    let err = WritePathPolicy::validate_path_string("../outside").unwrap_err();
+    assert_eq!(err.code, "path_not_allowed");
+    assert!(err.message.contains("'..'"));
 }
 
-#[test]
-#[ignore = "0054 phase 2: write_path_rejects_special_files"]
-fn write_path_rejects_special_files() {
-    panic!("0054 not implemented");
+#[cfg(unix)]
+#[tokio::test]
+async fn write_path_rejects_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let base = tempdir().expect("base");
+    let outside = tempdir().expect("outside");
+    std::fs::write(outside.path().join("secret.txt"), "secret").expect("write");
+    symlink(outside.path(), base.path().join("link")).expect("symlink");
+
+    let policy = WritePathPolicy::new(vec![base.path().to_path_buf()]);
+    let ctx = ToolExecutionContext::new(ClientCwd::new(base.path().to_path_buf()).expect("cwd"));
+    let err = policy
+        .resolve_write_path(&ctx, Path::new("link/secret.txt"))
+        .await
+        .expect_err("symlink");
+    assert_eq!(err.code, "symlink_not_allowed");
 }
 
-#[test]
-#[ignore = "0054 phase 2: write_path_rejects_symlink"]
-fn write_path_rejects_symlinks() {
-    panic!("0054 not implemented");
+#[cfg(unix)]
+#[tokio::test]
+async fn write_path_rejects_special_files() {
+    let dir = tempdir().expect("tempdir");
+    let fifo = dir.path().join("pipe");
+    std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo");
+
+    let policy = WritePathPolicy::new(vec![dir.path().to_path_buf()]);
+    let ctx = ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"));
+    let err = policy
+        .resolve_write_path(&ctx, Path::new("pipe"))
+        .await
+        .expect_err("fifo");
+    assert_eq!(err.code, "unsupported_file_type");
 }
 
 #[test]

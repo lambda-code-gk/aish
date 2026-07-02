@@ -1,6 +1,6 @@
 //! `read_file` ツール。
 
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -11,34 +11,20 @@ use tokio::time::timeout;
 use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
 use crate::ports::outbound::{ReadFileConfig, ToolExecutionContext, ToolExecutor};
 
+use super::safe_path::ReadPathPolicy;
 use super::tool_output::limit_tool_output;
 
 pub struct ReadFileTool {
-    config: ReadFileConfig,
+    path_policy: ReadPathPolicy,
     max_output_bytes: usize,
 }
 
 impl ReadFileTool {
     pub fn new(config: ReadFileConfig, max_output_bytes: usize) -> Self {
         Self {
-            config,
+            path_policy: ReadPathPolicy::from_config(&config),
             max_output_bytes,
         }
-    }
-
-    fn resolve_allowed_roots(&self, ctx: &ToolExecutionContext) -> Vec<PathBuf> {
-        self.config
-            .allowed_roots
-            .iter()
-            .map(|p| {
-                let root = if p == Path::new(".") {
-                    ctx.base_dir().to_path_buf()
-                } else {
-                    expand_home_path(p)
-                };
-                root.canonicalize().unwrap_or(root)
-            })
-            .collect()
     }
 
     fn slice_lines(content: &str, offset: Option<u32>, limit: Option<u32>) -> String {
@@ -54,37 +40,16 @@ impl ReadFileTool {
         lines[start..end].join("\n")
     }
 
-    async fn read_within_roots(
-        roots: &[PathBuf],
-        path: &Path,
+    async fn read_canonical(
+        canonical: &Path,
         offset: Option<u32>,
         limit: Option<u32>,
     ) -> Result<String, String> {
-        let canonical = tokio::fs::canonicalize(path)
-            .await
-            .map_err(|e| e.to_string())?;
-        if !roots.iter().any(|root| canonical.starts_with(root)) {
-            return Err("path is outside allowed_roots".to_string());
-        }
-        let content = tokio::fs::read_to_string(&canonical)
+        let content = tokio::fs::read_to_string(canonical)
             .await
             .map_err(|e| e.to_string())?;
         Ok(Self::slice_lines(&content, offset, limit))
     }
-}
-
-fn expand_home_path(path: &Path) -> PathBuf {
-    if let Some(s) = path.to_str() {
-        if let Some(rest) = s.strip_prefix("~/") {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            return PathBuf::from(home).join(rest);
-        }
-    }
-    path.to_path_buf()
-}
-
-fn path_has_parent_traversal(path: &Path) -> bool {
-    path.components().any(|c| matches!(c, Component::ParentDir))
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,32 +114,53 @@ impl ToolExecutor for ReadFileTool {
             );
         }
 
-        let path = PathBuf::from(&parsed.path);
-        if path_has_parent_traversal(&path) {
-            let msg = "path must not contain '..'";
-            return (
-                ExecutedToolCall::err(id.clone(), self.name(), args_value, "path_not_allowed", msg),
-                ToolResult {
-                    tool_call_id: id,
-                    content: msg.to_string(),
-                    is_error: true,
-                },
-            );
-        }
+        let path = match ReadPathPolicy::validate_path_string(&parsed.path) {
+            Ok(path) => path,
+            Err(err) => {
+                return (
+                    ExecutedToolCall::err(
+                        id.clone(),
+                        self.name(),
+                        args_value,
+                        err.code,
+                        &err.message,
+                    ),
+                    ToolResult {
+                        tool_call_id: id,
+                        content: err.message,
+                        is_error: true,
+                    },
+                );
+            }
+        };
 
-        let roots = self.resolve_allowed_roots(ctx);
-        let read_path = ctx.resolve_path(&path);
         let offset = parsed.offset;
         let limit = parsed.limit;
         let max_output_bytes = self.max_output_bytes;
         let duration = Duration::from_millis(timeout_ms.max(1));
 
-        match timeout(
-            duration,
-            Self::read_within_roots(&roots, &read_path, offset, limit),
-        )
-        .await
-        {
+        let resolve = self.path_policy.resolve_read_path(ctx, &path).await;
+        let canonical = match resolve {
+            Ok(path) => path,
+            Err(err) => {
+                return (
+                    ExecutedToolCall::err(
+                        id.clone(),
+                        self.name(),
+                        args_value,
+                        err.code,
+                        &err.message,
+                    ),
+                    ToolResult {
+                        tool_call_id: id,
+                        content: err.message,
+                        is_error: true,
+                    },
+                );
+            }
+        };
+
+        match timeout(duration, Self::read_canonical(&canonical, offset, limit)).await {
             Ok(Ok(text)) => {
                 let limited = limit_tool_output(&text, max_output_bytes);
                 (
@@ -187,13 +173,9 @@ impl ToolExecutor for ReadFileTool {
                 )
             }
             Ok(Err(e)) => {
-                let (code, msg) = if e == "path is outside allowed_roots" {
-                    ("path_not_allowed", e)
-                } else {
-                    ("read_failed", format!("read failed: {e}"))
-                };
+                let msg = format!("read failed: {e}");
                 (
-                    ExecutedToolCall::err(id.clone(), self.name(), args_value, code, &msg),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "read_failed", &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg,
@@ -221,6 +203,7 @@ mod tests {
     use super::*;
     use crate::ports::outbound::ReadFileConfig;
     use serde_json::json;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[tokio::test]

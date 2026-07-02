@@ -1445,7 +1445,7 @@ id = "write_path_allowed_roots"
 description = "write root 内の相対 path が解決される"
 test = "write_path_resolves_under_allowed_roots"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1454,7 +1454,7 @@ id = "write_path_rejects_parent"
 description = ".. を拒否"
 test = "write_path_rejects_parent_components"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1463,7 +1463,7 @@ id = "write_path_rejects_symlink"
 description = "target / parent symlink を拒否"
 test = "write_path_rejects_symlinks"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1472,7 +1472,7 @@ id = "write_path_rejects_special_files"
 description = "FIFO / socket / device を拒否"
 test = "write_path_rejects_special_files"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1481,7 +1481,7 @@ id = "read_file_uses_safe_path"
 description = "read_file が共通 resolver（read policy）を使う"
 test = "read_file_uses_shared_safe_path_resolver"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1490,7 +1490,7 @@ id = "read_write_roots_independent"
 description = "read roots を write に流用しない"
 test = "write_roots_are_independent_from_read_roots"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1499,7 +1499,7 @@ id = "sha256_file_hash"
 description = "ファイル全体 SHA-256（lower hex）"
 test = "sha256_hashes_file_bytes"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1508,7 +1508,7 @@ id = "text_validation_binary"
 description = "binary / invalid UTF-8 を拒否"
 test = "text_validation_rejects_binary_and_invalid_utf8"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1517,7 +1517,7 @@ id = "line_ending_detection"
 description = "lf / crlf / none / mixed を判定"
 test = "line_ending_detection_covers_all_kinds"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1526,7 +1526,7 @@ id = "file_size_limit"
 description = "上限超過で file_too_large"
 test = "file_size_limit_enforced"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
