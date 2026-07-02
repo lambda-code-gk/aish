@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::executed_tool::ExecutedToolCall;
+use crate::executed_tool::{ExecutedToolCall, ToolRiskClass};
 use crate::memory::{
     MemoryApplyStatus, MemoryChangeEventDto, MemoryEntryDto, MemoryKindDefinitionDto,
     MemoryQueryDto, MemoryQueryStatus, MemoryRecipeProposalDto, MemoryRecipeStatus,
@@ -46,6 +46,18 @@ pub enum ClientResponse {
         tool_call_id: String,
         command: String,
         args: Vec<String>,
+    },
+    /// write-like tool 実行前にクライアントへ yes/no を求める。
+    ToolApprovalPrompt {
+        id: String,
+        turn_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        risk_class: ToolRiskClass,
+        summary: String,
+        paths: Vec<String>,
+        preview: String,
+        preview_truncated: bool,
     },
     ClientToolCallRequested {
         id: String,

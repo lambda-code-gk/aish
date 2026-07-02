@@ -23,6 +23,17 @@ pub const DEFAULT_MAX_GREP_MATCHES: usize = 5_000;
 /// `grep` が 1 ファイルあたり読むバイトの既定上限。
 pub const DEFAULT_MAX_GREP_FILE_BYTES: usize = 1_048_576;
 
+/// `write_file` / `apply_patch` の既定ファイルサイズ上限（バイト）。
+pub const DEFAULT_MAX_FILE_WRITE_BYTES: usize = 1_048_576;
+/// `apply_patch` の既定 patch サイズ上限（バイト）。
+pub const DEFAULT_MAX_PATCH_BYTES: usize = 1_048_576;
+/// 承認 UI 向け diff preview の既定上限（バイト）。
+pub const DEFAULT_MAX_PREVIEW_BYTES: usize = 32_768;
+/// rollback journal の既定保持日数。
+pub const DEFAULT_JOURNAL_RETENTION_DAYS: u32 = 7;
+/// rollback journal の既定容量上限（バイト）。
+pub const DEFAULT_JOURNAL_MAX_BYTES: u64 = 268_435_456;
+
 /// `[[external_commands]]` — `shell_exec` 用の起動テンプレート（first-class tool ではない）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalCommandConfig {
@@ -155,6 +166,7 @@ pub struct ToolsConfig {
     pub termination_strategy: TerminationStrategy,
     pub shell_exec: ShellExecConfig,
     pub read_file: ReadFileConfig,
+    pub file_write: FileWriteConfig,
     pub explore: ExploreLimitsConfig,
 }
 
@@ -227,6 +239,60 @@ pub struct ReadFileConfig {
     pub allowed_roots: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FileWriteApprovalMode {
+    Never,
+    #[default]
+    Ask,
+    Always,
+}
+
+impl FileWriteApprovalMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "never" => Some(Self::Never),
+            "ask" => Some(Self::Ask),
+            "always" => Some(Self::Always),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Ask => "ask",
+            Self::Always => "always",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileWriteConfig {
+    pub enabled: bool,
+    pub allowed_roots: Vec<PathBuf>,
+    pub approval: FileWriteApprovalMode,
+    pub max_file_bytes: usize,
+    pub max_patch_bytes: usize,
+    pub max_preview_bytes: usize,
+    pub journal_retention_days: u32,
+    pub journal_max_bytes: u64,
+}
+
+impl Default for FileWriteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allowed_roots: vec![PathBuf::from(".")],
+            approval: FileWriteApprovalMode::Ask,
+            max_file_bytes: DEFAULT_MAX_FILE_WRITE_BYTES,
+            max_patch_bytes: DEFAULT_MAX_PATCH_BYTES,
+            max_preview_bytes: DEFAULT_MAX_PREVIEW_BYTES,
+            journal_retention_days: DEFAULT_JOURNAL_RETENTION_DAYS,
+            journal_max_bytes: DEFAULT_JOURNAL_MAX_BYTES,
+        }
+    }
+}
+
 impl ToolsConfig {
     /// 1 `agent_turn` あたりの LLM↔tool ループ上限。
     ///
@@ -253,6 +319,7 @@ impl Default for ToolsConfig {
             read_file: ReadFileConfig {
                 allowed_roots: vec![PathBuf::from(".")],
             },
+            file_write: FileWriteConfig::default(),
             explore: ExploreLimitsConfig::default(),
         }
     }

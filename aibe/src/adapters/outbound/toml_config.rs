@@ -487,6 +487,39 @@ fn parse_tools(file: Option<&FileConfig>) -> Result<ToolsConfig, ConfigError> {
                 tools.read_file.allowed_roots = roots.into_iter().map(expand_home).collect();
             }
         }
+        if let Some(fw) = t.file_write.as_ref() {
+            if let Some(enabled) = fw.enabled {
+                tools.file_write.enabled = enabled;
+            }
+            if let Some(roots) = fw.allowed_roots.clone() {
+                tools.file_write.allowed_roots = roots.into_iter().map(expand_home).collect();
+            }
+            if let Some(mode) = fw.approval.as_deref() {
+                match crate::ports::outbound::FileWriteApprovalMode::parse(mode) {
+                    Some(parsed) => tools.file_write.approval = parsed,
+                    None => {
+                        return Err(ConfigError::Invalid(format!(
+                            "[tools.file_write] approval must be never, ask, or always (got {mode:?})"
+                        )));
+                    }
+                }
+            }
+            if let Some(n) = fw.max_file_bytes {
+                tools.file_write.max_file_bytes = n;
+            }
+            if let Some(n) = fw.max_patch_bytes {
+                tools.file_write.max_patch_bytes = n;
+            }
+            if let Some(n) = fw.max_preview_bytes {
+                tools.file_write.max_preview_bytes = n;
+            }
+            if let Some(n) = fw.journal_retention_days {
+                tools.file_write.journal_retention_days = n;
+            }
+            if let Some(n) = fw.journal_max_bytes {
+                tools.file_write.journal_max_bytes = n;
+            }
+        }
         if let Some(s) = t.termination_strategy.as_deref() {
             if let Some(strategy) = crate::ports::outbound::TerminationStrategy::parse(s) {
                 tools.termination_strategy = strategy;
@@ -658,6 +691,7 @@ struct ToolsSection {
     termination_strategy: Option<String>,
     shell_exec: Option<ShellExecSection>,
     read_file: Option<ReadFileSection>,
+    file_write: Option<FileWriteSection>,
     explore: Option<ExploreSection>,
 }
 
@@ -688,6 +722,18 @@ struct AutoApprovePatternsSection {
 #[derive(Debug, Deserialize)]
 struct ReadFileSection {
     allowed_roots: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileWriteSection {
+    enabled: Option<bool>,
+    allowed_roots: Option<Vec<String>>,
+    approval: Option<String>,
+    max_file_bytes: Option<usize>,
+    max_patch_bytes: Option<usize>,
+    max_preview_bytes: Option<usize>,
+    journal_retention_days: Option<u32>,
+    journal_max_bytes: Option<u64>,
 }
 
 #[cfg(test)]

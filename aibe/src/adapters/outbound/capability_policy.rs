@@ -34,6 +34,7 @@ impl StaticCapabilityPolicy {
                 Capability::AgentAsk,
                 Capability::ShellPropose,
                 Capability::ShellExecute,
+                Capability::FileWrite,
             ],
         ))
     }
@@ -96,6 +97,7 @@ mod tests {
             Capability::AgentAsk,
             Capability::ShellPropose,
             Capability::ShellExecute,
+            Capability::FileWrite,
         ] {
             assert!(policy.allows(cap), "local_full should allow {cap:?}");
         }

@@ -30,6 +30,7 @@ pub use memory_space::{
 pub use request::{
     ClientProvidedToolSpec, ClientRequest, ClientToolErrorKind, ClientToolResult,
     ClientToolResultStatus, ProtocolMessage, RequestContext, ShellExecApprovalOrigin,
+    ToolApprovalOrigin,
 };
 pub use request::{
     RouteTurnCliOverrides, RouteTurnConversation, RouteTurnPreprocessorHints, RouteTurnSession,
@@ -40,8 +41,9 @@ pub use response::{
 };
 pub use tool_name::{
     is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,
-    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, GIT_DIFF, GIT_STATUS,
-    GREP, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE, SHELL_EXEC,
+    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, APPLY_PATCH, GIT_DIFF,
+    GIT_STATUS, GREP, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE, SHELL_EXEC,
+    WRITE_FILE,
 };
 pub use work::{
     validate_work_id, validate_work_text, WorkApplyRequestBody, WorkApplyResponseBody,

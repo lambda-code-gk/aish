@@ -216,6 +216,11 @@ impl RequestService {
                 ErrorCode::InvalidRequest,
                 "shell_exec_approval must be sent during an active agent_turn",
             ),
+            ClientRequest::ToolApproval { .. } => ClientResponse::error(
+                String::new(),
+                ErrorCode::InvalidRequest,
+                "tool_approval must be sent during an active agent_turn",
+            ),
             ClientRequest::ClientToolResult(_) => ClientResponse::error(
                 String::new(),
                 ErrorCode::InvalidRequest,

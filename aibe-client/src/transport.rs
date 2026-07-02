@@ -199,6 +199,11 @@ pub fn agent_turn_with_client_tools_on_stream(
                 )
                 .map_err(ClientError::Connect)?;
             }
+            ClientResponse::ToolApprovalPrompt { .. } => {
+                return Err(ClientError::Unexpected(
+                    "tool_approval_prompt received but client has no handler".into(),
+                ));
+            }
             ClientResponse::ClientToolCallRequested {
                 id,
                 turn_id,

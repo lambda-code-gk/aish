@@ -30,12 +30,15 @@ pub use client_tool::{empty_tool_result, ClientToolGate};
 pub use command_policy::CommandPolicy;
 pub use config::{
     default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,
-    ConfigLoader, ExploreLimitsConfig, ExternalCommandConfig, LlmBackend, LlmGenerationParams,
-    LlmProfile, LlmProfilesConfig, LlmProviderKind, MemoryConfig, ProfileRegistry, ReadFileConfig,
-    RouterConfig, ShellExecApprovalMode, ShellExecAutoApprovePatterns, ShellExecConfig,
-    TerminationStrategy, ToolsConfig, DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
-    DEFAULT_MAX_GREP_FILES_SCANNED, DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_MATCHES,
-    DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_TOOL_OUTPUT_BYTES, MIN_MAX_TOOL_ROUNDS,
+    ConfigLoader, ExploreLimitsConfig, ExternalCommandConfig, FileWriteApprovalMode,
+    FileWriteConfig, LlmBackend, LlmGenerationParams, LlmProfile, LlmProfilesConfig,
+    LlmProviderKind, MemoryConfig, ProfileRegistry, ReadFileConfig, RouterConfig,
+    ShellExecApprovalMode, ShellExecAutoApprovePatterns, ShellExecConfig, TerminationStrategy,
+    ToolsConfig, DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS, DEFAULT_JOURNAL_MAX_BYTES,
+    DEFAULT_JOURNAL_RETENTION_DAYS, DEFAULT_MAX_FILE_WRITE_BYTES, DEFAULT_MAX_GREP_FILES_SCANNED,
+    DEFAULT_MAX_GREP_FILE_BYTES, DEFAULT_MAX_GREP_MATCHES, DEFAULT_MAX_LIST_ENTRIES,
+    DEFAULT_MAX_PATCH_BYTES, DEFAULT_MAX_PREVIEW_BYTES, DEFAULT_MAX_TOOL_OUTPUT_BYTES,
+    MIN_MAX_TOOL_ROUNDS,
 };
 pub use contextual_memory_store::{
     ContextualMemoryStore, ContextualMemoryStoreError, MemoryStoreContext,

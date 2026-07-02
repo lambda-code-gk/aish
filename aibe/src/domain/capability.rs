@@ -13,6 +13,7 @@ pub enum Capability {
     AgentAsk,
     ShellPropose,
     ShellExecute,
+    FileWrite,
 }
 
 impl Capability {
@@ -26,6 +27,23 @@ impl Capability {
             Self::AgentAsk => "agent:ask",
             Self::ShellPropose => "shell:propose",
             Self::ShellExecute => "shell:execute",
+            Self::FileWrite => "file:write",
+        }
+    }
+
+    /// wire 文字列から capability を解釈する。
+    pub fn parse_wire(s: &str) -> Option<Self> {
+        match s {
+            "memory:read" => Some(Self::MemoryRead),
+            "memory:write" => Some(Self::MemoryWrite),
+            "memory:archive" => Some(Self::MemoryArchive),
+            "memory:recipe_run" => Some(Self::MemoryRecipeRun),
+            "memory:subscribe" => Some(Self::MemorySubscribe),
+            "agent:ask" => Some(Self::AgentAsk),
+            "shell:propose" => Some(Self::ShellPropose),
+            "shell:execute" => Some(Self::ShellExecute),
+            "file:write" => Some(Self::FileWrite),
+            _ => None,
         }
     }
 }

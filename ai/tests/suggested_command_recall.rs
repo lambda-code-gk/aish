@@ -84,7 +84,11 @@ fn recall_cli_prev_prints_cached_command() {
         .args(["recall", "prev"])
         .output()
         .expect("run");
-    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "git add -A");
 }
 

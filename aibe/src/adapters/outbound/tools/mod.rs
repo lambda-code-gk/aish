@@ -21,7 +21,9 @@ pub use shell_exec::ShellExecTool;
 
 use std::sync::Arc;
 
-use crate::ports::outbound::{CommandPolicy, ExternalCommandConfig, ToolRegistry, ToolsConfig};
+use crate::ports::outbound::{
+    CommandPolicy, ExternalCommandConfig, ToolExecutor, ToolRegistry, ToolsConfig,
+};
 
 pub fn build_registry(
     tools_cfg: &ToolsConfig,
@@ -30,16 +32,19 @@ pub fn build_registry(
     let max_output = tool_output::clamp_max_tool_output_bytes(tools_cfg.max_tool_output_bytes);
     let policy: Arc<dyn CommandPolicy> =
         Arc::new(ConfigAllowlistPolicy::new(tools_cfg.shell_exec.clone()));
-    Arc::new(DefaultToolRegistry::new(
-        Arc::new(ShellExecTool::new(
-            policy,
-            max_output,
-            external_commands.to_vec(),
-        )),
-        Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
-        Arc::new(ListDirTool::new(max_output, tools_cfg.explore.clone())),
-        Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),
-        Arc::new(GitDiffTool::new(max_output)),
-        Arc::new(GitStatusTool::new(max_output)),
-    ))
+    Arc::new(
+        DefaultToolRegistry::from_executors([
+            Arc::new(ShellExecTool::new(
+                policy,
+                max_output,
+                external_commands.to_vec(),
+            )) as Arc<dyn ToolExecutor>,
+            Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
+            Arc::new(ListDirTool::new(max_output, tools_cfg.explore.clone())),
+            Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),
+            Arc::new(GitDiffTool::new(max_output)),
+            Arc::new(GitStatusTool::new(max_output)),
+        ])
+        .expect("built-in registry must have unique tool names"),
+    )
 }

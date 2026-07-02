@@ -14,7 +14,7 @@ pub use crate::domain::{
 };
 
 pub use crate::domain::{is_known_tool, KNOWN_TOOLS, READ_FILE};
-pub use crate::domain::{GIT_DIFF, GIT_STATUS, GREP, LIST_DIR};
+pub use crate::domain::{APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, WRITE_FILE};
 
 pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
     allowed
@@ -139,6 +139,42 @@ fn git_status_definition() -> ToolDefinition {
                     "description": "Optional path inside the repository"
                 }
             }
+        }),
+    }
+}
+
+#[allow(dead_code)]
+fn write_file_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: WRITE_FILE.to_string(),
+        description: "Create or replace a text file under configured write allowed roots."
+            .to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path relative to client cwd" },
+                "mode": { "type": "string", "enum": ["create", "replace"], "description": "create for new files, replace for existing" },
+                "content": { "type": "string", "description": "Full file content" },
+                "expected_sha256": { "type": "string", "description": "Required for replace: SHA-256 of current file bytes (lowercase hex)" }
+            },
+            "required": ["path", "mode", "content"]
+        }),
+    }
+}
+
+#[allow(dead_code)]
+fn apply_patch_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: APPLY_PATCH.to_string(),
+        description: "Apply a strict unified diff hunk to a single text file.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "File path relative to client cwd" },
+                "patch": { "type": "string", "description": "Strict unified diff hunk without file headers" },
+                "expected_sha256": { "type": "string", "description": "SHA-256 of current file bytes (lowercase hex); use empty string for absent file" }
+            },
+            "required": ["path", "patch", "expected_sha256"]
         }),
     }
 }

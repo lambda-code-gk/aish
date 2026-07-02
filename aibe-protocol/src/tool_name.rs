@@ -12,8 +12,19 @@ pub const LIST_DIR: &str = "list_dir";
 pub const GREP: &str = "grep";
 pub const GIT_DIFF: &str = "git_diff";
 pub const GIT_STATUS: &str = "git_status";
+pub const WRITE_FILE: &str = "write_file";
+pub const APPLY_PATCH: &str = "apply_patch";
 
-pub const KNOWN_TOOLS: &[&str] = &[SHELL_EXEC, READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
+pub const KNOWN_TOOLS: &[&str] = &[
+    SHELL_EXEC,
+    READ_FILE,
+    LIST_DIR,
+    GREP,
+    GIT_DIFF,
+    GIT_STATUS,
+    WRITE_FILE,
+    APPLY_PATCH,
+];
 
 /// `route_turn` advisory / `SetRecommendedTools` で許可する read-only tool。
 pub const READONLY_ADVISORY_TOOLS: &[&str] = &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
@@ -53,6 +64,14 @@ impl ToolName {
 
     pub fn git_status() -> Self {
         Self(GIT_STATUS.to_string())
+    }
+
+    pub fn write_file() -> Self {
+        Self(WRITE_FILE.to_string())
+    }
+
+    pub fn apply_patch() -> Self {
+        Self(APPLY_PATCH.to_string())
     }
 }
 

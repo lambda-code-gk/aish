@@ -31,9 +31,10 @@ use ai::application::{
     assistant_content_from_response, build_response_summary, build_summary, classify_from_raw_args,
     current_time_ms, ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
     list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
-    plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn, resolve_recall_gating,
-    HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, PreprocessorRunInput,
-    PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext, ShellLogMode, TurnCancelGuard,
+    plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn,
+    resolve_recall_gating, HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute,
+    PreprocessorRunInput, PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext,
+    ShellLogMode, TurnCancelGuard,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -1322,6 +1323,7 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         | ClientRequest::Ping { id }
         | ClientRequest::RouteTurn { id, .. }
         | ClientRequest::ShellExecApproval { id, .. }
+        | ClientRequest::ToolApproval { id, .. }
         | ClientRequest::CancelTurn { id, .. } => Ok(id.clone()),
         ClientRequest::MemoryApply(body) => Ok(body.id.clone()),
         ClientRequest::MemoryQuery(body) => Ok(body.id.clone()),
@@ -1506,6 +1508,7 @@ fn exit_code_for_response(
         | ClientResponse::AssistantStreaming { .. }
         | ClientResponse::RouteTurnResult { .. }
         | ClientResponse::ShellExecApprovalPrompt { .. }
+        | ClientResponse::ToolApprovalPrompt { .. }
         | ClientResponse::ClientToolCallRequested { .. }
         | ClientResponse::MemoryApplyResult { .. }
         | ClientResponse::MemoryQueryResult { .. }

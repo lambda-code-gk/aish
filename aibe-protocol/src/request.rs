@@ -49,6 +49,14 @@ pub enum ClientRequest {
         approved: bool,
         approval_origin: ShellExecApprovalOrigin,
     },
+    /// write-like tool 実行前承認の応答（同一 socket 接続上）。
+    ToolApproval {
+        id: String,
+        turn_id: String,
+        tool_call_id: String,
+        approved: bool,
+        approval_origin: ToolApprovalOrigin,
+    },
     /// `client_tool` 実行結果（同一 socket 接続上）。
     ClientToolResult(ClientToolResult),
     /// contextual memory の書き込み。
@@ -80,6 +88,14 @@ pub enum ShellExecApprovalOrigin {
     SessionCacheCommandName,
     PatternReadOnly,
     PatternMutating,
+}
+
+/// write-like tool 承認の provenance（v1: UI yes/no のみ）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolApprovalOrigin {
+    UiYes,
+    UiNo,
 }
 
 /// プロトコル上のメッセージ（serde 用）。
