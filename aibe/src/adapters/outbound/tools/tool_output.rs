@@ -34,6 +34,20 @@ pub fn limit_tool_output(content: &str, max_bytes: usize) -> String {
     )
 }
 
+/// metadata 行を先頭に残したまま本文のみ truncate する（設計 §8.1）。
+pub fn limit_tool_output_with_metadata(
+    metadata_line: &str,
+    body: &str,
+    max_bytes: usize,
+) -> String {
+    let prefix = format!("{metadata_line}\n");
+    if prefix.len() >= max_bytes {
+        return metadata_line.to_string();
+    }
+    let limited_body = limit_tool_output(body, max_bytes - prefix.len());
+    format!("{prefix}{limited_body}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

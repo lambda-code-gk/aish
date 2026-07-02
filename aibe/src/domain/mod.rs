@@ -44,8 +44,8 @@ pub use feature_registry::{
     FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
 };
 pub use file_text::{
-    check_file_size, detect_line_ending, reject_mixed_line_endings, sha256_hex,
-    validate_utf8_bytes, FileTextError, LineEnding,
+    check_file_size, detect_line_ending, has_trailing_newline, reject_mixed_line_endings,
+    sha256_hex, validate_utf8_bytes, FileTextError, LineEnding,
 };
 pub use llm_step::LlmStepResult;
 pub(crate) use memory_kind_registry::parse_kinds_toml_str;

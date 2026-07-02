@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aibe::adapters::outbound::tools::{DefaultToolRegistry, ReadPathPolicy, WritePathPolicy};
+use aibe::adapters::outbound::tools::{
+    DefaultToolRegistry, ReadFileTool, ReadPathPolicy, WritePathPolicy, FILE_METADATA_PREFIX,
+};
 use aibe::domain::{
     check_file_size, detect_line_ending, sha256_hex, validate_utf8_bytes, Capability, ClientCwd,
     FileTextError, LineEnding, ToolName,
@@ -262,34 +264,131 @@ async fn write_path_rejects_special_files() {
     assert_eq!(err.code, "unsupported_file_type");
 }
 
-#[test]
-#[ignore = "0054 phase 3: metadata_default_unchanged"]
-fn read_file_default_output_unchanged_without_metadata() {
-    panic!("0054 not implemented");
+fn read_file_tool(dir: &tempfile::TempDir, max_output_bytes: usize) -> ReadFileTool {
+    ReadFileTool::new(
+        ReadFileConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+        },
+        max_output_bytes,
+    )
 }
 
-#[test]
-#[ignore = "0054 phase 3: metadata_hash_full_file"]
-fn read_file_metadata_hash_covers_full_file() {
-    panic!("0054 not implemented");
+fn read_file_ctx(dir: &tempfile::TempDir) -> ToolExecutionContext {
+    ToolExecutionContext::new(ClientCwd::new(dir.path().to_path_buf()).expect("cwd"))
 }
 
-#[test]
-#[ignore = "0054 phase 3: metadata_includes_sha256"]
-fn read_file_metadata_includes_sha256() {
-    panic!("0054 not implemented");
+fn parse_metadata_line(output: &str) -> serde_json::Value {
+    let line = output.lines().next().expect("metadata line");
+    assert!(
+        line.starts_with(FILE_METADATA_PREFIX),
+        "expected metadata prefix, got: {line}"
+    );
+    let json = line
+        .strip_prefix(FILE_METADATA_PREFIX)
+        .expect("prefix")
+        .trim_start();
+    serde_json::from_str(json).expect("metadata json")
 }
 
-#[test]
-#[ignore = "0054 phase 3: metadata_line_endings"]
-fn read_file_metadata_reports_line_ending() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn read_file_default_output_unchanged_without_metadata() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("plain.txt"), "line one\nline two\n").expect("write");
+
+    let tool = read_file_tool(&dir, 4096);
+    let ctx = read_file_ctx(&dir);
+    let args = serde_json::json!({ "path": "plain.txt", "offset": 2, "limit": 1 });
+
+    let (_record, result) = tool.execute("tc-plain", &args, 5000, &ctx).await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(!result.content.starts_with(FILE_METADATA_PREFIX));
+    assert_eq!(result.content, "line two");
 }
 
-#[test]
-#[ignore = "0054 phase 3: metadata_survives_truncate"]
-fn read_file_metadata_survives_output_truncate() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn read_file_metadata_includes_sha256() {
+    let dir = tempdir().expect("tempdir");
+    let body = "alpha\nbeta\n";
+    std::fs::write(dir.path().join("hash.txt"), body).expect("write");
+
+    let tool = read_file_tool(&dir, 4096);
+    let ctx = read_file_ctx(&dir);
+    let args = serde_json::json!({ "path": "hash.txt", "include_metadata": true });
+
+    let (_record, result) = tool.execute("tc-hash", &args, 5000, &ctx).await;
+    assert!(!result.is_error, "{}", result.content);
+    let meta = parse_metadata_line(&result.content);
+    assert_eq!(meta["path"], "hash.txt");
+    assert_eq!(meta["sha256"], sha256_hex(body.as_bytes()));
+    assert_eq!(meta["size_bytes"], body.len());
+}
+
+#[tokio::test]
+async fn read_file_metadata_hash_covers_full_file() {
+    let dir = tempdir().expect("tempdir");
+    let body = "first\nsecond\nthird\n";
+    std::fs::write(dir.path().join("slice.txt"), body).expect("write");
+
+    let tool = read_file_tool(&dir, 4096);
+    let ctx = read_file_ctx(&dir);
+    let args = serde_json::json!({
+        "path": "slice.txt",
+        "offset": 2,
+        "limit": 1,
+        "include_metadata": true
+    });
+
+    let (_record, result) = tool.execute("tc-slice", &args, 5000, &ctx).await;
+    assert!(!result.is_error, "{}", result.content);
+    let meta = parse_metadata_line(&result.content);
+    assert_eq!(meta["sha256"], sha256_hex(body.as_bytes()));
+    let body_only = result
+        .content
+        .split_once('\n')
+        .map(|(_, tail)| tail)
+        .expect("body");
+    assert_eq!(body_only, "second");
+}
+
+#[tokio::test]
+async fn read_file_metadata_reports_line_ending() {
+    let dir = tempdir().expect("tempdir");
+    let cases = [
+        ("lf.txt", "a\nb\n", "lf"),
+        ("crlf.txt", "a\r\nb\r\n", "crlf"),
+        ("none.txt", "plain", "none"),
+        ("mixed.txt", "a\nb\r\nc", "mixed"),
+    ];
+
+    let tool = read_file_tool(&dir, 4096);
+    let ctx = read_file_ctx(&dir);
+
+    for (name, body, expected) in cases {
+        std::fs::write(dir.path().join(name), body).expect("write");
+        let args = serde_json::json!({ "path": name, "include_metadata": true });
+        let (_record, result) = tool.execute("tc-ending", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{name}: {}", result.content);
+        let meta = parse_metadata_line(&result.content);
+        assert_eq!(meta["line_ending"], expected, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn read_file_metadata_survives_output_truncate() {
+    let dir = tempdir().expect("tempdir");
+    let body = "x".repeat(400);
+    std::fs::write(dir.path().join("big.txt"), format!("{body}\n")).expect("write");
+
+    let tool = read_file_tool(&dir, 300);
+    let ctx = read_file_ctx(&dir);
+    let args = serde_json::json!({ "path": "big.txt", "include_metadata": true });
+
+    let (_record, result) = tool.execute("tc-trunc", &args, 5000, &ctx).await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.starts_with(FILE_METADATA_PREFIX));
+    assert!(result.content.contains("[output truncated:"));
+    let meta = parse_metadata_line(&result.content);
+    assert_eq!(meta["path"], "big.txt");
 }
 
 #[test]

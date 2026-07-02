@@ -1535,7 +1535,7 @@ id = "metadata_default_unchanged"
 description = "既定は従来どおり plain text"
 test = "read_file_default_output_unchanged_without_metadata"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1544,7 +1544,7 @@ id = "metadata_includes_sha256"
 description = "include_metadata=true で hash 行が付く"
 test = "read_file_metadata_includes_sha256"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1553,7 +1553,7 @@ id = "metadata_hash_full_file"
 description = "offset/limit 使用時も hash は全体"
 test = "read_file_metadata_hash_covers_full_file"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1562,7 +1562,7 @@ id = "metadata_line_endings"
 description = "lf / crlf / none / mixed を JSON に含む"
 test = "read_file_metadata_reports_line_ending"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1571,7 +1571,7 @@ id = "metadata_survives_truncate"
 description = "truncate 後も metadata 行が先頭"
 test = "read_file_metadata_survives_output_truncate"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"

@@ -8,11 +8,16 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::time::timeout;
 
-use crate::domain::{ExecutedToolCall, ToolName, ToolResult};
+use crate::domain::{
+    detect_line_ending, has_trailing_newline, sha256_hex, validate_utf8_bytes, ExecutedToolCall,
+    FileTextError, ToolName, ToolResult,
+};
 use crate::ports::outbound::{ReadFileConfig, ToolExecutionContext, ToolExecutor};
 
 use super::safe_path::ReadPathPolicy;
-use super::tool_output::limit_tool_output;
+use super::tool_output::{limit_tool_output, limit_tool_output_with_metadata};
+
+pub const FILE_METADATA_PREFIX: &str = "[aibe_file_metadata]";
 
 pub struct ReadFileTool {
     path_policy: ReadPathPolicy,
@@ -40,23 +45,55 @@ impl ReadFileTool {
         lines[start..end].join("\n")
     }
 
+    fn format_metadata_line(path: &str, bytes: &[u8], content: &str) -> String {
+        let metadata = serde_json::json!({
+            "path": path,
+            "sha256": sha256_hex(bytes),
+            "size_bytes": bytes.len(),
+            "line_ending": detect_line_ending(content).as_str(),
+            "trailing_newline": has_trailing_newline(bytes),
+        });
+        format!("{FILE_METADATA_PREFIX} {metadata}")
+    }
+
+    fn file_text_error(err: FileTextError) -> String {
+        err.code().to_string()
+    }
+
     async fn read_canonical(
         canonical: &Path,
         offset: Option<u32>,
         limit: Option<u32>,
+        include_metadata: bool,
+        path_for_metadata: &str,
     ) -> Result<String, String> {
-        let content = tokio::fs::read_to_string(canonical)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(Self::slice_lines(&content, offset, limit))
+        if include_metadata {
+            let bytes = tokio::fs::read(canonical)
+                .await
+                .map_err(|e| e.to_string())?;
+            let content = validate_utf8_bytes(&bytes).map_err(Self::file_text_error)?;
+            let body = Self::slice_lines(&content, offset, limit);
+            let metadata_line = Self::format_metadata_line(path_for_metadata, &bytes, &content);
+            Ok(format!("{metadata_line}\n{body}"))
+        } else {
+            let content = tokio::fs::read_to_string(canonical)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(Self::slice_lines(&content, offset, limit))
+        }
     }
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ReadFileArgs {
     path: String,
+    #[serde(default)]
     offset: Option<u32>,
+    #[serde(default)]
     limit: Option<u32>,
+    #[serde(default)]
+    include_metadata: bool,
 }
 
 #[async_trait]
@@ -136,6 +173,8 @@ impl ToolExecutor for ReadFileTool {
 
         let offset = parsed.offset;
         let limit = parsed.limit;
+        let include_metadata = parsed.include_metadata;
+        let path_for_metadata = parsed.path.clone();
         let max_output_bytes = self.max_output_bytes;
         let duration = Duration::from_millis(timeout_ms.max(1));
 
@@ -160,9 +199,25 @@ impl ToolExecutor for ReadFileTool {
             }
         };
 
-        match timeout(duration, Self::read_canonical(&canonical, offset, limit)).await {
+        match timeout(
+            duration,
+            Self::read_canonical(
+                &canonical,
+                offset,
+                limit,
+                include_metadata,
+                &path_for_metadata,
+            ),
+        )
+        .await
+        {
             Ok(Ok(text)) => {
-                let limited = limit_tool_output(&text, max_output_bytes);
+                let limited = if include_metadata {
+                    let (metadata_line, body) = text.split_once('\n').unwrap_or((&text, ""));
+                    limit_tool_output_with_metadata(metadata_line, body, max_output_bytes)
+                } else {
+                    limit_tool_output(&text, max_output_bytes)
+                };
                 (
                     ExecutedToolCall::ok(id.clone(), self.name(), args_value, limited.clone()),
                     ToolResult {
@@ -173,9 +228,20 @@ impl ToolExecutor for ReadFileTool {
                 )
             }
             Ok(Err(e)) => {
-                let msg = format!("read failed: {e}");
+                let is_text_error = e == FileTextError::InvalidUtf8.code()
+                    || e == FileTextError::BinaryFileNotSupported.code();
+                let msg = if is_text_error {
+                    e
+                } else {
+                    format!("read failed: {e}")
+                };
+                let code = if is_text_error {
+                    msg.as_str()
+                } else {
+                    "read_failed"
+                };
                 (
-                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "read_failed", &msg),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, code, &msg),
                     ToolResult {
                         tool_call_id: id,
                         content: msg,
@@ -201,6 +267,7 @@ impl ToolExecutor for ReadFileTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ClientCwd;
     use crate::ports::outbound::ReadFileConfig;
     use serde_json::json;
     use std::path::PathBuf;
@@ -219,7 +286,6 @@ mod tests {
             },
             4096,
         );
-        use crate::domain::ClientCwd;
         let ctx = ToolExecutionContext::new(
             ClientCwd::new(client_sub.clone()).expect("absolute client cwd"),
         );
@@ -241,7 +307,6 @@ mod tests {
             },
             4096,
         );
-        use crate::domain::ClientCwd;
         let ctx = ToolExecutionContext::new(
             ClientCwd::new(dir.path().to_path_buf()).expect("absolute client cwd"),
         );
@@ -250,5 +315,29 @@ mod tests {
         let (_record, result) = tool.execute("tc2", &args, 5000, &ctx).await;
         assert!(!result.is_error, "{}", result.content);
         assert_eq!(result.content, "dot root");
+    }
+
+    #[tokio::test]
+    async fn include_metadata_prepends_json_line() {
+        let dir = tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("sample.txt"), "hello\n").expect("write");
+
+        let tool = ReadFileTool::new(
+            ReadFileConfig {
+                allowed_roots: vec![dir.path().to_path_buf()],
+            },
+            4096,
+        );
+        let ctx = ToolExecutionContext::new(
+            ClientCwd::new(dir.path().to_path_buf()).expect("absolute client cwd"),
+        );
+        let args = json!({ "path": "sample.txt", "include_metadata": true });
+
+        let (_record, result) = tool.execute("tc-meta", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.starts_with(FILE_METADATA_PREFIX));
+        let (meta, body) = result.content.split_once('\n').expect("metadata newline");
+        assert!(meta.contains(&sha256_hex(b"hello\n")));
+        assert_eq!(body, "hello");
     }
 }

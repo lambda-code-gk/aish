@@ -102,6 +102,11 @@ pub fn detect_line_ending(content: &str) -> LineEnding {
     }
 }
 
+/// ファイル末尾が改行で終わるか（raw bytes 基準、設計 §8.1）。
+pub fn has_trailing_newline(bytes: &[u8]) -> bool {
+    bytes.ends_with(b"\n")
+}
+
 /// write 時に mixed 改行を拒否する（Phase 7 で使用）。
 pub fn reject_mixed_line_endings(content: &str) -> Result<LineEnding, FileTextError> {
     let kind = detect_line_ending(content);
@@ -150,5 +155,13 @@ mod tests {
     fn file_size_limit() {
         assert!(check_file_size(10, 10).is_ok());
         assert_eq!(check_file_size(11, 10), Err(FileTextError::FileTooLarge));
+    }
+
+    #[test]
+    fn trailing_newline() {
+        assert!(has_trailing_newline(b"a\n"));
+        assert!(has_trailing_newline(b"a\r\n"));
+        assert!(!has_trailing_newline(b"a"));
+        assert!(!has_trailing_newline(b""));
     }
 }

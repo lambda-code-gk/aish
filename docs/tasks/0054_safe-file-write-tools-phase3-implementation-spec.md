@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 3）  
+> **状態**: 実装済み（Phase 3）  
 > **前提**: [Phase 2](0054_safe-file-write-tools-phase2-implementation-spec.md) 完了
 
 ## 0. 目的
@@ -33,11 +33,11 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `metadata_default_unchanged` | 既定は従来どおり plain text | `read_file_default_output_unchanged_without_metadata` | true |
-| `metadata_includes_sha256` | `include_metadata=true` で hash 行が付く | `read_file_metadata_includes_sha256` | true |
-| `metadata_hash_full_file` | offset/limit 使用時も hash は全体 | `read_file_metadata_hash_covers_full_file` | true |
-| `metadata_line_endings` | lf / crlf / none / mixed を JSON に含む | `read_file_metadata_reports_line_ending` | true |
-| `metadata_survives_truncate` | truncate 後も metadata 行が先頭 | `read_file_metadata_survives_output_truncate` | true |
+| `metadata_default_unchanged` | 既定は従来どおり plain text | `read_file_default_output_unchanged_without_metadata` | false |
+| `metadata_includes_sha256` | `include_metadata=true` で hash 行が付く | `read_file_metadata_includes_sha256` | false |
+| `metadata_hash_full_file` | offset/limit 使用時も hash は全体 | `read_file_metadata_hash_covers_full_file` | false |
+| `metadata_line_endings` | lf / crlf / none / mixed を JSON に含む | `read_file_metadata_reports_line_ending` | false |
+| `metadata_survives_truncate` | truncate 後も metadata 行が先頭 | `read_file_metadata_survives_output_truncate` | false |
 
 ## 3. 変更ファイル（目安）
 

@@ -60,7 +60,11 @@ fn read_file_definition() -> ToolDefinition {
             "properties": {
                 "path": { "type": "string", "description": "File path relative to allowed root or absolute under root" },
                 "offset": { "type": "integer", "description": "1-based line to start reading" },
-                "limit": { "type": "integer", "description": "Maximum lines to read" }
+                "limit": { "type": "integer", "description": "Maximum lines to read" },
+                "include_metadata": {
+                    "type": "boolean",
+                    "description": "If true, prepend a metadata line with sha256, size_bytes, line_ending, and trailing_newline for optimistic concurrency"
+                }
             },
             "required": ["path"]
         }),
