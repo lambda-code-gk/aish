@@ -1353,3 +1353,780 @@ description = "bash / zsh hook が `Alt+,` を `ai recall prev` に結ぶ"
 test = "ai_complete_zsh_includes_recall_hook"
 file_glob = "ai/tests/suggested_command_recall.rs"
 pending = false
+
+# 0054 — Safe File Write Tools（Phase 1–9）
+# 実装指示: docs/tasks/0054_safe-file-write-tools-phaseN-implementation-spec.md
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "tool_names_known"
+description = "write_file / apply_patch を parse できる"
+test = "write_tools_are_known_tool_names"
+file_glob = "aibe-protocol/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "full_category_unchanged"
+description = "@full 展開に write tool が含まれない"
+test = "full_tool_category_excludes_write_tools"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "sanitize_readonly_excludes_write"
+description = "advisory サニタイズが write tool を除外"
+test = "sanitize_readonly_advisory_tools_excludes_write_tools"
+file_glob = "aibe-protocol/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "file_write_capability_wire"
+description = "file:write capability の wire roundtrip"
+test = "file_write_capability_roundtrip"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "tool_approval_prompt_roundtrip"
+description = "ToolApprovalPrompt serde roundtrip"
+test = "tool_approval_prompt_roundtrip"
+file_glob = "aibe-protocol/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "tool_approval_request_roundtrip"
+description = "ToolApproval serde roundtrip"
+test = "tool_approval_request_roundtrip"
+file_glob = "aibe-protocol/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "file_write_config_defaults"
+description = "[tools.file_write] 既定値が設計どおり"
+test = "file_write_config_defaults_match_spec"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "tool_registry_duplicate_rejected"
+description = "重複 tool 名登録で起動失敗"
+test = "tool_registry_rejects_duplicate_tool_name"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 1
+id = "route_turn_no_write_tools"
+description = "route_turn / local route が write tool を推薦しない"
+test = "route_turn_does_not_recommend_write_tools"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "write_path_allowed_roots"
+description = "write root 内の相対 path が解決される"
+test = "write_path_resolves_under_allowed_roots"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "write_path_rejects_parent"
+description = ".. を拒否"
+test = "write_path_rejects_parent_components"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "write_path_rejects_symlink"
+description = "target / parent symlink を拒否"
+test = "write_path_rejects_symlinks"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "write_path_rejects_special_files"
+description = "FIFO / socket / device を拒否"
+test = "write_path_rejects_special_files"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "read_file_uses_safe_path"
+description = "read_file が共通 resolver（read policy）を使う"
+test = "read_file_uses_shared_safe_path_resolver"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "read_write_roots_independent"
+description = "read roots を write に流用しない"
+test = "write_roots_are_independent_from_read_roots"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "sha256_file_hash"
+description = "ファイル全体 SHA-256（lower hex）"
+test = "sha256_hashes_file_bytes"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "text_validation_binary"
+description = "binary / invalid UTF-8 を拒否"
+test = "text_validation_rejects_binary_and_invalid_utf8"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "line_ending_detection"
+description = "lf / crlf / none / mixed を判定"
+test = "line_ending_detection_covers_all_kinds"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 2
+id = "file_size_limit"
+description = "上限超過で file_too_large"
+test = "file_size_limit_enforced"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 3
+id = "metadata_default_unchanged"
+description = "既定は従来どおり plain text"
+test = "read_file_default_output_unchanged_without_metadata"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 3
+id = "metadata_includes_sha256"
+description = "include_metadata=true で hash 行が付く"
+test = "read_file_metadata_includes_sha256"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 3
+id = "metadata_hash_full_file"
+description = "offset/limit 使用時も hash は全体"
+test = "read_file_metadata_hash_covers_full_file"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 3
+id = "metadata_line_endings"
+description = "lf / crlf / none / mixed を JSON に含む"
+test = "read_file_metadata_reports_line_ending"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 3
+id = "metadata_survives_truncate"
+description = "truncate 後も metadata 行が先頭"
+test = "read_file_metadata_survives_output_truncate"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "unified_diff_new_file"
+description = "新規ファイル diff が /dev/null 形式"
+test = "unified_diff_formats_new_file"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "unified_diff_existing_file"
+description = "既存ファイル diff が --- a/ 形式"
+test = "unified_diff_formats_existing_file"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "preview_truncation"
+description = "max_preview_bytes 超過で truncate + flag"
+test = "diff_preview_truncates_at_max_bytes"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "atomic_write_preserves_original"
+description = "temp/rename 失敗で元ファイル残存"
+test = "atomic_write_preserves_original_on_failure"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "atomic_write_no_temp_leftover"
+description = "成功後 temp が残らない"
+test = "atomic_write_removes_temp_file_on_success"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "journal_saves_before_bytes"
+description = "commit 前に before.bin が正確"
+test = "journal_saves_before_state_bytes"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "journal_create_absent"
+description = "新規作成は before_state=absent"
+test = "journal_records_absent_before_for_create"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "journal_permissions"
+description = "dir 0700、ファイル 0600"
+test = "journal_uses_restricted_permissions"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "journal_retention_cleanup"
+description = "期限切れ journal の best-effort 削除"
+test = "journal_retention_cleanup_removes_expired"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "journal_capacity_exceeded"
+description = "容量確保不可で write 拒否"
+test = "journal_capacity_exceeded_blocks_write"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 4
+id = "journal_no_raw_patch"
+description = "metadata に raw patch を保存しない"
+test = "journal_metadata_excludes_raw_patch"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "file_change_prepare_no_write"
+description = "prepare 段階でファイルを変更しない"
+test = "file_change_prepare_does_not_mutate_file"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "policy_never_denies"
+description = "approval=never → write_denied_by_policy"
+test = "file_write_never_mode_denies_execution"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "policy_always_skips_prompt"
+description = "approval=always は prompt なしで監査残し"
+test = "file_write_always_mode_skips_prompt"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "tool_disabled_when_config_off"
+description = "enabled=false → tool_disabled"
+test = "file_write_disabled_returns_tool_disabled"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "fake_gate_yes_commits"
+description = "fake gate yes で commit まで到達"
+test = "file_change_fake_gate_yes_commits"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "fake_gate_no_denies"
+description = "fake gate no で変更なし"
+test = "file_change_fake_gate_no_leaves_file_unchanged"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "revalidate_stale_file"
+description = "承認待ち中の外部変更 → stale_file"
+test = "file_change_revalidate_detects_stale_file"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "cancel_during_approval"
+description = "cancel で書き込まない"
+test = "file_change_cancel_during_approval_writes_nothing"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "approval_gate_missing"
+description = "gate 不在 → approval_unavailable"
+test = "file_change_missing_gate_returns_unavailable"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "sanitized_arguments"
+description = "raw content/patch が監査に入らない"
+test = "file_change_sanitizes_executed_tool_arguments"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 5
+id = "tool_approval_wire_roundtrip"
+description = "socket 上で prompt/approval roundtrip"
+test = "tool_approval_wire_roundtrip"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "edit_category_expansion"
+description = "@edit が設計どおり展開"
+test = "edit_tool_category_includes_write_tools"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_create_success"
+description = "create 成功"
+test = "write_file_create_succeeds"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_create_target_exists"
+description = "既存へ create 拒否"
+test = "write_file_create_rejects_existing_target"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_create_parent_missing"
+description = "parent 不存在拒否"
+test = "write_file_create_rejects_missing_parent"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_replace_success"
+description = "replace + hash 成功"
+test = "write_file_replace_succeeds_with_matching_hash"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_replace_requires_hash"
+description = "hash 未指定拒否"
+test = "write_file_replace_requires_expected_sha256"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_stale_hash"
+description = "hash 不一致拒否"
+test = "write_file_replace_rejects_stale_hash"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_empty_content"
+description = "空ファイル / 空置換を許可"
+test = "write_file_allows_empty_content"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_preserves_permissions"
+description = "replace で permission 維持"
+test = "write_file_replace_preserves_permissions"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "write_file_capability_gate"
+description = "capability なし → capability_denied"
+test = "write_file_requires_file_write_capability"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "startup_warning_write_tools"
+description = "write tool 有効時 warning"
+test = "ai_warns_when_write_tools_enabled"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "race_stale_write_file"
+description = "承認待ち中の外部変更 → stale_file"
+test = "write_file_detects_stale_file_after_approval_wait"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 6
+id = "tool_round_capability_gate"
+description = "ToolRoundExecutor が FileWrite を要求"
+test = "tool_round_executor_requires_file_write_for_write_tools"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_single_hunk"
+description = "1 hunk 成功"
+test = "apply_patch_single_hunk_succeeds"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_multiple_hunks"
+description = "複数 hunk 成功"
+test = "apply_patch_multiple_hunks_succeeds"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_context_mismatch"
+description = "context 不一致 → patch_conflict"
+test = "apply_patch_rejects_context_mismatch"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_overlapping_hunks"
+description = "hunk 重複拒否"
+test = "apply_patch_rejects_overlapping_hunks"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_rejects_headers"
+description = "--- a/file 等 header 付き拒否"
+test = "apply_patch_rejects_diff_headers"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_empty_invalid"
+description = "空 patch → invalid_patch"
+test = "apply_patch_rejects_empty_patch"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_no_change"
+description = "同一結果 → 成功・書込なし"
+test = "apply_patch_no_change_skips_write"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_crlf"
+description = "CRLF ファイルで CRLF 維持"
+test = "apply_patch_preserves_crlf"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_mixed_line_endings"
+description = "mixed 拒否"
+test = "apply_patch_rejects_mixed_line_endings"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "apply_patch_size_limit"
+description = "patch 上限超過"
+test = "apply_patch_enforces_patch_size_limit"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 7
+id = "race_stale_apply_patch"
+description = "承認待ち中の外部変更"
+test = "apply_patch_detects_stale_file_after_approval_wait"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "approval_ui_stderr_only"
+description = "承認 UI が stderr のみ"
+test = "file_write_approval_ui_writes_stderr_only"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "approval_ui_escapes_control_chars"
+description = "diff 内制御文字を escape"
+test = "file_write_approval_ui_escapes_control_chars"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "approval_ui_truncation_notice"
+description = "truncate 時に明示メッセージ"
+test = "file_write_approval_ui_shows_truncation_notice"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "approval_ui_non_tty"
+description = "non-TTY → deny"
+test = "file_write_approval_ui_rejects_non_tty"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "approval_ui_yes_executes"
+description = "y で write 実行"
+test = "file_write_approval_ui_yes_executes_write"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "approval_ui_no_continues_turn"
+description = "n で turn 継続・変更なし"
+test = "file_write_approval_ui_no_continues_turn"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "aibe_client_tool_approval_roundtrip"
+description = "client が prompt→approval 往復"
+test = "aibe_client_tool_approval_roundtrip"
+file_glob = "aibe-client/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "verbose_tools_change_id"
+description = "verbose 時 change_id 表示"
+test = "verbose_tools_shows_change_id"
+file_glob = "ai/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 8
+id = "shell_and_write_approval_mixed"
+description = "同一 turn で shell/write 承認混在"
+test = "mixed_shell_and_write_approval_in_one_turn"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "disconnect_during_approval"
+description = "disconnect で write しない"
+test = "disconnect_during_write_approval_writes_nothing"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "audit_write_like_risk_class"
+description = "risk_class = write_like"
+test = "write_tools_audit_uses_write_like_risk_class"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "audit_approval_source_vocabulary"
+description = "approval_source 固定語彙"
+test = "write_tools_audit_uses_fixed_approval_source"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "audit_decision_matrix"
+description = "success/deny/unavailable/stale/no_change 識別"
+test = "write_tools_audit_decision_matrix"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "shell_exec_regression"
+description = "shell 承認の既存動作を壊さない"
+test = "shell_exec_approval_regression_unchanged"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "acceptance_create_scenario"
+description = "§28.1 新規作成シナリオ"
+test = "acceptance_write_file_create_flow"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
+
+[[cases]]
+spec = "0054"
+phase = 9
+id = "acceptance_patch_scenario"
+description = "§28.2 既存修正シナリオ"
+test = "acceptance_apply_patch_flow"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = true
