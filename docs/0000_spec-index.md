@@ -44,8 +44,8 @@
 | 0047 | [0047_ai-interactive-prompt-input-spec.md](spec/0047_ai-interactive-prompt-input-spec.md) | 設計確定（実装済み） | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 | 0048 | [0048_ai-filter-streaming-fix-spec.md](spec/0048_ai-filter-streaming-fix-spec.md) | 設計確定（実装済み） | `ai` output filter と assistant streaming の整合化 |
 | 0049 | [0049_aish-command-output-replay-spec.md](spec/0049_aish-command-output-replay-spec.md) | 設計確定（実装済み） | `aish` command output replay（`replay list/show/pick`、shell span 記録） |
-| 0050 | [0050_client-provided-replay-tool-spec.md](spec/0050_client-provided-replay-tool-spec.md) | 設計確定 | Client-Provided Replay Tool（`aish.replay_show`、turn-local read-only client tool、hybrid manifest + `shell_log_tail`） |
-| 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装中） | Smart Preprocessor observation の read-only stats/recent/report CLI |
+| 0050 | [0050_client-provided-replay-tool-spec.md](spec/0050_client-provided-replay-tool-spec.md) | 設計確定（実装済み） | Client-Provided Replay Tool（`aish.replay_show`、turn-local read-only client tool、hybrid manifest + `shell_log_tail`） |
+| 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装済み） | Smart Preprocessor observation の read-only stats/recent/report CLI |
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
 
@@ -62,8 +62,6 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
-| 0050 | [0050_client-provided-replay-tool-implementation-spec.md](tasks/0050_client-provided-replay-tool-implementation-spec.md) | 実装指示書 | Client-Provided Replay Tool（設計: [0050](spec/0050_client-provided-replay-tool-spec.md)） |
-| 0051 | [0051_smart-observation-report-implementation-spec.md](tasks/0051_smart-observation-report-implementation-spec.md) | 実装指示書 | Smart Preprocessor Observation Report（設計: [0051](spec/0051_smart-observation-report-spec.md)） |
 
 ## 実装済み指示書（docs/done/）
 
@@ -134,4 +132,6 @@
 | 0047 | [0047_ai-interactive-prompt-input-implementation-spec.md](done/0047_ai-interactive-prompt-input-implementation-spec.md) | 実装済み | `ai` 対話的プロンプト入力（bare `ai` / AI_EDITOR / reedline） |
 | 0048 | [0048_ai-filter-streaming-fix-implementation-spec.md](done/0048_ai-filter-streaming-fix-implementation-spec.md) | 実装済み | `ai` output filter と assistant streaming の整合化（設計: [0048](spec/0048_ai-filter-streaming-fix-spec.md)） |
 | 0049 | [0049_aish-command-output-replay-implementation-spec.md](done/0049_aish-command-output-replay-implementation-spec.md) | 実装済み | `aish` command output replay（設計: [0049](spec/0049_aish-command-output-replay-spec.md)） |
+| 0050 | [0050_client-provided-replay-tool-implementation-spec.md](done/0050_client-provided-replay-tool-implementation-spec.md) | 実装済み | Client-Provided Replay Tool（設計: [0050](spec/0050_client-provided-replay-tool-spec.md)） |
+| 0051 | [0051_smart-observation-report-implementation-spec.md](done/0051_smart-observation-report-implementation-spec.md) | 実装済み | Smart Preprocessor Observation Report（設計: [0051](spec/0051_smart-observation-report-spec.md)） |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。
