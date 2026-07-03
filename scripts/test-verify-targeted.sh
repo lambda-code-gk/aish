@@ -34,15 +34,15 @@ assert_log() {
 
 reset_log
 ./scripts/verify-targeted.sh --package aibe --test agent_turn_loop >/dev/null
-assert_log $'cargo fmt --all -- --check\ncargo check -p aibe\ncargo test -p aibe --test agent_turn_loop -j 1'
+assert_log $'cargo fmt --all -- --check\ncargo clippy -p aibe -- -D warnings\ncargo test -p aibe --test agent_turn_loop -j 1'
 
 reset_log
 ./scripts/verify-targeted.sh --package ai --test ask_integration --test history_cli >/dev/null
-assert_log $'cargo fmt --all -- --check\ncargo check -p ai\ncargo test -p ai --test ask_integration -j 1\ncargo test -p ai --test history_cli -j 1'
+assert_log $'cargo fmt --all -- --check\ncargo clippy -p ai -- -D warnings\ncargo test -p ai --test ask_integration -j 1\ncargo test -p ai --test history_cli -j 1'
 
 reset_log
 ./scripts/verify-targeted.sh --package aibe-client >/dev/null
-assert_log $'cargo fmt --all -- --check\ncargo check -p aibe-client\ncargo build -p aibe -q\ncargo test -p aibe-client -j 1 -- --test-threads=1'
+assert_log $'cargo fmt --all -- --check\ncargo clippy -p aibe-client -- -D warnings\ncargo build -p aibe -q\ncargo test -p aibe-client -j 1 -- --test-threads=1'
 
 reset_log
 ./scripts/verify-targeted.sh --docs --architecture --codex-tooling >/dev/null

@@ -101,7 +101,7 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 
 if [[ -n "$package" ]]; then
   run "$CARGO" fmt --all -- --check
-  run "$CARGO" check -p "$package"
+  run "$CARGO" clippy -p "$package" -- -D warnings
 
   if [[ "$package" == "aibe-client" ]]; then
     run "$CARGO" build -p aibe -q

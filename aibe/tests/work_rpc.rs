@@ -1,3 +1,5 @@
+#![cfg(feature = "memory")]
+
 use std::sync::Arc;
 
 use aibe::adapters::outbound::{
