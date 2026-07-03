@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use aibe_protocol::{
     ClientRequest, ClientResponse, ClientToolResult, ClientToolResultStatus, ProgressPhase,
-    ShellExecApprovalOrigin,
+    ShellExecApprovalOrigin, ToolApprovalOrigin, ToolRiskClass,
 };
 
 use crate::unix_connect::connect_unix_stream;
@@ -29,6 +29,57 @@ pub struct ShellExecApprovalPrompt {
 pub struct ShellExecApprovalDecision {
     pub approved: bool,
     pub approval_origin: ShellExecApprovalOrigin,
+}
+
+/// write-like tool 承認 prompt の内容。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolApprovalPrompt {
+    pub prompt_id: String,
+    pub turn_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub risk_class: ToolRiskClass,
+    pub summary: String,
+    pub paths: Vec<String>,
+    pub preview: String,
+    pub preview_truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolApprovalDecision {
+    pub approved: bool,
+    pub approval_origin: ToolApprovalOrigin,
+}
+
+/// `agent_turn` 中の承認 callback 集約（設計 §14.4）。
+pub struct AgentTurnCallbacks<S, T> {
+    pub on_shell_exec: S,
+    pub on_tool: T,
+}
+
+impl<S, T> AgentTurnCallbacks<S, T> {
+    pub fn new(on_shell_exec: S, on_tool: T) -> Self {
+        Self {
+            on_shell_exec,
+            on_tool,
+        }
+    }
+}
+
+pub fn shell_exec_only_callbacks<S>(
+    on_shell_exec: S,
+) -> AgentTurnCallbacks<S, fn(ToolApprovalPrompt) -> ToolApprovalDecision>
+where
+    S: FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+{
+    AgentTurnCallbacks::new(on_shell_exec, deny_tool_approval)
+}
+
+fn deny_tool_approval(_: ToolApprovalPrompt) -> ToolApprovalDecision {
+    ToolApprovalDecision {
+        approved: false,
+        approval_origin: ToolApprovalOrigin::UiNo,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +200,7 @@ pub fn agent_turn_with_events_on_stream(
         on_progress,
         on_stream,
         |_| None,
-        on_approval,
+        shell_exec_only_callbacks(on_approval),
     )
 }
 
@@ -159,8 +210,13 @@ pub fn agent_turn_with_client_tools_on_stream(
     mut on_progress: impl FnMut(AgentTurnProgressEvent),
     mut on_stream: impl FnMut(String),
     mut on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<ClientToolResult>,
-    mut on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+    callbacks: AgentTurnCallbacks<
+        impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+        impl FnMut(ToolApprovalPrompt) -> ToolApprovalDecision,
+    >,
 ) -> Result<ClientResponse, ClientError> {
+    let mut on_shell_exec = callbacks.on_shell_exec;
+    let mut on_tool = callbacks.on_tool;
     let mut writer = stream;
     let mut reader = BufReader::new(writer.try_clone().map_err(ClientError::Connect)?);
     send_request(&mut writer, &request).map_err(ClientError::Connect)?;
@@ -180,7 +236,7 @@ pub fn agent_turn_with_client_tools_on_stream(
                 command,
                 args,
             } => {
-                let decision = on_approval(ShellExecApprovalPrompt {
+                let decision = on_shell_exec(ShellExecApprovalPrompt {
                     prompt_id: id.clone(),
                     turn_id: turn_id.clone(),
                     tool_call_id: tool_call_id.clone(),
@@ -199,10 +255,39 @@ pub fn agent_turn_with_client_tools_on_stream(
                 )
                 .map_err(ClientError::Connect)?;
             }
-            ClientResponse::ToolApprovalPrompt { .. } => {
-                return Err(ClientError::Unexpected(
-                    "tool_approval_prompt received but client has no handler".into(),
-                ));
+            ClientResponse::ToolApprovalPrompt {
+                id,
+                turn_id,
+                tool_call_id,
+                tool_name,
+                risk_class,
+                summary,
+                paths,
+                preview,
+                preview_truncated,
+            } => {
+                let decision = on_tool(ToolApprovalPrompt {
+                    prompt_id: id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    risk_class,
+                    summary: summary.clone(),
+                    paths: paths.clone(),
+                    preview: preview.clone(),
+                    preview_truncated,
+                });
+                send_request(
+                    &mut writer,
+                    &ClientRequest::ToolApproval {
+                        id,
+                        turn_id,
+                        tool_call_id,
+                        approved: decision.approved,
+                        approval_origin: decision.approval_origin,
+                    },
+                )
+                .map_err(ClientError::Connect)?;
             }
             ClientResponse::ClientToolCallRequested {
                 id,
@@ -258,13 +343,27 @@ pub fn agent_turn_on_stream(
     agent_turn_with_events_on_stream(stream, request, |_| {}, |_| {}, on_approval)
 }
 
+pub fn agent_turn_on_stream_with_callbacks(
+    stream: UnixStream,
+    request: ClientRequest,
+    callbacks: AgentTurnCallbacks<
+        impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+        impl FnMut(ToolApprovalPrompt) -> ToolApprovalDecision,
+    >,
+) -> Result<ClientResponse, ClientError> {
+    agent_turn_with_client_tools_on_stream(stream, request, |_| {}, |_| {}, |_| None, callbacks)
+}
+
 pub fn agent_turn_with_client_tools(
     socket_path: &Path,
     request: ClientRequest,
     on_progress: impl FnMut(AgentTurnProgressEvent),
     on_stream: impl FnMut(String),
     on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<ClientToolResult>,
-    on_approval: impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+    callbacks: AgentTurnCallbacks<
+        impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+        impl FnMut(ToolApprovalPrompt) -> ToolApprovalDecision,
+    >,
 ) -> Result<ClientResponse, ClientError> {
     let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;
     agent_turn_with_client_tools_on_stream(
@@ -273,7 +372,7 @@ pub fn agent_turn_with_client_tools(
         on_progress,
         on_stream,
         on_client_tool,
-        on_approval,
+        callbacks,
     )
 }
 
@@ -402,10 +501,10 @@ mod tests {
                     content: "[untrusted terminal output]\nindex: 1\n".into(),
                 })
             },
-            |_| ShellExecApprovalDecision {
+            shell_exec_only_callbacks(|_| ShellExecApprovalDecision {
                 approved: true,
                 approval_origin: ShellExecApprovalOrigin::UiYes,
-            },
+            }),
         )
         .expect("agent turn");
 

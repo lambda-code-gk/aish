@@ -1399,9 +1399,150 @@ async fn apply_patch_detects_stale_file_after_approval_wait() {
 }
 
 #[test]
-#[ignore = "0054 phase 8: shell_and_write_approval_mixed"]
 fn mixed_shell_and_write_approval_in_one_turn() {
-    panic!("0054 not implemented");
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::thread;
+
+    use aibe_client::{
+        agent_turn_on_stream_with_callbacks, AgentTurnCallbacks, ShellExecApprovalDecision,
+        ShellExecApprovalPrompt, ToolApprovalDecision, ToolApprovalPrompt,
+    };
+    use aibe_protocol::{
+        AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessage, ProtocolMessageOut,
+        ShellExecApprovalOrigin, ToolApprovalOrigin, ToolRiskClass, WRITE_FILE,
+    };
+
+    let (client, server) = UnixStream::pair().expect("pair");
+    let handle = thread::spawn(move || {
+        let mut server = server;
+        let mut reader = BufReader::new(server.try_clone().expect("clone"));
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read request");
+
+        let shell_prompt = ClientResponse::ShellExecApprovalPrompt {
+            id: "shell-prompt".into(),
+            turn_id: "turn-mixed".into(),
+            tool_call_id: "call-shell".into(),
+            command: "echo".into(),
+            args: vec!["hi".into()],
+        };
+        writeln!(
+            server,
+            "{}",
+            serde_json::to_string(&shell_prompt).expect("shell prompt")
+        )
+        .expect("write shell prompt");
+        server.flush().expect("flush");
+
+        line.clear();
+        reader.read_line(&mut line).expect("read shell approval");
+        let shell_approval: ClientRequest =
+            serde_json::from_str(line.trim()).expect("parse shell approval");
+        assert!(matches!(
+            shell_approval,
+            ClientRequest::ShellExecApproval {
+                approved: true,
+                approval_origin: ShellExecApprovalOrigin::UiYes,
+                ..
+            }
+        ));
+
+        let tool_prompt = ClientResponse::ToolApprovalPrompt {
+            id: "tool-prompt".into(),
+            turn_id: "turn-mixed".into(),
+            tool_call_id: "call-write".into(),
+            tool_name: WRITE_FILE.into(),
+            risk_class: ToolRiskClass::WriteLike,
+            summary: "create demo.txt (+1 -0, 0 -> 5 bytes)".into(),
+            paths: vec!["demo.txt".into()],
+            preview: "+hello\n".into(),
+            preview_truncated: false,
+        };
+        writeln!(
+            server,
+            "{}",
+            serde_json::to_string(&tool_prompt).expect("tool prompt")
+        )
+        .expect("write tool prompt");
+        server.flush().expect("flush");
+
+        line.clear();
+        reader.read_line(&mut line).expect("read tool approval");
+        let tool_approval: ClientRequest =
+            serde_json::from_str(line.trim()).expect("parse tool approval");
+        assert!(matches!(
+            tool_approval,
+            ClientRequest::ToolApproval {
+                approved: false,
+                approval_origin: ToolApprovalOrigin::UiNo,
+                ..
+            }
+        ));
+
+        let final_resp = ClientResponse::AgentTurnResult {
+            id: "turn-mixed".into(),
+            status: AgentTurnStatus::Ok,
+            assistant_message: ProtocolMessageOut {
+                role: "assistant".into(),
+                content: "mixed approvals handled".into(),
+            },
+            tool_calls: vec![],
+        };
+        writeln!(
+            server,
+            "{}",
+            serde_json::to_string(&final_resp).expect("final")
+        )
+        .expect("write final");
+        server.flush().expect("flush final");
+    });
+
+    let mut shell_seen = false;
+    let mut tool_seen = false;
+    let resp = agent_turn_on_stream_with_callbacks(
+        client,
+        ClientRequest::AgentTurn {
+            id: "turn-mixed".into(),
+            messages: vec![ProtocolMessage {
+                role: "user".into(),
+                content: "mixed".into(),
+            }],
+            tools: vec!["shell_exec".into(), WRITE_FILE.into()],
+            client_tools: vec![],
+            context: Default::default(),
+            llm_profile: None,
+        },
+        AgentTurnCallbacks::new(
+            |prompt: ShellExecApprovalPrompt| {
+                shell_seen = true;
+                assert_eq!(prompt.command, "echo");
+                ShellExecApprovalDecision {
+                    approved: true,
+                    approval_origin: ShellExecApprovalOrigin::UiYes,
+                }
+            },
+            |prompt: ToolApprovalPrompt| {
+                tool_seen = true;
+                assert_eq!(prompt.tool_name, WRITE_FILE);
+                ToolApprovalDecision {
+                    approved: false,
+                    approval_origin: ToolApprovalOrigin::UiNo,
+                }
+            },
+        ),
+    )
+    .expect("agent turn");
+
+    handle.join().expect("server");
+    assert!(shell_seen);
+    assert!(tool_seen);
+    match resp {
+        ClientResponse::AgentTurnResult {
+            assistant_message, ..
+        } => assert_eq!(assistant_message.content, "mixed approvals handled"),
+        other => panic!("expected agent_turn_result, got {other:?}"),
+    }
 }
 
 #[test]

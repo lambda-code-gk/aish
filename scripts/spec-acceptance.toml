@@ -1994,7 +1994,7 @@ id = "approval_ui_stderr_only"
 description = "承認 UI が stderr のみ"
 test = "file_write_approval_ui_writes_stderr_only"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2003,7 +2003,7 @@ id = "approval_ui_escapes_control_chars"
 description = "diff 内制御文字を escape"
 test = "file_write_approval_ui_escapes_control_chars"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2012,7 +2012,7 @@ id = "approval_ui_truncation_notice"
 description = "truncate 時に明示メッセージ"
 test = "file_write_approval_ui_shows_truncation_notice"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2021,7 +2021,7 @@ id = "approval_ui_non_tty"
 description = "non-TTY → deny"
 test = "file_write_approval_ui_rejects_non_tty"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2030,7 +2030,7 @@ id = "approval_ui_yes_executes"
 description = "y で write 実行"
 test = "file_write_approval_ui_yes_executes_write"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2039,7 +2039,7 @@ id = "approval_ui_no_continues_turn"
 description = "n で turn 継続・変更なし"
 test = "file_write_approval_ui_no_continues_turn"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2048,7 +2048,7 @@ id = "aibe_client_tool_approval_roundtrip"
 description = "client が prompt→approval 往復"
 test = "aibe_client_tool_approval_roundtrip"
 file_glob = "aibe-client/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2057,7 +2057,7 @@ id = "verbose_tools_change_id"
 description = "verbose 時 change_id 表示"
 test = "verbose_tools_shows_change_id"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2066,7 +2066,7 @@ id = "shell_and_write_approval_mixed"
 description = "同一 turn で shell/write 承認混在"
 test = "mixed_shell_and_write_approval_in_one_turn"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"

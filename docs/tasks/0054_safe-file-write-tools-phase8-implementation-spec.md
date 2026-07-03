@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 8）  
+> **状態**: 実装済み（Phase 8）  
 > **前提**: [Phase 7](0054_safe-file-write-tools-phase7-implementation-spec.md) 完了
 
 ## 0. 目的
@@ -39,15 +39,15 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `approval_ui_stderr_only` | 承認 UI が stderr のみ | `file_write_approval_ui_writes_stderr_only` | true |
-| `approval_ui_escapes_control_chars` | diff 内制御文字を escape | `file_write_approval_ui_escapes_control_chars` | true |
-| `approval_ui_truncation_notice` | truncate 時に明示メッセージ | `file_write_approval_ui_shows_truncation_notice` | true |
-| `approval_ui_non_tty` | non-TTY → deny | `file_write_approval_ui_rejects_non_tty` | true |
-| `approval_ui_yes_executes` | `y` で write 実行 | `file_write_approval_ui_yes_executes_write` | true |
-| `approval_ui_no_continues_turn` | `n` で turn 継続・変更なし | `file_write_approval_ui_no_continues_turn` | true |
-| `aibe_client_tool_approval_roundtrip` | client が prompt→approval 往復 | `aibe_client_tool_approval_roundtrip` | true |
-| `verbose_tools_change_id` | verbose 時 change_id 表示 | `verbose_tools_shows_change_id` | true |
-| `shell_and_write_approval_mixed` | 同一 turn で shell/write 承認混在 | `mixed_shell_and_write_approval_in_one_turn` | true |
+| `approval_ui_stderr_only` | 承認 UI が stderr のみ | `file_write_approval_ui_writes_stderr_only` | false |
+| `approval_ui_escapes_control_chars` | diff 内制御文字を escape | `file_write_approval_ui_escapes_control_chars` | false |
+| `approval_ui_truncation_notice` | truncate 時に明示メッセージ | `file_write_approval_ui_shows_truncation_notice` | false |
+| `approval_ui_non_tty` | non-TTY → deny | `file_write_approval_ui_rejects_non_tty` | false |
+| `approval_ui_yes_executes` | `y` で write 実行 | `file_write_approval_ui_yes_executes_write` | false |
+| `approval_ui_no_continues_turn` | `n` で turn 継続・変更なし | `file_write_approval_ui_no_continues_turn` | false |
+| `aibe_client_tool_approval_roundtrip` | client が prompt→approval 往復 | `aibe_client_tool_approval_roundtrip` | false |
+| `verbose_tools_change_id` | verbose 時 change_id 表示 | `verbose_tools_shows_change_id` | false |
+| `shell_and_write_approval_mixed` | 同一 turn で shell/write 承認混在 | `mixed_shell_and_write_approval_in_one_turn` | false |
 
 ## 3. 変更ファイル（目安）
 

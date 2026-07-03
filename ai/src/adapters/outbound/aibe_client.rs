@@ -3,12 +3,13 @@
 use std::path::Path;
 
 use aibe_client::{
-    agent_turn as transport_agent_turn, agent_turn_with_client_tools, agent_turn_with_events,
-    memory_request as transport_memory_request, route_turn as transport_route_turn,
-    send_cancel_request, AgentTurnProgressEvent, ClientError, ClientToolCallRequest,
-    ShellExecApprovalDecision,
+    agent_turn_with_client_tools, memory_request as transport_memory_request,
+    route_turn as transport_route_turn, send_cancel_request, AgentTurnCallbacks,
+    AgentTurnProgressEvent, ClientError, ClientToolCallRequest, ShellExecApprovalDecision,
+    ToolApprovalDecision,
 };
 
+use super::file_write_approval_ui::prompt_file_write_approval;
 use super::shell_exec_approval_ui::prompt_shell_exec_approval;
 use crate::domain::classify_shell_exec_tier;
 use crate::domain::client_tools::replay_show::replay_client_tool_callback;
@@ -24,6 +25,25 @@ use crate::ports::outbound::{AgentClient, AgentError, MemoryClient, WorkClient};
 
 pub struct AibeUnixClient {
     socket_path: std::path::PathBuf,
+}
+
+fn shell_exec_approval_callback(
+    prompt: aibe_client::ShellExecApprovalPrompt,
+) -> ShellExecApprovalDecision {
+    let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
+    let decision = prompt_shell_exec_approval(prompt, tier, false);
+    ShellExecApprovalDecision {
+        approved: decision.approved,
+        approval_origin: decision.approval_origin,
+    }
+}
+
+fn tool_approval_callback(prompt: aibe_client::ToolApprovalPrompt) -> ToolApprovalDecision {
+    let decision = prompt_file_write_approval(prompt);
+    ToolApprovalDecision {
+        approved: decision.approved,
+        approval_origin: decision.approval_origin,
+    }
 }
 
 impl AibeUnixClient {
@@ -72,12 +92,13 @@ impl AibeUnixClient {
         on_stream: impl FnMut(String),
         on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
     ) -> Result<ClientResponse, AgentError> {
-        agent_turn_with_events(
+        agent_turn_with_client_tools(
             self.socket_path(),
             request,
             on_progress,
             on_stream,
-            on_approval,
+            |_| None,
+            AgentTurnCallbacks::new(on_approval, tool_approval_callback),
         )
         .map_err(map_client_error)
     }
@@ -96,7 +117,7 @@ impl AibeUnixClient {
             on_progress,
             on_stream,
             on_client_tool,
-            on_approval,
+            AgentTurnCallbacks::new(on_approval, tool_approval_callback),
         )
         .map_err(map_client_error)
     }
@@ -186,30 +207,25 @@ impl AgentClient for AibeUnixClient {
     fn agent_turn(&self, request: &AskRequest) -> Result<ClientResponse, AgentError> {
         let wire = Self::to_client_request(request);
         if request.client_tools.is_empty() {
-            return transport_agent_turn(self.socket_path(), wire, |prompt| {
-                let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
-                let decision = prompt_shell_exec_approval(prompt, tier, false);
-                ShellExecApprovalDecision {
-                    approved: decision.approved,
-                    approval_origin: decision.approval_origin,
-                }
-            })
+            return agent_turn_with_client_tools(
+                self.socket_path(),
+                wire,
+                |_| {},
+                |_| {},
+                |_| None,
+                AgentTurnCallbacks::new(shell_exec_approval_callback, tool_approval_callback),
+            )
             .map_err(map_client_error);
         }
-        self.agent_turn_request_stream_with_client_tools(
+        agent_turn_with_client_tools(
+            self.socket_path(),
             wire,
             |_| {},
             |_| {},
             replay_client_tool_callback(request.replay_events.clone()),
-            |prompt| {
-                let tier = classify_shell_exec_tier(&prompt.command, &prompt.args);
-                let decision = prompt_shell_exec_approval(prompt, tier, false);
-                ShellExecApprovalDecision {
-                    approved: decision.approved,
-                    approval_origin: decision.approval_origin,
-                }
-            },
+            AgentTurnCallbacks::new(shell_exec_approval_callback, tool_approval_callback),
         )
+        .map_err(map_client_error)
     }
 }
 

@@ -5,6 +5,7 @@ mod chat_line_editor;
 mod dynamic_completion;
 mod external_editor;
 mod file_log;
+mod file_write_approval_ui;
 mod local_history;
 mod memory_recipe_approval_ui;
 mod output_filter;
@@ -37,6 +38,12 @@ pub use external_editor::{
     acquire_prompt_via_external_editor, create_prompt_temp_file, resolve_editor_command_from_env,
 };
 pub use file_log::FileLogTail;
+pub use file_write_approval_ui::{
+    approval_prompt_stderr_lines as file_write_approval_prompt_stderr_lines,
+    escape_for_file_write_approval_display, file_write_approval_decision_from_input,
+    parse_file_write_approval_choice, prompt_file_write_approval,
+    stdin_ready_for_file_write_approval, ToolApprovalDecision,
+};
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{
     parse_memory_recipe_apply_choice, prompt_memory_recipe_apply,
@@ -69,7 +76,8 @@ pub use smart_preprocessor_observation::{
 };
 pub use smart_preprocessor_trace::smart_preprocessor_trace_enabled;
 pub use stdout_presenter::{
-    format_shell_exec_executed_summary, render_response, ShellExecRenderOptions, StdoutPresenter,
+    format_shell_exec_executed_summary, format_tool_call_line, render_response,
+    ShellExecRenderOptions, StdoutPresenter,
 };
 pub use suggested_command_recall_store::{
     default_suggestion_cache_path, resolve_suggestion_cache_path, FileSuggestedCommandRecallStore,

@@ -13,11 +13,12 @@ use std::time::Duration;
 use aibe_protocol::{ClientRequest, ClientResponse};
 
 pub use transport::{
-    agent_turn, agent_turn_on_stream, agent_turn_with_client_tools,
-    agent_turn_with_client_tools_on_stream, agent_turn_with_events,
+    agent_turn, agent_turn_on_stream, agent_turn_on_stream_with_callbacks,
+    agent_turn_with_client_tools, agent_turn_with_client_tools_on_stream, agent_turn_with_events,
     agent_turn_with_events_on_stream, memory_request, memory_request_on_stream, read_response_line,
-    route_turn, route_turn_on_stream, send_cancel_request, send_request, AgentTurnProgressEvent,
-    ClientError, ClientToolCallRequest, ShellExecApprovalDecision, ShellExecApprovalPrompt,
+    route_turn, route_turn_on_stream, send_cancel_request, send_request, shell_exec_only_callbacks,
+    AgentTurnCallbacks, AgentTurnProgressEvent, ClientError, ClientToolCallRequest,
+    ShellExecApprovalDecision, ShellExecApprovalPrompt, ToolApprovalDecision, ToolApprovalPrompt,
 };
 
 use unix_connect::connect_unix_stream;
