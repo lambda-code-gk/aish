@@ -3,7 +3,7 @@
 > **種別**: 設計書（`docs/spec/`）
 > **状態**: 設計確定
 > **起票**: 2026-07-02
-> **実装**: [マスター指示書](../tasks/0054_safe-file-write-tools-implementation-spec.md)（Phase 1–9 に分割）
+> **実装**: [マスター指示書](../done/0054_safe-file-write-tools-implementation-spec.md)（Phase 1–9 に分割）
 > **関連**: [0023_shell-exec-approval-hardening-spec.md](../done/0023_shell-exec-approval-hardening-spec.md)、[0036_shell-exec-approval-ux-spec.md](0036_shell-exec-approval-ux-spec.md)、[0049_aish-command-output-replay-spec.md](0049_aish-command-output-replay-spec.md)、[architecture.md](../architecture.md)、[security.md](../security.md)、[testing.md](../testing.md)
 
 ## 0. 目的
@@ -126,15 +126,15 @@ cancelled
 
 | Phase | 指示書 | 内容 |
 |-------|--------|------|
-| 1 | [phase1](../tasks/0054_safe-file-write-tools-phase1-implementation-spec.md) | protocol / name / config / DTO / registry |
-| 2 | [phase2](../tasks/0054_safe-file-write-tools-phase2-implementation-spec.md) | safe_path / SHA-256 / text / read_file 移行 |
-| 3 | [phase3](../tasks/0054_safe-file-write-tools-phase3-implementation-spec.md) | read_file metadata |
-| 4 | [phase4](../tasks/0054_safe-file-write-tools-phase4-implementation-spec.md) | diff / atomic / journal |
-| 5 | [phase5](../tasks/0054_safe-file-write-tools-phase5-implementation-spec.md) | FileChangeService / ToolApprovalGate |
-| 6 | [phase6](../tasks/0054_safe-file-write-tools-phase6-implementation-spec.md) | @edit / write_file |
-| 7 | [phase7](../tasks/0054_safe-file-write-tools-phase7-implementation-spec.md) | apply_patch |
-| 8 | [phase8](../tasks/0054_safe-file-write-tools-phase8-implementation-spec.md) | ai 承認 UI |
-| 9 | [phase9](../tasks/0054_safe-file-write-tools-phase9-implementation-spec.md) | 統合 / docs |
+| 1 | [phase1](../done/0054_safe-file-write-tools-phase1-implementation-spec.md) | protocol / name / config / DTO / registry |
+| 2 | [phase2](../done/0054_safe-file-write-tools-phase2-implementation-spec.md) | safe_path / SHA-256 / text / read_file 移行 |
+| 3 | [phase3](../done/0054_safe-file-write-tools-phase3-implementation-spec.md) | read_file metadata |
+| 4 | [phase4](../done/0054_safe-file-write-tools-phase4-implementation-spec.md) | diff / atomic / journal |
+| 5 | [phase5](../done/0054_safe-file-write-tools-phase5-implementation-spec.md) | FileChangeService / ToolApprovalGate |
+| 6 | [phase6](../done/0054_safe-file-write-tools-phase6-implementation-spec.md) | @edit / write_file |
+| 7 | [phase7](../done/0054_safe-file-write-tools-phase7-implementation-spec.md) | apply_patch |
+| 8 | [phase8](../done/0054_safe-file-write-tools-phase8-implementation-spec.md) | ai 承認 UI |
+| 9 | [phase9](../done/0054_safe-file-write-tools-phase9-implementation-spec.md) | 統合 / docs |
 
 前 Phase の `pending = false` になるまで次 Phase に進まない。
 

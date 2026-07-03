@@ -710,7 +710,6 @@ struct Phase6ApprovalGate {
 }
 
 impl Phase6ApprovalGate {
-    #[allow(dead_code)]
     fn fixed(response: ToolApprovalGateOutcome) -> Arc<Self> {
         Arc::new(Self {
             response: Mutex::new(response),
@@ -1545,44 +1544,537 @@ fn mixed_shell_and_write_approval_in_one_turn() {
     }
 }
 
-#[test]
-#[ignore = "0054 phase 9: acceptance_create_scenario"]
-fn acceptance_write_file_create_flow() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn acceptance_write_file_create_flow() {
+    use aibe_protocol::ClientResponse;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+    use tokio::sync::Mutex;
+
+    use aibe::adapters::inbound::connection_approval::ConnectionApprovalGate;
+
+    let dir = tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("src")).expect("mkdir src");
+    let socket_path = dir.path().join("create.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind");
+    let workdir = dir.path().to_path_buf();
+    let target = workdir.join("src").join("example.rs");
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, writer) = stream.into_split();
+        let writer = Arc::new(Mutex::new(writer));
+        let lines = Arc::new(Mutex::new(BufReader::new(reader).lines()));
+        let gate = Arc::new(ConnectionApprovalGate::new(
+            "turn-create".into(),
+            Arc::clone(&writer),
+            Arc::clone(&lines),
+            None,
+            None,
+        ));
+        let config = phase6_write_config(FileWriteApprovalMode::Ask);
+        let tool = phase6_tool(&workdir, config);
+        let ctx = phase6_ctx(&workdir, Some(gate));
+        tool.execute(
+            "call-create",
+            &json!({
+                "path": "src/example.rs",
+                "mode": "create",
+                "content": "fn main() {}\n",
+            }),
+            30_000,
+            &ctx,
+        )
+        .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let stream = UnixStream::connect(&socket_path).await.expect("connect");
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+    let prompt_line = read_until_tool_approval_prompt(&mut lines).await;
+    let prompt: ClientResponse = serde_json::from_str(prompt_line.trim()).expect("prompt json");
+    let ClientResponse::ToolApprovalPrompt {
+        id,
+        turn_id,
+        tool_call_id,
+        tool_name,
+        preview,
+        ..
+    } = prompt
+    else {
+        panic!("expected tool_approval_prompt, got {prompt_line}");
+    };
+    assert_eq!(turn_id, "turn-create");
+    assert_eq!(tool_call_id, "call-create");
+    assert_eq!(tool_name, "write_file");
+    assert!(preview.contains("fn main()"));
+
+    let approval = json!({
+        "type": "tool_approval",
+        "id": id,
+        "turn_id": turn_id,
+        "tool_call_id": tool_call_id,
+        "approved": true,
+        "approval_origin": "ui_yes"
+    });
+    writer
+        .write_all(format!("{approval}\n").as_bytes())
+        .await
+        .expect("write approval");
+    writer.flush().await.expect("flush approval");
+
+    let (executed, result) = server.await.expect("server");
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read created file"),
+        "fn main() {}\n"
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 9: acceptance_patch_scenario"]
-fn acceptance_apply_patch_flow() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn acceptance_apply_patch_flow() {
+    use aibe_protocol::ClientResponse;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+    use tokio::sync::Mutex;
+
+    use aibe::adapters::inbound::connection_approval::ConnectionApprovalGate;
+
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("handler.rs");
+    std::fs::write(&path, "fn handle() {\n    todo!()\n}\n").expect("seed");
+    let hash = sha256_hex(b"fn handle() {\n    todo!()\n}\n");
+    let socket_path = dir.path().join("patch.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind");
+    let workdir = dir.path().to_path_buf();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, writer) = stream.into_split();
+        let writer = Arc::new(Mutex::new(writer));
+        let lines = Arc::new(Mutex::new(BufReader::new(reader).lines()));
+        let gate = Arc::new(ConnectionApprovalGate::new(
+            "turn-patch".into(),
+            Arc::clone(&writer),
+            Arc::clone(&lines),
+            None,
+            None,
+        ));
+        let config = phase6_write_config(FileWriteApprovalMode::Ask);
+        let tool = phase7_tool(&workdir, config);
+        let ctx = phase6_ctx(&workdir, Some(gate));
+        tool.execute(
+            "call-patch",
+            &json!({
+                "path": "handler.rs",
+                "expected_sha256": hash,
+                "patch": "@@ -2,1 +2,1 @@\n-    todo!()\n+    Ok(())\n",
+            }),
+            30_000,
+            &ctx,
+        )
+        .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let stream = UnixStream::connect(&socket_path).await.expect("connect");
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+    let prompt_line = read_until_tool_approval_prompt(&mut lines).await;
+    let prompt: ClientResponse = serde_json::from_str(prompt_line.trim()).expect("prompt json");
+    let ClientResponse::ToolApprovalPrompt {
+        id,
+        turn_id,
+        tool_call_id,
+        tool_name,
+        preview,
+        ..
+    } = prompt
+    else {
+        panic!("expected tool_approval_prompt, got {prompt_line}");
+    };
+    assert_eq!(turn_id, "turn-patch");
+    assert_eq!(tool_call_id, "call-patch");
+    assert_eq!(tool_name, "apply_patch");
+    assert!(preview.contains("-    todo!()"));
+    assert!(preview.contains("+    Ok(())"));
+
+    let approval = json!({
+        "type": "tool_approval",
+        "id": id,
+        "turn_id": turn_id,
+        "tool_call_id": tool_call_id,
+        "approved": true,
+        "approval_origin": "ui_yes"
+    });
+    writer
+        .write_all(format!("{approval}\n").as_bytes())
+        .await
+        .expect("write approval");
+    writer.flush().await.expect("flush approval");
+
+    let (executed, result) = server.await.expect("server");
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    let updated = std::fs::read_to_string(&path).expect("read patched file");
+    assert!(updated.contains("Ok(())"));
+    assert!(!updated.contains("todo!()"));
 }
 
-#[test]
-#[ignore = "0054 phase 9: audit_approval_source_vocabulary"]
-fn write_tools_audit_uses_fixed_approval_source() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_tools_audit_uses_fixed_approval_source() {
+    use aibe_protocol::ToolApprovalOrigin;
+
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("yes.txt"), "before\n").expect("seed");
+    let yes_hash = sha256_hex(b"before\n");
+
+    let gate_yes =
+        Phase6ApprovalGate::fixed(ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes));
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate_yes),
+        json!({
+            "path": "yes.txt",
+            "mode": "replace",
+            "expected_sha256": yes_hash,
+            "content": "after\n",
+        }),
+    )
+    .await;
+    assert_eq!(
+        executed.approval_source.as_deref(),
+        Some("file_write_approval=ask;ui=y")
+    );
+
+    std::fs::write(dir.path().join("no.txt"), "keep\n").expect("seed");
+    let no_hash = sha256_hex(b"keep\n");
+    let gate_no =
+        Phase6ApprovalGate::fixed(ToolApprovalGateOutcome::Denied(ToolApprovalOrigin::UiNo));
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate_no),
+        json!({
+            "path": "no.txt",
+            "mode": "replace",
+            "expected_sha256": no_hash,
+            "content": "new\n",
+        }),
+    )
+    .await;
+    assert_eq!(
+        executed.approval_source.as_deref(),
+        Some("file_write_approval=ask;ui=n")
+    );
+
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        None,
+        json!({
+            "path": "new2.txt",
+            "mode": "create",
+            "content": "hello\n",
+        }),
+    )
+    .await;
+    assert_eq!(
+        executed.approval_source.as_deref(),
+        Some("file_write_approval=ask")
+    );
+
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "auto.txt",
+            "mode": "create",
+            "content": "auto\n",
+        }),
+    )
+    .await;
+    assert_eq!(
+        executed.approval_source.as_deref(),
+        Some("file_write_approval=always")
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 9: audit_decision_matrix"]
-fn write_tools_audit_decision_matrix() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_tools_audit_decision_matrix() {
+    use aibe_protocol::ToolApprovalOrigin;
+
+    let dir = tempdir().expect("tempdir");
+
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "created.txt",
+            "mode": "create",
+            "content": "hello\n",
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(executed.decision.as_deref(), Some("executed"));
+
+    std::fs::write(dir.path().join("deny.txt"), "keep\n").expect("seed");
+    let hash = sha256_hex(b"keep\n");
+    let gate_no =
+        Phase6ApprovalGate::fixed(ToolApprovalGateOutcome::Denied(ToolApprovalOrigin::UiNo));
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate_no),
+        json!({
+            "path": "deny.txt",
+            "mode": "replace",
+            "expected_sha256": hash,
+            "content": "new\n",
+        }),
+    )
+    .await;
+    assert!(result.is_error);
+    assert_eq!(executed.decision.as_deref(), Some("rejected_by_user"));
+
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        None,
+        json!({
+            "path": "unavail.txt",
+            "mode": "create",
+            "content": "x\n",
+        }),
+    )
+    .await;
+    assert!(result.is_error);
+    assert_eq!(executed.decision.as_deref(), Some("approval_unavailable"));
+
+    let path = dir.path().join("stale.txt");
+    std::fs::write(&path, "before\n").expect("seed");
+    let stale_hash = sha256_hex(b"before\n");
+    let gate_yes = Phase6ApprovalGate::delayed(
+        ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
+        Duration::from_millis(200),
+    );
+    let path_for_task = path.clone();
+    let writer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        std::fs::write(path_for_task, "external\n").expect("external write");
+    });
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate_yes),
+        json!({
+            "path": "stale.txt",
+            "mode": "replace",
+            "expected_sha256": stale_hash,
+            "content": "after\n",
+        }),
+    )
+    .await;
+    writer.await.expect("writer");
+    assert!(result.is_error);
+    assert_eq!(executed.decision.as_deref(), Some("rejected_or_failed"));
+
+    std::fs::write(dir.path().join("note.txt"), "line1\nline2\n").expect("seed");
+    let before = std::fs::read(dir.path().join("note.txt")).expect("read");
+    let note_hash = sha256_hex(&before);
+    let patch = "@@ -1,2 +1,2 @@\n line1\n line2\n";
+    let (executed, result) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": note_hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(executed.decision.as_deref(), Some("no_change"));
 }
 
-#[test]
-#[ignore = "0054 phase 9: audit_write_like_risk_class"]
-fn write_tools_audit_uses_write_like_risk_class() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_tools_audit_uses_write_like_risk_class() {
+    use aibe::domain::ToolRiskClass;
+
+    let dir = tempdir().expect("tempdir");
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "new.txt",
+            "mode": "create",
+            "content": "hello\n",
+        }),
+    )
+    .await;
+    assert_eq!(executed.risk_class, Some(ToolRiskClass::WriteLike));
+
+    std::fs::write(dir.path().join("note.txt"), "line1\n").expect("seed");
+    let hash = sha256_hex(b"line1\n");
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": "@@ -1,1 +1,1 @@\n-line1\n+LINE1\n",
+        }),
+    )
+    .await;
+    assert_eq!(executed.risk_class, Some(ToolRiskClass::WriteLike));
 }
 
-#[test]
-#[ignore = "0054 phase 9: disconnect_during_approval"]
-fn disconnect_during_write_approval_writes_nothing() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn disconnect_during_write_approval_writes_nothing() {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::net::UnixStream;
+    use tokio::sync::Mutex;
+
+    use aibe::adapters::inbound::connection_approval::ConnectionApprovalGate;
+
+    let dir = tempdir().expect("tempdir");
+    let socket_path = dir.path().join("disconnect.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind");
+    let workdir = dir.path().to_path_buf();
+    let target = workdir.join("pending.txt");
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (reader, writer) = stream.into_split();
+        let writer = Arc::new(Mutex::new(writer));
+        let lines = Arc::new(Mutex::new(BufReader::new(reader).lines()));
+        let gate = Arc::new(ConnectionApprovalGate::new(
+            "turn-disconnect".into(),
+            Arc::clone(&writer),
+            Arc::clone(&lines),
+            None,
+            None,
+        ));
+        let config = phase6_write_config(FileWriteApprovalMode::Ask);
+        let tool = phase6_tool(&workdir, config);
+        let ctx = phase6_ctx(&workdir, Some(gate));
+        let (executed, result) = tool
+            .execute(
+                "call-disconnect",
+                &json!({
+                    "path": "pending.txt",
+                    "mode": "create",
+                    "content": "should not land\n",
+                }),
+                30_000,
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+        assert_eq!(executed.error.as_deref(), Some("approval_unavailable"));
+        assert!(!target.exists());
+    });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let stream = UnixStream::connect(&socket_path).await.expect("connect");
+    let (reader, writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await.expect("read") {
+        if line.contains(r#""type":"tool_approval_prompt""#) {
+            break;
+        }
+    }
+    drop(lines);
+    drop(writer);
+
+    server.await.expect("server");
 }
 
-#[test]
-#[ignore = "0054 phase 9: shell_exec_regression"]
-fn shell_exec_approval_regression_unchanged() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn shell_exec_approval_regression_unchanged() {
+    use async_trait::async_trait;
+
+    use aibe::adapters::outbound::tools::{ConfigAllowlistPolicy, ShellExecTool};
+    use aibe::domain::{ClientCwd, ToolApprovalState, ToolRiskClass, SHELL_EXEC};
+    use aibe::ports::outbound::{ShellExecApprovalGate, ShellExecApprovalMode, ShellExecConfig};
+    use aibe_client::ShellExecApprovalDecision;
+    use aibe_protocol::ShellExecApprovalOrigin;
+
+    struct YesGate;
+
+    #[async_trait]
+    impl ShellExecApprovalGate for YesGate {
+        async fn request_shell_exec_approval(
+            &self,
+            _tool_call_id: &str,
+            _command: &str,
+            _args: &[String],
+        ) -> Option<ShellExecApprovalDecision> {
+            Some(ShellExecApprovalDecision {
+                approved: true,
+                approval_origin: ShellExecApprovalOrigin::UiYes,
+            })
+        }
+    }
+
+    let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+        enabled: true,
+        allowed_commands: vec!["echo".into()],
+        approval: ShellExecApprovalMode::Ask,
+        ..Default::default()
+    }));
+    let tool = ShellExecTool::new(policy, 4096, Vec::new());
+    let cwd = ClientCwd::new(std::env::current_dir().expect("cwd")).expect("cwd");
+    let ctx = ToolExecutionContext::new(cwd)
+        .with_turn_id("regression")
+        .with_capability_policy(StaticCapabilityPolicy::local_full())
+        .with_approval_gate(Arc::new(YesGate));
+    let (record, result) = tool
+        .execute(
+            "tc-reg",
+            &json!({"command": "echo", "args": ["ok"]}),
+            5000,
+            &ctx,
+        )
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(record.risk_class, Some(ToolRiskClass::DangerousShell));
+    assert_eq!(
+        record.approval_state,
+        Some(ToolApprovalState::ExplicitClientOptIn)
+    );
+    assert_eq!(record.decision.as_deref(), Some("executed"));
+    assert_eq!(
+        record.approval_source.as_deref(),
+        Some("shell_exec_approval=ask;ui=y")
+    );
+    assert_eq!(record.name, SHELL_EXEC);
+}
+
+async fn read_until_tool_approval_prompt(
+    lines: &mut tokio::io::Lines<tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>>,
+) -> String {
+    loop {
+        let line = lines.next_line().await.expect("read line").expect("line");
+        if line.contains(r#""type":"tool_approval_prompt""#) {
+            return line;
+        }
+    }
 }

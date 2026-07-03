@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 9）  
+> **状態**: 実装済み（Phase 9）  
 > **前提**: [Phase 8](0054_safe-file-write-tools-phase8-implementation-spec.md) 完了
 
 ## 0. 目的

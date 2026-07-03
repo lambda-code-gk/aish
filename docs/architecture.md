@@ -556,7 +556,7 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 - `tools: []` のときは **1 回の LLM 呼び出し**のみ（従来互換）。
 - `tools` に名前があるとき、aibe は **エージェントループ**（LLM → ツール実行 → LLM …）を `[tools] max_rounds` まで繰り返す。**このとき `context.cwd`（絶対パス）は必須**。未送信・相対パスは `invalid_request` で拒否する。
 - `[tools] max_rounds` は **1 以上**。`config.toml` で `0` は設定読み込みエラー。プログラム上 `ToolsConfig { max_rounds: 0 }` のみ `effective_max_rounds()` で 1 に補正（`docs/done/0007_agent-turn-loop-modularization-spec.md`）。
-- 組み込みツール: safe tools は `read_file` / `list_dir` / `grep` / `git_diff` / `git_status`。`shell_exec` は危険操作として `@exec` か literal 指定でのみ許可する（`@full` には含めない）。`shell_exec` は設定 `allowed_commands` のみ実行し、subprocess cwd は `context.cwd`。`[tools.shell_exec] shell_exec_approval = "never" | "ask" | "always"`（既定 `ask`）で実行前の承認を制御する。`ask` では `ai` が `y / n / a / c` の UI を出し、`read_only` / `mutating` / `destructive` の tier と session 許可、`[tools.shell_exec.auto_approve_patterns]` を見て自動承認する。`never` は最上位拒否で `--yes-exec` でも越えない。外部コマンド（`shell_exec` / `git_*`）は timeout 時に子プロセスを kill して明示 reap（共通 `run_subprocess`）。
+- 組み込みツール: safe tools は `read_file` / `list_dir` / `grep` / `git_diff` / `git_status`。`write_file` / `apply_patch` は write-like tool として `@edit` または literal 指定でのみ許可する（`@full` / Smart Preprocessor からは自動追加しない）。`shell_exec` は危険操作として `@exec` か literal 指定でのみ許可する（`@full` には含めない）。`shell_exec` は設定 `allowed_commands` のみ実行し、subprocess cwd は `context.cwd`。`[tools.shell_exec] shell_exec_approval = "never" | "ask" | "always"`（既定 `ask`）で実行前の承認を制御する。`ask` では `ai` が `y / n / a / c` の UI を出し、`read_only` / `mutating` / `destructive` の tier と session 許可、`[tools.shell_exec.auto_approve_patterns]` を見て自動承認する。`never` は最上位拒否で `--yes-exec` でも越えない。`[tools.file_write] approval = "never" | "ask" | "always"`（既定 `ask`）で write tool 実行前承認を制御する。`ask` では AIBE が実 diff を生成し `ai` が stderr で `Apply this change? [y/N]` を表示する（0054）。non-TTY では fail-closed。外部コマンド（`shell_exec` / `git_*`）は timeout 時に子プロセスを kill して明示 reap（共通 `run_subprocess`）。
 - `approval_origin` を `ClientRequest::ShellExecApproval` に追加し、`aibe` 側は `approval_source` を再構成して監査に残す。
 - `list_dir` / `grep` は `[tools.explore]` の件数・走査上限で timeout 前のメモリ・I/O を抑制する（`docs/aibe.config.example.toml`）。
 - ツール出力は `[tools] max_tool_output_bytes` で切り詰め、`tool_calls.output` と LLM 向け tool result の両方に同じ制限をかける（`docs/security.md`）。
@@ -574,7 +574,7 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 | **aibe の cwd** | 相対パス解決に **使わない**（フォールバックなし） |
 | **新規ツール** | [`ToolExecutor::execute`](aibe/src/ports/outbound/tools.rs) の `ToolExecutionContext` を受け取り、相対パスは `base_dir` / `resolve_path` を使う。aibe 内で `std::env::current_dir` を直接参照しない |
 | **`ai` の責務** | ツール有効時は起動時の `std::env::current_dir()`（絶対パス）を `context.cwd` に載せる。`AskInput` → `AskRequest` 変換で検証する |
-| **既存** | `read_file` / `list_dir` / `grep` / `git_diff` / `git_status` / `shell_exec` は上記に準拠 |
+| **既存** | `read_file` / `list_dir` / `grep` / `git_diff` / `git_status` / `shell_exec` / `write_file` / `apply_patch` は上記に準拠 |
 
 実装の正本: **wire** — `aibe-protocol`（`ClientRequest` / `ClientResponse` / `ToolName` / `ExecutedToolCall` / `KNOWN_TOOLS` / 契約定数）。**server 内部** — `aibe::domain::{ClientCwd, AgentTurnContext, ShellLogTail, ChatMessage, ToolCall}`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context` 形は従来どおり。`RequestService` は `aibe_protocol::RequestContext` を `application/protocol_convert` の `TryFrom` で `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。会話メッセージは wire 上 `messages[].role` 文字列のまま受け取り、内部は `MessageRole` enum（0008）。`ai` の allowlist は `aibe_protocol::ToolName` を使用する。
 

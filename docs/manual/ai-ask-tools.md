@@ -384,6 +384,54 @@ spawn 失敗時の未加工フォールバックは unit test（`output_filter::
 
 **C（実 LLM）は任意。** AI 未実施の完了報告では「C 未実施」と明記する。A・B は可能な限り実施する。
 
+## D. file write 承認（0054 `@edit`）
+
+`write_file` / `apply_patch` は **明示的に `@edit` または literal 指定** したときのみ有効。Smart Preprocessor は自動追加しない。
+
+### D0. 隔離設定（mock aibe + write roots）
+
+B0 と同様に mock aibe を起動したうえで、`AIBE_CONFIG` に write roots を追加する。
+
+```bash
+cat >>"$AIBE_CONFIG" <<'EOF'
+[tools.file_write]
+allowed_roots = ["."]
+approval = "ask"
+EOF
+
+cat >"$AI_CONFIG" <<'EOF'
+[ask]
+tools = "@edit"
+EOF
+```
+
+### D1. 新規作成（§28.1）
+
+TTY 上で次を実行し、stderr に diff preview と `Apply this change? [y/N]` が出ること、`y` でファイルが作成されることを確認する。
+
+```bash
+cd "$MANUAL"
+cargo run -q -p ai -- ask --tools @edit 'src/example.rs を fn main() {} だけのファイルとして作成してください'
+```
+
+### D2. 既存修正（§28.2）
+
+既存ファイルを seed したうえで patch 承認を確認する。
+
+```bash
+mkdir -p "$MANUAL/src"
+echo 'fn main() { todo!() }' >"$MANUAL/src/example.rs"
+cargo run -q -p ai -- ask --tools @edit 'src/example.rs の todo を println に置き換えて'
+```
+
+### D3. 外部 editor 競合（§28.3）
+
+承認 prompt 表示中に別ターミナルで同ファイルを編集し、`stale_file` で書き込まれないことを確認する（手動・任意）。
+
+### D4. 拒否（§28.4）
+
+prompt で `n` を選び、ファイルが不変で turn が継続することを確認する。
+
 ## 実施記録（リポジトリメンテナンス用）
 
 | 区分 | 実施日 | 実施者 | 結果 |

@@ -294,6 +294,23 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 - **0023 / 0036**: `ai` は `shell_exec_approval_ui` と `domain/shell_exec_approval` の unit で TTY/escape/tier/pattern を固定。`aibe-client/tests/agent_turn_approval.rs` で `approval_origin` 往復を固定。`ai/tests/shell_exec_approval_ux.rs` と `yes_exec_integration.rs` で cache / non-TTY を検証。pipe への `printf y` は [manual/ai-ask-tools.md](manual/ai-ask-tools.md) B3c で手動確認。
 - **正本**: 検証計画の説明はこの文書に置き、運用手順は `docs/manual/ai-ask-tools.md` に寄せる。
 
+### 0054 Safe File Write Tools の検証観点
+
+設計: [spec/0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md)。
+
+| 種別 | ファイル | 担保する観点 |
+|------|----------|--------------|
+| **unit / integration** | `aibe-protocol/tests/0054_safe_file_write_red.rs` | `file:write` capability、`ToolApproval` wire、`ExecutedToolCall` audit 語彙 |
+| **integration** | `aibe/tests/0054_safe_file_write_red.rs` | `write_file` / `apply_patch`、SHA-256 / stale_file、journal、socket 承認、§28 受け入れシナリオ |
+| **integration** | `aibe/tests/file_change_service.rs` | `FileChangeService` prepare → approve → revalidate → journal → commit |
+| **integration** | `aibe/tests/tool_approval_socket.rs` | `ConnectionApprovalGate` の write-like 承認往復 |
+| **integration** | `ai/tests/0054_safe_file_write_red.rs` | `@edit` 展開、write tool 有効時 warning |
+| **integration** | `ai/tests/file_write_approval_ui.rs` | stderr 承認 UI、non-TTY fail-closed、diff escape |
+| **integration** | `aibe-client/tests/0054_safe_file_write_red.rs` | `ToolApprovalPrompt` callback 往復 |
+| **manual** | [manual/ai-ask-tools.md](manual/ai-ask-tools.md) § D | `ai --tools @edit` での create / patch / stale / 拒否 |
+
+受け入れ条件は `scripts/spec-acceptance.toml`（`spec = "0054"`）に Phase 1–9 で登録。
+
 ### 0035 memory identity split の検証観点
 
 設計: [spec/0035_aibe-memory-identity-split-spec.md](spec/0035_aibe-memory-identity-split-spec.md)。

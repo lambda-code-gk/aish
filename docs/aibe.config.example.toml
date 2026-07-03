@@ -103,6 +103,18 @@ mutating = ["^cargo test$", "^cargo check$"]
 [tools.read_file]
 allowed_roots = [".", "~/projects"]
 
+# write_file / apply_patch（0054 Safe File Write Tools）
+# @edit category または literal 指定でのみ有効化。Smart Preprocessor は自動追加しない。
+[tools.file_write]
+# enabled = true
+# allowed_roots = ["."]
+# approval = "ask"   # never | ask | always（既定 ask）
+# max_file_bytes = 1_048_576
+# max_patch_bytes = 262_144
+# max_preview_bytes = 65_536
+# journal_retention_days = 7
+# journal_max_bytes = 50_000_000
+
 # list_dir / grep の探索上限（timeout 前のメモリ・I/O 抑制）
 [tools.explore]
 max_list_entries = 10_000

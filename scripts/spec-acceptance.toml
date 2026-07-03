@@ -2075,7 +2075,7 @@ id = "disconnect_during_approval"
 description = "disconnect で write しない"
 test = "disconnect_during_write_approval_writes_nothing"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2084,7 +2084,7 @@ id = "audit_write_like_risk_class"
 description = "risk_class = write_like"
 test = "write_tools_audit_uses_write_like_risk_class"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2093,7 +2093,7 @@ id = "audit_approval_source_vocabulary"
 description = "approval_source 固定語彙"
 test = "write_tools_audit_uses_fixed_approval_source"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2102,7 +2102,7 @@ id = "audit_decision_matrix"
 description = "success/deny/unavailable/stale/no_change 識別"
 test = "write_tools_audit_decision_matrix"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2111,7 +2111,7 @@ id = "shell_exec_regression"
 description = "shell 承認の既存動作を壊さない"
 test = "shell_exec_approval_regression_unchanged"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2120,7 +2120,7 @@ id = "acceptance_create_scenario"
 description = "§28.1 新規作成シナリオ"
 test = "acceptance_write_file_create_flow"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -2129,4 +2129,4 @@ id = "acceptance_patch_scenario"
 description = "§28.2 既存修正シナリオ"
 test = "acceptance_apply_patch_flow"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
