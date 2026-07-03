@@ -249,7 +249,11 @@ fn ensure_stdout_newline() {
 }
 
 pub fn format_tools_startup(line: &ToolsStartupLine) -> String {
-    let prefix = if line.warn_shell { "warning: " } else { "" };
+    let prefix = if line.warn_shell || line.warn_write {
+        "warning: "
+    } else {
+        ""
+    };
     match &line.source_hint {
         Some(hint) => format!("{prefix}ai: tools enabled: {} ({hint})", line.enabled_list),
         None => format!("{prefix}ai: tools enabled: {}", line.enabled_list),
@@ -907,7 +911,9 @@ pub fn truncate_bytes(s: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aibe_protocol::{ProtocolMessageOut, ToolApprovalState, ToolName, ToolRiskClass};
+    use aibe_protocol::{
+        ProtocolMessageOut, ToolApprovalState, ToolName, ToolRiskClass, WRITE_FILE,
+    };
     use serde_json::json;
 
     #[test]
@@ -934,6 +940,10 @@ mod tests {
             format_tools_startup(&r.startup),
             "warning: ai: tools enabled: shell_exec (@exec)"
         );
+
+        let r = resolve_tools(Some("@edit"), &ConfigToolsTokens::default()).unwrap();
+        assert!(format_tools_startup(&r.startup).starts_with("warning: "));
+        assert!(format_tools_startup(&r.startup).contains(WRITE_FILE));
     }
 
     #[test]

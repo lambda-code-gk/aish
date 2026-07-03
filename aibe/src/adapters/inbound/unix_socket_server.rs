@@ -17,7 +17,7 @@ use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{
-    ClientToolGate, ShellExecApprovalGate, TurnCancellation, TurnEventSink,
+    ClientToolGate, ShellExecApprovalGate, ToolApprovalGate, TurnCancellation, TurnEventSink,
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
 
@@ -141,6 +141,7 @@ async fn serve_connection(
                 }
                 let mut cancellation: Option<Arc<TurnCancellation>> = None;
                 let mut gate: Option<Arc<dyn ShellExecApprovalGate>> = None;
+                let mut tool_gate: Option<Arc<dyn ToolApprovalGate>> = None;
                 let mut client_tool_gate: Option<Arc<dyn ClientToolGate>> = None;
                 let mut events: Option<Arc<dyn TurnEventSink>> = None;
                 if let ClientRequest::AgentTurn { id, .. } = &req {
@@ -148,15 +149,16 @@ async fn serve_connection(
                     let sink: Arc<dyn TurnEventSink> = Arc::new(ConnectionEventSink {
                         writer: Arc::clone(&writer),
                     });
-                    let approval_gate: Arc<dyn ShellExecApprovalGate> =
-                        Arc::new(ConnectionApprovalGate::new(
-                            id.clone(),
-                            Arc::clone(&writer),
-                            Arc::clone(&lines),
-                            Some(Arc::clone(&sink)),
-                            Some(Arc::clone(&cancel)),
-                        ));
-                    let tool_gate: Arc<dyn ClientToolGate> =
+                    let connection_gate = Arc::new(ConnectionApprovalGate::new(
+                        id.clone(),
+                        Arc::clone(&writer),
+                        Arc::clone(&lines),
+                        Some(Arc::clone(&sink)),
+                        Some(Arc::clone(&cancel)),
+                    ));
+                    let tool_approval_gate: Arc<dyn ToolApprovalGate> = connection_gate.clone();
+                    let approval_gate: Arc<dyn ShellExecApprovalGate> = connection_gate;
+                    let tool_gate_impl: Arc<dyn ClientToolGate> =
                         Arc::new(ConnectionClientToolGate::new(
                             id.clone(),
                             Arc::clone(&writer),
@@ -166,11 +168,19 @@ async fn serve_connection(
                         ));
                     cancellation = Some(cancel);
                     gate = Some(approval_gate);
-                    client_tool_gate = Some(tool_gate);
+                    tool_gate = Some(tool_approval_gate);
+                    client_tool_gate = Some(tool_gate_impl);
                     events = Some(sink);
                 }
                 handler
-                    .handle_with_events(req, gate, client_tool_gate, events, cancellation)
+                    .handle_with_events(
+                        req,
+                        gate,
+                        tool_gate,
+                        client_tool_gate,
+                        events,
+                        cancellation,
+                    )
                     .await
             }
             Err(e) => ClientResponse::error(

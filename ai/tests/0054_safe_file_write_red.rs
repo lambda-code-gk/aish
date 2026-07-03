@@ -62,15 +62,45 @@ fn route_turn_does_not_recommend_write_tools() {
 }
 
 #[test]
-#[ignore = "0054 phase 6: edit_category_expansion"]
 fn edit_tool_category_includes_write_tools() {
-    panic!("0054 not implemented");
+    let resolved = resolve_tools(Some("@edit"), &ConfigToolsTokens::default()).expect("resolve");
+    let names: Vec<_> = resolved
+        .allowlist
+        .names()
+        .iter()
+        .map(|n| n.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "read_file",
+            "list_dir",
+            "grep",
+            "git_diff",
+            "git_status",
+            WRITE_FILE,
+            APPLY_PATCH,
+        ]
+    );
+    let full = resolve_tools(Some("@full"), &ConfigToolsTokens::default()).expect("resolve");
+    for name in full.allowlist.names() {
+        assert_ne!(name.as_str(), WRITE_FILE);
+        assert_ne!(name.as_str(), APPLY_PATCH);
+    }
 }
 
 #[test]
-#[ignore = "0054 phase 6: startup_warning_write_tools"]
 fn ai_warns_when_write_tools_enabled() {
-    panic!("0054 not implemented");
+    let resolved = resolve_tools(Some("@edit"), &ConfigToolsTokens::default()).expect("resolve");
+    assert!(resolved.startup.warn_write);
+    assert!(resolved.startup.enabled_list.contains(WRITE_FILE));
+    assert!(resolved.startup.enabled_list.contains(APPLY_PATCH));
+    assert_eq!(resolved.startup.source_hint.as_deref(), Some("@edit"));
+
+    let literal =
+        resolve_tools(Some("write_file"), &ConfigToolsTokens::default()).expect("resolve");
+    assert!(literal.startup.warn_write);
+    assert_eq!(literal.startup.enabled_list, WRITE_FILE);
 }
 
 #[test]

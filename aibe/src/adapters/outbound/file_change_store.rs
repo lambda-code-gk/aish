@@ -21,4 +21,21 @@ impl FileChangeStore for FilesystemFileChangeStore {
     ) -> Result<(), FileChangeStoreError> {
         atomic_write_file(path, content, preserve_mode).map_err(|_| FileChangeStoreError)
     }
+
+    async fn is_regular_file(&self, path: &Path) -> bool {
+        path.is_file()
+    }
+
+    async fn read_file_bytes(&self, path: &Path) -> Result<Option<Vec<u8>>, FileChangeStoreError> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        std::fs::read(path)
+            .map(Some)
+            .map_err(|_| FileChangeStoreError)
+    }
+
+    async fn path_exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
 }

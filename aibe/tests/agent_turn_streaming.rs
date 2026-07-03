@@ -2,12 +2,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
     terminator::ToolRoundTerminatorOrchestrator, DeltaStreamingMockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::basic_pack_arc;
+use aibe::application::build_default_tool_registry;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage};
 use aibe::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig, TurnEventSink};
@@ -38,7 +38,7 @@ async fn text_only_turn_forwards_multiple_streaming_deltas() {
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         cfg.termination_strategy,
     ));
-    let registry = build_registry(&cfg, &[]);
+    let registry = build_default_tool_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(
         Arc::clone(&llm),
         registry,

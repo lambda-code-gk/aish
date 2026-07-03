@@ -10,7 +10,8 @@ use crate::application::tool_round::rejected::rejected_tool_result;
 use crate::domain::logical_tool_name;
 use crate::domain::{
     is_known_tool, Capability, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName,
-    ToolResult, ToolRiskClass, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+    ToolResult, ToolRiskClass, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE,
+    SHELL_EXEC, WRITE_FILE,
 };
 use crate::ports::outbound::{
     LlmCallTracer, LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
@@ -55,6 +56,10 @@ fn classify_tool(name: &str) -> (ToolRiskClass, ToolApprovalState) {
             ToolApprovalState::ExplicitClientOptIn,
         ),
     }
+}
+
+fn is_write_tool(name: &str) -> bool {
+    matches!(name, WRITE_FILE | APPLY_PATCH)
 }
 
 impl ToolRoundExecutor {
@@ -282,8 +287,35 @@ impl ToolRoundExecutor {
                         format!("model requested disallowed tool: {}", tc.name),
                     )
                 } else if let Some(executor) = self.registry.get(&name) {
-                    if name.as_str() == SHELL_EXEC {
+                    let needs_shell = name.as_str() == SHELL_EXEC;
+                    let needs_write = is_write_tool(name.as_str());
+                    if needs_shell {
                         if let Err(denied) = tool_ctx.require_capability(Capability::ShellExecute) {
+                            rejected_tool_result(tc, "capability_denied", denied.message())
+                        } else if let Some(cancel) = cancellation {
+                            tokio::select! {
+                                res = executor.execute(
+                                    &tc.id,
+                                    &tc.arguments,
+                                    self.tools_config.exec_timeout_ms,
+                                    tool_ctx,
+                                ) => res,
+                                _ = cancel.wait() => {
+                                    return Ok(RoundOutcome::Cancelled { executed });
+                                }
+                            }
+                        } else {
+                            executor
+                                .execute(
+                                    &tc.id,
+                                    &tc.arguments,
+                                    self.tools_config.exec_timeout_ms,
+                                    tool_ctx,
+                                )
+                                .await
+                        }
+                    } else if needs_write {
+                        if let Err(denied) = tool_ctx.require_capability(Capability::FileWrite) {
                             rejected_tool_result(tc, "capability_denied", denied.message())
                         } else if let Some(cancel) = cancellation {
                             tokio::select! {

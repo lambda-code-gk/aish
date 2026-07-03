@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
     shared_baseline_recipe_loader, shared_builtin_loader, EmptyContextualMemoryStore,
     FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker, MockLlm,
     StaticCapabilityPolicy,
 };
+use aibe::application::build_default_tool_registry;
 use aibe::application::contextual_pack_arc;
 use aibe::application::memory_service::MemoryService;
 use aibe::application::memory_subscribe_service::MemorySubscribeService;
@@ -35,7 +35,7 @@ fn request_service_with_policy(
         Arc::new(MockLlm::new()),
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
@@ -338,7 +338,7 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
         llm,
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
-    let tool_registry = build_registry(&tools_cfg, &[]);
+    let tool_registry = build_default_tool_registry(&tools_cfg, &[]);
     let policy = StaticCapabilityPolicy::memory_read_only();
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
@@ -418,7 +418,7 @@ async fn memory_only_profile_denies_shell_execute() {
         llm,
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
-    let tool_registry = build_registry(&tools_cfg, &[]);
+    let tool_registry = build_default_tool_registry(&tools_cfg, &[]);
     let policy = StaticCapabilityPolicy::memory_only();
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),

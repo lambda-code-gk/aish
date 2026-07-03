@@ -26,6 +26,7 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
             GREP => Some(grep_definition()),
             GIT_DIFF => Some(git_diff_definition()),
             GIT_STATUS => Some(git_status_definition()),
+            WRITE_FILE => Some(write_file_definition()),
             _ => None,
         })
         .collect()
@@ -147,11 +148,12 @@ fn git_status_definition() -> ToolDefinition {
     }
 }
 
-#[allow(dead_code)]
 fn write_file_definition() -> ToolDefinition {
     ToolDefinition {
         name: WRITE_FILE.to_string(),
-        description: "Create or replace a text file under configured write allowed roots."
+        description: "Create or replace a text file under configured write allowed roots. \
+                      For mode=replace, call read_file with include_metadata=true first and pass \
+                      expected_sha256 from the metadata line."
             .to_string(),
         parameters: json!({
             "type": "object",

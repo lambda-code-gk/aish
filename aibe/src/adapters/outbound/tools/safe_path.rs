@@ -263,13 +263,21 @@ async fn reject_symlinks_along_path(path: &Path) -> Result<(), SafePathError> {
             Component::CurDir => {}
             Component::Normal(name) => {
                 current.push(name);
-                let meta = tokio::fs::symlink_metadata(&current)
-                    .await
-                    .map_err(|e| SafePathError::path_not_allowed(e.to_string()))?;
-                if meta.file_type().is_symlink() {
-                    return Err(SafePathError::symlink_not_allowed(
-                        "path component is a symlink",
-                    ));
+                match tokio::fs::symlink_metadata(&current).await {
+                    Ok(meta) => {
+                        if meta.file_type().is_symlink() {
+                            return Err(SafePathError::symlink_not_allowed(
+                                "path component is a symlink",
+                            ));
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        // create 先の最終コンポーネントは未作成のためここで打ち切る。
+                        break;
+                    }
+                    Err(e) => {
+                        return Err(SafePathError::path_not_allowed(e.to_string()));
+                    }
                 }
             }
             Component::ParentDir => {}

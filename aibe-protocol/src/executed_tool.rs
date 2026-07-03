@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ShellExecApprovalOrigin;
+use crate::{ShellExecApprovalOrigin, ToolApprovalOrigin};
 
 /// 実行済みツール呼び出しの成否。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +49,18 @@ pub enum ShellExecApprovalOutcome {
     UserDenied,
     /// `ask` だが対話クライアント / gate が無い。
     ApprovalUnavailable,
+}
+
+/// `write_file` / `apply_patch` 監査用の承認結果（`with_file_write_audit`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileWriteApprovalOutcome {
+    PolicyNever,
+    AutoApproved,
+    UserApproved,
+    UserDenied,
+    ApprovalUnavailable,
+    Cancelled,
+    Timeout,
 }
 
 /// クライアント向け `tool_calls` 記録。
@@ -208,6 +220,68 @@ impl ExecutedToolCall {
         }
         self.approval_source = Some(approval_source);
         self
+    }
+
+    pub fn with_file_write_audit(
+        mut self,
+        approval_mode: &str,
+        outcome: FileWriteApprovalOutcome,
+        approval_origin: Option<ToolApprovalOrigin>,
+    ) -> Self {
+        self.risk_class = Some(ToolRiskClass::WriteLike);
+        self.dry_run = Some(false);
+        let mut approval_source = format!("file_write_approval={approval_mode}");
+        match outcome {
+            FileWriteApprovalOutcome::PolicyNever => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("rejected_by_policy".into());
+            }
+            FileWriteApprovalOutcome::AutoApproved => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some(if self.status == ExecutedToolStatus::Ok {
+                    "executed".into()
+                } else {
+                    "rejected_or_failed".into()
+                });
+            }
+            FileWriteApprovalOutcome::UserApproved => {
+                self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
+                self.decision = Some(if self.status == ExecutedToolStatus::Ok {
+                    "executed".into()
+                } else {
+                    "rejected_or_failed".into()
+                });
+            }
+            FileWriteApprovalOutcome::UserDenied => {
+                self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
+                self.decision = Some("rejected_by_user".into());
+            }
+            FileWriteApprovalOutcome::ApprovalUnavailable => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("approval_unavailable".into());
+            }
+            FileWriteApprovalOutcome::Cancelled => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("cancelled".into());
+            }
+            FileWriteApprovalOutcome::Timeout => {
+                self.approval_state = Some(ToolApprovalState::NotRequired);
+                self.decision = Some("timeout".into());
+            }
+        }
+        if let Some(origin) = approval_origin {
+            approval_source.push(';');
+            approval_source.push_str(tool_approval_origin_audit_suffix(origin));
+        }
+        self.approval_source = Some(approval_source);
+        self
+    }
+}
+
+fn tool_approval_origin_audit_suffix(origin: ToolApprovalOrigin) -> &'static str {
+    match origin {
+        ToolApprovalOrigin::UiYes => "ui=y",
+        ToolApprovalOrigin::UiNo => "ui=n",
     }
 }
 

@@ -11,8 +11,9 @@ use crate::adapters::inbound::unix_socket_server;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
-    ConversationStore as FilesystemConversationStore, EnvLlmCallTracer,
-    FilesystemFeatureRegistryLoader, StaticCapabilityPolicy, TomlConfig,
+    ConversationStore as FilesystemConversationStore, EnvLlmCallTracer, FileChangeJournalConfig,
+    FilesystemFeatureRegistryLoader, FilesystemFileChangeJournal, FilesystemFileChangeStore,
+    StaticCapabilityPolicy, TomlConfig,
 };
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
@@ -22,15 +23,36 @@ use crate::adapters::outbound::{
 use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
 use crate::application::contextual_pack_with_work_arc;
+use crate::application::file_change_service::FileChangeService;
 use crate::application::request_service::RequestService;
 use crate::daemon::{build_current_pid_record, default_pid_file_path, write_pid_file};
 use crate::domain::{FeatureEligibilityContext, FeatureRegistry};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{
-    ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, LlmCallTracer, MemoryConfig,
-    ProfileRegistry, ToolsConfig,
+    ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, FileChangeExecutor,
+    FileWriteConfig, LlmCallTracer, MemoryConfig, ProfileRegistry, ToolRegistry, ToolsConfig,
 };
+
+/// 本番経路の rollback journal + atomic store + orchestration。
+pub fn build_file_change_executor(config: &FileWriteConfig) -> Arc<dyn FileChangeExecutor> {
+    let journal = Arc::new(FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: FileChangeJournalConfig::default_root(),
+        retention_days: config.journal_retention_days,
+        max_bytes: config.journal_max_bytes,
+    }));
+    let store = Arc::new(FilesystemFileChangeStore);
+    Arc::new(FileChangeService::new(config.clone(), journal, store))
+}
+
+/// テスト / composition root 向けの既定 tool registry。
+pub fn build_default_tool_registry(
+    tools_cfg: &ToolsConfig,
+    external_commands: &[ExternalCommandConfig],
+) -> Arc<dyn ToolRegistry> {
+    let executor = build_file_change_executor(&tools_cfg.file_write);
+    build_registry(tools_cfg, external_commands, executor)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -43,7 +65,8 @@ pub async fn run(
     conversation_store_root: PathBuf,
     memory_config: MemoryConfig,
 ) -> anyhow::Result<()> {
-    let tool_registry = build_registry(&tools_config, &external_commands);
+    let file_change = build_file_change_executor(&tools_config.file_write);
+    let tool_registry = build_registry(&tools_config, &external_commands, file_change);
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         tools_config.termination_strategy,
     ));

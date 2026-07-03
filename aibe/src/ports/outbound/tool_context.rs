@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::domain::Capability;
 use crate::domain::ClientCwd;
 use crate::ports::outbound::{
-    CapabilityDenied, CapabilityPolicy, ClientToolGate, ShellExecApprovalGate,
+    CapabilityDenied, CapabilityPolicy, ClientToolGate, ShellExecApprovalGate, ToolApprovalGate,
 };
 use aibe_protocol::ClientProvidedToolSpec;
 
@@ -21,6 +21,7 @@ pub struct ToolExecutionContext {
     client_cwd: ClientCwd,
     turn_id: String,
     approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+    tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
     client_tool_gate: Option<Arc<dyn ClientToolGate>>,
     capability_policy: Option<Arc<dyn CapabilityPolicy>>,
     client_tools: Vec<ClientProvidedToolSpec>,
@@ -32,6 +33,7 @@ impl std::fmt::Debug for ToolExecutionContext {
             .field("client_cwd", &self.client_cwd)
             .field("turn_id", &self.turn_id)
             .field("approval_gate", &self.approval_gate.is_some())
+            .field("tool_approval_gate", &self.tool_approval_gate.is_some())
             .field("client_tool_gate", &self.client_tool_gate.is_some())
             .field(
                 "capability_policy",
@@ -47,6 +49,7 @@ impl PartialEq for ToolExecutionContext {
         self.client_cwd == other.client_cwd
             && self.turn_id == other.turn_id
             && self.approval_gate.is_some() == other.approval_gate.is_some()
+            && self.tool_approval_gate.is_some() == other.tool_approval_gate.is_some()
             && self.client_tool_gate.is_some() == other.client_tool_gate.is_some()
             && self.capability_policy.as_ref().map(|p| p.profile_name())
                 == other.capability_policy.as_ref().map(|p| p.profile_name())
@@ -62,6 +65,7 @@ impl ToolExecutionContext {
             client_cwd,
             turn_id: String::new(),
             approval_gate: None,
+            tool_approval_gate: None,
             client_tool_gate: None,
             capability_policy: None,
             client_tools: Vec::new(),
@@ -75,6 +79,21 @@ impl ToolExecutionContext {
 
     pub fn with_approval_gate(mut self, gate: Arc<dyn ShellExecApprovalGate>) -> Self {
         self.approval_gate = Some(gate);
+        self
+    }
+
+    pub fn with_tool_approval_gate(mut self, gate: Arc<dyn ToolApprovalGate>) -> Self {
+        self.tool_approval_gate = Some(gate);
+        self
+    }
+
+    pub fn with_both_approval_gates(
+        mut self,
+        gate: Arc<dyn ShellExecApprovalGate>,
+        tool_gate: Arc<dyn ToolApprovalGate>,
+    ) -> Self {
+        self.approval_gate = Some(gate);
+        self.tool_approval_gate = Some(tool_gate);
         self
     }
 
@@ -114,6 +133,10 @@ impl ToolExecutionContext {
 
     pub fn approval_gate(&self) -> Option<&Arc<dyn ShellExecApprovalGate>> {
         self.approval_gate.as_ref()
+    }
+
+    pub fn tool_approval_gate(&self) -> Option<&Arc<dyn ToolApprovalGate>> {
+        self.tool_approval_gate.as_ref()
     }
 
     pub fn client_tool_gate(&self) -> Option<&Arc<dyn ClientToolGate>> {

@@ -13,8 +13,8 @@ use crate::domain::{
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
     CapabilityPolicy, ClientToolGate, ConversationStore, LlmCallTracer, ProfileRegistry,
-    RouterConfig, RpcExtension, ShellExecApprovalGate, ToolRoundTerminator, ToolsConfig,
-    TurnCancellation, TurnEventSink, TurnHook,
+    RouterConfig, RpcExtension, ShellExecApprovalGate, ToolApprovalGate, ToolRoundTerminator,
+    ToolsConfig, TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
     ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody,
@@ -151,7 +151,7 @@ impl RequestService {
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
     ) -> ClientResponse {
-        self.handle_with_events(request, approval_gate, client_tool_gate, None, None)
+        self.handle_with_events(request, approval_gate, None, client_tool_gate, None, None)
             .await
     }
 
@@ -166,6 +166,7 @@ impl RequestService {
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
@@ -340,6 +341,7 @@ impl RequestService {
                         client_tools.clone(),
                         ctx,
                         approval_gate,
+                        tool_approval_gate,
                         client_tool_gate,
                         events,
                         cancellation.clone(),
@@ -464,6 +466,7 @@ impl ClientRequestHandler for RequestService {
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
@@ -472,6 +475,7 @@ impl ClientRequestHandler for RequestService {
             self,
             request,
             approval_gate,
+            tool_approval_gate,
             client_tool_gate,
             events,
             cancellation,

@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 6）  
+> **状態**: 実装済み（Phase 6）  
 > **前提**: [Phase 5](0054_safe-file-write-tools-phase5-implementation-spec.md) 完了
 
 ## 0. 目的
@@ -37,19 +37,19 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `edit_category_expansion` | `@edit` が設計どおり展開 | `edit_tool_category_includes_write_tools` | true |
-| `write_file_create_success` | create 成功 | `write_file_create_succeeds` | true |
-| `write_file_create_target_exists` | 既存へ create 拒否 | `write_file_create_rejects_existing_target` | true |
-| `write_file_create_parent_missing` | parent 不存在拒否 | `write_file_create_rejects_missing_parent` | true |
-| `write_file_replace_success` | replace + hash 成功 | `write_file_replace_succeeds_with_matching_hash` | true |
-| `write_file_replace_requires_hash` | hash 未指定拒否 | `write_file_replace_requires_expected_sha256` | true |
-| `write_file_stale_hash` | hash 不一致拒否 | `write_file_replace_rejects_stale_hash` | true |
-| `write_file_empty_content` | 空ファイル / 空置換を許可 | `write_file_allows_empty_content` | true |
-| `write_file_preserves_permissions` | replace で permission 維持 | `write_file_replace_preserves_permissions` | true |
-| `write_file_capability_gate` | capability なし → `capability_denied` | `write_file_requires_file_write_capability` | true |
-| `startup_warning_write_tools` | write tool 有効時 warning | `ai_warns_when_write_tools_enabled` | true |
-| `race_stale_write_file` | 承認待ち中の外部変更 → `stale_file` | `write_file_detects_stale_file_after_approval_wait` | true |
-| `tool_round_capability_gate` | ToolRoundExecutor が FileWrite を要求 | `tool_round_executor_requires_file_write_for_write_tools` | true |
+| `edit_category_expansion` | `@edit` が設計どおり展開 | `edit_tool_category_includes_write_tools` | false |
+| `write_file_create_success` | create 成功 | `write_file_create_succeeds` | false |
+| `write_file_create_target_exists` | 既存へ create 拒否 | `write_file_create_rejects_existing_target` | false |
+| `write_file_create_parent_missing` | parent 不存在拒否 | `write_file_create_rejects_missing_parent` | false |
+| `write_file_replace_success` | replace + hash 成功 | `write_file_replace_succeeds_with_matching_hash` | false |
+| `write_file_replace_requires_hash` | hash 未指定拒否 | `write_file_replace_requires_expected_sha256` | false |
+| `write_file_stale_hash` | hash 不一致拒否 | `write_file_replace_rejects_stale_hash` | false |
+| `write_file_empty_content` | 空ファイル / 空置換を許可 | `write_file_allows_empty_content` | false |
+| `write_file_preserves_permissions` | replace で permission 維持 | `write_file_replace_preserves_permissions` | false |
+| `write_file_capability_gate` | capability なし → `capability_denied` | `write_file_requires_file_write_capability` | false |
+| `startup_warning_write_tools` | write tool 有効時 warning | `ai_warns_when_write_tools_enabled` | false |
+| `race_stale_write_file` | 承認待ち中の外部変更 → `stale_file` | `write_file_detects_stale_file_after_approval_wait` | false |
+| `tool_round_capability_gate` | ToolRoundExecutor が FileWrite を要求 | `tool_round_executor_requires_file_write_for_write_tools` | false |
 
 ## 3. 変更ファイル（目安）
 

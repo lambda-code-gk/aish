@@ -6,7 +6,8 @@
 use std::str::FromStr;
 
 use aibe_protocol::{
-    is_known_tool, ToolName, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE, SHELL_EXEC,
+    is_known_tool, ToolName, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE,
+    SHELL_EXEC, WRITE_FILE,
 };
 use thiserror::Error;
 
@@ -45,6 +46,7 @@ pub struct ToolsStartupLine {
     /// 括弧内の元指定（`@read-only` 等）。`none` のときは `None`。
     pub source_hint: Option<String>,
     pub warn_shell: bool,
+    pub warn_write: bool,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -133,6 +135,7 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
     }
 
     let warn_shell = shell_warning(&names, tokens);
+    let warn_write = write_warning(&names, tokens);
     let enabled_list = if names.is_empty() {
         "none".to_string()
     } else {
@@ -149,6 +152,7 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
             enabled_list,
             source_hint: Some(source_hint),
             warn_shell,
+            warn_write,
         },
     })
 }
@@ -164,6 +168,7 @@ fn empty_resolved() -> ResolvedTools {
             enabled_list: "none".to_string(),
             source_hint: None,
             warn_shell: false,
+            warn_write: false,
         },
     }
 }
@@ -171,6 +176,7 @@ fn empty_resolved() -> ResolvedTools {
 fn expand_category(token: &str) -> Result<Option<&'static [&'static str]>, ToolsResolveError> {
     match token {
         "@read-only" => Ok(Some(SAFE_TOOL_NAMES)),
+        "@edit" => Ok(Some(EDIT_TOOL_NAMES)),
         "@exec" => Ok(Some(&[SHELL_EXEC])),
         "@full" => Ok(Some(SAFE_TOOL_NAMES)),
         _ if token.starts_with('@') => Err(ToolsResolveError::UnknownCategory(token.to_string())),
@@ -185,7 +191,25 @@ fn shell_warning(resolved: &[ToolName], original_tokens: &[String]) -> bool {
             .any(|t| matches!(t.as_str(), SHELL_EXEC | "@exec"))
 }
 
+fn write_warning(resolved: &[ToolName], original_tokens: &[String]) -> bool {
+    resolved
+        .iter()
+        .any(|n| matches!(n.as_str(), WRITE_FILE | APPLY_PATCH))
+        && original_tokens
+            .iter()
+            .any(|t| matches!(t.as_str(), WRITE_FILE | APPLY_PATCH | "@edit"))
+}
+
 const SAFE_TOOL_NAMES: &[&str] = &[READ_FILE, LIST_DIR, GREP, GIT_DIFF, GIT_STATUS];
+const EDIT_TOOL_NAMES: &[&str] = &[
+    READ_FILE,
+    LIST_DIR,
+    GREP,
+    GIT_DIFF,
+    GIT_STATUS,
+    WRITE_FILE,
+    APPLY_PATCH,
+];
 
 fn dedup_preserve_order(names: Vec<ToolName>) -> Vec<ToolName> {
     let mut out = Vec::new();
@@ -209,11 +233,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn edit_category_expands_write_tools() {
+        let r = resolve_tools(Some("@edit"), &ConfigToolsTokens::default()).unwrap();
+        assert_eq!(
+            r.allowlist.names(),
+            &[
+                ToolName::read_file(),
+                ToolName::list_dir(),
+                ToolName::grep(),
+                ToolName::git_diff(),
+                ToolName::git_status(),
+                ToolName::write_file(),
+                ToolName::apply_patch(),
+            ]
+        );
+        assert!(r.startup.warn_write);
+        assert!(!r.startup.warn_shell);
+    }
+
+    #[test]
+    fn write_literal_warns() {
+        let r = resolve_tools(Some("write_file"), &ConfigToolsTokens::default()).unwrap();
+        assert_eq!(r.allowlist.names(), &[ToolName::write_file()]);
+        assert!(r.startup.warn_write);
+    }
+
+    #[test]
     fn default_empty() {
         let r = resolve_tools(None, &ConfigToolsTokens::default()).unwrap();
         assert!(r.allowlist.is_empty());
         assert_eq!(r.startup.enabled_list, "none");
         assert!(!r.startup.warn_shell);
+        assert!(!r.startup.warn_write);
     }
 
     #[test]
@@ -237,6 +288,7 @@ mod tests {
             ]
         );
         assert!(!r.startup.warn_shell);
+        assert!(!r.startup.warn_write);
     }
 
     #[test]
@@ -253,6 +305,7 @@ mod tests {
             ]
         );
         assert!(!r.startup.warn_shell);
+        assert!(!r.startup.warn_write);
     }
 
     #[test]

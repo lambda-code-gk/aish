@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{OpenAiCompatibleLlm, StaticCapabilityPolicy};
 use aibe::application::agent_turn::AgentTurnService;
 use aibe::application::basic_pack_arc;
+use aibe::application::build_default_tool_registry;
 use aibe::application::tool_round::ToolRoundExecutor;
 use aibe::domain::{AgentTurnContext, ChatMessage, ClientCwd, ExecutedToolStatus, ToolName};
 use aibe::ports::outbound::{LlmProvider, TerminationCapability, ToolsConfig};
@@ -118,7 +118,7 @@ async fn agent_turn_unknown_tool_from_llm_returns_tool_result_and_continues() {
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         cfg.termination_strategy,
     ));
-    let registry = build_registry(&cfg, &[]);
+    let registry = build_default_tool_registry(&cfg, &[]);
     let executor = ToolRoundExecutor::new(
         Arc::clone(&llm),
         registry,

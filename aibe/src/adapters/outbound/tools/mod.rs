@@ -1,6 +1,7 @@
 mod config_allowlist;
 pub mod diff_preview;
 pub mod file_atomic;
+pub(crate) mod file_change_common;
 mod git_common;
 mod git_diff;
 mod git_status;
@@ -12,6 +13,7 @@ mod safe_path;
 mod shell_exec;
 mod subprocess;
 mod tool_output;
+mod write_file;
 
 pub use config_allowlist::ConfigAllowlistPolicy;
 pub use diff_preview::build_unified_diff_preview;
@@ -26,20 +28,24 @@ pub use read_file::{ReadFileTool, FILE_METADATA_PREFIX};
 pub use registry::DefaultToolRegistry;
 pub use safe_path::{ReadPathPolicy, SafePathError, WritePathPolicy};
 pub use shell_exec::ShellExecTool;
+pub use write_file::WriteFileTool;
 
 use std::sync::Arc;
 
 use crate::ports::outbound::{
-    CommandPolicy, ExternalCommandConfig, ToolExecutor, ToolRegistry, ToolsConfig,
+    CommandPolicy, ExternalCommandConfig, FileChangeExecutor, ToolExecutor, ToolRegistry,
+    ToolsConfig,
 };
 
 pub fn build_registry(
     tools_cfg: &ToolsConfig,
     external_commands: &[ExternalCommandConfig],
+    file_change: Arc<dyn FileChangeExecutor>,
 ) -> Arc<dyn ToolRegistry> {
     let max_output = tool_output::clamp_max_tool_output_bytes(tools_cfg.max_tool_output_bytes);
     let policy: Arc<dyn CommandPolicy> =
         Arc::new(ConfigAllowlistPolicy::new(tools_cfg.shell_exec.clone()));
+    let file_change_service = file_change;
     Arc::new(
         DefaultToolRegistry::from_executors([
             Arc::new(ShellExecTool::new(
@@ -52,6 +58,10 @@ pub fn build_registry(
             Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),
             Arc::new(GitDiffTool::new(max_output)),
             Arc::new(GitStatusTool::new(max_output)),
+            Arc::new(WriteFileTool::new(
+                tools_cfg.file_write.clone(),
+                file_change_service,
+            )),
         ])
         .expect("built-in registry must have unique tool names"),
     )

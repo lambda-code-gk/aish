@@ -5,6 +5,7 @@ mod capability;
 mod client_cwd;
 mod client_tool_names;
 mod contextual_memory;
+mod diff_preview;
 mod feature_registry;
 mod file_change;
 mod file_text;
@@ -39,12 +40,14 @@ pub use contextual_memory::{
     validate_standard_kind_operation, validate_text, MemoryBlock, MemoryEntry, MemoryInjectPolicy,
     MemoryScope, MemoryStatus, MemoryValidationError, ProjectKey, ProjectKeyError,
 };
+pub use diff_preview::build_unified_diff_preview;
 pub use feature_registry::{
     actions_equivalent, baseline_feature_registry, feature_action_schema_prompt,
     EffectiveFeatureMode, FeatureDefinition, FeatureEligibilityContext, FeaturePackConfig,
     FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
 };
 pub use file_change::{
+    prepare_file_change_plan, sanitize_apply_patch_arguments, sanitize_write_file_arguments,
     BeforeState, DiffPreview, DiffSummary, FileChangeOperation, FileChangePlan, FileSnapshot,
 };
 pub use file_text::{

@@ -3,28 +3,39 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use aibe::adapters::outbound::tools::{
     atomic_write_file, build_unified_diff_preview, dir_has_temp_leftovers, DefaultToolRegistry,
-    ReadFileTool, ReadPathPolicy, WritePathPolicy, FILE_METADATA_PREFIX,
+    ReadFileTool, ReadPathPolicy, WriteFileTool, WritePathPolicy, FILE_METADATA_PREFIX,
 };
 use aibe::adapters::outbound::{
     path_mode, read_journal_metadata, set_journal_created_at_for_test, FileChangeJournalConfig,
-    FilesystemFileChangeJournal,
+    FilesystemFileChangeJournal, FilesystemFileChangeStore, StaticCapabilityPolicy,
 };
+use aibe::application::file_change_service::FileChangeService;
+use aibe::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use aibe::domain::{
     check_file_size, detect_line_ending, sha256_hex, validate_utf8_bytes, BeforeState, Capability,
-    ClientCwd, FileChangeOperation, FileTextError, LineEnding, ToolName,
+    ChatMessage, ClientCwd, FileChangeOperation, FileTextError, LineEnding, LlmStepResult,
+    ToolCall, ToolName,
 };
+use aibe::ports::outbound::FileChangeExecutor;
 use aibe::ports::outbound::{
     FileChangeJournal, FileChangeJournalError, FileWriteApprovalMode, FileWriteConfig,
-    JournalSaveRequest, ReadFileConfig, ToolExecutionContext, ToolExecutor, ToolsConfig,
+    JournalSaveRequest, LlmProvider, NoopLlmCallTracer, ReadFileConfig, ToolApprovalGate,
+    ToolApprovalGateOutcome, ToolApprovalPromptRequest, ToolDefinition, ToolExecutionContext,
+    ToolExecutor, ToolsConfig,
+};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use tempfile::tempdir;
+use tokio::sync::Mutex;
+
+use aibe::ports::outbound::{
     DEFAULT_JOURNAL_MAX_BYTES, DEFAULT_JOURNAL_RETENTION_DAYS, DEFAULT_MAX_FILE_WRITE_BYTES,
     DEFAULT_MAX_PATCH_BYTES, DEFAULT_MAX_PREVIEW_BYTES,
 };
-use async_trait::async_trait;
-use serde_json::Value;
-use tempfile::tempdir;
 
 #[test]
 fn file_write_capability_roundtrip() {
@@ -692,136 +703,415 @@ fn unified_diff_formats_new_file() {
     assert!(preview.diff_text.contains("+fn main() {}\n"));
 }
 
-#[test]
-#[ignore = "0054 phase 5: approval_gate_missing"]
-fn file_change_missing_gate_returns_unavailable() {
-    panic!("0054 not implemented");
+struct Phase6ApprovalGate {
+    response: Mutex<ToolApprovalGateOutcome>,
+    delay: Option<Duration>,
 }
 
-#[test]
-#[ignore = "0054 phase 5: cancel_during_approval"]
-fn file_change_cancel_during_approval_writes_nothing() {
-    panic!("0054 not implemented");
+impl Phase6ApprovalGate {
+    #[allow(dead_code)]
+    fn fixed(response: ToolApprovalGateOutcome) -> Arc<Self> {
+        Arc::new(Self {
+            response: Mutex::new(response),
+            delay: None,
+        })
+    }
+
+    fn delayed(response: ToolApprovalGateOutcome, delay: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            response: Mutex::new(response),
+            delay: Some(delay),
+        })
+    }
 }
 
-#[test]
-#[ignore = "0054 phase 5: fake_gate_no_denies"]
-fn file_change_fake_gate_no_leaves_file_unchanged() {
-    panic!("0054 not implemented");
+#[async_trait]
+impl ToolApprovalGate for Phase6ApprovalGate {
+    async fn request_tool_approval(
+        &self,
+        _tool_call_id: &str,
+        _prompt: ToolApprovalPromptRequest,
+    ) -> ToolApprovalGateOutcome {
+        if let Some(delay) = self.delay {
+            tokio::time::sleep(delay).await;
+        }
+        *self.response.lock().await
+    }
 }
 
-#[test]
-#[ignore = "0054 phase 5: fake_gate_yes_commits"]
-fn file_change_fake_gate_yes_commits() {
-    panic!("0054 not implemented");
+fn phase6_write_config(approval: FileWriteApprovalMode) -> FileWriteConfig {
+    let mut config = FileWriteConfig::default();
+    config.approval = approval;
+    config
 }
 
-#[test]
-#[ignore = "0054 phase 5: file_change_prepare_no_write"]
-fn file_change_prepare_does_not_mutate_file() {
-    panic!("0054 not implemented");
+fn phase6_service(dir: &Path, config: FileWriteConfig) -> Arc<dyn FileChangeExecutor> {
+    let journal = Arc::new(FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: dir.join("journal"),
+        retention_days: 7,
+        max_bytes: 1_000_000,
+    }));
+    let store = Arc::new(FilesystemFileChangeStore);
+    Arc::new(FileChangeService::new(config, journal, store))
 }
 
-#[test]
-#[ignore = "0054 phase 5: policy_always_skips_prompt"]
-fn file_write_always_mode_skips_prompt() {
-    panic!("0054 not implemented");
+fn phase6_ctx(dir: &Path, gate: Option<Arc<dyn ToolApprovalGate>>) -> ToolExecutionContext {
+    let cwd = ClientCwd::new(dir.to_path_buf()).expect("cwd");
+    let mut ctx = ToolExecutionContext::new(cwd).with_turn_id("phase6");
+    ctx = ctx.with_capability_policy(StaticCapabilityPolicy::local_full());
+    if let Some(gate) = gate {
+        ctx = ctx.with_tool_approval_gate(gate);
+    }
+    ctx
 }
 
-#[test]
-#[ignore = "0054 phase 5: policy_never_denies"]
-fn file_write_never_mode_denies_execution() {
-    panic!("0054 not implemented");
+fn phase6_tool(dir: &Path, config: FileWriteConfig) -> WriteFileTool {
+    let service = phase6_service(dir, config.clone());
+    WriteFileTool::new(config, service)
 }
 
-#[test]
-#[ignore = "0054 phase 5: revalidate_stale_file"]
-fn file_change_revalidate_detects_stale_file() {
-    panic!("0054 not implemented");
+async fn run_write_file(
+    dir: &Path,
+    config: FileWriteConfig,
+    gate: Option<Arc<dyn ToolApprovalGate>>,
+    args: Value,
+) -> (aibe::domain::ExecutedToolCall, aibe::domain::ToolResult) {
+    let tool = phase6_tool(dir, config);
+    let ctx = phase6_ctx(dir, gate);
+    tool.execute("call-1", &args, 30_000, &ctx).await
 }
 
-#[test]
-#[ignore = "0054 phase 5: sanitized_arguments"]
-fn file_change_sanitizes_executed_tool_arguments() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_detects_stale_file_after_approval_wait() {
+    use aibe_protocol::ToolApprovalOrigin;
+
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("note.txt");
+    std::fs::write(&path, "before\n").expect("seed");
+    let hash = sha256_hex(b"before\n");
+    let gate = Phase6ApprovalGate::delayed(
+        ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
+        Duration::from_millis(200),
+    );
+    let path_for_task = path.clone();
+    let writer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        std::fs::write(path_for_task, "external\n").expect("external write");
+    });
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate),
+        json!({
+            "path": "note.txt",
+            "mode": "replace",
+            "content": "after\n",
+            "expected_sha256": hash,
+        }),
+    )
+    .await;
+    writer.await.expect("writer");
+    assert_eq!(executed.error.as_deref(), Some("stale_file"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "external\n");
 }
 
-#[test]
-#[ignore = "0054 phase 5: tool_approval_wire_roundtrip"]
-fn tool_approval_wire_roundtrip() {
-    panic!("0054 not implemented");
+struct WriteRoundLlm {
+    step: Mutex<Option<LlmStepResult>>,
 }
 
-#[test]
-#[ignore = "0054 phase 5: tool_disabled_when_config_off"]
-fn file_write_disabled_returns_tool_disabled() {
-    panic!("0054 not implemented");
+impl WriteRoundLlm {
+    fn write_file_call() -> Arc<Self> {
+        Arc::new(Self {
+            step: Mutex::new(Some(LlmStepResult::with_tool_calls(
+                "",
+                vec![ToolCall {
+                    id: "c1".into(),
+                    name: "write_file".into(),
+                    arguments: json!({
+                        "path": "out.txt",
+                        "mode": "create",
+                        "content": "hello\n",
+                    }),
+                    provider_extras: None,
+                }],
+            ))),
+        })
+    }
 }
 
-#[test]
-#[ignore = "0054 phase 6: race_stale_write_file"]
-fn write_file_detects_stale_file_after_approval_wait() {
-    panic!("0054 not implemented");
+#[async_trait]
+impl LlmProvider for WriteRoundLlm {
+    async fn complete(
+        &self,
+        _messages: &[ChatMessage],
+    ) -> Result<ChatMessage, aibe::ports::outbound::LlmError> {
+        Err(aibe::ports::outbound::LlmError::Provider("not used".into()))
+    }
+
+    async fn complete_with_tools(
+        &self,
+        _conversation: &[ChatMessage],
+        _tools: &[ToolDefinition],
+    ) -> Result<LlmStepResult, aibe::ports::outbound::LlmError> {
+        self.step
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| aibe::ports::outbound::LlmError::Provider("no step".into()))
+    }
+
+    async fn complete_with_tools_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        tools: &[ToolDefinition],
+        _on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<LlmStepResult, aibe::ports::outbound::LlmError> {
+        self.complete_with_tools(conversation, tools).await
+    }
 }
 
-#[test]
-#[ignore = "0054 phase 6: tool_round_capability_gate"]
-fn tool_round_executor_requires_file_write_for_write_tools() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn tool_round_executor_requires_file_write_for_write_tools() {
+    let dir = tempdir().expect("tempdir");
+    let mut config = phase6_write_config(FileWriteApprovalMode::Always);
+    config.approval = FileWriteApprovalMode::Always;
+    let tool = Arc::new(phase6_tool(dir.path(), config.clone())) as Arc<dyn ToolExecutor>;
+    let registry = Arc::new(DefaultToolRegistry::from_executors([tool]).expect("registry"));
+    let llm = WriteRoundLlm::write_file_call();
+    let executor = ToolRoundExecutor::new(
+        llm,
+        registry,
+        ToolsConfig::default(),
+        Arc::new(NoopLlmCallTracer),
+    );
+    let cwd = ClientCwd::new(dir.path().to_path_buf()).expect("cwd");
+    let ctx = ToolExecutionContext::new(cwd)
+        .with_turn_id("round")
+        .with_capability_policy(StaticCapabilityPolicy::memory_read_only());
+    let outcome = executor
+        .run_one_round(
+            &[ChatMessage::user("write")],
+            &[ToolName::write_file()],
+            &[],
+            &ctx,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .expect("round");
+    match outcome {
+        RoundOutcome::Continue { executed, .. } => {
+            assert_eq!(executed.len(), 1);
+            assert_eq!(executed[0].error.as_deref(), Some("capability_denied"));
+        }
+        _ => panic!("expected Continue"),
+    }
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_capability_gate"]
-fn write_file_requires_file_write_capability() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_requires_file_write_capability() {
+    let dir = tempdir().expect("tempdir");
+    let config = phase6_write_config(FileWriteApprovalMode::Always);
+    let tool = phase6_tool(dir.path(), config);
+    let cwd = ClientCwd::new(dir.path().to_path_buf()).expect("cwd");
+    let ctx = ToolExecutionContext::new(cwd)
+        .with_capability_policy(StaticCapabilityPolicy::memory_read_only());
+    let (executed, result) = tool
+        .execute(
+            "call-1",
+            &json!({
+                "path": "out.txt",
+                "mode": "create",
+                "content": "hello\n",
+            }),
+            30_000,
+            &ctx,
+        )
+        .await;
+    assert!(result.is_error);
+    assert_eq!(executed.error.as_deref(), Some("capability_denied"));
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_create_parent_missing"]
-fn write_file_create_rejects_missing_parent() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_create_rejects_missing_parent() {
+    let dir = tempdir().expect("tempdir");
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "missing/out.txt",
+            "mode": "create",
+            "content": "hello\n",
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("parent_not_found"));
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_create_success"]
-fn write_file_create_succeeds() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_create_succeeds() {
+    let dir = tempdir().expect("tempdir");
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "new.txt",
+            "mode": "create",
+            "content": "hello\n",
+        }),
+    )
+    .await;
+    assert!(!result.is_error);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("new.txt")).unwrap(),
+        "hello\n"
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_create_target_exists"]
-fn write_file_create_rejects_existing_target() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_create_rejects_existing_target() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("exists.txt"), "old\n").expect("seed");
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "exists.txt",
+            "mode": "create",
+            "content": "new\n",
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("target_exists"));
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_empty_content"]
-fn write_file_allows_empty_content() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_allows_empty_content() {
+    let dir = tempdir().expect("tempdir");
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "empty.txt",
+            "mode": "create",
+            "content": "",
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(std::fs::read(dir.path().join("empty.txt")).unwrap(), b"");
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_preserves_permissions"]
-fn write_file_replace_preserves_permissions() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_replace_preserves_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("perm.txt");
+    std::fs::write(&path, "before\n").expect("seed");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).expect("chmod");
+    let hash = sha256_hex(b"before\n");
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "perm.txt",
+            "mode": "replace",
+            "content": "after\n",
+            "expected_sha256": hash,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+    assert_eq!(path_mode(&path).expect("mode"), 0o640);
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_replace_requires_hash"]
-fn write_file_replace_requires_expected_sha256() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_replace_requires_expected_sha256() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "before\n").expect("seed");
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "mode": "replace",
+            "content": "after\n",
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("precondition_required"));
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_replace_success"]
-fn write_file_replace_succeeds_with_matching_hash() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_replace_succeeds_with_matching_hash() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "before\n").expect("seed");
+    let hash = sha256_hex(b"before\n");
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "mode": "replace",
+            "content": "after\n",
+            "expected_sha256": hash,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "after\n"
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 6: write_file_stale_hash"]
-fn write_file_replace_rejects_stale_hash() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn write_file_replace_rejects_stale_hash() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "before\n").expect("seed");
+    let (executed, _) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "mode": "replace",
+            "content": "after\n",
+            "expected_sha256": "0".repeat(64),
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("stale_file"));
 }
 
 #[test]

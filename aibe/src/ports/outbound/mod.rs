@@ -5,6 +5,7 @@ pub mod config;
 pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod feature_registry_loader;
+pub mod file_change_executor;
 pub mod file_change_journal;
 pub mod file_change_store;
 pub mod llm;
@@ -16,6 +17,7 @@ pub mod memory_subscription_broker;
 pub mod rpc_extension;
 pub mod shell_exec_approval;
 pub mod termination_capability;
+pub mod tool_approval;
 mod tool_context;
 pub mod tool_registry;
 pub mod tool_round_terminator;
@@ -49,6 +51,9 @@ pub use conversation_store::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStore, ConversationStoreError,
 };
 pub use feature_registry_loader::FeatureRegistryLoader;
+pub use file_change_executor::{
+    FileChangeError, FileChangeExecuteRequest, FileChangeExecuteResult, FileChangeExecutor,
+};
 pub use file_change_journal::{
     FileChangeJournal, FileChangeJournalError, JournalEntry, JournalSaveRequest,
 };
@@ -61,6 +66,10 @@ pub use memory_subscription_broker::{MemorySubscription, MemorySubscriptionBroke
 pub use rpc_extension::RpcExtension;
 pub use shell_exec_approval::ShellExecApprovalGate;
 pub use termination_capability::TerminationCapability;
+pub use tool_approval::{
+    ToolApprovalGate, ToolApprovalGateOutcome, ToolApprovalPromptRequest,
+    FILE_WRITE_APPROVAL_TIMEOUT_MS,
+};
 pub use tool_context::ToolExecutionContext;
 pub use tool_registry::ToolRegistry;
 pub use tool_round_terminator::{TerminationResult, TerminationStrategyUsed, ToolRoundTerminator};

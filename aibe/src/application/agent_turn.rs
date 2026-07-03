@@ -9,8 +9,8 @@ use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, Capability, ChatMessage, ToolName, SHELL_EXEC};
 use crate::ports::outbound::{
     CapabilityPolicy, ClientToolGate, LlmCallTracer, LlmProvider, ShellExecApprovalGate,
-    TerminationCapability, ToolExecutionContext, ToolRoundTerminator, TurnCancellation,
-    TurnEventSink, TurnHook,
+    TerminationCapability, ToolApprovalGate, ToolExecutionContext, ToolRoundTerminator,
+    TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
     AgentTurnStatus, ClientProvidedToolSpec, ClientResponse, ErrorCode, ProgressPhase,
@@ -86,6 +86,7 @@ impl AgentTurnService {
             context,
             approval_gate,
             None,
+            None,
         )
         .await
     }
@@ -99,6 +100,7 @@ impl AgentTurnService {
         client_tools: Vec<ClientProvidedToolSpec>,
         context: AgentTurnContext,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
     ) -> ClientResponse {
         self.run_with_client_tools_and_events(
@@ -108,6 +110,7 @@ impl AgentTurnService {
             client_tools,
             context,
             approval_gate,
+            tool_approval_gate,
             client_tool_gate,
             None,
             None,
@@ -134,6 +137,7 @@ impl AgentTurnService {
             context,
             approval_gate,
             None,
+            None,
             events,
             cancellation,
         )
@@ -149,6 +153,7 @@ impl AgentTurnService {
         client_tools: Vec<ClientProvidedToolSpec>,
         context: AgentTurnContext,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
@@ -214,6 +219,9 @@ impl AgentTurnService {
             .with_capability_policy(Arc::clone(&self.capability_policy));
         if let Some(gate) = approval_gate {
             tool_ctx = tool_ctx.with_approval_gate(gate);
+        }
+        if let Some(gate) = tool_approval_gate {
+            tool_ctx = tool_ctx.with_tool_approval_gate(gate);
         }
         if let Some(gate) = client_tool_gate {
             tool_ctx = tool_ctx.with_client_tool_gate(gate);

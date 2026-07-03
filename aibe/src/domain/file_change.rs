@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use super::sha256_hex;
+
 /// 変更種別（設計 §16.2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileChangeOperation {
@@ -98,4 +100,67 @@ pub struct FileChangePlan {
     pub before_sha256: Option<String>,
     pub after_sha256: String,
     pub diff_preview: DiffPreview,
+}
+
+/// `write_file` 監査用 sanitized arguments（設計 §20.1）。
+pub fn sanitize_write_file_arguments(
+    path: &str,
+    mode: &str,
+    expected_sha256: Option<&str>,
+    content: &str,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "path": path,
+        "mode": mode,
+        "content_bytes": content.len(),
+    });
+    if let Some(hash) = expected_sha256 {
+        value["expected_sha256"] = serde_json::Value::String(hash.to_string());
+    }
+    value
+}
+
+/// prepare 段階の plan 組み立て（ファイルは変更しない）。
+pub fn prepare_file_change_plan(
+    path: PathBuf,
+    operation: FileChangeOperation,
+    before: FileSnapshot,
+    after_bytes: Vec<u8>,
+    display_path: &str,
+    max_preview_bytes: usize,
+) -> FileChangePlan {
+    let before_sha256 = before.sha256.clone();
+    let after_sha256 = sha256_hex(&after_bytes);
+    let before_bytes = before.bytes.as_deref();
+    let diff_preview = crate::domain::build_unified_diff_preview(
+        display_path,
+        before_bytes,
+        &after_bytes,
+        operation,
+        max_preview_bytes,
+    );
+    FileChangePlan {
+        path,
+        operation,
+        before,
+        after_bytes,
+        before_sha256,
+        after_sha256,
+        diff_preview,
+    }
+}
+
+/// `apply_patch` 監査用 sanitized arguments（設計 §20.1）。
+pub fn sanitize_apply_patch_arguments(
+    path: &str,
+    expected_sha256: &str,
+    patch: &str,
+    hunk_count: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "path": path,
+        "expected_sha256": expected_sha256,
+        "patch_bytes": patch.len(),
+        "hunk_count": hunk_count,
+    })
 }

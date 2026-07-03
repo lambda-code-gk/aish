@@ -1678,8 +1678,8 @@ phase = 5
 id = "file_change_prepare_no_write"
 description = "prepare 段階でファイルを変更しない"
 test = "file_change_prepare_does_not_mutate_file"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1687,8 +1687,8 @@ phase = 5
 id = "policy_never_denies"
 description = "approval=never → write_denied_by_policy"
 test = "file_write_never_mode_denies_execution"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1696,8 +1696,8 @@ phase = 5
 id = "policy_always_skips_prompt"
 description = "approval=always は prompt なしで監査残し"
 test = "file_write_always_mode_skips_prompt"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1705,8 +1705,8 @@ phase = 5
 id = "tool_disabled_when_config_off"
 description = "enabled=false → tool_disabled"
 test = "file_write_disabled_returns_tool_disabled"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1714,8 +1714,8 @@ phase = 5
 id = "fake_gate_yes_commits"
 description = "fake gate yes で commit まで到達"
 test = "file_change_fake_gate_yes_commits"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1723,8 +1723,8 @@ phase = 5
 id = "fake_gate_no_denies"
 description = "fake gate no で変更なし"
 test = "file_change_fake_gate_no_leaves_file_unchanged"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1732,8 +1732,8 @@ phase = 5
 id = "revalidate_stale_file"
 description = "承認待ち中の外部変更 → stale_file"
 test = "file_change_revalidate_detects_stale_file"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1741,8 +1741,8 @@ phase = 5
 id = "cancel_during_approval"
 description = "cancel で書き込まない"
 test = "file_change_cancel_during_approval_writes_nothing"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1750,8 +1750,8 @@ phase = 5
 id = "approval_gate_missing"
 description = "gate 不在 → approval_unavailable"
 test = "file_change_missing_gate_returns_unavailable"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1759,8 +1759,8 @@ phase = 5
 id = "sanitized_arguments"
 description = "raw content/patch が監査に入らない"
 test = "file_change_sanitizes_executed_tool_arguments"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/file_change_service.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1768,8 +1768,8 @@ phase = 5
 id = "tool_approval_wire_roundtrip"
 description = "socket 上で prompt/approval roundtrip"
 test = "tool_approval_wire_roundtrip"
-file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+file_glob = "aibe/tests/tool_approval_socket.rs"
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1778,7 +1778,7 @@ id = "edit_category_expansion"
 description = "@edit が設計どおり展開"
 test = "edit_tool_category_includes_write_tools"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1787,7 +1787,7 @@ id = "write_file_create_success"
 description = "create 成功"
 test = "write_file_create_succeeds"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1796,7 +1796,7 @@ id = "write_file_create_target_exists"
 description = "既存へ create 拒否"
 test = "write_file_create_rejects_existing_target"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1805,7 +1805,7 @@ id = "write_file_create_parent_missing"
 description = "parent 不存在拒否"
 test = "write_file_create_rejects_missing_parent"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1814,7 +1814,7 @@ id = "write_file_replace_success"
 description = "replace + hash 成功"
 test = "write_file_replace_succeeds_with_matching_hash"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1823,7 +1823,7 @@ id = "write_file_replace_requires_hash"
 description = "hash 未指定拒否"
 test = "write_file_replace_requires_expected_sha256"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1832,7 +1832,7 @@ id = "write_file_stale_hash"
 description = "hash 不一致拒否"
 test = "write_file_replace_rejects_stale_hash"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1841,7 +1841,7 @@ id = "write_file_empty_content"
 description = "空ファイル / 空置換を許可"
 test = "write_file_allows_empty_content"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1850,7 +1850,7 @@ id = "write_file_preserves_permissions"
 description = "replace で permission 維持"
 test = "write_file_replace_preserves_permissions"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1859,7 +1859,7 @@ id = "write_file_capability_gate"
 description = "capability なし → capability_denied"
 test = "write_file_requires_file_write_capability"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1868,7 +1868,7 @@ id = "startup_warning_write_tools"
 description = "write tool 有効時 warning"
 test = "ai_warns_when_write_tools_enabled"
 file_glob = "ai/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1877,7 +1877,7 @@ id = "race_stale_write_file"
 description = "承認待ち中の外部変更 → stale_file"
 test = "write_file_detects_stale_file_after_approval_wait"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1886,7 +1886,7 @@ id = "tool_round_capability_gate"
 description = "ToolRoundExecutor が FileWrite を要求"
 test = "tool_round_executor_requires_file_write_for_write_tools"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"

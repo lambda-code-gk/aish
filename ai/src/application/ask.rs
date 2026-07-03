@@ -180,6 +180,7 @@ mod tests {
                             enabled_list: "none".into(),
                             source_hint: None,
                             warn_shell: false,
+                            warn_write: false,
                         },
                     },
                     verbose_tools: false,

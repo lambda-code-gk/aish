@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
     shared_baseline_recipe_loader, shared_builtin_loader, ConversationStore,
     EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
     ScriptedMockLlm, StaticCapabilityPolicy,
 };
+use aibe::application::build_default_tool_registry;
 use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
 use aibe::domain::FeatureEligibilityContext;
@@ -37,7 +37,7 @@ fn service(store_root: std::path::PathBuf) -> RequestService {
     ]));
     let profile_registry =
         ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
@@ -187,7 +187,7 @@ async fn registry_merges_feature_actions_when_query_matches_trigger() {
     )]));
     let profile_registry =
         ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
@@ -258,7 +258,7 @@ async fn registry_does_not_duplicate_memory_query_when_llm_already_returned_one(
     )]));
     let profile_registry =
         ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
@@ -327,7 +327,7 @@ async fn route_turn_strips_shell_exec_from_recommended_tools() {
     )]));
     let profile_registry =
         ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),
@@ -390,7 +390,7 @@ async fn registry_skips_requires_recipe_features_when_recipes_disabled() {
     )]));
     let profile_registry =
         ProfileRegistry::single("fast", llm, TerminationCapability::summary_prompt_only());
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),

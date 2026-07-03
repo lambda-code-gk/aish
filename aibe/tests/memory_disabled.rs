@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{ConversationStore, MockLlm, ScriptedMockLlm};
 use aibe::application::basic_pack_arc;
+use aibe::application::build_default_tool_registry;
 use aibe::application::memory_runtime::MEMORY_DISABLED_MESSAGE;
 use aibe::application::RequestService;
 use aibe::domain::FeatureRegistry;
@@ -26,7 +26,7 @@ fn memory_disabled_service() -> RequestService {
         Arc::new(MockLlm::new()),
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = basic_pack_arc();
     RequestService::new_with_turns_and_packs(
         profile_registry,
@@ -265,7 +265,7 @@ async fn route_turn_strips_feature_actions_when_feature_registry_empty() {
     )]));
     let profile_registry =
         ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = basic_pack_arc();
     let service = RequestService::new_with_turns_and_packs(
         profile_registry,

@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use aibe::adapters::outbound::tools::build_registry;
 use aibe::adapters::outbound::{
     shared_baseline_recipe_loader, shared_builtin_loader, ConversationStore,
     EmptyContextualMemoryStore, FilesystemMemorySpaceResolver, InProcessMemorySubscriptionBroker,
     MockLlm, StaticCapabilityPolicy,
 };
+use aibe::application::build_default_tool_registry;
 use aibe::application::contextual_pack_arc;
 use aibe::application::RequestService;
 use aibe::domain::FeatureRegistry;
@@ -27,7 +27,7 @@ fn service() -> RequestService {
         Arc::new(MockLlm::new()),
         aibe::ports::outbound::TerminationCapability::summary_prompt_only(),
     );
-    let tool_registry = build_registry(&tools_config, &[]);
+    let tool_registry = build_default_tool_registry(&tools_config, &[]);
     let (rpc_extension, turn_hook) = contextual_pack_arc(
         Arc::new(EmptyContextualMemoryStore),
         Arc::new(FilesystemMemorySpaceResolver),

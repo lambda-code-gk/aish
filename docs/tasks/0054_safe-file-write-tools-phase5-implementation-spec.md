@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 5）  
+> **状態**: 実装済み（Phase 5）  
 > **前提**: [Phase 4](0054_safe-file-write-tools-phase4-implementation-spec.md) 完了
 
 ## 0. 目的
@@ -40,17 +40,17 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `file_change_prepare_no_write` | prepare 段階でファイルを変更しない | `file_change_prepare_does_not_mutate_file` | true |
-| `policy_never_denies` | `approval=never` → `write_denied_by_policy` | `file_write_never_mode_denies_execution` | true |
-| `policy_always_skips_prompt` | `approval=always` は prompt なしで監査残し | `file_write_always_mode_skips_prompt` | true |
-| `tool_disabled_when_config_off` | `enabled=false` → `tool_disabled` | `file_write_disabled_returns_tool_disabled` | true |
-| `fake_gate_yes_commits` | fake gate yes で commit まで到達 | `file_change_fake_gate_yes_commits` | true |
-| `fake_gate_no_denies` | fake gate no で変更なし | `file_change_fake_gate_no_leaves_file_unchanged` | true |
-| `revalidate_stale_file` | 承認待ち中の外部変更 → `stale_file` | `file_change_revalidate_detects_stale_file` | true |
-| `cancel_during_approval` | cancel で書き込まない | `file_change_cancel_during_approval_writes_nothing` | true |
-| `approval_gate_missing` | gate 不在 → `approval_unavailable` | `file_change_missing_gate_returns_unavailable` | true |
-| `sanitized_arguments` | raw content/patch が監査に入らない | `file_change_sanitizes_executed_tool_arguments` | true |
-| `tool_approval_wire_roundtrip` | socket 上で prompt/approval roundtrip | `tool_approval_wire_roundtrip` | true |
+| `file_change_prepare_no_write` | prepare 段階でファイルを変更しない | `file_change_prepare_does_not_mutate_file` | false |
+| `policy_never_denies` | `approval=never` → `write_denied_by_policy` | `file_write_never_mode_denies_execution` | false |
+| `policy_always_skips_prompt` | `approval=always` は prompt なしで監査残し | `file_write_always_mode_skips_prompt` | false |
+| `tool_disabled_when_config_off` | `enabled=false` → `tool_disabled` | `file_write_disabled_returns_tool_disabled` | false |
+| `fake_gate_yes_commits` | fake gate yes で commit まで到達 | `file_change_fake_gate_yes_commits` | false |
+| `fake_gate_no_denies` | fake gate no で変更なし | `file_change_fake_gate_no_leaves_file_unchanged` | false |
+| `revalidate_stale_file` | 承認待ち中の外部変更 → `stale_file` | `file_change_revalidate_detects_stale_file` | false |
+| `cancel_during_approval` | cancel で書き込まない | `file_change_cancel_during_approval_writes_nothing` | false |
+| `approval_gate_missing` | gate 不在 → `approval_unavailable` | `file_change_missing_gate_returns_unavailable` | false |
+| `sanitized_arguments` | raw content/patch が監査に入らない | `file_change_sanitizes_executed_tool_arguments` | false |
+| `tool_approval_wire_roundtrip` | socket 上で prompt/approval roundtrip | `tool_approval_wire_roundtrip` | false |
 
 ## 3. エラー分岐表（必須）
 

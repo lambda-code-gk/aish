@@ -11,8 +11,8 @@ mod work;
 
 pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
 pub use executed_tool::{
-    ExecutedToolCall, ExecutedToolStatus, ShellExecApprovalOutcome, ToolApprovalState,
-    ToolRiskClass,
+    ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome, ShellExecApprovalOutcome,
+    ToolApprovalState, ToolRiskClass,
 };
 pub use memory::{
     MemoryApplyRequestBody, MemoryApplyStatus, MemoryChangeEventDto, MemoryChangeKind,
