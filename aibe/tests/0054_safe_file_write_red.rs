@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::tools::{
-    atomic_write_file, build_unified_diff_preview, dir_has_temp_leftovers, DefaultToolRegistry,
-    ReadFileTool, ReadPathPolicy, WriteFileTool, WritePathPolicy, FILE_METADATA_PREFIX,
+    atomic_write_file, build_unified_diff_preview, dir_has_temp_leftovers, ApplyPatchTool,
+    DefaultToolRegistry, ReadFileTool, ReadPathPolicy, WriteFileTool, WritePathPolicy,
+    FILE_METADATA_PREFIX,
 };
 use aibe::adapters::outbound::{
     path_mode, read_journal_metadata, set_journal_created_at_for_test, FileChangeJournalConfig,
@@ -770,6 +771,22 @@ fn phase6_tool(dir: &Path, config: FileWriteConfig) -> WriteFileTool {
     WriteFileTool::new(config, service)
 }
 
+fn phase7_tool(dir: &Path, config: FileWriteConfig) -> ApplyPatchTool {
+    let service = phase6_service(dir, config.clone());
+    ApplyPatchTool::new(config, service)
+}
+
+async fn run_apply_patch(
+    dir: &Path,
+    config: FileWriteConfig,
+    gate: Option<Arc<dyn ToolApprovalGate>>,
+    args: Value,
+) -> (aibe::domain::ExecutedToolCall, aibe::domain::ToolResult) {
+    let tool = phase7_tool(dir, config);
+    let ctx = phase6_ctx(dir, gate);
+    tool.execute("call-1", &args, 30_000, &ctx).await
+}
+
 async fn run_write_file(
     dir: &Path,
     config: FileWriteConfig,
@@ -1114,70 +1131,271 @@ async fn write_file_replace_rejects_stale_hash() {
     assert_eq!(executed.error.as_deref(), Some("stale_file"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_context_mismatch"]
-fn apply_patch_rejects_context_mismatch() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_single_hunk_succeeds() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "line1\nline2\nline3\n").expect("seed");
+    let hash = sha256_hex(b"line1\nline2\nline3\n");
+    let patch = "@@ -2,1 +2,1 @@\n-line2\n+LINE2\n";
+    let (executed, result) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "line1\nLINE2\nline3\n"
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_crlf"]
-fn apply_patch_preserves_crlf() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_multiple_hunks_succeeds() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "a\nb\nc\nd\n").expect("seed");
+    let hash = sha256_hex(b"a\nb\nc\nd\n");
+    let patch = "@@ -1,1 +1,1 @@\n-a\n+A\n@@ -4,1 +4,1 @@\n-d\n+D\n";
+    let (executed, result) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "A\nb\nc\nD\n"
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_empty_invalid"]
-fn apply_patch_rejects_empty_patch() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_rejects_context_mismatch() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "line1\nline2\n").expect("seed");
+    let hash = sha256_hex(b"line1\nline2\n");
+    let patch = "@@ -2,1 +2,1 @@\n-wrong\n+new\n";
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("patch_conflict"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_mixed_line_endings"]
-fn apply_patch_rejects_mixed_line_endings() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_rejects_overlapping_hunks() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "a\nb\nc\n").expect("seed");
+    let hash = sha256_hex(b"a\nb\nc\n");
+    let patch = "@@ -1,2 +1,2 @@\n a\n-b\n@@ -2,1 +2,1 @@\n-b\n+B\n";
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("invalid_patch"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_multiple_hunks"]
-fn apply_patch_multiple_hunks_succeeds() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_rejects_diff_headers() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "line1\n").expect("seed");
+    let hash = sha256_hex(b"line1\n");
+    let patch = "--- a/note.txt\n+++ b/note.txt\n@@ -1,1 +1,1 @@\n-line1\n+LINE1\n";
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("invalid_patch"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_no_change"]
-fn apply_patch_no_change_skips_write() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_rejects_empty_patch() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "line1\n").expect("seed");
+    let hash = sha256_hex(b"line1\n");
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": "",
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("invalid_patch"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_overlapping_hunks"]
-fn apply_patch_rejects_overlapping_hunks() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_no_change_skips_write() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("note.txt");
+    std::fs::write(&path, "line1\nline2\n").expect("seed");
+    let before = std::fs::read(&path).expect("read");
+    let hash = sha256_hex(&before);
+    let patch = "@@ -1,2 +1,2 @@\n line1\n line2\n";
+    let (executed, result) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(executed.decision.as_deref(), Some("no_change"));
+    assert_eq!(std::fs::read(&path).expect("read"), before);
+    assert!(
+        !dir.path().join("journal").exists(),
+        "no journal entry on no_change"
+    );
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_rejects_headers"]
-fn apply_patch_rejects_diff_headers() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_preserves_crlf() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("note.txt");
+    std::fs::write(&path, "line1\r\nline2\r\n").expect("seed");
+    let hash = sha256_hex(b"line1\r\nline2\r\n");
+    let patch = "@@ -2,1 +2,1 @@\n-line2\n+LINE2\n";
+    let (executed, result) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert!(!result.is_error, "{}", result.content);
+    assert!(executed
+        .output
+        .as_deref()
+        .unwrap_or("")
+        .contains("change_id="));
+    assert_eq!(std::fs::read(&path).expect("read"), b"line1\r\nLINE2\r\n");
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_single_hunk"]
-fn apply_patch_single_hunk_succeeds() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_rejects_mixed_line_endings() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "a\nb\r\nc\n").expect("seed");
+    let hash = sha256_hex(b"a\nb\r\nc\n");
+    let patch = "@@ -2,1 +2,1 @@\n-b\n+B\n";
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("unsupported_line_endings"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: apply_patch_size_limit"]
-fn apply_patch_enforces_patch_size_limit() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_enforces_patch_size_limit() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "line1\n").expect("seed");
+    let hash = sha256_hex(b"line1\n");
+    let mut config = phase6_write_config(FileWriteApprovalMode::Always);
+    config.max_patch_bytes = 10;
+    let patch = "@@ -1,1 +1,1 @@\n-line1\n+this patch is too long\n";
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        config,
+        None,
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": patch,
+        }),
+    )
+    .await;
+    assert_eq!(executed.error.as_deref(), Some("input_too_large"));
 }
 
-#[test]
-#[ignore = "0054 phase 7: race_stale_apply_patch"]
-fn apply_patch_detects_stale_file_after_approval_wait() {
-    panic!("0054 not implemented");
+#[tokio::test]
+async fn apply_patch_detects_stale_file_after_approval_wait() {
+    use aibe_protocol::ToolApprovalOrigin;
+
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("note.txt");
+    std::fs::write(&path, "before\n").expect("seed");
+    let hash = sha256_hex(b"before\n");
+    let gate = Phase6ApprovalGate::delayed(
+        ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
+        Duration::from_millis(200),
+    );
+    let path_for_task = path.clone();
+    let writer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        std::fs::write(path_for_task, "external\n").expect("external write");
+    });
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate),
+        json!({
+            "path": "note.txt",
+            "expected_sha256": hash,
+            "patch": "@@ -1,1 +1,1 @@\n-before\n+after\n",
+        }),
+    )
+    .await;
+    writer.await.expect("writer");
+    assert_eq!(executed.error.as_deref(), Some("stale_file"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "external\n");
 }
 
 #[test]

@@ -96,17 +96,16 @@ fn render_unified_diff(
             idx += 1;
         }
 
-        let ctx_start = change_start.saturating_sub(CONTEXT_LINES);
-        let old_hunk_start = old_lines[..ctx_start].len() + 1;
-        let new_hunk_start = new_lines[..ctx_start].len() + 1;
+        let ctx_op_start = change_start.saturating_sub(CONTEXT_LINES);
+        let (mut o, mut n) = line_positions_at_op(&ops, ctx_op_start);
+        let old_hunk_start = o + 1;
+        let new_hunk_start = n + 1;
 
         let mut hunk_old = 0usize;
         let mut hunk_new = 0usize;
         let mut hunk_lines: Vec<(char, String)> = Vec::new();
 
-        let mut o = ctx_start;
-        let mut n = ctx_start;
-        for op in &ops[ctx_start..idx] {
+        for op in &ops[ctx_op_start..idx] {
             match op {
                 DiffOp::Equal => {
                     hunk_lines.push((' ', old_lines[o].clone()));
@@ -147,6 +146,25 @@ enum DiffOp {
     Equal,
     Insert,
     Delete,
+}
+
+fn line_positions_at_op(ops: &[DiffOp], op_idx: usize) -> (usize, usize) {
+    let mut o = 0usize;
+    let mut n = 0usize;
+    for (i, op) in ops.iter().enumerate() {
+        if i >= op_idx {
+            break;
+        }
+        match op {
+            DiffOp::Equal => {
+                o += 1;
+                n += 1;
+            }
+            DiffOp::Delete => o += 1,
+            DiffOp::Insert => n += 1,
+        }
+    }
+    (o, n)
 }
 
 fn diff_ops(old: &[String], new: &[String]) -> Vec<DiffOp> {

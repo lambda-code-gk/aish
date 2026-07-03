@@ -1895,7 +1895,7 @@ id = "apply_patch_single_hunk"
 description = "1 hunk 成功"
 test = "apply_patch_single_hunk_succeeds"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1904,7 +1904,7 @@ id = "apply_patch_multiple_hunks"
 description = "複数 hunk 成功"
 test = "apply_patch_multiple_hunks_succeeds"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1913,7 +1913,7 @@ id = "apply_patch_context_mismatch"
 description = "context 不一致 → patch_conflict"
 test = "apply_patch_rejects_context_mismatch"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1922,7 +1922,7 @@ id = "apply_patch_overlapping_hunks"
 description = "hunk 重複拒否"
 test = "apply_patch_rejects_overlapping_hunks"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1931,7 +1931,7 @@ id = "apply_patch_rejects_headers"
 description = "--- a/file 等 header 付き拒否"
 test = "apply_patch_rejects_diff_headers"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1940,7 +1940,7 @@ id = "apply_patch_empty_invalid"
 description = "空 patch → invalid_patch"
 test = "apply_patch_rejects_empty_patch"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1949,7 +1949,7 @@ id = "apply_patch_no_change"
 description = "同一結果 → 成功・書込なし"
 test = "apply_patch_no_change_skips_write"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1958,7 +1958,7 @@ id = "apply_patch_crlf"
 description = "CRLF ファイルで CRLF 維持"
 test = "apply_patch_preserves_crlf"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1967,7 +1967,7 @@ id = "apply_patch_mixed_line_endings"
 description = "mixed 拒否"
 test = "apply_patch_rejects_mixed_line_endings"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1976,7 +1976,7 @@ id = "apply_patch_size_limit"
 description = "patch 上限超過"
 test = "apply_patch_enforces_patch_size_limit"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1985,7 +1985,7 @@ id = "race_stale_apply_patch"
 description = "承認待ち中の外部変更"
 test = "apply_patch_detects_stale_file_after_approval_wait"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"

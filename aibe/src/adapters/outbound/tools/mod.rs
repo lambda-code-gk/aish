@@ -1,3 +1,4 @@
+mod apply_patch;
 mod config_allowlist;
 pub mod diff_preview;
 pub mod file_atomic;
@@ -7,6 +8,7 @@ mod git_diff;
 mod git_status;
 mod grep;
 mod list_dir;
+mod patch_parser;
 mod read_file;
 mod registry;
 mod safe_path;
@@ -14,6 +16,8 @@ mod shell_exec;
 mod subprocess;
 mod tool_output;
 mod write_file;
+
+pub use apply_patch::ApplyPatchTool;
 
 pub use config_allowlist::ConfigAllowlistPolicy;
 pub use diff_preview::build_unified_diff_preview;
@@ -59,6 +63,10 @@ pub fn build_registry(
             Arc::new(GitDiffTool::new(max_output)),
             Arc::new(GitStatusTool::new(max_output)),
             Arc::new(WriteFileTool::new(
+                tools_cfg.file_write.clone(),
+                Arc::clone(&file_change_service),
+            )),
+            Arc::new(ApplyPatchTool::new(
                 tools_cfg.file_write.clone(),
                 file_change_service,
             )),

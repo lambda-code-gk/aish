@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 7）  
+> **状態**: 実装済み（Phase 7）  
 > **前提**: [Phase 6](0054_safe-file-write-tools-phase6-implementation-spec.md) 完了
 
 ## 0. 目的
@@ -37,17 +37,17 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `apply_patch_single_hunk` | 1 hunk 成功 | `apply_patch_single_hunk_succeeds` | true |
-| `apply_patch_multiple_hunks` | 複数 hunk 成功 | `apply_patch_multiple_hunks_succeeds` | true |
-| `apply_patch_context_mismatch` | context 不一致 → `patch_conflict` | `apply_patch_rejects_context_mismatch` | true |
-| `apply_patch_overlapping_hunks` | hunk 重複拒否 | `apply_patch_rejects_overlapping_hunks` | true |
-| `apply_patch_rejects_headers` | `--- a/file` 等 header 付き拒否 | `apply_patch_rejects_diff_headers` | true |
-| `apply_patch_empty_invalid` | 空 patch → `invalid_patch` | `apply_patch_rejects_empty_patch` | true |
-| `apply_patch_no_change` | 同一結果 → 成功・書込なし | `apply_patch_no_change_skips_write` | true |
-| `apply_patch_crlf` | CRLF ファイルで CRLF 維持 | `apply_patch_preserves_crlf` | true |
-| `apply_patch_mixed_line_endings` | mixed 拒否 | `apply_patch_rejects_mixed_line_endings` | true |
-| `apply_patch_size_limit` | patch 上限超過 | `apply_patch_enforces_patch_size_limit` | true |
-| `race_stale_apply_patch` | 承認待ち中の外部変更 | `apply_patch_detects_stale_file_after_approval_wait` | true |
+| `apply_patch_single_hunk` | 1 hunk 成功 | `apply_patch_single_hunk_succeeds` | false |
+| `apply_patch_multiple_hunks` | 複数 hunk 成功 | `apply_patch_multiple_hunks_succeeds` | false |
+| `apply_patch_context_mismatch` | context 不一致 → `patch_conflict` | `apply_patch_rejects_context_mismatch` | false |
+| `apply_patch_overlapping_hunks` | hunk 重複拒否 | `apply_patch_rejects_overlapping_hunks` | false |
+| `apply_patch_rejects_headers` | `--- a/file` 等 header 付き拒否 | `apply_patch_rejects_diff_headers` | false |
+| `apply_patch_empty_invalid` | 空 patch → `invalid_patch` | `apply_patch_rejects_empty_patch` | false |
+| `apply_patch_no_change` | 同一結果 → 成功・書込なし | `apply_patch_no_change_skips_write` | false |
+| `apply_patch_crlf` | CRLF ファイルで CRLF 維持 | `apply_patch_preserves_crlf` | false |
+| `apply_patch_mixed_line_endings` | mixed 拒否 | `apply_patch_rejects_mixed_line_endings` | false |
+| `apply_patch_size_limit` | patch 上限超過 | `apply_patch_enforces_patch_size_limit` | false |
+| `race_stale_apply_patch` | 承認待ち中の外部変更 | `apply_patch_detects_stale_file_after_approval_wait` | false |
 
 ## 3. 変更ファイル（目安）
 

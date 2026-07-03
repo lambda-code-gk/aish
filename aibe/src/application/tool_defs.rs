@@ -27,6 +27,7 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
             GIT_DIFF => Some(git_diff_definition()),
             GIT_STATUS => Some(git_status_definition()),
             WRITE_FILE => Some(write_file_definition()),
+            APPLY_PATCH => Some(apply_patch_definition()),
             _ => None,
         })
         .collect()
@@ -168,11 +169,13 @@ fn write_file_definition() -> ToolDefinition {
     }
 }
 
-#[allow(dead_code)]
 fn apply_patch_definition() -> ToolDefinition {
     ToolDefinition {
         name: APPLY_PATCH.to_string(),
-        description: "Apply a strict unified diff hunk to a single text file.".to_string(),
+        description: "Apply a strict unified diff hunk to a single text file. \
+                      Call read_file with include_metadata=true first and pass expected_sha256 \
+                      from the metadata line. Patch must contain @@ hunks only (no ---/+++ headers)."
+            .to_string(),
         parameters: json!({
             "type": "object",
             "properties": {

@@ -48,7 +48,7 @@
 | 0051 | [0051_smart-observation-report-spec.md](spec/0051_smart-observation-report-spec.md) | 設計確定（実装済み） | Smart Preprocessor observation の read-only stats/recent/report CLI |
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
-| 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装中・Phase 1–6 完了） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
+| 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装中・Phase 1–7 完了） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
 
 ### 状態ラベルの意味
 
@@ -127,7 +127,7 @@
 | 0054 | [0054_safe-file-write-tools-phase4-implementation-spec.md](tasks/0054_safe-file-write-tools-phase4-implementation-spec.md) | 実装済み（Phase 4） | diff / atomic / journal |
 | 0054 | [0054_safe-file-write-tools-phase5-implementation-spec.md](tasks/0054_safe-file-write-tools-phase5-implementation-spec.md) | 実装済み（Phase 5） | FileChangeService / approval gate |
 | 0054 | [0054_safe-file-write-tools-phase6-implementation-spec.md](tasks/0054_safe-file-write-tools-phase6-implementation-spec.md) | 実装済み（Phase 6） | @edit / write_file |
-| 0054 | [0054_safe-file-write-tools-phase7-implementation-spec.md](tasks/0054_safe-file-write-tools-phase7-implementation-spec.md) | 未着手（Phase 7） | apply_patch |
+| 0054 | [0054_safe-file-write-tools-phase7-implementation-spec.md](tasks/0054_safe-file-write-tools-phase7-implementation-spec.md) | 実装済み（Phase 7） | apply_patch |
 | 0054 | [0054_safe-file-write-tools-phase8-implementation-spec.md](tasks/0054_safe-file-write-tools-phase8-implementation-spec.md) | 未着手（Phase 8） | ai 承認 UI |
 | 0054 | [0054_safe-file-write-tools-phase9-implementation-spec.md](tasks/0054_safe-file-write-tools-phase9-implementation-spec.md) | 未着手（Phase 9） | 統合 / docs |
 | 0041 | [0041_ai-smart-feature-plan-implementation-spec.md](done/0041_ai-smart-feature-plan-implementation-spec.md) | 実装済み | `ai` Smart Feature Plan（設計: [0041](spec/0041_ai-smart-feature-plan-spec.md)） |

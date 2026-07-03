@@ -8,7 +8,7 @@ use crate::adapters::outbound::path_mode;
 use crate::domain::{
     check_file_size, prepare_file_change_plan, reject_mixed_line_endings,
     sanitize_write_file_arguments, sha256_hex, validate_utf8_bytes, FileChangeOperation,
-    FileSnapshot, FileTextError,
+    FileSnapshot, FileTextError, LineEnding,
 };
 use crate::ports::outbound::ToolExecutionContext;
 
@@ -171,4 +171,68 @@ pub(crate) fn sanitized_write_file_args(
     content: &str,
 ) -> Value {
     sanitize_write_file_arguments(path, mode.as_str(), expected_sha256, content)
+}
+
+pub(crate) async fn load_patch_target_snapshot(
+    canonical: &Path,
+) -> Result<(FileSnapshot, LineEnding), (&'static str, String)> {
+    if !canonical.is_file() {
+        return Err(("target_not_found", "target file does not exist".into()));
+    }
+    let bytes = tokio::fs::read(canonical)
+        .await
+        .map_err(|e| ("target_not_found", e.to_string()))?;
+    if let Err(err) = check_file_size(bytes.len(), usize::MAX) {
+        return Err(map_text_error(err));
+    }
+    let content = validate_utf8_bytes(&bytes).map_err(map_text_error)?;
+    let line_ending = reject_mixed_line_endings(&content).map_err(map_text_error)?;
+    let hash = sha256_hex(&bytes);
+    let file_mode = path_mode(canonical).ok();
+    Ok((FileSnapshot::present(bytes, hash, file_mode), line_ending))
+}
+
+pub(crate) fn verify_patch_expected_hash(
+    expected_sha256: &str,
+    before: &FileSnapshot,
+) -> Result<(), (&'static str, String)> {
+    if expected_sha256.is_empty() {
+        return Err((
+            "precondition_required",
+            "expected_sha256 is required for apply_patch".into(),
+        ));
+    }
+    let Some(actual) = before.sha256.as_deref() else {
+        return Err(("stale_file", "file hash mismatch".into()));
+    };
+    if expected_sha256 != actual {
+        return Err(("stale_file", "file hash mismatch".into()));
+    }
+    Ok(())
+}
+
+pub(crate) fn build_patch_plan(
+    canonical: PathBuf,
+    before: FileSnapshot,
+    after_bytes: Vec<u8>,
+    display: &str,
+    max_preview_bytes: usize,
+) -> crate::domain::FileChangePlan {
+    prepare_file_change_plan(
+        canonical,
+        FileChangeOperation::Patch,
+        before,
+        after_bytes,
+        display,
+        max_preview_bytes,
+    )
+}
+
+pub(crate) fn sanitized_apply_patch_args(
+    path: &str,
+    expected_sha256: &str,
+    patch: &str,
+    hunk_count: usize,
+) -> Value {
+    crate::domain::sanitize_apply_patch_arguments(path, expected_sha256, patch, hunk_count)
 }
