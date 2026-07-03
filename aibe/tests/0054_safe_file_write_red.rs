@@ -5,16 +5,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use aibe::adapters::outbound::tools::{
-    DefaultToolRegistry, ReadFileTool, ReadPathPolicy, WritePathPolicy, FILE_METADATA_PREFIX,
+    atomic_write_file, build_unified_diff_preview, dir_has_temp_leftovers, DefaultToolRegistry,
+    ReadFileTool, ReadPathPolicy, WritePathPolicy, FILE_METADATA_PREFIX,
+};
+use aibe::adapters::outbound::{
+    path_mode, read_journal_metadata, set_journal_created_at_for_test, FileChangeJournalConfig,
+    FilesystemFileChangeJournal,
 };
 use aibe::domain::{
-    check_file_size, detect_line_ending, sha256_hex, validate_utf8_bytes, Capability, ClientCwd,
-    FileTextError, LineEnding, ToolName,
+    check_file_size, detect_line_ending, sha256_hex, validate_utf8_bytes, BeforeState, Capability,
+    ClientCwd, FileChangeOperation, FileTextError, LineEnding, ToolName,
 };
 use aibe::ports::outbound::{
-    FileWriteApprovalMode, FileWriteConfig, ReadFileConfig, ToolExecutionContext, ToolExecutor,
-    ToolsConfig, DEFAULT_JOURNAL_MAX_BYTES, DEFAULT_JOURNAL_RETENTION_DAYS,
-    DEFAULT_MAX_FILE_WRITE_BYTES, DEFAULT_MAX_PATCH_BYTES, DEFAULT_MAX_PREVIEW_BYTES,
+    FileChangeJournal, FileChangeJournalError, FileWriteApprovalMode, FileWriteConfig,
+    JournalSaveRequest, ReadFileConfig, ToolExecutionContext, ToolExecutor, ToolsConfig,
+    DEFAULT_JOURNAL_MAX_BYTES, DEFAULT_JOURNAL_RETENTION_DAYS, DEFAULT_MAX_FILE_WRITE_BYTES,
+    DEFAULT_MAX_PATCH_BYTES, DEFAULT_MAX_PREVIEW_BYTES,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -392,69 +398,298 @@ async fn read_file_metadata_survives_output_truncate() {
 }
 
 #[test]
-#[ignore = "0054 phase 4: atomic_write_no_temp_leftover"]
 fn atomic_write_removes_temp_file_on_success() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("target.txt");
+    atomic_write_file(&path, b"hello\n", None).expect("write");
+    assert_eq!(std::fs::read(&path).expect("read"), b"hello\n");
+    assert!(
+        !dir_has_temp_leftovers(dir.path()).expect("scan"),
+        "temp file must not remain after successful write"
+    );
 }
 
 #[test]
-#[ignore = "0054 phase 4: atomic_write_preserves_original"]
 fn atomic_write_preserves_original_on_failure() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("target.txt");
+    std::fs::write(&path, b"original\n").expect("seed");
+    let err = aibe::adapters::outbound::tools::file_atomic::atomic_write_file_fail_before_rename(
+        &path,
+        b"replacement\n",
+        Some(0o644),
+    );
+    assert!(err.is_err());
+    assert_eq!(std::fs::read(&path).expect("read"), b"original\n");
+    assert!(
+        !dir_has_temp_leftovers(dir.path()).expect("scan"),
+        "failed write must not leave temp files"
+    );
 }
 
 #[test]
-#[ignore = "0054 phase 4: journal_capacity_exceeded"]
 fn journal_capacity_exceeded_blocks_write() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let journal = FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: dir.path().join("journal"),
+        retention_days: 7,
+        max_bytes: 900,
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let payload = vec![b'x'; 300];
+    let first = rt.block_on(journal.save_before(JournalSaveRequest {
+        tool: "write_file".to_string(),
+        target_path: PathBuf::from("/tmp/a.txt"),
+        before_state: BeforeState::Present,
+        before_bytes: Some(payload.clone()),
+        before_sha256: Some(sha256_hex(&payload)),
+        after_sha256: sha256_hex(b"after"),
+        after_bytes: 5,
+        file_mode: Some(0o644),
+        operation: FileChangeOperation::Replace,
+        raw_patch: None,
+    }));
+    assert!(first.is_ok(), "first journal save should fit");
+
+    let second = rt.block_on(journal.save_before(JournalSaveRequest {
+        tool: "write_file".to_string(),
+        target_path: PathBuf::from("/tmp/b.txt"),
+        before_state: BeforeState::Present,
+        before_bytes: Some(payload),
+        before_sha256: Some(sha256_hex(b"x")),
+        after_sha256: sha256_hex(b"after"),
+        after_bytes: 5,
+        file_mode: Some(0o644),
+        operation: FileChangeOperation::Replace,
+        raw_patch: None,
+    }));
+    assert!(matches!(
+        second,
+        Err(FileChangeJournalError::CapacityExceeded)
+    ));
 }
 
 #[test]
-#[ignore = "0054 phase 4: journal_create_absent"]
 fn journal_records_absent_before_for_create() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let journal = FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: dir.path().join("journal"),
+        retention_days: 7,
+        max_bytes: DEFAULT_JOURNAL_MAX_BYTES,
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let entry = rt
+        .block_on(journal.save_before(JournalSaveRequest {
+            tool: "write_file".to_string(),
+            target_path: PathBuf::from("/tmp/new.txt"),
+            before_state: BeforeState::Absent,
+            before_bytes: None,
+            before_sha256: None,
+            after_sha256: sha256_hex(b"new"),
+            after_bytes: 3,
+            file_mode: None,
+            operation: FileChangeOperation::Create,
+            raw_patch: None,
+        }))
+        .expect("save");
+    assert!(!entry.dir.join("before.bin").exists());
+    let meta = read_journal_metadata(&entry.dir).expect("metadata");
+    assert_eq!(meta["before_state"], "absent");
 }
 
 #[test]
-#[ignore = "0054 phase 4: journal_no_raw_patch"]
 fn journal_metadata_excludes_raw_patch() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let journal = FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: dir.path().join("journal"),
+        retention_days: 7,
+        max_bytes: DEFAULT_JOURNAL_MAX_BYTES,
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let patch = "+++ b/file\n+secret patch body\n".to_string();
+    let entry = rt
+        .block_on(journal.save_before(JournalSaveRequest {
+            tool: "apply_patch".to_string(),
+            target_path: PathBuf::from("/tmp/file.txt"),
+            before_state: BeforeState::Present,
+            before_bytes: Some(b"old\n".to_vec()),
+            before_sha256: Some(sha256_hex(b"old\n")),
+            after_sha256: sha256_hex(b"new\n"),
+            after_bytes: 4,
+            file_mode: Some(0o644),
+            operation: FileChangeOperation::Patch,
+            raw_patch: Some(patch.clone()),
+        }))
+        .expect("save");
+    let meta_text = std::fs::read_to_string(entry.dir.join("metadata.json")).expect("read meta");
+    assert!(
+        !meta_text.contains("secret patch body"),
+        "raw patch must not be persisted in metadata"
+    );
+    assert!(!meta_text.contains("+++ b/file"));
 }
 
 #[test]
-#[ignore = "0054 phase 4: journal_permissions"]
 fn journal_uses_restricted_permissions() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().join("journal");
+    let journal = FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: root.clone(),
+        retention_days: 7,
+        max_bytes: DEFAULT_JOURNAL_MAX_BYTES,
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let entry = rt
+        .block_on(journal.save_before(JournalSaveRequest {
+            tool: "write_file".to_string(),
+            target_path: PathBuf::from("/tmp/file.txt"),
+            before_state: BeforeState::Present,
+            before_bytes: Some(b"before\n".to_vec()),
+            before_sha256: Some(sha256_hex(b"before\n")),
+            after_sha256: sha256_hex(b"after\n"),
+            after_bytes: 6,
+            file_mode: Some(0o644),
+            operation: FileChangeOperation::Replace,
+            raw_patch: None,
+        }))
+        .expect("save");
+    assert_eq!(path_mode(&root).expect("root mode"), 0o700);
+    assert_eq!(path_mode(&entry.dir).expect("entry mode"), 0o700);
+    assert_eq!(
+        path_mode(&entry.dir.join("metadata.json")).expect("meta mode"),
+        0o600
+    );
+    assert_eq!(
+        path_mode(&entry.dir.join("before.bin")).expect("before mode"),
+        0o600
+    );
 }
 
 #[test]
-#[ignore = "0054 phase 4: journal_retention_cleanup"]
 fn journal_retention_cleanup_removes_expired() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path().join("journal");
+    let journal = FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: root.clone(),
+        retention_days: 7,
+        max_bytes: DEFAULT_JOURNAL_MAX_BYTES,
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let entry = rt
+        .block_on(journal.save_before(JournalSaveRequest {
+            tool: "write_file".to_string(),
+            target_path: PathBuf::from("/tmp/old.txt"),
+            before_state: BeforeState::Absent,
+            before_bytes: None,
+            before_sha256: None,
+            after_sha256: sha256_hex(b"x"),
+            after_bytes: 1,
+            file_mode: None,
+            operation: FileChangeOperation::Create,
+            raw_patch: None,
+        }))
+        .expect("save");
+    set_journal_created_at_for_test(&entry.dir, "2000-01-01T00:00:00Z").expect("backdate");
+    rt.block_on(journal.cleanup_expired()).expect("cleanup");
+    assert!(
+        !entry.dir.exists(),
+        "expired journal entry should be removed"
+    );
 }
 
 #[test]
-#[ignore = "0054 phase 4: journal_saves_before_bytes"]
 fn journal_saves_before_state_bytes() {
-    panic!("0054 not implemented");
+    let dir = tempdir().expect("tempdir");
+    let journal = FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: dir.path().join("journal"),
+        retention_days: 7,
+        max_bytes: DEFAULT_JOURNAL_MAX_BYTES,
+    });
+    let before = b"exact bytes\n".to_vec();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let entry = rt
+        .block_on(journal.save_before(JournalSaveRequest {
+            tool: "write_file".to_string(),
+            target_path: PathBuf::from("/tmp/file.txt"),
+            before_state: BeforeState::Present,
+            before_bytes: Some(before.clone()),
+            before_sha256: Some(sha256_hex(&before)),
+            after_sha256: sha256_hex(b"after\n"),
+            after_bytes: 6,
+            file_mode: Some(0o644),
+            operation: FileChangeOperation::Replace,
+            raw_patch: None,
+        }))
+        .expect("save");
+    let saved = std::fs::read(entry.dir.join("before.bin")).expect("before.bin");
+    assert_eq!(saved, before);
 }
 
 #[test]
-#[ignore = "0054 phase 4: preview_truncation"]
 fn diff_preview_truncates_at_max_bytes() {
-    panic!("0054 not implemented");
+    let before: String = (0..120).map(|i| format!("old-{i}\n")).collect();
+    let after: String = (0..120).map(|i| format!("new-{i}\n")).collect();
+    let preview = build_unified_diff_preview(
+        "big.txt",
+        Some(before.as_bytes()),
+        after.as_bytes(),
+        FileChangeOperation::Replace,
+        200,
+    );
+    assert!(preview.preview_truncated);
+    assert!(preview.diff_text.len() <= 200);
+    assert_eq!(preview.summary.after_bytes, after.len());
+    assert_eq!(preview.summary.before_bytes, before.len());
 }
 
 #[test]
-#[ignore = "0054 phase 4: unified_diff_existing_file"]
 fn unified_diff_formats_existing_file() {
-    panic!("0054 not implemented");
+    let preview = build_unified_diff_preview(
+        "src/main.rs",
+        Some(b"old line\n"),
+        b"new line\n",
+        FileChangeOperation::Replace,
+        DEFAULT_MAX_PREVIEW_BYTES,
+    );
+    assert!(preview
+        .diff_text
+        .starts_with("--- a/src/main.rs\n+++ b/src/main.rs\n"));
+    assert!(preview.diff_text.contains("-old line\n"));
+    assert!(preview.diff_text.contains("+new line\n"));
 }
 
 #[test]
-#[ignore = "0054 phase 4: unified_diff_new_file"]
 fn unified_diff_formats_new_file() {
-    panic!("0054 not implemented");
+    let preview = build_unified_diff_preview(
+        "src/new_file.rs",
+        None,
+        b"fn main() {}\n",
+        FileChangeOperation::Create,
+        DEFAULT_MAX_PREVIEW_BYTES,
+    );
+    assert!(preview
+        .diff_text
+        .starts_with("--- /dev/null\n+++ b/src/new_file.rs\n"));
+    assert!(preview.diff_text.contains("+fn main() {}\n"));
 }
 
 #[test]

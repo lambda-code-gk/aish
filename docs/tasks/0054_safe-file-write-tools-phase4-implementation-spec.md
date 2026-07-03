@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0054_safe-file-write-tools-spec.md](../spec/0054_safe-file-write-tools-spec.md)  
 > **マスター**: [0054_safe-file-write-tools-implementation-spec.md](0054_safe-file-write-tools-implementation-spec.md)  
-> **状態**: 未着手（Phase 4）  
+> **状態**: 実装済み（Phase 4）  
 > **前提**: [Phase 2](0054_safe-file-write-tools-phase2-implementation-spec.md) 完了（Phase 3 と並行可だが、本 Phase 開始前に Phase 2 必須）
 
 ## 0. 目的
@@ -37,17 +37,17 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `unified_diff_new_file` | 新規ファイル diff が `/dev/null` 形式 | `unified_diff_formats_new_file` | true |
-| `unified_diff_existing_file` | 既存ファイル diff が `--- a/` 形式 | `unified_diff_formats_existing_file` | true |
-| `preview_truncation` | `max_preview_bytes` 超過で truncate + flag | `diff_preview_truncates_at_max_bytes` | true |
-| `atomic_write_preserves_original` | temp/rename 失敗で元ファイル残存 | `atomic_write_preserves_original_on_failure` | true |
-| `atomic_write_no_temp_leftover` | 成功後 temp が残らない | `atomic_write_removes_temp_file_on_success` | true |
-| `journal_saves_before_bytes` | commit 前に before.bin が正確 | `journal_saves_before_state_bytes` | true |
-| `journal_create_absent` | 新規作成は `before_state=absent`、before.bin なし | `journal_records_absent_before_for_create` | true |
-| `journal_permissions` | dir `0700`、ファイル `0600` | `journal_uses_restricted_permissions` | true |
-| `journal_retention_cleanup` | 期限切れ journal の best-effort 削除 | `journal_retention_cleanup_removes_expired` | true |
-| `journal_capacity_exceeded` | 容量確保不可で write 拒否 | `journal_capacity_exceeded_blocks_write` | true |
-| `journal_no_raw_patch` | metadata に raw patch を保存しない | `journal_metadata_excludes_raw_patch` | true |
+| `unified_diff_new_file` | 新規ファイル diff が `/dev/null` 形式 | `unified_diff_formats_new_file` | false |
+| `unified_diff_existing_file` | 既存ファイル diff が `--- a/` 形式 | `unified_diff_formats_existing_file` | false |
+| `preview_truncation` | `max_preview_bytes` 超過で truncate + flag | `diff_preview_truncates_at_max_bytes` | false |
+| `atomic_write_preserves_original` | temp/rename 失敗で元ファイル残存 | `atomic_write_preserves_original_on_failure` | false |
+| `atomic_write_no_temp_leftover` | 成功後 temp が残らない | `atomic_write_removes_temp_file_on_success` | false |
+| `journal_saves_before_bytes` | commit 前に before.bin が正確 | `journal_saves_before_state_bytes` | false |
+| `journal_create_absent` | 新規作成は `before_state=absent`、before.bin なし | `journal_records_absent_before_for_create` | false |
+| `journal_permissions` | dir `0700`、ファイル `0600` | `journal_uses_restricted_permissions` | false |
+| `journal_retention_cleanup` | 期限切れ journal の best-effort 削除 | `journal_retention_cleanup_removes_expired` | false |
+| `journal_capacity_exceeded` | 容量確保不可で write 拒否 | `journal_capacity_exceeded_blocks_write` | false |
+| `journal_no_raw_patch` | metadata に raw patch を保存しない | `journal_metadata_excludes_raw_patch` | false |
 
 ## 3. 変更ファイル（目安）
 

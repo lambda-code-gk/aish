@@ -6,6 +6,7 @@ mod client_cwd;
 mod client_tool_names;
 mod contextual_memory;
 mod feature_registry;
+mod file_change;
 mod file_text;
 mod llm_step;
 mod memory_kind_registry;
@@ -42,6 +43,9 @@ pub use feature_registry::{
     actions_equivalent, baseline_feature_registry, feature_action_schema_prompt,
     EffectiveFeatureMode, FeatureDefinition, FeatureEligibilityContext, FeaturePackConfig,
     FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
+};
+pub use file_change::{
+    BeforeState, DiffPreview, DiffSummary, FileChangeOperation, FileChangePlan, FileSnapshot,
 };
 pub use file_text::{
     check_file_size, detect_line_ending, has_trailing_newline, reject_mixed_line_endings,

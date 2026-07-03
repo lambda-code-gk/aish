@@ -1580,7 +1580,7 @@ id = "unified_diff_new_file"
 description = "新規ファイル diff が /dev/null 形式"
 test = "unified_diff_formats_new_file"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1589,7 +1589,7 @@ id = "unified_diff_existing_file"
 description = "既存ファイル diff が --- a/ 形式"
 test = "unified_diff_formats_existing_file"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1598,7 +1598,7 @@ id = "preview_truncation"
 description = "max_preview_bytes 超過で truncate + flag"
 test = "diff_preview_truncates_at_max_bytes"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1607,7 +1607,7 @@ id = "atomic_write_preserves_original"
 description = "temp/rename 失敗で元ファイル残存"
 test = "atomic_write_preserves_original_on_failure"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1616,7 +1616,7 @@ id = "atomic_write_no_temp_leftover"
 description = "成功後 temp が残らない"
 test = "atomic_write_removes_temp_file_on_success"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1625,7 +1625,7 @@ id = "journal_saves_before_bytes"
 description = "commit 前に before.bin が正確"
 test = "journal_saves_before_state_bytes"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1634,7 +1634,7 @@ id = "journal_create_absent"
 description = "新規作成は before_state=absent"
 test = "journal_records_absent_before_for_create"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1643,7 +1643,7 @@ id = "journal_permissions"
 description = "dir 0700、ファイル 0600"
 test = "journal_uses_restricted_permissions"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1652,7 +1652,7 @@ id = "journal_retention_cleanup"
 description = "期限切れ journal の best-effort 削除"
 test = "journal_retention_cleanup_removes_expired"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1661,7 +1661,7 @@ id = "journal_capacity_exceeded"
 description = "容量確保不可で write 拒否"
 test = "journal_capacity_exceeded_blocks_write"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"
@@ -1670,7 +1670,7 @@ id = "journal_no_raw_patch"
 description = "metadata に raw patch を保存しない"
 test = "journal_metadata_excludes_raw_patch"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0054"

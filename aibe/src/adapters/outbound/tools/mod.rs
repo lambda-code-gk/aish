@@ -1,4 +1,6 @@
 mod config_allowlist;
+pub mod diff_preview;
+pub mod file_atomic;
 mod git_common;
 mod git_diff;
 mod git_status;
@@ -12,6 +14,10 @@ mod subprocess;
 mod tool_output;
 
 pub use config_allowlist::ConfigAllowlistPolicy;
+pub use diff_preview::build_unified_diff_preview;
+pub use file_atomic::{
+    atomic_write_file, dir_has_temp_leftovers, temp_file_prefix, AtomicWriteError,
+};
 pub use git_diff::GitDiffTool;
 pub use git_status::GitStatusTool;
 pub use grep::GrepTool;

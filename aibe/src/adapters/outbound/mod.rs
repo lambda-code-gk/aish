@@ -4,6 +4,8 @@ mod contextual_memory_store;
 mod conversation_store;
 mod env_config;
 mod env_llm_call_tracer;
+mod file_change_journal;
+mod file_change_store;
 mod filesystem_feature_registry;
 mod filesystem_memory_kind_registry;
 mod filesystem_memory_recipe_registry;
@@ -17,6 +19,7 @@ mod memory_space_resolver;
 mod mock_llm;
 mod openai_compatible;
 mod scripted_mock_llm;
+mod secure_fs;
 pub mod terminator;
 mod toml_config;
 pub mod tools;
@@ -32,6 +35,11 @@ pub use contextual_memory_store::{EmptyContextualMemoryStore, FilesystemContextu
 pub use conversation_store::ConversationStore;
 pub use env_config::EnvConfig;
 pub use env_llm_call_tracer::EnvLlmCallTracer;
+pub use file_change_journal::{
+    path_mode, read_journal_metadata, set_journal_created_at_for_test, FileChangeJournalConfig,
+    FilesystemFileChangeJournal,
+};
+pub use file_change_store::FilesystemFileChangeStore;
 pub use filesystem_feature_registry::FilesystemFeatureRegistryLoader;
 pub use filesystem_memory_kind_registry::{
     shared_baseline_loader, shared_builtin_loader, BaselineMemoryKindRegistryLoader,

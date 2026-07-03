@@ -5,6 +5,8 @@ pub mod config;
 pub mod contextual_memory_store;
 pub mod conversation_store;
 pub mod feature_registry_loader;
+pub mod file_change_journal;
+pub mod file_change_store;
 pub mod llm;
 pub mod llm_call_tracer;
 pub mod memory_kind_registry_loader;
@@ -47,6 +49,10 @@ pub use conversation_store::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStore, ConversationStoreError,
 };
 pub use feature_registry_loader::FeatureRegistryLoader;
+pub use file_change_journal::{
+    FileChangeJournal, FileChangeJournalError, JournalEntry, JournalSaveRequest,
+};
+pub use file_change_store::{FileChangeStore, FileChangeStoreError};
 pub use llm::{LlmError, LlmProvider};
 pub use memory_kind_registry_loader::MemoryKindRegistryLoader;
 pub use memory_recipe_registry_loader::MemoryRecipeRegistryLoader;
