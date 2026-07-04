@@ -86,25 +86,211 @@ fn human_shell_exit_returns_control_regardless_of_code() {
 }
 
 #[test]
-#[ignore = "0055 phase5: ctrl_c_in_human_shell_does_not_terminate_parent"]
 fn ctrl_c_in_human_shell_does_not_terminate_parent() {
-    panic!("0055 phase5 not implemented");
+    if !std::path::Path::new("/bin/bash").is_file() {
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let result_file = home.path().join("result.json");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
+        .args(["human-shell", "--result-file"])
+        .arg(&result_file)
+        .env("HOME", home.path())
+        .env("SHELL", "/bin/bash")
+        .env("AISH_CONTROL_MODE", "human-shell")
+        .env("AISH_HANDOFF_ID", "ho-test")
+        .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
+        .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"sleep 30\n\x03\nexit\n")
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("human shell hung after ctrl-c")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: aish::human_shell::HumanShellResult =
+        serde_json::from_str(&std::fs::read_to_string(result_file).unwrap()).unwrap();
+    assert!(result.normal_return);
 }
 
 #[test]
-#[ignore = "0055 phase5: human_shell_job_control_fg_bg"]
 fn human_shell_job_control_fg_bg() {
-    panic!("0055 phase5 not implemented");
+    if !std::path::Path::new("/bin/bash").is_file() {
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let result_file = home.path().join("result.json");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
+        .args(["human-shell", "--result-file"])
+        .arg(&result_file)
+        .env("HOME", home.path())
+        .env("SHELL", "/bin/bash")
+        .env("AISH_CONTROL_MODE", "human-shell")
+        .env("AISH_HANDOFF_ID", "ho-test")
+        .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
+        .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"sleep 30\n\x1a\nbg\nfg\nexit\n")
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(12))
+        .expect("human shell hung during job control")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
-#[ignore = "0055 phase5: human_shell_prompt_shows_collaborative_status"]
 fn human_shell_prompt_shows_collaborative_status() {
-    panic!("0055 phase5 not implemented");
+    let tmp = tempfile::tempdir().unwrap();
+    let handoff_dir = tmp.path().join("ho-test");
+    std::fs::create_dir_all(&handoff_dir).unwrap();
+    std::fs::write(
+        handoff_dir.join("handoff.json"),
+        r#"{"state":"HUMAN_ACTIVE"}"#,
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("AISH_CONTROL_MODE", "human-shell");
+        std::env::set_var("AISH_HANDOFF_ID", "ho-test");
+        std::env::set_var("AISH_HANDOFF_STORE_ROOT", tmp.path());
+        std::env::remove_var("AISH_COLLABORATIVE_PROMPT_TEMPLATE");
+    }
+    let prefix = aish::collaborative_prompt::render_collaborative_prompt_prefix();
+    unsafe {
+        std::env::remove_var("AISH_CONTROL_MODE");
+        std::env::remove_var("AISH_HANDOFF_ID");
+        std::env::remove_var("AISH_HANDOFF_STORE_ROOT");
+    }
+    assert!(prefix.contains("collab"), "prefix={prefix}");
+    assert!(prefix.contains("human"), "prefix={prefix}");
 }
 
 #[test]
-#[ignore = "0055 phase5: human_shell_prompt_shows_waiting_for_side_agent"]
 fn human_shell_prompt_shows_waiting_for_side_agent() {
-    panic!("0055 phase5 not implemented");
+    let tmp = tempfile::tempdir().unwrap();
+    let handoff_dir = tmp.path().join("ho-test");
+    std::fs::create_dir_all(&handoff_dir).unwrap();
+    std::fs::write(
+        handoff_dir.join("handoff.json"),
+        r#"{"state":"SIDE_AGENT_WAITING_FOR_HUMAN"}"#,
+    )
+    .unwrap();
+    unsafe {
+        std::env::set_var("AISH_CONTROL_MODE", "human-shell");
+        std::env::set_var("AISH_HANDOFF_ID", "ho-test");
+        std::env::set_var("AISH_HANDOFF_STORE_ROOT", tmp.path());
+        std::env::remove_var("AISH_COLLABORATIVE_PROMPT_TEMPLATE");
+    }
+    let prefix = aish::collaborative_prompt::render_collaborative_prompt_prefix();
+    unsafe {
+        std::env::remove_var("AISH_CONTROL_MODE");
+        std::env::remove_var("AISH_HANDOFF_ID");
+        std::env::remove_var("AISH_HANDOFF_STORE_ROOT");
+    }
+    assert!(prefix.contains("waiting"), "prefix={prefix}");
+    assert!(prefix.contains("ai"), "prefix={prefix}");
+}
+
+#[test]
+fn heartbeat_maintains_lease_during_long_command() {
+    use std::io::Write;
+    if !std::path::Path::new("/bin/bash").is_file() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let store_root = tmp.path().join("handoffs");
+    let handoff_dir = store_root.join("handoff-test");
+    std::fs::create_dir_all(&handoff_dir).unwrap();
+    let lease_path = handoff_dir.join("lease.json");
+    let future = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 120_000;
+    let lease = serde_json::json!({
+        "handoff_id": "handoff-test",
+        "owner_client_id": "owner",
+        "owner_process_id": 1,
+        "owner_tty": null,
+        "owner_host": "host",
+        "owner_uid": 1000,
+        "lease_acquired_at_ms": 1,
+        "lease_expires_at_ms": future,
+        "last_heartbeat_at_ms": 1
+    });
+    std::fs::write(&lease_path, serde_json::to_vec(&lease).unwrap()).unwrap();
+    let result_file = tmp.path().join("result.json");
+    let home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
+        .args(["human-shell", "--result-file"])
+        .arg(&result_file)
+        .env("HOME", home.path())
+        .env("SHELL", "/bin/bash")
+        .env("AISH_CONTROL_MODE", "human-shell")
+        .env("AISH_HANDOFF_ID", "handoff-test")
+        .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
+        .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
+        .env("AISH_HANDOFF_STORE_ROOT", &store_root)
+        .env("AISH_HANDOFF_HEARTBEAT_INTERVAL_MS", "200")
+        .env("AISH_HANDOFF_LEASE_TIMEOUT_MS", "120000")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"sleep 1\nexit\n")
+        .unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(8))
+        .expect("human shell hung during heartbeat test")
+        .unwrap();
+    assert!(output.status.success());
+    let updated: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&lease_path).unwrap()).unwrap();
+    assert!(updated["last_heartbeat_at_ms"].as_u64().unwrap() > 1);
+    assert!(updated["lease_expires_at_ms"].as_u64().unwrap() > future);
 }

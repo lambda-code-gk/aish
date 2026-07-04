@@ -107,3 +107,11 @@ pub trait CommandCandidateStore {
     fn list_candidates(&self, handoff_id: &str)
         -> Result<Vec<CommandCandidate>, HandoffStoreError>;
 }
+
+pub trait HandoffAuditRepository {
+    fn record_audit(
+        &self,
+        handoff_id: &str,
+        kind: crate::domain::CollaborativeAuditKind,
+    ) -> Result<(), HandoffStoreError>;
+}

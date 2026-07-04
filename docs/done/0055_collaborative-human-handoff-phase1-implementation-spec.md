@@ -1,9 +1,9 @@
 # 0055 — Collaborative Human Handoff Phase 1 実装指示書
 
-> **種別**: 実装指示書（`docs/tasks/`）  
+> **種別**: 実装指示書（`docs/done/`）  
 > **設計正本**: [0055_collaborative-human-handoff-spec.md](../spec/0055_collaborative-human-handoff-spec.md)  
 > **マスター**: [0055_collaborative-human-handoff-implementation-spec.md](0055_collaborative-human-handoff-implementation-spec.md)  
-> **状態**: Phase 1 完了 / Phase 2–5 未着手  
+> **状態**: 実装済み（Phase 1） / Phase 2–5 未着手  
 > **前提**: なし
 
 ## 0. 目的

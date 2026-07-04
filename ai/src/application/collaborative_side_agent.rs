@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::{
-    try_transition, CollaborativeHandoffReport, CommandCandidate, CommandCandidateSource, Handoff,
-    HandoffEvent, HandoffState,
+    try_transition, CollaborativeAuditKind, CollaborativeHandoffReport, CommandCandidate,
+    CommandCandidateSource, Handoff, HandoffEvent, HandoffState,
 };
 use crate::ports::outbound::{
-    CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffRepository,
-    HandoffRuntime, HandoffShellSessionStore, HandoffStoreError, LeaseAcquireRequest,
-    LeaseRepository,
+    CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository,
+    HandoffRepository, HandoffRuntime, HandoffShellSessionStore, HandoffStoreError,
+    LeaseAcquireRequest, LeaseRepository,
 };
 
 pub const HANDOFF_ENV_KEYS: [&str; 4] = [
@@ -135,6 +135,7 @@ pub trait SideAgentStore:
     + HandoffShellSessionStore
     + LeaseRepository
     + CommandCandidateStore
+    + HandoffAuditRepository
 {
 }
 
@@ -144,7 +145,16 @@ impl<T> SideAgentStore for T where
         + HandoffShellSessionStore
         + LeaseRepository
         + CommandCandidateStore
+        + HandoffAuditRepository
 {
+}
+
+fn record_audit<S: HandoffAuditRepository>(
+    store: &S,
+    handoff_id: &str,
+    kind: CollaborativeAuditKind,
+) {
+    let _ = store.record_audit(handoff_id, kind);
 }
 
 pub struct StartOrResumeSideAgent<'a, S, O, R> {
@@ -184,6 +194,11 @@ where
         if !crate::domain::validate_shell_token(&sessions, &env.token, env.generation)
             || env.generation != handoff.shell_generation
         {
+            record_audit(
+                self.store,
+                &env.handoff_id,
+                CollaborativeAuditKind::StaleTokenRejected,
+            );
             return Err(SideAgentError::InvalidToken);
         }
         let mut checkpoint = self.store.load_checkpoint(&env.handoff_id)?;
@@ -232,6 +247,11 @@ where
                 let id = self.runtime.unique_id("side-conversation");
                 handoff.side_conversation_id = Some(id.clone());
                 checkpoint.side_conversation_id = Some(id.clone());
+                record_audit(
+                    self.store,
+                    &env.handoff_id,
+                    CollaborativeAuditKind::SideConversationCreated,
+                );
                 id
             }
         };
@@ -258,6 +278,11 @@ where
         checkpoint.cwd = invocation.cwd.display().to_string();
         self.store.save_checkpoint(&handoff.id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            &handoff.id,
+            CollaborativeAuditKind::SideAgentStarted,
+        );
 
         let observation_start = handoff.shell_log_end.unwrap_or(handoff.shell_log_start);
         let observation = self.observer.observe(&invocation.cwd, observation_start);
@@ -323,6 +348,11 @@ where
         checkpoint.command_candidates.extend(added_candidates);
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            handoff_id,
+            CollaborativeAuditKind::SideAgentWaitingForHuman,
+        );
         self.store.release_lease(handoff_id)?;
         Ok(())
     }
@@ -337,6 +367,11 @@ where
         checkpoint.conversation_summary = handoff.conversation_summary.clone();
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            handoff_id,
+            CollaborativeAuditKind::SideAgentReturned,
+        );
         self.store.release_lease(handoff_id)?;
         Ok(())
     }

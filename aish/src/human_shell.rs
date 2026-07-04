@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::adapters::outbound::toml_config::AishConfig;
 use crate::adapters::outbound::{
     create_shell_session, prune_old_sessions, resolve_sessions_parent, JsonlFileLog, PtyShell,
+    RedactingSessionLog,
 };
 use crate::application::RunShell;
 use crate::domain::{CommandSpec, LogEvent};
@@ -70,7 +71,13 @@ pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
     let layout = create_shell_session(&parent)?;
     prune_old_sessions(&parent, cfg.max_sessions)?;
     let shell = cfg.shell;
-    let mut log = JsonlFileLog::new(layout.log_path.clone());
+    let token = std::env::var("AISH_HANDOFF_TOKEN").unwrap_or_default();
+    let secrets = if token.is_empty() {
+        Vec::new()
+    } else {
+        vec![token]
+    };
+    let mut log = RedactingSessionLog::new(JsonlFileLog::new(layout.log_path.clone()), secrets);
     log.append(&LogEvent::command_start(&CommandSpec {
         program: "human_shell".into(),
         args: vec![shell.clone()],

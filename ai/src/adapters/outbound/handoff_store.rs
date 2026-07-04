@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
 
 use crate::domain::{
-    hash_handoff_token, validate_handoff_id, CommandCandidate, Handoff, HandoffCheckpoint,
-    HandoffLease, HandoffShellSession, HandoffState,
+    hash_handoff_token, validate_handoff_id, CollaborativeAuditKind, CommandCandidate, Handoff,
+    HandoffCheckpoint, HandoffLease, HandoffShellSession, HandoffState,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
@@ -225,17 +225,34 @@ impl FilesystemHandoffStore {
     fn append_audit_event(
         &self,
         handoff_id: &str,
-        state: HandoffState,
+        kind: CollaborativeAuditKind,
     ) -> Result<(), HandoffStoreError> {
         #[derive(serde::Serialize)]
-        struct AuditEvent<'a> {
-            handoff_id: &'a str,
-            state: HandoffState,
+        struct AuditEvent {
+            event: CollaborativeAuditKind,
+            handoff_id: String,
+            at_ms: u64,
         }
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         self.append_jsonl(
             &self.events_path(handoff_id)?,
-            &AuditEvent { handoff_id, state },
+            &AuditEvent {
+                event: kind,
+                handoff_id: handoff_id.to_string(),
+                at_ms,
+            },
         )
+    }
+
+    pub fn record_audit(
+        &self,
+        handoff_id: &str,
+        kind: CollaborativeAuditKind,
+    ) -> Result<(), HandoffStoreError> {
+        self.append_audit_event(handoff_id, kind)
     }
 
     fn update_index(&self, handoff: &Handoff) -> Result<(), HandoffStoreError> {
@@ -260,8 +277,7 @@ impl HandoffRepository for FilesystemHandoffStore {
     fn save_handoff(&self, handoff: &Handoff) -> Result<(), HandoffStoreError> {
         validate_handoff_id(&handoff.id).map_err(|_| HandoffStoreError::InvalidHandoffId)?;
         self.with_handoff_lock(&handoff.id, || {
-            self.write_json_atomic(&self.handoff_path(&handoff.id)?, handoff)?;
-            self.append_audit_event(&handoff.id, handoff.state)
+            self.write_json_atomic(&self.handoff_path(&handoff.id)?, handoff)
         })?;
         self.with_index_lock(|| self.update_index(handoff))
     }
@@ -436,6 +452,16 @@ impl CommandCandidateStore for FilesystemHandoffStore {
         self.with_handoff_lock(handoff_id, || {
             self.read_jsonl(&self.candidates_path(handoff_id)?)
         })
+    }
+}
+
+impl crate::ports::outbound::HandoffAuditRepository for FilesystemHandoffStore {
+    fn record_audit(
+        &self,
+        handoff_id: &str,
+        kind: CollaborativeAuditKind,
+    ) -> Result<(), HandoffStoreError> {
+        self.record_audit(handoff_id, kind)
     }
 }
 

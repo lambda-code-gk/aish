@@ -2878,7 +2878,7 @@ id = "prompt_shows_collaborative_state"
 description = "プロンプトに協調状態"
 test = "human_shell_prompt_shows_collaborative_status"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2887,7 +2887,7 @@ id = "prompt_waiting_shows_hint"
 description = "人間待ち時のプロンプト表示"
 test = "human_shell_prompt_shows_waiting_for_side_agent"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2896,7 +2896,7 @@ id = "token_redacted_in_shell_log"
 description = "shell log に token 無し"
 test = "handoff_token_redacted_from_shell_log"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2905,7 +2905,7 @@ id = "token_not_in_replay"
 description = "replay に token 無し"
 test = "handoff_token_not_in_replay_output"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2914,7 +2914,7 @@ id = "ctrl_c_does_not_kill_parent"
 description = "Ctrl+C が親を終了しない"
 test = "ctrl_c_in_human_shell_does_not_terminate_parent"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2923,7 +2923,7 @@ id = "job_control_works"
 description = "Ctrl+Z / fg / bg が動作"
 test = "human_shell_job_control_fg_bg"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2931,8 +2931,8 @@ phase = 5
 id = "long_running_lease_held"
 description = "長時間コマンド中 lease 維持"
 test = "heartbeat_maintains_lease_during_long_command"
-file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2941,7 +2941,7 @@ id = "audit_events_emitted"
 description = "監査イベントが記録される"
 test = "collaborative_audit_events_are_emitted"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2950,7 +2950,7 @@ id = "collaborative_config_wired"
 description = "[collaborative] 設定が読める"
 test = "collaborative_config_defaults_match_spec"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2959,7 +2959,7 @@ id = "normal_ai_unchanged_regression"
 description = "非協調 ai smoke"
 test = "normal_ai_entry_unchanged_regression"
 file_glob = "ai/tests/0055_collaborative_regression.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2968,7 +2968,7 @@ id = "docs_architecture_synced"
 description = "architecture.md に協調節"
 test = "docs_architecture_mentions_collaborative_handoff"
 file_glob = "ai/tests/0055_collaborative_regression.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2977,4 +2977,4 @@ id = "manual_checklist_exists"
 description = "manual 手順あり"
 test = "manual_collaborative_handoff_checklist_exists"
 file_glob = "ai/tests/0055_collaborative_regression.rs"
-pending = true
+pending = false

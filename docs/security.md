@@ -71,8 +71,16 @@
 | `Bearer ...` | `Bearer [REDACTED]` |
 | `AIza...`（Google API キー形式） | `AIza[REDACTED]` |
 | 環境変数名に `KEY` / `TOKEN` / `SECRET` を含む `NAME=value` | `NAME=[REDACTED]` |
+| `AISH_HANDOFF_TOKEN=...` | `AISH_HANDOFF_TOKEN=[REDACTED]` |
+| human shell セッションの既知 handoff token 平文 | `[REDACTED]`（`RedactingSessionLog`） |
 
 `command_start` は `LogEvent::command_start` 経由でのみ安全化する。`CommandStart` の enum 直構築は使わない。
+
+### Collaborative human handoff（0055）
+
+- handoff token は **hash のみ**永続化。`ai status` / LLM / replay / shell log へ平文を出さない
+- human shell ログは `RedactingSessionLog` で token を除去してから JSONL へ追記
+- 監査 `events.jsonl` に token・コマンド全文を無条件に含めない（イベント名 + handoff_id + 時刻）
 
 完全な秘匿ではない。パスワードプロンプト直後の入力などは今後拡張する。
 

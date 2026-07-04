@@ -502,6 +502,11 @@ fn format_command_preview(command: &str, args: &[String]) -> String {
 
 /// ログ・コンテキストへ書く前に機微らしき部分を置換する。
 pub fn sanitize_log_text(input: &str) -> String {
+    sanitize_log_text_with_secrets(input, &[])
+}
+
+/// 既知の追加 secret（例: handoff token）も置換する。
+pub fn sanitize_log_text_with_secrets(input: &str, extra_secrets: &[&str]) -> String {
     static RE_SK: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"sk-[a-zA-Z0-9]{8,}").expect("regex"));
     static RE_BEARER: LazyLock<Regex> =
@@ -512,12 +517,22 @@ pub fn sanitize_log_text(input: &str) -> String {
     });
     static RE_AIZA: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"AIza[0-9A-Za-z_\-]{10,}").expect("regex"));
+    static RE_HANDOFF_TOKEN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)AISH_HANDOFF_TOKEN=([^\s\\]+)").expect("regex"));
 
     let mut s = input.to_string();
     s = RE_SK.replace_all(&s, "sk-[REDACTED]").into_owned();
     s = RE_BEARER.replace_all(&s, "Bearer [REDACTED]").into_owned();
     s = RE_AIZA.replace_all(&s, "AIza[REDACTED]").into_owned();
     s = RE_ENV_SECRET.replace_all(&s, "$1=[REDACTED]").into_owned();
+    s = RE_HANDOFF_TOKEN
+        .replace_all(&s, "AISH_HANDOFF_TOKEN=[REDACTED]")
+        .into_owned();
+    for secret in extra_secrets {
+        if secret.len() >= 8 {
+            s = s.replace(secret, "[REDACTED]");
+        }
+    }
     s
 }
 

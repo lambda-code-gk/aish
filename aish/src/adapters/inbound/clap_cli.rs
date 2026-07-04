@@ -131,6 +131,9 @@ pub enum AishCommand {
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         result_file: PathBuf,
     },
+    /// Print collaborative handoff prompt prefix (internal)
+    #[command(hide = true)]
+    CollaborativePrompt,
     /// Print current session metadata
     Session {
         #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]

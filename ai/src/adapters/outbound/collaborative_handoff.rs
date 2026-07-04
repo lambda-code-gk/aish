@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::toml_config::AiConfig;
 use super::FileSuggestedCommandRecallStore;
 use crate::domain::{SuggestedCommandCache, SuggestedCommandCandidate, SuggestedCommandQueue};
 use crate::ports::outbound::{
@@ -59,6 +60,7 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
         let result_path = result_file.path().to_path_buf();
         drop(result_file);
+        let collaborative = AiConfig::load().collaborative;
         let status = Command::new(&self.binary)
             .arg("human-shell")
             .arg("--result-file")
@@ -75,8 +77,18 @@ impl HumanShellLauncher for AishHumanShellLauncher {
                 "AISH_HANDOFF_STORE_ROOT",
                 crate::adapters::outbound::FilesystemHandoffStore::default_root(),
             )
-            .env("AISH_HANDOFF_HEARTBEAT_INTERVAL_MS", "30000")
-            .env("AISH_HANDOFF_LEASE_TIMEOUT_MS", "120000")
+            .env(
+                "AISH_HANDOFF_HEARTBEAT_INTERVAL_MS",
+                (collaborative.heartbeat_interval_secs * 1000).to_string(),
+            )
+            .env(
+                "AISH_HANDOFF_LEASE_TIMEOUT_MS",
+                (collaborative.lease_timeout_secs * 1000).to_string(),
+            )
+            .env(
+                "AISH_COLLABORATIVE_PROMPT_TEMPLATE",
+                collaborative.prompt_template,
+            )
             .status()
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
         let raw = std::fs::read_to_string(&result_path)

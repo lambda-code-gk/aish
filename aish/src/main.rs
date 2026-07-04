@@ -48,6 +48,13 @@ fn run() -> anyhow::Result<u8> {
             aish::human_shell::run_human_shell(&result_file)?;
             Ok(0)
         }
+        AishCommand::CollaborativePrompt => {
+            let prefix = aish::collaborative_prompt::render_collaborative_prompt_prefix();
+            io::stdout()
+                .write_all(prefix.as_bytes())
+                .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(0)
+        }
         AishCommand::Session { format } => run_session(format.into()),
         AishCommand::Replay { command } => run_replay(command),
         AishCommand::Complete { shell } => {

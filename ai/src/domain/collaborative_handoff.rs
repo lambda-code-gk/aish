@@ -25,6 +25,28 @@ pub enum CollaborativePolicy {
     Disabled,
 }
 
+/// 監査イベント種別（spec §29）。秘密・コマンド全文は含めない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollaborativeAuditKind {
+    HandoffCreated,
+    HumanShellStarted,
+    HumanShellReturned,
+    HumanShellOrphaned,
+    SideConversationCreated,
+    SideAgentStarted,
+    SideAgentWaitingForHuman,
+    SideAgentReturned,
+    CandidateRegistered,
+    HandoffResumed,
+    ParentResumeStarted,
+    ParentResumeCompleted,
+    ParentResumeFailed,
+    LeaseAcquired,
+    LeaseLost,
+    StaleTokenRejected,
+}
+
 /// Handoff 状態（spec §9）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

@@ -3513,7 +3513,7 @@ mod cli_tests {
     use std::path::PathBuf;
 
     use crate::ResolvedTurnSettings;
-    use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig};
+    use ai::adapters::outbound::toml_config::{AiConfig, AiPresetConfig, CollaborativeConfig};
     use ai::adapters::outbound::LocalHistoryStore;
     use ai::application::ShellLogMode;
     use ai::clap_cli::{AiCli, TurnOptions};
@@ -3935,6 +3935,7 @@ mod cli_tests {
             suggested_command_recall_max_items: 8,
             presets: std::collections::HashMap::new(),
             smart_preprocessor: None,
+            collaborative: CollaborativeConfig::default(),
         };
         let summary =
             crate::resolve_recent_local_history_summary(&cfg, "ai-session").expect("summary");
@@ -4001,6 +4002,7 @@ mod cli_tests {
             suggested_command_recall_max_items: 8,
             presets: HashMap::new(),
             smart_preprocessor: None,
+            collaborative: CollaborativeConfig::default(),
         };
         let turn = TurnOptions {
             format: Some(OutputFormatArg::Json),
@@ -4068,6 +4070,7 @@ mod cli_tests {
             suggested_command_recall_max_items: 8,
             presets: HashMap::from([("fast".into(), AiPresetConfig::default())]),
             smart_preprocessor: None,
+            collaborative: CollaborativeConfig::default(),
         };
         let plan = RoutePlan {
             conversation_id: "conv-1".into(),
@@ -4151,6 +4154,7 @@ mod cli_tests {
             suggested_command_recall_max_items: 8,
             presets: HashMap::new(),
             smart_preprocessor: None,
+            collaborative: CollaborativeConfig::default(),
         };
         let settings = crate::ResolvedTurnSettings {
             quiet: true,
@@ -4242,6 +4246,7 @@ mod cli_tests {
             suggested_command_recall_max_items: 8,
             presets: std::collections::HashMap::new(),
             smart_preprocessor: None,
+            collaborative: CollaborativeConfig::default(),
         };
         let settings = ResolvedTurnSettings {
             quiet: true,

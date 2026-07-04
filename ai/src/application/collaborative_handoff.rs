@@ -6,16 +6,16 @@ use std::sync::Mutex;
 use crate::domain::{
     build_candidate_command, close_child_goal_on_control_returned, mark_running_tools_unknown,
     try_transition, ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole,
-    CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint,
-    HandoffEvent, HandoffState, RequestedShellExec, SuggestedCommandCache,
+    CollaborativeAuditKind, CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff,
+    HandoffCheckpoint, HandoffEvent, HandoffState, RequestedShellExec, SuggestedCommandCache,
     SuggestedCommandCandidate, SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
-    CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffCandidatePublisher,
-    HandoffRepository, HandoffRuntime, HandoffShellSessionStore, HandoffStoreError,
-    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, LeaseAcquireRequest,
-    LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest, SuggestedCommandRecallStore,
-    SuggestedCommandRecallStoreError,
+    CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository,
+    HandoffCandidatePublisher, HandoffRepository, HandoffRuntime, HandoffShellSessionStore,
+    HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
+    LeaseAcquireRequest, LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest,
+    SuggestedCommandRecallStore, SuggestedCommandRecallStoreError,
 };
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
@@ -89,6 +89,7 @@ pub trait CollaborativeHandoffStore:
     + CommandCandidateStore
     + HandoffShellSessionStore
     + LeaseRepository
+    + HandoffAuditRepository
 {
 }
 impl<T> CollaborativeHandoffStore for T where
@@ -97,7 +98,16 @@ impl<T> CollaborativeHandoffStore for T where
         + CommandCandidateStore
         + HandoffShellSessionStore
         + LeaseRepository
+        + HandoffAuditRepository
 {
+}
+
+fn record_audit<S: HandoffAuditRepository>(
+    store: &S,
+    handoff_id: &str,
+    kind: CollaborativeAuditKind,
+) {
+    let _ = store.record_audit(handoff_id, kind);
 }
 
 pub struct CollaborativeShellExecPolicy<'a, S, L, O, B, P, R> {
@@ -218,7 +228,17 @@ where
             updated_at_ms: now,
         };
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::HandoffCreated,
+        );
         self.store.append_candidate(&handoff_id, &candidate)?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::CandidateRegistered,
+        );
         self.candidate_publisher
             .publish(&handoff_id, std::slice::from_ref(&candidate_text))
             .map_err(CollaborativeHandoffError::Candidate)?;
@@ -273,9 +293,19 @@ where
                 lease_timeout_ms: 120_000,
             },
         )?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::LeaseAcquired,
+        );
         handoff.state = transition(handoff.state, HandoffEvent::ShellReady)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::HumanShellStarted,
+        );
 
         let launch_result = self.launcher.launch_and_wait(&HumanShellLaunchRequest {
             handoff_id: handoff_id.clone(),
@@ -308,7 +338,15 @@ where
                 checkpoint.control_state = handoff.state;
                 self.store.save_checkpoint(&handoff_id, &checkpoint)?;
                 self.store.save_handoff(&handoff)?;
+                if matches!(event, HandoffEvent::Orphaned) {
+                    record_audit(
+                        self.store,
+                        &handoff_id,
+                        CollaborativeAuditKind::HumanShellOrphaned,
+                    );
+                }
                 self.store.release_lease(&handoff_id)?;
+                record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
                 return Err(error.into());
             }
         };
@@ -331,15 +369,31 @@ where
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::HumanShellReturned,
+        );
         self.store.release_lease(&handoff_id)?;
+        record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
         handoff.state = transition(handoff.state, HandoffEvent::StartParentResume)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::ParentResumeStarted,
+        );
         checkpoint.control_state = HandoffState::ResumingParent;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         handoff.state = transition(handoff.state, HandoffEvent::ParentResumeCompleted)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            &handoff_id,
+            CollaborativeAuditKind::ParentResumeCompleted,
+        );
         checkpoint.control_state = HandoffState::Completed;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
 

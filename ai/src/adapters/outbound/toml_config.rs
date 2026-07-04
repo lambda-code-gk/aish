@@ -14,6 +14,33 @@ pub const DEFAULT_HISTORY_MAX_ENTRIES: usize = 500;
 pub const MEMORY_DISABLED_MESSAGE: &str =
     "contextual memory is disabled ([memory] enabled = false in ai config)";
 
+pub const DEFAULT_COLLABORATIVE_PROMPT_TEMPLATE: &str = "[collab:{state}] ";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollaborativeConfig {
+    pub enabled: bool,
+    pub prompt_template: String,
+    pub heartbeat_interval_secs: u64,
+    pub lease_timeout_secs: u64,
+    pub recent_parent_turns: usize,
+    pub recent_side_turns: usize,
+    pub summary_token_limit: usize,
+}
+
+impl Default for CollaborativeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            prompt_template: DEFAULT_COLLABORATIVE_PROMPT_TEMPLATE.to_string(),
+            heartbeat_interval_secs: 30,
+            lease_timeout_secs: 120,
+            recent_parent_turns: 6,
+            recent_side_turns: 8,
+            summary_token_limit: 4096,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AiConfig {
     pub socket_path: PathBuf,
@@ -33,6 +60,7 @@ pub struct AiConfig {
     pub suggested_command_recall_max_items: usize,
     pub presets: HashMap<String, AiPresetConfig>,
     pub smart_preprocessor: Option<SmartPreprocessorConfig>,
+    pub collaborative: CollaborativeConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +114,7 @@ impl AiConfig {
             suggested_command_recall_max_items: 8,
             presets: HashMap::new(),
             smart_preprocessor: None,
+            collaborative: CollaborativeConfig::default(),
         };
         let config_dir = path.parent().map(|p| p.to_path_buf());
         if path.is_file() {
@@ -142,6 +171,9 @@ impl AiConfig {
                             sp,
                             config_dir.as_deref(),
                         ));
+                    }
+                    if let Some(collaborative) = file.collaborative {
+                        cfg.collaborative = CollaborativeConfig::from_section(collaborative);
                     }
                 }
             }
@@ -242,6 +274,46 @@ struct FileConfig {
     log_tail_bytes: Option<usize>,
     presets: Option<HashMap<String, PresetToml>>,
     smart_preprocessor: Option<SmartPreprocessorSection>,
+    collaborative: Option<CollaborativeSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CollaborativeSection {
+    enabled: Option<bool>,
+    prompt_template: Option<String>,
+    heartbeat_interval_secs: Option<u64>,
+    lease_timeout_secs: Option<u64>,
+    recent_parent_turns: Option<usize>,
+    recent_side_turns: Option<usize>,
+    summary_token_limit: Option<usize>,
+}
+
+impl CollaborativeConfig {
+    fn from_section(section: CollaborativeSection) -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: section.enabled.unwrap_or(defaults.enabled),
+            prompt_template: section
+                .prompt_template
+                .filter(|value| !value.is_empty())
+                .unwrap_or(defaults.prompt_template),
+            heartbeat_interval_secs: section
+                .heartbeat_interval_secs
+                .unwrap_or(defaults.heartbeat_interval_secs),
+            lease_timeout_secs: section
+                .lease_timeout_secs
+                .unwrap_or(defaults.lease_timeout_secs),
+            recent_parent_turns: section
+                .recent_parent_turns
+                .unwrap_or(defaults.recent_parent_turns),
+            recent_side_turns: section
+                .recent_side_turns
+                .unwrap_or(defaults.recent_side_turns),
+            summary_token_limit: section
+                .summary_token_limit
+                .unwrap_or(defaults.summary_token_limit),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -605,9 +605,3 @@ fn lease_expiry_alone_does_not_auto_resume_parent() {
         HandoffState::HumanActive
     );
 }
-
-#[test]
-#[ignore = "0055 phase5: heartbeat_maintains_lease_during_long_command"]
-fn heartbeat_maintains_lease_during_long_command() {
-    panic!("0055 phase5 not implemented");
-}

@@ -1,6 +1,7 @@
 mod jsonl_log;
 mod process_shell;
 mod pty_shell;
+mod redacting_log;
 mod replay_log;
 mod replay_picker;
 mod session_info;
@@ -11,6 +12,7 @@ pub mod toml_config;
 pub use jsonl_log::JsonlFileLog;
 pub use process_shell::ProcessShell;
 pub use pty_shell::{HumanReturnMarker, PtyShell};
+pub use redacting_log::RedactingSessionLog;
 pub use replay_log::{read_log_events, ReplayLogReadError};
 pub use replay_picker::{pick_entry, require_interactive_tty, PickerEntry, ReplayPickerError};
 pub use session_info::{

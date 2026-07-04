@@ -24,6 +24,6 @@
 | [ai-work.md](ai-work.md) | `ai work` 作業文脈の使い方（推奨導線・コマンド説明） |
 | [contextual-memory-kinds-toml.md](contextual-memory-kinds-toml.md) | `kinds.toml` サンプル（registry override / custom kind） |
 | [contextual-memory-multi-client.md](contextual-memory-multi-client.md) | multi-client readiness（memory space 共有・capability・subscribe 制限） |
-| [aibe-graceful-restart.md](aibe-graceful-restart.md) | `aibe stop` / `restart` / `status`（mock 可） |
+| [collaborative-handoff.md](collaborative-handoff.md) | 0055 協調作業（`ai --collaborative`、handoff / resume / status） |
 
 テンプレは [testing.md](../testing.md) の「手動検証ドキュメント」を参照。

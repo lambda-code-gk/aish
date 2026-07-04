@@ -4,6 +4,17 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+const BASH_COLLABORATIVE_PROMPT_SNIPPET: &str = r#"
+_aish_collaborative_install_prompt() {
+  [[ -n "${_AISH_COLLAB_PROMPT_READY:-}" ]] && return 0
+  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
+  command -v aish >/dev/null 2>&1 || return 0
+  _AISH_COLLAB_PROMPT_READY=1
+  _AISH_BASE_PS1="${PS1:-\$ }"
+  PS1='$(aish collaborative-prompt 2>/dev/null)'"${_AISH_BASE_PS1}"
+}
+"#;
+
 const BASH_SNIPPET: &str = r#"if command -v aish >/dev/null 2>&1; then eval "$(aish complete bash)"; fi
 if command -v ai >/dev/null 2>&1; then eval "$(ai complete bash)"; fi
 if command -v aibe >/dev/null 2>&1; then eval "$(aibe complete bash)"; fi
@@ -66,9 +77,20 @@ _aish_handoff_return() {
 if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
   # rcfile 評価中に DEBUG が有効だと直後の PROMPT_COMMAND 代入自体が span 化され control pipe が詰まる。
   trap - DEBUG 2>/dev/null || true
-  PROMPT_COMMAND="_aish_replay_install_hooks;_aish_replay_precmd${PROMPT_COMMAND:+;}$PROMPT_COMMAND"
+  PROMPT_COMMAND="_aish_collaborative_install_prompt;_aish_replay_install_hooks;_aish_replay_precmd${PROMPT_COMMAND:+;}$PROMPT_COMMAND"
   trap '_aish_handoff_return' EXIT
 fi
+"#;
+
+const ZSH_COLLABORATIVE_PROMPT_SNIPPET: &str = r#"
+_aish_collaborative_install_prompt() {
+  [[ -n "${_AISH_COLLAB_PROMPT_READY:-}" ]] && return
+  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return
+  command -v aish >/dev/null 2>&1 || return
+  _AISH_COLLAB_PROMPT_READY=1
+  _AISH_BASE_PS1="${PS1:-%# }"
+  PS1='$(aish collaborative-prompt 2>/dev/null)'"${_AISH_BASE_PS1}"
+}
 "#;
 
 const ZSH_SNIPPET: &str = r#"if command -v aish >/dev/null 2>&1; then eval "$(aish complete zsh)"; fi
@@ -117,6 +139,7 @@ _aish_handoff_return() {
   _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
 }
 if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
+  precmd_functions+=(_aish_collaborative_install_prompt)
   precmd_functions+=(_aish_replay_install_hooks)
   zshexit_functions+=(_aish_handoff_return)
 fi
@@ -191,6 +214,7 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
     }
     body.push_str(BASH_SNIPPET);
     body.push_str(BASH_RECALL_ENV_SNIPPET);
+    body.push_str(BASH_COLLABORATIVE_PROMPT_SNIPPET);
     body.push_str(BASH_REPLAY_SNIPPET);
     fs::write(dst, body)
 }
@@ -206,6 +230,7 @@ fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
     }
     body.push_str(ZSH_SNIPPET);
     body.push_str(ZSH_RECALL_ENV_SNIPPET);
+    body.push_str(ZSH_COLLABORATIVE_PROMPT_SNIPPET);
     body.push_str(ZSH_REPLAY_SNIPPET);
     fs::write(dst, body)
 }

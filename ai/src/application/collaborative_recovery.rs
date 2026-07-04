@@ -3,25 +3,43 @@
 use std::path::PathBuf;
 
 use crate::domain::{
-    close_child_goal_on_control_returned, mark_running_tools_unknown, try_transition, Handoff,
-    HandoffCheckpoint, HandoffEvent, HandoffState, RecoverableToolStatus, RequestedShellExec,
+    close_child_goal_on_control_returned, mark_running_tools_unknown, try_transition,
+    CollaborativeAuditKind, Handoff, HandoffCheckpoint, HandoffEvent, HandoffState,
+    RecoverableToolStatus, RequestedShellExec,
 };
 use crate::ports::outbound::{
-    CheckpointRepository, HandoffRepository, HandoffRuntime, HandoffShellSessionStore,
-    HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
-    HumanShellReturn, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
+    CheckpointRepository, HandoffAuditRepository, HandoffRepository, HandoffRuntime,
+    HandoffShellSessionStore, HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest,
+    HumanShellLauncher, HumanShellReturn, LeaseAcquireRequest, LeaseRepository,
+    ShellSessionIssueRequest,
 };
 
 const LEASE_TIMEOUT_MS: u64 = 120_000;
 
 pub trait RecoveryStore:
-    HandoffRepository + CheckpointRepository + HandoffShellSessionStore + LeaseRepository
+    HandoffRepository
+    + CheckpointRepository
+    + HandoffShellSessionStore
+    + LeaseRepository
+    + HandoffAuditRepository
 {
 }
 
 impl<T> RecoveryStore for T where
-    T: HandoffRepository + CheckpointRepository + HandoffShellSessionStore + LeaseRepository
+    T: HandoffRepository
+        + CheckpointRepository
+        + HandoffShellSessionStore
+        + LeaseRepository
+        + HandoffAuditRepository
 {
+}
+
+fn record_audit<S: HandoffAuditRepository>(
+    store: &S,
+    handoff_id: &str,
+    kind: CollaborativeAuditKind,
+) {
+    let _ = store.record_audit(handoff_id, kind);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -301,6 +319,16 @@ impl<'a, S: RecoveryStore, L: HumanShellLauncher, R: HandoffRuntime>
         checkpoint.control_state = HandoffState::HumanActive;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            handoff_id,
+            CollaborativeAuditKind::HandoffResumed,
+        );
+        record_audit(
+            self.store,
+            handoff_id,
+            CollaborativeAuditKind::HumanShellStarted,
+        );
 
         let request = HumanShellLaunchRequest {
             handoff_id: handoff_id.to_string(),
@@ -358,6 +386,16 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ResumeReturnedParent<'a, S, R> {
         checkpoint.control_state = HandoffState::ResumingParent;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            handoff_id,
+            CollaborativeAuditKind::HandoffResumed,
+        );
+        record_audit(
+            self.store,
+            handoff_id,
+            CollaborativeAuditKind::ParentResumeStarted,
+        );
         Ok(parent_context(
             &handoff,
             &checkpoint,
@@ -383,6 +421,15 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ResumeReturnedParent<'a, S, R> {
         checkpoint.control_state = handoff.state;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        record_audit(
+            self.store,
+            handoff_id,
+            if event == HandoffEvent::ParentResumeCompleted {
+                CollaborativeAuditKind::ParentResumeCompleted
+            } else {
+                CollaborativeAuditKind::ParentResumeFailed
+            },
+        );
         self.store.release_lease(handoff_id)?;
         Ok(())
     }

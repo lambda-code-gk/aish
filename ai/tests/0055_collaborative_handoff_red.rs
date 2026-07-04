@@ -575,25 +575,148 @@ fn non_parent_role_skips_handoff() {
 }
 
 #[test]
-#[ignore = "0055 phase5: collaborative_audit_events_are_emitted"]
 fn collaborative_audit_events_are_emitted() {
-    panic!("0055 phase5 not implemented");
+    use ai::adapters::outbound::FilesystemHandoffStore;
+    use ai::application::{
+        CollaborativeExecutionContext, CollaborativeShellExecPolicy, ParentShellExecRequest,
+    };
+    use ai::domain::{CollaborativeAuditKind, HandoffState};
+    use ai::ports::outbound::{
+        EnvironmentObservation, EnvironmentObserver, HandoffRepository, HumanShellLaunchError,
+        HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+        NoopHandoffCandidatePublisher, NoopParentToolBarrier,
+    };
+    use std::path::{Path, PathBuf};
+
+    struct Observer;
+    impl EnvironmentObserver for Observer {
+        fn observe(&self, cwd: &Path, _: u64) -> EnvironmentObservation {
+            EnvironmentObservation {
+                cwd_exists: cwd.is_dir(),
+                cwd: cwd.display().to_string(),
+                git_head: None,
+                git_branch: None,
+                git_status: None,
+                shell_log_end: Some(1),
+            }
+        }
+    }
+    struct Launcher;
+    impl HumanShellLauncher for Launcher {
+        fn launch_and_wait(
+            &self,
+            _: &HumanShellLaunchRequest,
+        ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+            Ok(HumanShellReturn {
+                normal_return: true,
+                exit_code: Some(0),
+                final_cwd: PathBuf::from("/tmp/work"),
+            })
+        }
+    }
+    struct Runtime;
+    impl ai::ports::outbound::HandoffRuntime for Runtime {
+        fn now_ms(&self) -> u64 {
+            1
+        }
+        fn unique_id(&self, prefix: &str) -> String {
+            format!("{prefix}-audit")
+        }
+        fn secure_token(&self) -> Result<String, String> {
+            Ok("token".into())
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("workspace");
+    std::fs::create_dir(&cwd).unwrap();
+    let store = FilesystemHandoffStore::new(root.path().join("handoffs"));
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &Launcher,
+        &Observer,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &Runtime,
+    );
+    let request = ParentShellExecRequest {
+        parent_task_id: "task".into(),
+        parent_conversation_id: "conv".into(),
+        parent_run_id: "run".into(),
+        parent_goal_id: None,
+        parent_goal: "goal".into(),
+        parent_request_summary: "summary".into(),
+        conversation_snapshot: "{}".into(),
+        conversation_summary: "summary".into(),
+        command: "echo".into(),
+        args: vec!["hi".into()],
+        cwd: cwd.clone(),
+        tool_call_id: "tc".into(),
+        shell_log_start: 0,
+    };
+    policy.intercept(request).unwrap();
+    let handoff = store.list_handoffs().unwrap().pop().unwrap();
+    assert_eq!(handoff.state, HandoffState::Completed);
+    let events_path = root
+        .path()
+        .join("handoffs")
+        .join(&handoff.id)
+        .join("events.jsonl");
+    let events = std::fs::read_to_string(events_path).unwrap();
+    for kind in [
+        CollaborativeAuditKind::HandoffCreated,
+        CollaborativeAuditKind::CandidateRegistered,
+        CollaborativeAuditKind::LeaseAcquired,
+        CollaborativeAuditKind::HumanShellStarted,
+        CollaborativeAuditKind::HumanShellReturned,
+        CollaborativeAuditKind::ParentResumeCompleted,
+    ] {
+        let needle = serde_json::to_string(&kind)
+            .unwrap()
+            .trim_matches('"')
+            .to_string();
+        assert!(
+            events.contains(&needle),
+            "missing audit event {needle}: {events}"
+        );
+    }
 }
 
 #[test]
-#[ignore = "0055 phase5: collaborative_config_defaults_match_spec"]
 fn collaborative_config_defaults_match_spec() {
-    panic!("0055 phase5 not implemented");
+    use ai::adapters::outbound::toml_config::CollaborativeConfig;
+    let cfg = CollaborativeConfig::default();
+    assert!(cfg.enabled);
+    assert_eq!(cfg.heartbeat_interval_secs, 30);
+    assert_eq!(cfg.lease_timeout_secs, 120);
+    assert_eq!(cfg.recent_parent_turns, 6);
+    assert_eq!(cfg.recent_side_turns, 8);
+    assert_eq!(cfg.summary_token_limit, 4096);
+    assert!(cfg.prompt_template.contains("{state}"));
 }
 
 #[test]
-#[ignore = "0055 phase5: handoff_token_not_in_replay_output"]
 fn handoff_token_not_in_replay_output() {
-    panic!("0055 phase5 not implemented");
+    use aish_replay::{replay_show, LogEvent};
+    let token = "opaque-handoff-token-0123456789abcdef";
+    let events = vec![
+        LogEvent::shell_command_start(1, "2026-01-01T00:00:00Z", &format!("echo {token}")),
+        LogEvent::stdout_indexed("ok\n", 1),
+        LogEvent::command_end(1, Some(0), "2026-01-01T00:00:01Z"),
+    ];
+    let out = replay_show(&events, 1, false).unwrap();
+    assert!(!out.contains(token));
+    assert_eq!(out, "ok\n");
 }
 
 #[test]
-#[ignore = "0055 phase5: handoff_token_redacted_from_shell_log"]
 fn handoff_token_redacted_from_shell_log() {
-    panic!("0055 phase5 not implemented");
+    let token = "opaque-handoff-token-0123456789abcdef";
+    let redacted = aish_replay::sanitize_log_text_with_secrets(
+        &format!("echo {token}\nAISH_HANDOFF_TOKEN={token}"),
+        &[token],
+    );
+    assert!(!redacted.contains(token));
+    assert!(redacted.contains("[REDACTED]"));
 }

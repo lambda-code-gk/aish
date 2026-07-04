@@ -15,9 +15,9 @@ pub use collaborative_handoff::{
     NoopHandoffCandidatePublisher, NoopParentToolBarrier, ParentToolBarrier,
 };
 pub use handoff_repository::{
-    CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
-    HandoffStoreError, LeaseAcquireRequest, LeaseHeartbeatRequest, LeaseRepository,
-    ShellSessionIssueRequest,
+    CheckpointRepository, CommandCandidateStore, HandoffAuditRepository, HandoffRepository,
+    HandoffShellSessionStore, HandoffStoreError, LeaseAcquireRequest, LeaseHeartbeatRequest,
+    LeaseRepository, ShellSessionIssueRequest,
 };
 pub use history_store::{HistoryStore, HistoryStoreError};
 pub use memory_client::MemoryClient;

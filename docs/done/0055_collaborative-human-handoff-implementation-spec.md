@@ -1,8 +1,8 @@
 # 0055 — Collaborative Human Handoff 実装指示書（マスター）
 
-> **種別**: 実装指示書（`docs/tasks/`）  
+> **種別**: 実装指示書（`docs/done/`）  
 > **設計正本**: [0055_collaborative-human-handoff-spec.md](../spec/0055_collaborative-human-handoff-spec.md)  
-> **状態**: 進行中  
+> **状態**: 実装済み  
 > **起票**: 2026-07-04
 
 ## 0. 目的
