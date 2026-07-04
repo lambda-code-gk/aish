@@ -97,6 +97,7 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
                 tool_call_id: tc_id,
                 approved,
                 approval_origin,
+                handoff_result,
                 ..
             }) = serde_json::from_str::<ClientRequest>(line.trim())
             else {
@@ -107,6 +108,7 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
                 return Some(ShellExecApprovalDecision {
                     approved,
                     approval_origin,
+                    handoff_result,
                 });
             }
             return None;

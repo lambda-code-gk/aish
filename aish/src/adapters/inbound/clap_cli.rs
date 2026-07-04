@@ -125,6 +125,12 @@ pub enum AishCommand {
         #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
         format: OutputFormatArg,
     },
+    /// Internal PTY shell used by collaborative handoff
+    #[command(hide = true)]
+    HumanShell {
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        result_file: PathBuf,
+    },
     /// Print current session metadata
     Session {
         #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]

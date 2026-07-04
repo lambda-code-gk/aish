@@ -23,6 +23,7 @@ impl RequestContextInput {
             conversation_id: self.conversation_id,
             system_instruction: normalize_system_instruction(self.system_instruction),
             memory_space_id: self.memory_space_id,
+            collaborative_handoff: false,
         }
     }
 }

@@ -172,7 +172,11 @@ impl ToolExecutor for ShellExecTool {
         let external_name = self
             .match_external_command(&parsed.command)
             .map(|entry| entry.name.as_str());
-        let approval_mode = self.policy.shell_exec_approval_mode();
+        let approval_mode = if ctx.collaborative_handoff() {
+            ShellExecApprovalMode::Ask
+        } else {
+            self.policy.shell_exec_approval_mode()
+        };
         let mut approval_origin: Option<ShellExecApprovalOrigin> = None;
         let mut approval_outcome: Option<ShellExecApprovalOutcome> = None;
         match approval_mode {
@@ -244,6 +248,25 @@ impl ToolExecutor for ShellExecTool {
                     );
                 };
                 approval_origin = Some(decision.approval_origin);
+                if let Some(handoff_result) = decision.handoff_result {
+                    let body = serde_json::to_string(&handoff_result).unwrap_or_else(|_| {
+                        "{\"execution_outcome\":\"human_control_returned\"}".into()
+                    });
+                    return finish_shell_exec(
+                        ExecutedToolCall::ok(id.clone(), self.name(), args_value, body.clone()),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: format!(
+                                "Control returned from the human shell.\nThe requested command was not automatically executed by AISH.\nDo not infer success from the shell exit code.\nInspect the current environment and verify the completion condition.\n\n{body}"
+                            ),
+                            is_error: false,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::CollaborativeHandoff,
+                        external_name,
+                        approval_origin,
+                    );
+                }
                 if !decision.approved {
                     let msg = "shell_exec rejected by user";
                     return finish_shell_exec(
@@ -562,6 +585,7 @@ mod tests {
                 Some(ShellExecApprovalDecision {
                     approved: false,
                     approval_origin: ShellExecApprovalOrigin::UiNo,
+                    handoff_result: None,
                 })
             }
         }
@@ -587,6 +611,68 @@ mod tests {
             record.approval_state,
             Some(ToolApprovalState::ExplicitClientOptIn)
         );
+    }
+
+    #[tokio::test]
+    async fn collaborative_handoff_result_skips_subprocess() {
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::{
+            HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion,
+        };
+        use async_trait::async_trait;
+
+        struct HandoffGate;
+        #[async_trait]
+        impl ShellExecApprovalGate for HandoffGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: true,
+                    approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+                    handoff_result: Some(HumanHandoffResult {
+                        handoff_id: "ho-1".into(),
+                        execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
+                        return_reason: Some("control_returned".into()),
+                        human_shell_exit_code: Some(127),
+                        requested_command: Some("definitely-missing-command".into()),
+                        requested_command_completion: RequestedCommandCompletion::Unknown,
+                        final_shell_cwd: Some("/tmp".into()),
+                        shell_log_range: None,
+                        child_goal_summary: None,
+                        side_conversation_summary: None,
+                        before_observation_ref: None,
+                        after_observation_ref: None,
+                        uncertain_tool_executions: Vec::new(),
+                    }),
+                })
+            }
+        }
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["definitely-missing-command".into()],
+            approval: ShellExecApprovalMode::Always,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let ctx = shell_ctx(ClientCwd::new(std::env::current_dir().unwrap()).unwrap())
+            .with_collaborative_handoff(true)
+            .with_approval_gate(Arc::new(HandoffGate));
+        let (record, result) = tool
+            .execute(
+                "tc-handoff",
+                &json!({"command":"definitely-missing-command"}),
+                100,
+                &ctx,
+            )
+            .await;
+        assert!(!result.is_error);
+        assert!(result.content.contains("human_control_returned"));
+        assert_eq!(record.decision.as_deref(), Some("human_control_returned"));
     }
 
     #[tokio::test]

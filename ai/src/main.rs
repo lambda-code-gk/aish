@@ -20,9 +20,10 @@ use ai::adapters::outbound::{
     load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
     resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
     resolve_suggestion_cache_path, smart_preprocessor_trace_enabled, AibeUnixClient,
-    ChatReadLineResult, FileLogTail, FileSuggestedCommandRecallStore, LocalHistoryStore,
-    LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions, StdoutPresenter,
-    YesExecCache,
+    AishHumanShellLauncher, ChatReadLineResult, FileHandoffCandidatePublisher, FileLogTail,
+    FileSuggestedCommandRecallStore, FilesystemHandoffStore, LocalHistoryStore, LocalRouteMetrics,
+    PreprocessorObservationDraft, ProcessEnvironmentObserver, ShellExecRenderOptions,
+    StdoutPresenter, SystemHandoffRuntime, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -32,7 +33,8 @@ use ai::application::{
     current_time_ms, ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
     list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
     plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn,
-    resolve_recall_gating, HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute,
+    resolve_recall_gating, CollaborativeExecutionContext, CollaborativeShellExecPolicy,
+    HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, ParentShellExecRequest,
     PreprocessorRunInput, PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext,
     ShellLogMode, TurnCancelGuard,
 };
@@ -56,7 +58,7 @@ use ai::domain::{
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
-use ai::ports::outbound::{AgentError, MemoryClient};
+use ai::ports::outbound::{AgentError, MemoryClient, NoopParentToolBarrier};
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{
     ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalDecision,
@@ -88,6 +90,7 @@ fn run() -> anyhow::Result<ExitCode> {
     let normalized = AiCli::normalized_args_for_completion();
     validate_normalized_ask_args(&normalized)?;
     let cli = AiCli::parse_from(normalized);
+    let collaborative = cli.collaborative;
 
     match cli.command {
         AiCommand::Complete { shell } => {
@@ -103,6 +106,7 @@ fn run() -> anyhow::Result<ExitCode> {
             file,
             message,
             invocation: ask_invocation,
+            collaborative,
         }),
         AiCommand::Chat { turn } => run_chat(turn),
         AiCommand::Retry { turn, history_id } => run_retry(turn, history_id),
@@ -154,6 +158,7 @@ struct AskArgs {
     file: Option<PathBuf>,
     message: Vec<String>,
     invocation: AskInvocationSource,
+    collaborative: bool,
 }
 
 #[derive(Debug)]
@@ -219,6 +224,7 @@ fn auto_approve_shell_exec_decision(
     ShellExecApprovalDecision {
         approved: true,
         approval_origin: origin,
+        handoff_result: None,
     }
 }
 
@@ -286,6 +292,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         prep.route_fallback,
         prep.observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
+        args.collaborative,
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -339,6 +346,7 @@ fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
             false,
             None,
             Arc::clone(&shell_exec_state),
+            false,
         )?;
         let exit_code = exit_code_for_response(&outcome.response, outcome.cancel_source);
         match &outcome.response {
@@ -435,6 +443,7 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         route_fallback,
         observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
+        false,
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -536,6 +545,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         route_fallback,
         observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
+        false,
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -679,6 +689,7 @@ fn execute_turn(
     route_fallback: bool,
     observation_draft: Option<PreprocessorObservationDraft>,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
     let replay_ctx = ai::application::replay_manifest::build_turn_replay_context(
@@ -778,7 +789,10 @@ fn execute_turn(
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
     let feature_summaries = history_messages_from_protocol(&feature_history_summaries);
-    let client_request = request_from_messages(turn_id.clone(), request, messages)?;
+    let mut client_request = request_from_messages(turn_id.clone(), request, messages)?;
+    if let ClientRequest::AgentTurn { context, .. } = &mut client_request {
+        context.collaborative_handoff = collaborative;
+    }
 
     let yes_exec_effective =
         settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
@@ -797,6 +811,7 @@ fn execute_turn(
             settings.timeout_secs,
             settings.silent_exec || settings.quiet,
             Arc::clone(&shell_exec_state),
+            collaborative,
         )?
     } else {
         run_agent_turn_sync(
@@ -810,6 +825,7 @@ fn execute_turn(
             settings.progress,
             settings.silent_exec || settings.quiet,
             shell_exec_state,
+            collaborative,
         )?
     };
 
@@ -1005,6 +1021,7 @@ fn run_agent_turn_sync(
     progress: bool,
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
@@ -1018,6 +1035,7 @@ fn run_agent_turn_sync(
         None,
         silent_shell_exec,
         shell_exec_state,
+        collaborative,
     )
 }
 
@@ -1034,6 +1052,7 @@ fn run_agent_turn_async(
     timeout_secs: Option<u64>,
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
@@ -1047,6 +1066,7 @@ fn run_agent_turn_async(
         timeout_secs,
         silent_shell_exec,
         shell_exec_state,
+        collaborative,
     )
 }
 
@@ -1070,8 +1090,23 @@ fn run_agent_turn_core(
     timeout_secs: Option<u64>,
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let turn_id = request_turn_id(&request)?;
+    let collaborative_meta = match &request {
+        ClientRequest::AgentTurn {
+            messages, context, ..
+        } => Some((
+            context.cwd.clone().map(PathBuf::from),
+            context.ai_session_id.clone(),
+            context.conversation_id.clone(),
+            messages
+                .iter()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone()),
+        )),
+        _ => None,
+    };
     let worker_client = AibeUnixClient::new(socket_path.clone());
     let cancel_client = AibeUnixClient::new(socket_path);
     let cancel_guard = TurnCancelGuard::new().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1093,6 +1128,37 @@ fn run_agent_turn_core(
         aibe_shell_exec.auto_approve_patterns.mutating,
     );
     thread::spawn(move || {
+        let handoff_store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+        let human_shell_launcher = AishHumanShellLauncher::default();
+        let environment_observer = ProcessEnvironmentObserver;
+        let parent_tool_barrier = NoopParentToolBarrier;
+        let handoff_runtime = SystemHandoffRuntime;
+        let candidate_store = FileSuggestedCommandRecallStore::new(resolve_suggestion_cache_path(
+            collaborative_meta
+                .as_ref()
+                .and_then(|m| m.1.as_deref())
+                .unwrap_or("default"),
+        ));
+        let candidate_publisher = FileHandoffCandidatePublisher::new(
+            candidate_store,
+            collaborative_meta
+                .as_ref()
+                .and_then(|m| m.1.clone())
+                .unwrap_or_else(|| "default".into()),
+        );
+        let collaborative_policy = CollaborativeShellExecPolicy::new(
+            if collaborative {
+                CollaborativeExecutionContext::parent_enabled()
+            } else {
+                CollaborativeExecutionContext::disabled()
+            },
+            &handoff_store,
+            &human_shell_launcher,
+            &environment_observer,
+            &parent_tool_barrier,
+            &candidate_publisher,
+            &handoff_runtime,
+        );
         let mut yes_exec_cache = if yes_exec {
             Some(YesExecCache::load(
                 &history_dir_thread,
@@ -1104,6 +1170,49 @@ fn run_agent_turn_core(
         let response = {
             let shell_exec_handler =
                 |prompt: ShellExecApprovalPrompt| -> ShellExecApprovalDecision {
+                    if collaborative {
+                        let (cwd, ai_session_id, conversation_id, parent_summary) =
+                            collaborative_meta.clone().unwrap_or_default();
+                        let request = ParentShellExecRequest {
+                            parent_task_id: ai_session_id
+                                .clone()
+                                .unwrap_or_else(|| turn_id_thread.clone()),
+                            parent_conversation_id: conversation_id
+                                .unwrap_or_else(|| turn_id_thread.clone()),
+                            parent_run_id: turn_id_thread.clone(),
+                            parent_goal_id: None,
+                            parent_goal: parent_summary
+                                .clone()
+                                .unwrap_or_else(|| "Complete the parent task".into()),
+                            parent_request_summary: parent_summary
+                                .clone()
+                                .unwrap_or_else(|| "Parent requested shell work".into()),
+                            conversation_snapshot: parent_summary.clone().unwrap_or_default(),
+                            conversation_summary: parent_summary.unwrap_or_default(),
+                            command: prompt.command.clone(),
+                            args: prompt.args.clone(),
+                            cwd: cwd.unwrap_or_else(|| PathBuf::from(".")),
+                            tool_call_id: prompt.tool_call_id.clone(),
+                            shell_log_start: 0,
+                        };
+                        return match collaborative_policy.intercept(request) {
+                            Ok(handoff_result) => ShellExecApprovalDecision {
+                                approved: true,
+                                approval_origin:
+                                    aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                handoff_result: Some(handoff_result),
+                            },
+                            Err(error) => {
+                                eprintln!("ai: collaborative handoff failed: {error}");
+                                ShellExecApprovalDecision {
+                                    approved: false,
+                                    approval_origin:
+                                        aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                    handoff_result: None,
+                                }
+                            }
+                        };
+                    }
                     let tier = ai::domain::classify_shell_exec_tier(&prompt.command, &prompt.args);
                     let invocation =
                         ai::domain::canonical_shell_exec_invocation(&prompt.command, &prompt.args);
@@ -1225,6 +1334,7 @@ fn run_agent_turn_core(
                     ShellExecApprovalDecision {
                         approved: decision.approved,
                         approval_origin: decision.approval_origin,
+                        handoff_result: None,
                     }
                 };
             let result = if use_client_tools {

@@ -15,6 +15,13 @@ use crate::ports::outbound::{InteractiveShellError, InteractiveShellRunner, Sess
 /// マスタ PTY と stdin/stdout を中継し、出力を `SessionLog` に追記する。
 pub struct PtyShell<'a, L: SessionLog> {
     log: &'a mut L,
+    human_return: Option<HumanReturnMarker>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HumanReturnMarker {
+    pub exit_code: Option<i32>,
+    pub final_cwd: String,
 }
 
 #[derive(Debug, Default)]
@@ -48,11 +55,19 @@ struct ControlMessage {
     event: String,
     command: Option<String>,
     exit_code: Option<i32>,
+    cwd: Option<String>,
 }
 
 impl<'a, L: SessionLog> PtyShell<'a, L> {
     pub fn new(log: &'a mut L) -> Self {
-        Self { log }
+        Self {
+            log,
+            human_return: None,
+        }
+    }
+
+    pub fn take_human_return_marker(&mut self) -> Option<HumanReturnMarker> {
+        self.human_return.take()
     }
 
     fn append_stdout(
@@ -239,6 +254,14 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
                     exit_code: msg.exit_code,
                     finished_at: rfc3339_now(),
                 });
+            }
+            "human_return" => {
+                if let Some(cwd) = msg.cwd.filter(|cwd| !cwd.is_empty()) {
+                    self.human_return = Some(HumanReturnMarker {
+                        exit_code: msg.exit_code,
+                        final_cwd: cwd,
+                    });
+                }
             }
             _ => {}
         }

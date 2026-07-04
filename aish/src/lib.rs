@@ -3,4 +3,5 @@
 pub mod adapters;
 pub mod application;
 pub mod domain;
+pub mod human_shell;
 pub mod ports;

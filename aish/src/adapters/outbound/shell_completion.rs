@@ -58,10 +58,16 @@ _aish_replay_install_hooks() {
   _AISH_REPLAY_READY=1
   trap '_aish_replay_debug' DEBUG
 }
+_aish_handoff_return() {
+  local code=$?
+  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
+  _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
+}
 if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
   # rcfile 評価中に DEBUG が有効だと直後の PROMPT_COMMAND 代入自体が span 化され control pipe が詰まる。
   trap - DEBUG 2>/dev/null || true
   PROMPT_COMMAND="_aish_replay_install_hooks;_aish_replay_precmd${PROMPT_COMMAND:+;}$PROMPT_COMMAND"
+  trap '_aish_handoff_return' EXIT
 fi
 "#;
 
@@ -105,8 +111,14 @@ _aish_replay_install_hooks() {
   preexec_functions+=(_aish_replay_preexec)
   precmd_functions+=(_aish_replay_precmd)
 }
+_aish_handoff_return() {
+  local code=$?
+  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return
+  _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
+}
 if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
   precmd_functions+=(_aish_replay_install_hooks)
+  zshexit_functions+=(_aish_handoff_return)
 fi
 "#;
 

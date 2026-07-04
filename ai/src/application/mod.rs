@@ -2,6 +2,7 @@ mod ask;
 mod ask_launch;
 mod ask_prompt_input;
 pub mod client_tools;
+mod collaborative_handoff;
 mod feature_executor;
 mod history;
 pub mod memory_cli;
@@ -21,6 +22,10 @@ pub use ask::{Ask, AskError, AskOutcome, AskRunOptions};
 pub use ask_launch::{ensure_aibe_if_needed, plan_ask_launch, AskLaunchPlan};
 pub use ask_prompt_input::{
     classify_from_raw_args, plan_interactive_prompt_route, InteractivePromptRoute,
+};
+pub use collaborative_handoff::{
+    persist_handoff_candidates_for_recall, CollaborativeExecutionContext,
+    CollaborativeHandoffError, CollaborativeShellExecPolicy, ParentShellExecRequest,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

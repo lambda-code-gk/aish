@@ -216,6 +216,7 @@ impl AgentTurnService {
 
         let mut tool_ctx = ToolExecutionContext::new(client_cwd)
             .with_turn_id(id.clone())
+            .with_collaborative_handoff(context.collaborative_handoff)
             .with_capability_policy(Arc::clone(&self.capability_policy));
         if let Some(gate) = approval_gate {
             tool_ctx = tool_ctx.with_approval_gate(gate);

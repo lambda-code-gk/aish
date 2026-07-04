@@ -20,6 +20,7 @@ pub struct AgentTurnContext {
     pub ai_session_id: Option<String>,
     /// クライアントが解決済みの memory space（注入時の解決順 1 位）。
     pub memory_space_id: Option<String>,
+    pub collaborative_handoff: bool,
 }
 
 impl AgentTurnContext {
@@ -30,6 +31,7 @@ impl AgentTurnContext {
             system_instruction: None,
             ai_session_id: None,
             memory_space_id: None,
+            collaborative_handoff: false,
         }
     }
 
@@ -40,6 +42,7 @@ impl AgentTurnContext {
             system_instruction: None,
             ai_session_id: None,
             memory_space_id: None,
+            collaborative_handoff: false,
         }
     }
 

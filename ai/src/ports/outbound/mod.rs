@@ -1,4 +1,5 @@
 mod agent_client;
+mod collaborative_handoff;
 mod handoff_repository;
 mod history_store;
 mod memory_client;
@@ -8,6 +9,11 @@ mod suggested_command_recall_store;
 mod work_client;
 
 pub use agent_client::{AgentClient, AgentError};
+pub use collaborative_handoff::{
+    EnvironmentObservation, EnvironmentObserver, HandoffCandidatePublisher, HandoffRuntime,
+    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+    NoopHandoffCandidatePublisher, NoopParentToolBarrier, ParentToolBarrier,
+};
 pub use handoff_repository::{
     CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
     HandoffStoreError, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,

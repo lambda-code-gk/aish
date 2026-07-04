@@ -2320,7 +2320,7 @@ id = "collaborative_flag_starts_parent"
 description = "ai --collaborative で親 policy 有効"
 test = "collaborative_flag_enables_parent_policy"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2329,7 +2329,7 @@ id = "parent_shell_exec_handoff"
 description = "親 shell_exec が handoff へ変換"
 test = "parent_shell_exec_creates_handoff_instead_of_exec"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2338,7 +2338,7 @@ id = "normal_shell_exec_unchanged"
 description = "通常モード shell_exec は自動実行のまま"
 test = "normal_mode_shell_exec_still_auto_executes"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2347,7 +2347,7 @@ id = "non_parent_role_skips_handoff"
 description = "PARENT 以外は handoff しない"
 test = "non_parent_role_skips_handoff"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2356,7 +2356,7 @@ id = "shell_exec_not_yes_no_approval"
 description = "協調モードで yes/no 承認に置換されない"
 test = "collaborative_shell_exec_skips_approval_prompt"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2365,7 +2365,7 @@ id = "parent_tools_barrier_before_handoff"
 description = "handoff 前に開始済み親ツールを完了"
 test = "parent_tools_complete_before_handoff_starts"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2374,7 +2374,7 @@ id = "cwd_missing_rejects_handoff"
 description = "cwd 不存在時は shell 起動せずエラー"
 test = "missing_cwd_rejects_human_shell_spawn"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2383,7 +2383,7 @@ id = "checkpoint_before_shell"
 description = "shell 起動前に checkpoint が存在"
 test = "checkpoint_persisted_before_human_shell_spawn"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2392,7 +2392,7 @@ id = "handoff_env_set_on_spawn"
 description = "human shell に handoff env が設定される"
 test = "human_shell_child_has_handoff_env_vars"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2401,7 +2401,7 @@ id = "candidate_in_recall_queue"
 description = "候補が recall から取得できる"
 test = "handoff_candidate_available_via_recall"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2410,7 +2410,7 @@ id = "candidate_inserts_command_only"
 description = "Alt+. は command 文字列のみ挿入"
 test = "recall_inserts_command_text_only"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2419,7 +2419,7 @@ id = "recall_prev_cycles_candidates"
 description = "Alt+, で逆順に候補をたどれる"
 test = "recall_prev_cycles_handoff_candidates"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2428,7 +2428,7 @@ id = "candidate_not_treated_as_executed"
 description = "候補挿入だけでは達成扱いにしない"
 test = "candidate_insertion_does_not_mark_command_executed"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2437,7 +2437,7 @@ id = "human_shell_ctrl_d_returns"
 description = "Ctrl+D で親へ制御返却"
 test = "human_shell_ctrl_d_returns_control_to_parent"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2446,7 +2446,7 @@ id = "human_shell_exit_returns"
 description = "exit / exit 1 も正常返却"
 test = "human_shell_exit_returns_control_regardless_of_code"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2455,7 +2455,7 @@ id = "final_shell_cwd_recorded"
 description = "終了時 final cwd を保存"
 test = "handoff_records_final_shell_cwd_on_return"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2464,7 +2464,7 @@ id = "tool_result_not_success"
 description = "requested_command_completion=unknown"
 test = "handoff_tool_result_marks_command_completion_unknown"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2473,7 +2473,7 @@ id = "parent_reobserves"
 description = "返却後に再観測コンテキストを親へ渡す"
 test = "parent_receives_reobservation_after_handoff"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2482,7 +2482,7 @@ id = "parent_state_normal_flow"
 description = "RETURNED→RESUMING_PARENT→COMPLETED"
 test = "handoff_completes_normal_parent_resume_flow"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2491,7 +2491,7 @@ id = "no_parallel_human_shells"
 description = "2 つ目の handoff は直列待ち"
 test = "second_shell_exec_waits_for_first_handoff"
 file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"

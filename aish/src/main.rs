@@ -44,6 +44,10 @@ fn run() -> anyhow::Result<u8> {
             command,
         } => run_exec(log, command),
         AishCommand::Shell { format: _ } => run_shell(),
+        AishCommand::HumanShell { result_file } => {
+            aish::human_shell::run_human_shell(&result_file)?;
+            Ok(0)
+        }
         AishCommand::Session { format } => run_session(format.into()),
         AishCommand::Replay { command } => run_replay(command),
         AishCommand::Complete { shell } => {

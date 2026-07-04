@@ -25,6 +25,7 @@ pub struct ToolExecutionContext {
     client_tool_gate: Option<Arc<dyn ClientToolGate>>,
     capability_policy: Option<Arc<dyn CapabilityPolicy>>,
     client_tools: Vec<ClientProvidedToolSpec>,
+    collaborative_handoff: bool,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -40,6 +41,7 @@ impl std::fmt::Debug for ToolExecutionContext {
                 &self.capability_policy.as_ref().map(|p| p.profile_name()),
             )
             .field("client_tools", &self.client_tools.len())
+            .field("collaborative_handoff", &self.collaborative_handoff)
             .finish()
     }
 }
@@ -54,6 +56,7 @@ impl PartialEq for ToolExecutionContext {
             && self.capability_policy.as_ref().map(|p| p.profile_name())
                 == other.capability_policy.as_ref().map(|p| p.profile_name())
             && self.client_tools == other.client_tools
+            && self.collaborative_handoff == other.collaborative_handoff
     }
 }
 
@@ -69,6 +72,7 @@ impl ToolExecutionContext {
             client_tool_gate: None,
             capability_policy: None,
             client_tools: Vec::new(),
+            collaborative_handoff: false,
         }
     }
 
@@ -110,6 +114,15 @@ impl ToolExecutionContext {
     pub fn with_client_tools(mut self, tools: Vec<ClientProvidedToolSpec>) -> Self {
         self.client_tools = tools;
         self
+    }
+
+    pub fn with_collaborative_handoff(mut self, enabled: bool) -> Self {
+        self.collaborative_handoff = enabled;
+        self
+    }
+
+    pub fn collaborative_handoff(&self) -> bool {
+        self.collaborative_handoff
     }
 
     pub fn capability_policy(&self) -> Option<&Arc<dyn CapabilityPolicy>> {

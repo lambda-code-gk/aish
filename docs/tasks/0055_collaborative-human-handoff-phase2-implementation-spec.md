@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0055_collaborative-human-handoff-spec.md](../spec/0055_collaborative-human-handoff-spec.md)  
 > **マスター**: [0055_collaborative-human-handoff-implementation-spec.md](0055_collaborative-human-handoff-implementation-spec.md)  
-> **状態**: 未着手  
+> **状態**: 完了
 > **前提**: Phase 1 完了
 
 ## 0. 目的
@@ -46,26 +46,26 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `collaborative_flag_starts_parent` | `--collaborative` で親ループが開始される | `collaborative_flag_enables_parent_policy` | true |
-| `parent_shell_exec_handoff` | 親のみ `shell_exec` が handoff される | `parent_shell_exec_creates_handoff_instead_of_exec` | true |
-| `normal_shell_exec_unchanged` | 非協調モードは既存自動実行 | `normal_mode_shell_exec_still_auto_executes` | true |
-| `non_parent_role_skips_handoff` | PARENT 以外は handoff しない | `non_parent_role_skips_handoff` | true |
-| `shell_exec_not_yes_no_approval` | 協調モードで yes/no 承認に置換されない | `collaborative_shell_exec_skips_approval_prompt` | true |
-| `parent_tools_barrier_before_handoff` | handoff 前に開始済み親ツールを完了させる | `parent_tools_complete_before_handoff_starts` | true |
-| `cwd_missing_rejects_handoff` | cwd 不存在時は shell 起動せずエラー | `missing_cwd_rejects_human_shell_spawn` | true |
-| `checkpoint_before_shell` | shell 起動前に checkpoint が存在 | `checkpoint_persisted_before_human_shell_spawn` | true |
-| `handoff_env_set_on_spawn` | human shell 子プロセスに handoff env が設定される | `human_shell_child_has_handoff_env_vars` | true |
-| `candidate_in_recall_queue` | 候補が recall から取得できる | `handoff_candidate_available_via_recall` | true |
-| `candidate_inserts_command_only` | Alt+. は command 文字列のみ挿入 | `recall_inserts_command_text_only` | true |
-| `recall_prev_cycles_candidates` | Alt+, で逆順に候補をたどれる | `recall_prev_cycles_handoff_candidates` | true |
-| `candidate_not_treated_as_executed` | 候補挿入だけでは達成扱いにしない | `candidate_insertion_does_not_mark_command_executed` | true |
-| `human_shell_ctrl_d_returns` | Ctrl+D で親へ戻る | `human_shell_ctrl_d_returns_control_to_parent` | true |
-| `human_shell_exit_returns` | `exit` / `exit 1` も正常返却 | `human_shell_exit_returns_control_regardless_of_code` | true |
-| `final_shell_cwd_recorded` | 終了時 final cwd が handoff に保存される | `handoff_records_final_shell_cwd_on_return` | true |
-| `tool_result_not_success` | `requested_command_completion=unknown` | `handoff_tool_result_marks_command_completion_unknown` | true |
-| `parent_reobserves` | 返却後に再観測コンテキストが親へ渡る | `parent_receives_reobservation_after_handoff` | true |
-| `parent_state_normal_flow` | RETURNED→RESUMING_PARENT→COMPLETED | `handoff_completes_normal_parent_resume_flow` | true |
-| `no_parallel_human_shells` | 2 つ目の handoff は直列待ち | `second_shell_exec_waits_for_first_handoff` | true |
+| `collaborative_flag_starts_parent` | `--collaborative` で親ループが開始される | `collaborative_flag_enables_parent_policy` | false |
+| `parent_shell_exec_handoff` | 親のみ `shell_exec` が handoff される | `parent_shell_exec_creates_handoff_instead_of_exec` | false |
+| `normal_shell_exec_unchanged` | 非協調モードは既存自動実行 | `normal_mode_shell_exec_still_auto_executes` | false |
+| `non_parent_role_skips_handoff` | PARENT 以外は handoff しない | `non_parent_role_skips_handoff` | false |
+| `shell_exec_not_yes_no_approval` | 協調モードで yes/no 承認に置換されない | `collaborative_shell_exec_skips_approval_prompt` | false |
+| `parent_tools_barrier_before_handoff` | handoff 前に開始済み親ツールを完了させる | `parent_tools_complete_before_handoff_starts` | false |
+| `cwd_missing_rejects_handoff` | cwd 不存在時は shell 起動せずエラー | `missing_cwd_rejects_human_shell_spawn` | false |
+| `checkpoint_before_shell` | shell 起動前に checkpoint が存在 | `checkpoint_persisted_before_human_shell_spawn` | false |
+| `handoff_env_set_on_spawn` | human shell 子プロセスに handoff env が設定される | `human_shell_child_has_handoff_env_vars` | false |
+| `candidate_in_recall_queue` | 候補が recall から取得できる | `handoff_candidate_available_via_recall` | false |
+| `candidate_inserts_command_only` | Alt+. は command 文字列のみ挿入 | `recall_inserts_command_text_only` | false |
+| `recall_prev_cycles_candidates` | Alt+, で逆順に候補をたどれる | `recall_prev_cycles_handoff_candidates` | false |
+| `candidate_not_treated_as_executed` | 候補挿入だけでは達成扱いにしない | `candidate_insertion_does_not_mark_command_executed` | false |
+| `human_shell_ctrl_d_returns` | Ctrl+D で親へ戻る | `human_shell_ctrl_d_returns_control_to_parent` | false |
+| `human_shell_exit_returns` | `exit` / `exit 1` も正常返却 | `human_shell_exit_returns_control_regardless_of_code` | false |
+| `final_shell_cwd_recorded` | 終了時 final cwd が handoff に保存される | `handoff_records_final_shell_cwd_on_return` | false |
+| `tool_result_not_success` | `requested_command_completion=unknown` | `handoff_tool_result_marks_command_completion_unknown` | false |
+| `parent_reobserves` | 返却後に再観測コンテキストが親へ渡る | `parent_receives_reobservation_after_handoff` | false |
+| `parent_state_normal_flow` | RETURNED→RESUMING_PARENT→COMPLETED | `handoff_completes_normal_parent_resume_flow` | false |
+| `no_parallel_human_shells` | 2 つ目の handoff は直列待ち | `second_shell_exec_waits_for_first_handoff` | false |
 
 ## 3. 変更ファイル（目安）
 

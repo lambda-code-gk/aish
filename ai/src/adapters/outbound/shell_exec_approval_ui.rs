@@ -37,6 +37,7 @@ fn shell_exec_approval_origin_label(origin: ShellExecApprovalOrigin) -> &'static
         ShellExecApprovalOrigin::SessionCacheCommandName => "session-cache/command",
         ShellExecApprovalOrigin::PatternReadOnly => "pattern/read_only",
         ShellExecApprovalOrigin::PatternMutating => "pattern/mutating",
+        ShellExecApprovalOrigin::CollaborativeHandoff => "collaborative/handoff",
         _ => "auto",
     }
 }

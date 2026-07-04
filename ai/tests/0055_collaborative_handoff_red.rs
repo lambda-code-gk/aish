@@ -1,7 +1,10 @@
 // 0055 Collaborative Human Handoff acceptance tests.
 // Phase 1 tests are active; later phases remain #[ignore] until implemented.
 
-use ai::adapters::outbound::FilesystemHandoffStore;
+use ai::adapters::outbound::{FilesystemHandoffStore, SystemHandoffRuntime};
+use ai::application::{
+    CollaborativeExecutionContext, CollaborativeShellExecPolicy, ParentShellExecRequest,
+};
 use ai::domain::{
     build_candidate_command, checkpoint_has_required_fields, checkpoint_serialized_field_names,
     close_child_goal_on_control_returned, should_close_child_goal, try_transition,
@@ -10,10 +13,102 @@ use ai::domain::{
     HandoffShellSession, HandoffState, RequestedShellExec, CHECKPOINT_REQUIRED_FIELD_NAMES,
     HANDOFF_SCHEMA_VERSION,
 };
+use ai::domain::{CollaborativeAgentRole, CollaborativePolicy};
 use ai::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
     HandoffStoreError, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
 };
+use ai::ports::outbound::{
+    EnvironmentObservation, EnvironmentObserver, HandoffCandidatePublisher, HumanShellLaunchError,
+    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn, ParentToolBarrier,
+};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+struct Phase2Trace(Mutex<Vec<String>>);
+impl Phase2Trace {
+    fn push(&self, value: &str) {
+        self.0.lock().unwrap().push(value.into());
+    }
+    fn values(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+struct TestBarrier(Arc<Phase2Trace>);
+impl ParentToolBarrier for TestBarrier {
+    fn wait_for_started_tools(&self) -> Result<(), String> {
+        self.0.push("barrier");
+        Ok(())
+    }
+}
+
+struct TestPublisher(Arc<Phase2Trace>);
+impl HandoffCandidatePublisher for TestPublisher {
+    fn publish(&self, _id: &str, commands: &[String]) -> Result<(), String> {
+        assert!(!commands.is_empty());
+        self.0.push("candidate");
+        Ok(())
+    }
+}
+
+struct TestObserver;
+impl EnvironmentObserver for TestObserver {
+    fn observe(&self, cwd: &Path, _start: u64) -> EnvironmentObservation {
+        EnvironmentObservation {
+            cwd_exists: cwd.is_dir(),
+            cwd: cwd.display().to_string(),
+            git_head: Some("head".into()),
+            git_branch: Some("main".into()),
+            git_status: Some(" M file".into()),
+            shell_log_end: Some(9),
+        }
+    }
+}
+
+struct TestLauncher {
+    root: PathBuf,
+    trace: Arc<Phase2Trace>,
+}
+impl HumanShellLauncher for TestLauncher {
+    fn launch_and_wait(
+        &self,
+        request: &HumanShellLaunchRequest,
+    ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+        assert!(self
+            .root
+            .join(&request.handoff_id)
+            .join("checkpoint.json")
+            .is_file());
+        assert_eq!(request.context_version, 1);
+        assert!(!request.token.is_empty());
+        self.trace.push("shell");
+        Ok(HumanShellReturn {
+            normal_return: true,
+            exit_code: Some(17),
+            final_cwd: request.cwd.clone(),
+        })
+    }
+}
+
+fn phase2_request(cwd: PathBuf) -> ParentShellExecRequest {
+    ParentShellExecRequest {
+        parent_task_id: "task".into(),
+        parent_conversation_id: "conv".into(),
+        parent_run_id: "run".into(),
+        parent_goal_id: Some("parent-goal".into()),
+        parent_goal: "finish phase2".into(),
+        parent_request_summary: "run tests".into(),
+        conversation_snapshot: "snapshot".into(),
+        conversation_summary: "summary".into(),
+        command: "cargo".into(),
+        args: vec!["test".into()],
+        cwd,
+        tool_call_id: "tc".into(),
+        shell_log_start: 3,
+    }
+}
 
 fn sample_handoff(id: &str) -> Handoff {
     Handoff {
@@ -345,39 +440,137 @@ fn checkpoint_rejects_mismatched_handoff_id() {
 }
 
 #[test]
-#[ignore = "0055 phase2: checkpoint_persisted_before_human_shell_spawn"]
 fn checkpoint_persisted_before_human_shell_spawn() {
-    panic!("0055 phase2 not implemented");
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let trace = Arc::new(Phase2Trace::default());
+    let store = FilesystemHandoffStore::new(dir.path().to_path_buf());
+    let launcher = TestLauncher {
+        root: dir.path().into(),
+        trace: trace.clone(),
+    };
+    let barrier = TestBarrier(trace.clone());
+    let publisher = TestPublisher(trace.clone());
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &barrier,
+        &publisher,
+        &SystemHandoffRuntime,
+    );
+    policy
+        .intercept(phase2_request(work.path().into()))
+        .unwrap();
+    assert_eq!(trace.values(), vec!["barrier", "candidate", "shell"]);
 }
 
 #[test]
-#[ignore = "0055 phase2: collaborative_flag_enables_parent_policy"]
 fn collaborative_flag_enables_parent_policy() {
-    panic!("0055 phase2 not implemented");
+    use clap::Parser;
+    let cli =
+        ai::clap_cli::AiCli::try_parse_from(["ai", "--collaborative", "ask", "task"]).unwrap();
+    assert!(cli.collaborative);
+    assert!(CollaborativeExecutionContext::parent_enabled().should_handoff_shell_exec());
 }
 
 #[test]
-#[ignore = "0055 phase2: handoff_completes_normal_parent_resume_flow"]
 fn handoff_completes_normal_parent_resume_flow() {
-    panic!("0055 phase2 not implemented");
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let trace = Arc::new(Phase2Trace::default());
+    let store = FilesystemHandoffStore::new(dir.path().into());
+    let launcher = TestLauncher {
+        root: dir.path().into(),
+        trace: trace.clone(),
+    };
+    let barrier = TestBarrier(trace.clone());
+    let publisher = TestPublisher(trace);
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &barrier,
+        &publisher,
+        &SystemHandoffRuntime,
+    );
+    let result = policy
+        .intercept(phase2_request(work.path().into()))
+        .unwrap();
+    assert_eq!(
+        store.load_handoff(&result.handoff_id).unwrap().state,
+        HandoffState::Completed
+    );
 }
 
 #[test]
-#[ignore = "0055 phase2: handoff_records_final_shell_cwd_on_return"]
 fn handoff_records_final_shell_cwd_on_return() {
-    panic!("0055 phase2 not implemented");
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let trace = Arc::new(Phase2Trace::default());
+    let store = FilesystemHandoffStore::new(dir.path().into());
+    let launcher = TestLauncher {
+        root: dir.path().into(),
+        trace: trace.clone(),
+    };
+    let barrier = TestBarrier(trace.clone());
+    let publisher = TestPublisher(trace);
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &barrier,
+        &publisher,
+        &SystemHandoffRuntime,
+    );
+    let result = policy
+        .intercept(phase2_request(work.path().into()))
+        .unwrap();
+    assert_eq!(
+        store
+            .load_handoff(&result.handoff_id)
+            .unwrap()
+            .final_shell_cwd
+            .as_deref(),
+        work.path().to_str()
+    );
 }
 
 #[test]
-#[ignore = "0055 phase2: missing_cwd_rejects_human_shell_spawn"]
 fn missing_cwd_rejects_human_shell_spawn() {
-    panic!("0055 phase2 not implemented");
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("missing");
+    let trace = Arc::new(Phase2Trace::default());
+    let store = FilesystemHandoffStore::new(dir.path().join("store"));
+    let launcher = TestLauncher {
+        root: dir.path().join("store"),
+        trace: trace.clone(),
+    };
+    let barrier = TestBarrier(trace.clone());
+    let publisher = TestPublisher(trace.clone());
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &barrier,
+        &publisher,
+        &SystemHandoffRuntime,
+    );
+    assert!(policy.intercept(phase2_request(missing)).is_err());
+    assert!(!trace.values().contains(&"shell".into()));
 }
 
 #[test]
-#[ignore = "0055 phase2: non_parent_role_skips_handoff"]
 fn non_parent_role_skips_handoff() {
-    panic!("0055 phase2 not implemented");
+    let ctx = CollaborativeExecutionContext {
+        role: CollaborativeAgentRole::Side,
+        policy: CollaborativePolicy::Enabled,
+    };
+    assert!(!ctx.should_handoff_shell_exec());
 }
 
 #[test]

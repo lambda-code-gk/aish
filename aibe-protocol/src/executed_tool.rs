@@ -49,6 +49,8 @@ pub enum ShellExecApprovalOutcome {
     UserDenied,
     /// `ask` だが対話クライアント / gate が無い。
     ApprovalUnavailable,
+    /// client 側 human handoff により subprocess を実行せず制御が戻った。
+    CollaborativeHandoff,
 }
 
 /// `write_file` / `apply_patch` 監査用の承認結果（`with_file_write_audit`）。
@@ -213,6 +215,10 @@ impl ExecutedToolCall {
                 self.approval_state = Some(ToolApprovalState::NotRequired);
                 self.decision = Some("approval_unavailable".into());
             }
+            ShellExecApprovalOutcome::CollaborativeHandoff => {
+                self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
+                self.decision = Some("human_control_returned".into());
+            }
         }
         if let Some(origin) = approval_origin {
             approval_source.push(';');
@@ -299,6 +305,7 @@ fn approval_origin_audit_suffix(origin: ShellExecApprovalOrigin) -> &'static str
         | ShellExecApprovalOrigin::SessionCacheCommandName => "cache=session",
         ShellExecApprovalOrigin::PatternReadOnly => "pattern=read_only",
         ShellExecApprovalOrigin::PatternMutating => "pattern=mutating",
+        ShellExecApprovalOrigin::CollaborativeHandoff => "execution_policy=collaborative_handoff",
     }
 }
 

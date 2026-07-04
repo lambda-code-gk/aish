@@ -125,6 +125,9 @@ pub struct TurnOptions {
     arg_required_else_help = false
 )]
 pub struct AiCli {
+    /// Route parent shell_exec calls through an interactive human shell
+    #[arg(long, global = true)]
+    pub collaborative: bool,
     #[command(subcommand)]
     pub command: AiCommand,
 }
