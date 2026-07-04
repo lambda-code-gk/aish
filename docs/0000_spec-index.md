@@ -49,7 +49,7 @@
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
 | 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装済み） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
-| 0055 | [0055_collaborative-human-handoff-spec.md](spec/0055_collaborative-human-handoff-spec.md) | 設計確定（Phase 2 完了、Phase 3–5 未実装） | Human-in-the-loop 協調作業（`ai --collaborative`、human shell handoff、side agent、復旧） |
+| 0055 | [0055_collaborative-human-handoff-spec.md](spec/0055_collaborative-human-handoff-spec.md) | 設計確定（Phase 3 完了、Phase 4–5 未実装） | Human-in-the-loop 協調作業（`ai --collaborative`、human shell handoff、side agent、復旧） |
 
 ### 状態ラベルの意味
 
@@ -67,7 +67,7 @@
 | 0055 | [0055_collaborative-human-handoff-implementation-spec.md](tasks/0055_collaborative-human-handoff-implementation-spec.md) | 進行中 | Collaborative Human Handoff マスター（Phase 1–5） |
 | 0055 | [0055_collaborative-human-handoff-phase1-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase1-implementation-spec.md) | Phase 1 完了 | Phase 1 — Domain / 永続化 |
 | 0055 | [0055_collaborative-human-handoff-phase2-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase2-implementation-spec.md) | Phase 2 完了 | Phase 2 — 親 shell_exec handoff |
-| 0055 | [0055_collaborative-human-handoff-phase3-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase3-implementation-spec.md) | 未着手 | Phase 3 — Side agent |
+| 0055 | [0055_collaborative-human-handoff-phase3-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase3-implementation-spec.md) | Phase 3 完了 | Phase 3 — Side agent |
 | 0055 | [0055_collaborative-human-handoff-phase4-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase4-implementation-spec.md) | 未着手 | Phase 4 — 復旧 |
 | 0055 | [0055_collaborative-human-handoff-phase5-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase5-implementation-spec.md) | 未着手 | Phase 5 — UX / docs |
 

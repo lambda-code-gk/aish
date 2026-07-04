@@ -128,6 +128,9 @@ pub struct AiCli {
     /// Route parent shell_exec calls through an interactive human shell
     #[arg(long, global = true)]
     pub collaborative: bool,
+    /// Ignore a human-shell handoff and run as an independent client
+    #[arg(long, global = true, conflicts_with = "collaborative")]
+    pub standalone: bool,
     #[command(subcommand)]
     pub command: AiCommand,
 }

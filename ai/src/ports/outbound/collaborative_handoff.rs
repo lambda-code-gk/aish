@@ -61,6 +61,12 @@ pub trait HandoffRuntime: Send + Sync {
     fn now_ms(&self) -> u64;
     fn unique_id(&self, prefix: &str) -> String;
     fn secure_token(&self) -> Result<String, String>;
+    fn host_id(&self) -> String {
+        "unknown-host".into()
+    }
+    fn effective_uid(&self) -> u32 {
+        0
+    }
 }
 
 #[derive(Debug, Default)]

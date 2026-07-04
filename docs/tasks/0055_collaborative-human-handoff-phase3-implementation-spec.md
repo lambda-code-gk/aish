@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0055_collaborative-human-handoff-spec.md](../spec/0055_collaborative-human-handoff-spec.md)  
 > **マスター**: [0055_collaborative-human-handoff-implementation-spec.md](0055_collaborative-human-handoff-implementation-spec.md)  
-> **状態**: 未着手  
+> **状態**: Phase 3 完了
 > **前提**: Phase 2 完了（human shell は env 付きで起動済み）
 
 ## 0. 目的
@@ -48,32 +48,32 @@ human shell 内 `ai` の **検証と side agent 接続**、親文脈継承、会
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `side_conversation_continues` | 同一 handoff で side conversation 継続 | `side_agent_reuses_conversation_in_handoff` | true |
-| `side_conversation_unique` | handoff あたり side conversation は 1 つ | `side_conversation_unique_per_handoff` | true |
-| `side_inherits_parent_context` | side turn に親要約・文脈が含まれる | `side_agent_receives_parent_task_context` | true |
-| `conversation_summary_on_side_turn` | side 前後で要約が更新される | `conversation_summary_updates_on_side_turn` | true |
-| `side_shell_exec_normal` | side の `shell_exec` は自動実行 | `side_agent_shell_exec_executes_normally` | true |
-| `request_human_action` | 人間待ちで新 shell を作らない | `side_agent_waiting_does_not_spawn_new_shell` | true |
-| `bare_ai_human_active_ui` | HUMAN_ACTIVE で裸 `ai` が入力 UI を開く | `bare_ai_in_human_active_opens_input_ui` | true |
-| `bare_ai_resumes_side` | WAITING で裸 `ai` が side 再開 | `bare_ai_resumes_side_agent_from_waiting` | true |
-| `ai_note_becomes_user_note` | `ai <補足>` → `user_note` | `ai_with_note_sets_user_note_on_resume` | true |
-| `human_control_returned_fields` | HumanControlReturned に必須フィールド | `human_control_returned_includes_required_fields` | true |
-| `side_agent_running_blocks_new_run` | RUNNING 中は新 run 拒否 | `side_agent_running_rejects_new_run` | true |
-| `standalone_ignores_handoff` | `--standalone` は handoff 無視 | `standalone_mode_ignores_handoff_context` | true |
-| `standalone_strips_handoff_env` | standalone 子に token 無し | `standalone_child_process_has_no_handoff_token` | true |
-| `ai_status_no_llm` | `ai status` は LLM / turn を作らない | `ai_status_does_not_invoke_llm` | true |
-| `status_no_token` | status 出力に token 無し | `ai_status_never_prints_handoff_token` | true |
-| `status_shows_handoff_fields` | 親タスク・状態・候補・再開ヒントを表示 | `ai_status_shows_collaborative_handoff_fields` | true |
-| `existing_ai_status_regression` | handoff 無し時は従来 status と同じ | `ai_status_unchanged_without_active_handoff` | true |
-| `stale_token_rejected` | 古い generation を拒否 | `stale_handoff_token_is_rejected` | true |
-| `uid_mismatch_rejected` | UID 不一致を拒否 | `handoff_rejected_when_effective_uid_mismatches` | true |
-| `host_id_mismatch_rejected` | host ID 不一致を拒否 | `handoff_rejected_when_host_id_mismatches` | true |
-| `tampered_handoff_id_rejected` | 存在しない handoff ID を拒否 | `tampered_handoff_id_is_rejected` | true |
-| `incomplete_env_no_fallback` | env 一部欠落で通常 ai に落とさない | `incomplete_handoff_env_shows_error_not_fallback` | true |
-| `nested_collaborative_rejected` | 入れ子 `--collaborative` 拒否 | `nested_collaborative_flag_is_rejected` | true |
-| `side_no_nested_human_shell` | side から human shell を起動しない | `side_agent_cannot_spawn_nested_human_shell` | true |
-| `orphaned_requires_resume` | ORPHANED は `ai resume` を促す | `orphaned_handoff_direct_ai_shows_resume_hint` | true |
-| `token_not_in_llm_context` | side turn の LLM 入力に token 無し | `handoff_token_not_in_llm_context` | true |
+| `side_conversation_continues` | 同一 handoff で side conversation 継続 | `side_agent_reuses_conversation_in_handoff` | false |
+| `side_conversation_unique` | handoff あたり side conversation は 1 つ | `side_conversation_unique_per_handoff` | false |
+| `side_inherits_parent_context` | side turn に親要約・文脈が含まれる | `side_agent_receives_parent_task_context` | false |
+| `conversation_summary_on_side_turn` | side 前後で要約が更新される | `conversation_summary_updates_on_side_turn` | false |
+| `side_shell_exec_normal` | side の `shell_exec` は自動実行 | `side_agent_shell_exec_executes_normally` | false |
+| `request_human_action` | 人間待ちで新 shell を作らない | `side_agent_waiting_does_not_spawn_new_shell` | false |
+| `bare_ai_human_active_ui` | HUMAN_ACTIVE で裸 `ai` が入力 UI を開く | `bare_ai_in_human_active_opens_input_ui` | false |
+| `bare_ai_resumes_side` | WAITING で裸 `ai` が side 再開 | `bare_ai_resumes_side_agent_from_waiting` | false |
+| `ai_note_becomes_user_note` | `ai <補足>` → `user_note` | `ai_with_note_sets_user_note_on_resume` | false |
+| `human_control_returned_fields` | HumanControlReturned に必須フィールド | `human_control_returned_includes_required_fields` | false |
+| `side_agent_running_blocks_new_run` | RUNNING 中は新 run 拒否 | `side_agent_running_rejects_new_run` | false |
+| `standalone_ignores_handoff` | `--standalone` は handoff 無視 | `standalone_mode_ignores_handoff_context` | false |
+| `standalone_strips_handoff_env` | standalone 子に token 無し | `standalone_child_process_has_no_handoff_token` | false |
+| `ai_status_no_llm` | `ai status` は LLM / turn を作らない | `ai_status_does_not_invoke_llm` | false |
+| `status_no_token` | status 出力に token 無し | `ai_status_never_prints_handoff_token` | false |
+| `status_shows_handoff_fields` | 親タスク・状態・候補・再開ヒントを表示 | `ai_status_shows_collaborative_handoff_fields` | false |
+| `existing_ai_status_regression` | handoff 無し時は従来 status と同じ | `ai_status_unchanged_without_active_handoff` | false |
+| `stale_token_rejected` | 古い generation を拒否 | `stale_handoff_token_is_rejected` | false |
+| `uid_mismatch_rejected` | UID 不一致を拒否 | `handoff_rejected_when_effective_uid_mismatches` | false |
+| `host_id_mismatch_rejected` | host ID 不一致を拒否 | `handoff_rejected_when_host_id_mismatches` | false |
+| `tampered_handoff_id_rejected` | 存在しない handoff ID を拒否 | `tampered_handoff_id_is_rejected` | false |
+| `incomplete_env_no_fallback` | env 一部欠落で通常 ai に落とさない | `incomplete_handoff_env_shows_error_not_fallback` | false |
+| `nested_collaborative_rejected` | 入れ子 `--collaborative` 拒否 | `nested_collaborative_flag_is_rejected` | false |
+| `side_no_nested_human_shell` | side から human shell を起動しない | `side_agent_cannot_spawn_nested_human_shell` | false |
+| `orphaned_requires_resume` | ORPHANED は `ai resume` を促す | `orphaned_handoff_direct_ai_shows_resume_hint` | false |
+| `token_not_in_llm_context` | side turn の LLM 入力に token 無し | `handoff_token_not_in_llm_context` | false |
 
 ## 3. 変更ファイル（目安）
 

@@ -31,6 +31,30 @@ impl FilesystemHandoffStore {
         PathBuf::from(home).join(".local/share/aibe/handoffs")
     }
 
+    /// status 用のローカル列挙。壊れた個別 entry は他の handoff の表示を妨げない。
+    fn read_handoffs(&self) -> Result<Vec<Handoff>, HandoffStoreError> {
+        if !self.root.is_dir() {
+            return Ok(Vec::new());
+        }
+        let entries = fs::read_dir(&self.root).map_err(read_err)?;
+        let mut handoffs = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(read_err)?;
+            if !entry.file_type().map_err(read_err)?.is_dir() {
+                continue;
+            }
+            let id = entry.file_name().to_string_lossy().into_owned();
+            if validate_handoff_id(&id).is_err() {
+                continue;
+            }
+            if let Ok(handoff) = self.load_handoff(&id) {
+                handoffs.push(handoff);
+            }
+        }
+        handoffs.sort_by_key(|handoff| std::cmp::Reverse(handoff.updated_at_ms));
+        Ok(handoffs)
+    }
+
     fn index_path(&self) -> PathBuf {
         self.root.join("index.jsonl")
     }
@@ -246,6 +270,10 @@ impl HandoffRepository for FilesystemHandoffStore {
             self.read_json(&self.handoff_path(handoff_id)?)
         })
     }
+
+    fn list_handoffs(&self) -> Result<Vec<Handoff>, HandoffStoreError> {
+        self.read_handoffs()
+    }
 }
 
 impl LeaseRepository for FilesystemHandoffStore {
@@ -287,6 +315,16 @@ impl LeaseRepository for FilesystemHandoffStore {
                 return Ok(None);
             }
             Ok(Some(self.read_json(&path)?))
+        })
+    }
+
+    fn release_lease(&self, handoff_id: &str) -> Result<(), HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let path = self.lease_path(handoff_id)?;
+            if path.exists() {
+                fs::remove_file(path).map_err(write_err)?;
+            }
+            Ok(())
         })
     }
 }

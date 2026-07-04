@@ -41,6 +41,7 @@ pub enum HandoffStoreError {
 pub trait HandoffRepository {
     fn save_handoff(&self, handoff: &Handoff) -> Result<(), HandoffStoreError>;
     fn load_handoff(&self, handoff_id: &str) -> Result<Handoff, HandoffStoreError>;
+    fn list_handoffs(&self) -> Result<Vec<Handoff>, HandoffStoreError>;
 }
 
 pub trait LeaseRepository {
@@ -51,6 +52,11 @@ pub trait LeaseRepository {
     ) -> Result<HandoffLease, HandoffStoreError>;
 
     fn load_lease(&self, handoff_id: &str) -> Result<Option<HandoffLease>, HandoffStoreError>;
+
+    /// 正常に side run が終了・人間待ちへ遷移した時の lease 解放。
+    fn release_lease(&self, _handoff_id: &str) -> Result<(), HandoffStoreError> {
+        Ok(())
+    }
 }
 
 pub trait CheckpointRepository {

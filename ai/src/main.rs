@@ -31,12 +31,14 @@ use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
     assistant_content_from_response, build_response_summary, build_summary, classify_from_raw_args,
     current_time_ms, ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
-    list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
-    plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn,
-    resolve_recall_gating, CollaborativeExecutionContext, CollaborativeShellExecPolicy,
+    list_history, memory_cli, next_history_id, parse_request_human_action,
+    persist_suggested_commands, plan_ask_launch, plan_interactive_prompt_route,
+    recall_next_command, recall_prev_command, record_turn, resolve_recall_gating,
+    CollaborativeExecutionContext, CollaborativeShellEnvironment, CollaborativeShellExecPolicy,
     HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, ParentShellExecRequest,
-    PreprocessorRunInput, PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext,
-    ShellLogMode, TurnCancelGuard,
+    PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus, RecallGatingInput,
+    RecallTurnContext, ShellLogMode, SideAgentDispatch, SideAgentInvocation, SideTurn,
+    StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -91,6 +93,12 @@ fn run() -> anyhow::Result<ExitCode> {
     validate_normalized_ask_args(&normalized)?;
     let cli = AiCli::parse_from(normalized);
     let collaborative = cli.collaborative;
+    let standalone = cli.standalone;
+    if standalone {
+        for key in HANDOFF_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+    }
 
     match cli.command {
         AiCommand::Complete { shell } => {
@@ -101,13 +109,32 @@ fn run() -> anyhow::Result<ExitCode> {
             turn,
             file,
             message,
-        } => run_ask(AskArgs {
-            turn,
-            file,
-            message,
-            invocation: ask_invocation,
-            collaborative,
-        }),
+        } => {
+            let side = if standalone {
+                None
+            } else {
+                resolve_side_dispatch(
+                    collaborative,
+                    matches!(ask_invocation, AskInvocationSource::BareRoot),
+                    message.join(" "),
+                )?
+            };
+            // 検証後は構造化済み side context だけを保持し、aibe や子プロセスへ
+            // token を含む human-shell env を継承させない。
+            if side.is_some() {
+                for key in HANDOFF_ENV_KEYS {
+                    std::env::remove_var(key);
+                }
+            }
+            run_ask(AskArgs {
+                turn,
+                file,
+                message,
+                invocation: ask_invocation,
+                collaborative: collaborative && side.is_none(),
+                side,
+            })
+        }
         AiCommand::Chat { turn } => run_chat(turn),
         AiCommand::Retry { turn, history_id } => run_retry(turn, history_id),
         AiCommand::Rerun { turn, history_id } => run_rerun(turn, history_id),
@@ -159,6 +186,50 @@ struct AskArgs {
     message: Vec<String>,
     invocation: AskInvocationSource,
     collaborative: bool,
+    side: Option<SideLaunch>,
+}
+
+#[derive(Debug, Clone)]
+enum SideLaunch {
+    PromptThenStart(CollaborativeShellEnvironment),
+    Run(SideTurn),
+}
+
+fn resolve_side_dispatch(
+    collaborative: bool,
+    bare: bool,
+    note: String,
+) -> anyhow::Result<Option<SideLaunch>> {
+    let values = HANDOFF_ENV_KEYS
+        .into_iter()
+        .filter_map(|key| {
+            std::env::var(key)
+                .ok()
+                .map(|value| (key.to_string(), value))
+        })
+        .collect();
+    let Some(env) = CollaborativeShellEnvironment::from_map(&values)? else {
+        return Ok(None);
+    };
+    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+    let observer = ProcessEnvironmentObserver;
+    let runtime = SystemHandoffRuntime;
+    let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+    let invocation = SideAgentInvocation {
+        standalone: false,
+        collaborative_requested: collaborative,
+        bare,
+        user_note: (!note.is_empty()).then_some(note),
+        client_id: format!("ai-{}", std::process::id()),
+        process_id: std::process::id(),
+        tty: std::env::var("TTY").ok(),
+        cwd: std::env::current_dir()?,
+    };
+    match service.dispatch(Some(env.clone()), &invocation)? {
+        SideAgentDispatch::PromptForInput { .. } => Ok(Some(SideLaunch::PromptThenStart(env))),
+        SideAgentDispatch::Run(turn) => Ok(Some(SideLaunch::Run(turn))),
+        SideAgentDispatch::Standalone | SideAgentDispatch::Normal => Ok(None),
+    }
 }
 
 #[derive(Debug)]
@@ -230,18 +301,58 @@ fn auto_approve_shell_exec_decision(
 
 fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
-    let message = match resolve_ask_message(args.file.clone(), args.message, args.invocation)? {
-        ResolveAskMessageOutcome::Ready(message) => message,
-        ResolveAskMessageOutcome::Cancelled { message } => {
-            eprintln!("{message}");
-            return Ok(ExitCode::SUCCESS);
-        }
-        ResolveAskMessageOutcome::EditorFailed { exit_code } => {
-            let code = exit_code.unwrap_or(-1);
-            eprintln!("AISH: editor exited with status {code}; cancelled.");
-            return Ok(ExitCode::from(1u8));
-        }
+    let mut message = match &args.side {
+        Some(SideLaunch::Run(turn)) if turn.control_returned.is_some() => ResolvedMessage {
+            source: "collaborative_human_control_returned".into(),
+            content: serde_json::to_string(turn.control_returned.as_ref().expect("checked"))?,
+        },
+        _ => match resolve_ask_message(args.file.clone(), args.message, args.invocation)? {
+            ResolveAskMessageOutcome::Ready(message) => message,
+            ResolveAskMessageOutcome::Cancelled { message } => {
+                eprintln!("{message}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            ResolveAskMessageOutcome::EditorFailed { exit_code } => {
+                let code = exit_code.unwrap_or(-1);
+                eprintln!("AISH: editor exited with status {code}; cancelled.");
+                return Ok(ExitCode::from(1u8));
+            }
+        },
     };
+    let mut side_turn = match args.side {
+        Some(SideLaunch::Run(turn)) => Some(turn),
+        Some(SideLaunch::PromptThenStart(env)) => {
+            let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+            let observer = ProcessEnvironmentObserver;
+            let runtime = SystemHandoffRuntime;
+            let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+            let invocation = SideAgentInvocation {
+                standalone: false,
+                collaborative_requested: false,
+                bare: false,
+                user_note: Some(message.content.clone()),
+                client_id: format!("ai-{}", std::process::id()),
+                process_id: std::process::id(),
+                tty: std::env::var("TTY").ok(),
+                cwd: std::env::current_dir()?,
+            };
+            match service.dispatch(Some(env), &invocation)? {
+                SideAgentDispatch::Run(turn) => Some(turn),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "side agent did not start after prompt input"
+                    ))
+                }
+            }
+        }
+        None => None,
+    };
+    if let Some(turn) = side_turn
+        .as_ref()
+        .filter(|turn| turn.control_returned.is_some())
+    {
+        message.content = serde_json::to_string(turn.control_returned.as_ref().expect("checked"))?;
+    }
     let base_settings = resolve_turn_settings(&cfg, &args.turn)?;
     if args.turn.dry_run {
         let report = build_dry_run_report(
@@ -278,7 +389,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         smart,
     );
     let settings = resolve_turn_settings(&cfg, &prep.effective_turn)?;
-    let response = execute_turn(
+    let response = match execute_turn(
         &cfg,
         "ask",
         message.clone(),
@@ -287,13 +398,47 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         None,
         prep.agent_messages,
         prep.feature_summaries,
-        prep.conversation_id,
+        side_turn
+            .as_ref()
+            .map(|side| side.conversation_id.clone())
+            .or(prep.conversation_id),
         prep.route_plan_json,
         prep.route_fallback,
         prep.observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
         args.collaborative,
-    )?;
+        side_turn.as_ref(),
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            if let Some(side) = side_turn.as_ref() {
+                let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                let observer = ProcessEnvironmentObserver;
+                let runtime = SystemHandoffRuntime;
+                let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+                service.finish_side_turn(&side.handoff_id, &format!("side run failed: {error}"))?;
+            }
+            return Err(error);
+        }
+    };
+    if let Some(side) = side_turn.take() {
+        let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+        let observer = ProcessEnvironmentObserver;
+        let runtime = SystemHandoffRuntime;
+        let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+        let summary = match &response.response {
+            ClientResponse::AgentTurnResult {
+                assistant_message, ..
+            } => assistant_message.content.as_str(),
+            ClientResponse::Error { message, .. } => message.as_str(),
+            _ => "side turn finished",
+        };
+        if let Some(request) = parse_request_human_action(summary) {
+            service.request_human_action(&side.handoff_id, request)?;
+        } else {
+            service.finish_side_turn(&side.handoff_id, summary)?;
+        }
+    }
     Ok(exit_code_for_response(
         &response.response,
         response.cancel_source,
@@ -347,6 +492,7 @@ fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
             None,
             Arc::clone(&shell_exec_state),
             false,
+            None,
         )?;
         let exit_code = exit_code_for_response(&outcome.response, outcome.cancel_source);
         match &outcome.response {
@@ -444,6 +590,7 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
         false,
+        None,
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -546,6 +693,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         observation_draft,
         Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
         false,
+        None,
     )?;
     Ok(exit_code_for_response(
         &response.response,
@@ -690,6 +838,7 @@ fn execute_turn(
     observation_draft: Option<PreprocessorObservationDraft>,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
+    side_turn: Option<&SideTurn>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
     let replay_ctx = ai::application::replay_manifest::build_turn_replay_context(
@@ -786,6 +935,14 @@ fn execute_turn(
         memory_space_id,
         replay_manifest_block.clone(),
     );
+    if let Some(side) = side_turn {
+        request.request_context.conversation_id = Some(side.conversation_id.clone());
+        request.request_context.system_instruction =
+            Some(match request.request_context.system_instruction.take() {
+                Some(existing) => format!("{existing}\n\n{}", side.system_instruction),
+                None => side.system_instruction.clone(),
+            });
+    }
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
     let feature_summaries = history_messages_from_protocol(&feature_history_summaries);
@@ -2885,6 +3042,13 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
     }
 }
 
+fn read_collaborative_status() -> anyhow::Result<Vec<ai::domain::CollaborativeHandoffReport>> {
+    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+    ReadCollaborativeStatus::new(&store)
+        .read()
+        .map_err(Into::into)
+}
+
 fn run_diagnostic_command(
     command: &str,
     quiet: bool,
@@ -2900,6 +3064,7 @@ fn run_diagnostic_command(
         Err(e) => (false, Some(e.to_string())),
     };
     let shell_log = resolve_shell_log_info();
+    let collaborative_handoff = read_collaborative_status()?;
     let report = DiagnosticsReport {
         command: command.to_string(),
         config_socket_path: cfg.socket_path.display().to_string(),
@@ -2921,6 +3086,7 @@ fn run_diagnostic_command(
         shell_log_error: shell_log.error,
         preset: None,
         log_tail_bytes: resolve_log_tail_bytes(None, None, cfg.log_tail_bytes)?,
+        collaborative_handoff,
     };
 
     if !quiet {
@@ -2976,6 +3142,7 @@ fn run_ping_command(
         shell_log_error: shell_log.error,
         preset: None,
         log_tail_bytes: resolve_log_tail_bytes(None, None, cfg.log_tail_bytes)?,
+        collaborative_handoff: Vec::new(),
     };
 
     if !quiet {

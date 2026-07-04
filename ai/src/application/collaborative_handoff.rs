@@ -212,6 +212,12 @@ where
         self.candidate_publisher
             .publish(&handoff_id, std::slice::from_ref(&candidate_text))
             .map_err(CollaborativeHandoffError::Candidate)?;
+        let environment_metadata = serde_json::json!({
+            "observation": before,
+            "handoff_host_id": self.runtime.host_id(),
+            "handoff_uid": self.runtime.effective_uid(),
+        })
+        .to_string();
         let checkpoint = HandoffCheckpoint {
             parent_task_id: request.parent_task_id,
             parent_conversation_id: request.parent_conversation_id,
@@ -222,7 +228,7 @@ where
             conversation_snapshot: request.conversation_snapshot,
             conversation_summary: request.conversation_summary,
             cwd: request.cwd.display().to_string(),
-            environment_metadata: before_ref.clone(),
+            environment_metadata,
             handoff_id: handoff_id.clone(),
             side_conversation_id: None,
             command_candidates: vec![candidate],

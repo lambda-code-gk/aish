@@ -11,6 +11,12 @@ use crate::ports::outbound::{
     SuggestedCommandRecallStore,
 };
 
+pub fn strip_handoff_environment(command: &mut Command) {
+    for key in crate::application::HANDOFF_ENV_KEYS {
+        command.env_remove(key);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AishHumanShellLauncher {
     binary: PathBuf,
@@ -191,6 +197,23 @@ impl HandoffRuntime for SystemHandoffRuntime {
             .and_then(|mut f| f.read_exact(&mut bytes))
             .map_err(|e| e.to_string())?;
         Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    fn host_id(&self) -> String {
+        let mut buffer = [0_u8; 256];
+        let rc = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+        if rc != 0 {
+            return "unknown-host".into();
+        }
+        let len = buffer
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(buffer.len());
+        String::from_utf8_lossy(&buffer[..len]).into_owned()
+    }
+
+    fn effective_uid(&self) -> u32 {
+        unsafe { libc::geteuid() }
     }
 }
 

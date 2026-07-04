@@ -3,6 +3,7 @@ mod ask_launch;
 mod ask_prompt_input;
 pub mod client_tools;
 mod collaborative_handoff;
+mod collaborative_side_agent;
 mod feature_executor;
 mod history;
 pub mod memory_cli;
@@ -26,6 +27,11 @@ pub use ask_prompt_input::{
 pub use collaborative_handoff::{
     persist_handoff_candidates_for_recall, CollaborativeExecutionContext,
     CollaborativeHandoffError, CollaborativeShellExecPolicy, ParentShellExecRequest,
+};
+pub use collaborative_side_agent::{
+    parse_request_human_action, CollaborativeShellEnvironment, HumanControlReturned,
+    ReadCollaborativeStatus, RequestHumanAction, SideAgentDispatch, SideAgentError,
+    SideAgentInvocation, SideTurn, StartOrResumeSideAgent, HANDOFF_ENV_KEYS,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

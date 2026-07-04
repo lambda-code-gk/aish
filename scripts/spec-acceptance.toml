@@ -2500,7 +2500,7 @@ id = "side_conversation_continues"
 description = "side agent conversation 継続"
 test = "side_agent_reuses_conversation_in_handoff"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2509,7 +2509,7 @@ id = "side_conversation_unique"
 description = "handoff あたり side conversation は 1 つ"
 test = "side_conversation_unique_per_handoff"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2518,7 +2518,7 @@ id = "side_inherits_parent_context"
 description = "side turn に親文脈が含まれる"
 test = "side_agent_receives_parent_task_context"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2527,7 +2527,7 @@ id = "conversation_summary_on_side_turn"
 description = "side 前後で要約が更新される"
 test = "conversation_summary_updates_on_side_turn"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2536,7 +2536,7 @@ id = "side_shell_exec_normal"
 description = "side の shell_exec は自動実行"
 test = "side_agent_shell_exec_executes_normally"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2545,7 +2545,7 @@ id = "request_human_action"
 description = "人間待ちで新 shell を作らない"
 test = "side_agent_waiting_does_not_spawn_new_shell"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2554,7 +2554,7 @@ id = "bare_ai_human_active_ui"
 description = "HUMAN_ACTIVE で裸 ai が入力 UI"
 test = "bare_ai_in_human_active_opens_input_ui"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2563,7 +2563,7 @@ id = "bare_ai_resumes_side"
 description = "WAITING で裸 ai が side 再開"
 test = "bare_ai_resumes_side_agent_from_waiting"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2572,7 +2572,7 @@ id = "ai_note_becomes_user_note"
 description = "ai 補足が user_note に"
 test = "ai_with_note_sets_user_note_on_resume"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2581,7 +2581,7 @@ id = "human_control_returned_fields"
 description = "HumanControlReturned 必須フィールド"
 test = "human_control_returned_includes_required_fields"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2590,7 +2590,7 @@ id = "side_agent_running_blocks_new_run"
 description = "RUNNING 中は新 run 拒否"
 test = "side_agent_running_rejects_new_run"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2599,7 +2599,7 @@ id = "standalone_ignores_handoff"
 description = "--standalone は handoff 無視"
 test = "standalone_mode_ignores_handoff_context"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2608,7 +2608,7 @@ id = "standalone_strips_handoff_env"
 description = "standalone 子に token 無し"
 test = "standalone_child_process_has_no_handoff_token"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2617,7 +2617,7 @@ id = "ai_status_no_llm"
 description = "ai status は LLM を呼ばない"
 test = "ai_status_does_not_invoke_llm"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2626,7 +2626,7 @@ id = "status_no_token"
 description = "status 出力に token 無し"
 test = "ai_status_never_prints_handoff_token"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2635,7 +2635,7 @@ id = "status_shows_handoff_fields"
 description = "協調 handoff フィールドを表示"
 test = "ai_status_shows_collaborative_handoff_fields"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2644,7 +2644,7 @@ id = "existing_ai_status_regression"
 description = "handoff 無し時は従来 status"
 test = "ai_status_unchanged_without_active_handoff"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2653,7 +2653,7 @@ id = "stale_token_rejected"
 description = "古い generation を拒否"
 test = "stale_handoff_token_is_rejected"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2662,7 +2662,7 @@ id = "uid_mismatch_rejected"
 description = "UID 不一致を拒否"
 test = "handoff_rejected_when_effective_uid_mismatches"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2671,7 +2671,7 @@ id = "host_id_mismatch_rejected"
 description = "host ID 不一致を拒否"
 test = "handoff_rejected_when_host_id_mismatches"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2680,7 +2680,7 @@ id = "tampered_handoff_id_rejected"
 description = "改変 handoff ID を拒否"
 test = "tampered_handoff_id_is_rejected"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2689,7 +2689,7 @@ id = "incomplete_env_no_fallback"
 description = "env 欠落で通常 ai に落とさない"
 test = "incomplete_handoff_env_shows_error_not_fallback"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2698,7 +2698,7 @@ id = "nested_collaborative_rejected"
 description = "入れ子 --collaborative 拒否"
 test = "nested_collaborative_flag_is_rejected"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2707,7 +2707,7 @@ id = "side_no_nested_human_shell"
 description = "side から human shell 起動禁止"
 test = "side_agent_cannot_spawn_nested_human_shell"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2716,7 +2716,7 @@ id = "orphaned_requires_resume"
 description = "ORPHANED は ai resume を促す"
 test = "orphaned_handoff_direct_ai_shows_resume_hint"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2725,7 +2725,7 @@ id = "token_not_in_llm_context"
 description = "LLM 入力に token 無し"
 test = "handoff_token_not_in_llm_context"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"

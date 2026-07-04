@@ -34,8 +34,8 @@ pub use aibe_config::{load_shell_exec_approval, AibeShellExecApproval};
 pub use aibe_external_commands::external_command_names;
 pub use chat_line_editor::{read_chat_line, ChatReadLineResult};
 pub use collaborative_handoff::{
-    AishHumanShellLauncher, FileHandoffCandidatePublisher, ProcessEnvironmentObserver,
-    SystemHandoffRuntime,
+    strip_handoff_environment, AishHumanShellLauncher, FileHandoffCandidatePublisher,
+    ProcessEnvironmentObserver, SystemHandoffRuntime,
 };
 pub use dynamic_completion::{
     complete_preset, complete_profile, complete_session, complete_tools_token, list_profile_names,

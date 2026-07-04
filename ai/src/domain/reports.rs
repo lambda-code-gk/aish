@@ -16,6 +16,15 @@ pub struct FilterMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CollaborativeHandoffReport {
+    pub handoff_id: String,
+    pub parent_task: String,
+    pub state: String,
+    pub command_candidates: Vec<String>,
+    pub resume_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiagnosticsReport {
     pub command: String,
     pub config_socket_path: String,
@@ -33,6 +42,8 @@ pub struct DiagnosticsReport {
     pub shell_log_error: Option<String>,
     pub preset: Option<String>,
     pub log_tail_bytes: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collaborative_handoff: Vec<CollaborativeHandoffReport>,
 }
 
 impl DiagnosticsReport {
@@ -118,6 +129,26 @@ impl DiagnosticsReport {
         );
         append_tsv_row(&mut out, "preset", self.preset.as_deref().unwrap_or(""));
         append_tsv_row(&mut out, "log_tail_bytes", &self.log_tail_bytes.to_string());
+        for (index, handoff) in self.collaborative_handoff.iter().enumerate() {
+            let prefix = format!("collaborative_handoff.{index}");
+            append_tsv_row(&mut out, &format!("{prefix}.id"), &handoff.handoff_id);
+            append_tsv_row(
+                &mut out,
+                &format!("{prefix}.parent_task"),
+                &handoff.parent_task,
+            );
+            append_tsv_row(&mut out, &format!("{prefix}.state"), &handoff.state);
+            append_tsv_row(
+                &mut out,
+                &format!("{prefix}.command_candidates"),
+                &handoff.command_candidates.join(" | "),
+            );
+            append_tsv_row(
+                &mut out,
+                &format!("{prefix}.resume_hint"),
+                &handoff.resume_hint,
+            );
+        }
         out
     }
 
@@ -193,6 +224,15 @@ impl DiagnosticsReport {
             "AI_LOG_TAIL_BYTES",
             &self.log_tail_bytes.to_string(),
         );
+        if let Some(handoff) = self.collaborative_handoff.first() {
+            append_env_line(&mut out, "AI_COLLABORATIVE_HANDOFF_ID", &handoff.handoff_id);
+            append_env_line(&mut out, "AI_COLLABORATIVE_HANDOFF_STATE", &handoff.state);
+            append_env_line(
+                &mut out,
+                "AI_COLLABORATIVE_RESUME_HINT",
+                &handoff.resume_hint,
+            );
+        }
         out
     }
 }
