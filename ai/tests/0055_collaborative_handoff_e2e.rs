@@ -13,8 +13,8 @@ use ai::application::{
 use ai::domain::{CollaborativeAgentRole, CollaborativePolicy, HandoffState};
 use ai::ports::outbound::{
     EnvironmentObservation, EnvironmentObserver, HandoffRepository, HumanShellLaunchError,
-    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn, NoopHandoffCandidatePublisher,
-    NoopParentToolBarrier,
+    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+    NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
 };
 use aibe_protocol::{HandoffExecutionOutcome, RequestedCommandCompletion};
 
@@ -57,6 +57,10 @@ impl HumanShellLauncher for Launcher {
             normal_return: true,
             exit_code: Some(9),
             final_cwd: request.cwd.clone(),
+            shell_session_id: "test-session".into(),
+            shell_session_dir: request.cwd.clone(),
+            shell_log_start: 0,
+            shell_log_end: 1,
         })
     }
 }
@@ -76,6 +80,7 @@ fn request(cwd: PathBuf, suffix: &str) -> ParentShellExecRequest {
         cwd,
         tool_call_id: format!("tc-{suffix}"),
         shell_log_start: 4,
+        suggestion_cache_path: PathBuf::from("/tmp/test-suggestions.json"),
     }
 }
 
@@ -103,6 +108,7 @@ fn run_once() -> (
         &Observer,
         &NoopParentToolBarrier,
         &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
         &SystemHandoffRuntime,
     );
     let result = policy.intercept(request(cwd.path().into(), "1")).unwrap();
@@ -178,7 +184,7 @@ fn parent_shell_exec_creates_handoff_instead_of_exec() {
     let handoff = store.load_handoff(&result.handoff_id).unwrap();
     assert_eq!(launches.load(Ordering::SeqCst), 1);
     assert_eq!(handoff.requested_shell_execs[0].command, "printf");
-    assert_eq!(handoff.state, HandoffState::Completed);
+    assert_eq!(handoff.state, HandoffState::Returned);
 }
 
 #[test]
@@ -247,6 +253,7 @@ fn second_shell_exec_waits_for_first_handoff() {
         Box::leak(Box::new(Observer)),
         Box::leak(Box::new(NoopParentToolBarrier)),
         Box::leak(Box::new(NoopHandoffCandidatePublisher)),
+        Box::leak(Box::new(NoopCollaborativeChildGoalService)),
         Box::leak(Box::new(SystemHandoffRuntime)),
     ));
     let p1 = policy.clone();

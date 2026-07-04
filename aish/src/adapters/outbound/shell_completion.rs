@@ -25,7 +25,7 @@ _ai_recall_export_env() {
   local sid="${AI_SESSION_ID:-}"
   [[ -n "$sid" ]] || return 0
   local home="${HOME:-/tmp}"
-  export AI_SUGGESTION_CACHE="${home}/.local/share/ai/suggestions/${sid}.json"
+  export AI_SUGGESTION_CACHE="${AI_SUGGESTION_CACHE:-${home}/.local/share/ai/suggestions/${sid}.json}"
   export AI_SUGGESTED_COMMAND_RECALL="${AI_SUGGESTED_COMMAND_RECALL:-1}"
   export AI_SUGGESTED_COMMAND_RECALL_HINT="${AI_SUGGESTED_COMMAND_RECALL_HINT:-1}"
 }

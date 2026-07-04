@@ -428,11 +428,11 @@ HumanControlReturned {
 
 ### 24.2 HandoffLease
 
-`handoff_id`, `owner_client_id`, `owner_process_id`, `owner_tty`, `owner_host`, `owner_uid`, `lease_acquired_at`, `lease_expires_at`, `last_heartbeat_at`。取得・更新・解放は原子的。
+`handoff_id`, `owner_client_id`, `owner_process_id`, `owner_tty`, `owner_host`, `owner_uid`, `lease_acquired_at`, `lease_expires_at`, `last_heartbeat_at`。取得・更新・解放は原子的。`lease.json` は親が human shell lifetime 全体（Ctrl+D後の親再開完了まで）で保持し、PTY heartbeat だけが更新する。side agent は lifetime lease を変更せず、1 side run ごとの `side-run-lock.json` を原子的に取得・解放する。
 
 ### 24.3 Checkpoint（必須）
 
-`parent_task_id`, `parent_conversation_id`, `parent_run_id`, `pending_shell_exec`, `parent_goal`, `child_goal`, `conversation_snapshot`, `conversation_summary`, `cwd`, `environment_metadata`, `handoff_id`, `side_conversation_id?`, `command_candidates`, `shell_log_start`, `control_state`, `provider_metadata`（診断用・復旧必須にしない）。
+`parent_task_id`, `parent_conversation_id`, `parent_run_id`, `pending_shell_exec`, `parent_goal`, `child_goal`, `conversation_snapshot`, `conversation_summary`, `cwd`, `environment_metadata`, `handoff_id`, `side_conversation_id?`, `command_candidates`, `shell_log_start`, `control_state`, `provider_metadata`（診断用・復旧必須にしない）。`environment_metadata` には PTY 返却後の `shell_session_id`, `shell_session_dir`, `shell_log_start`, `shell_log_end` と共有 suggestion cache path を保存する。
 
 ### 24.4 Tool execution（handoff 関連）
 
@@ -468,6 +468,8 @@ Inspect the current environment and verify the completion condition.
 ## 27. 親再観測（§18 詳細）
 
 返却後・復旧親 run 開始前に利用可能な範囲で: 元 cwd 存在、final cwd、Git HEAD / branch / `git status`、変更ファイル、shell log 追加範囲、child goal 状態、side 要約、不確定ツール、handoff 前後差分。Git 外は git 省略。全ファイル走査は必須にしない。
+
+状態遷移は Ctrl+D / `exit` の正常返却で `RETURNED` までとし、親 run の開始時に `RESUMING_PARENT`、成功後だけ `COMPLETED` とする。親 run が失敗・cancelされた場合は `RETURNED` に戻して `resume_error` を残す。`ORPHANED` の `ai resume` は新 human shell の正常返却後、同じ invocation 内で親 run まで自動再開する。
 
 ## 28. 復旧で復元しないもの（§20.3）
 

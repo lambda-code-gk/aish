@@ -2,6 +2,7 @@ mod aibe_client;
 mod aibe_config;
 mod aibe_external_commands;
 mod chat_line_editor;
+mod collaborative_child_goal;
 mod collaborative_handoff;
 mod dynamic_completion;
 mod external_editor;
@@ -33,6 +34,7 @@ pub use aibe_client::AibeUnixClient;
 pub use aibe_config::{load_shell_exec_approval, AibeShellExecApproval};
 pub use aibe_external_commands::external_command_names;
 pub use chat_line_editor::{read_chat_line, ChatReadLineResult};
+pub use collaborative_child_goal::AibeCollaborativeChildGoalService;
 pub use collaborative_handoff::{
     strip_handoff_environment, AishHumanShellLauncher, FileHandoffCandidatePublisher,
     ProcessEnvironmentObserver, SystemHandoffRuntime,

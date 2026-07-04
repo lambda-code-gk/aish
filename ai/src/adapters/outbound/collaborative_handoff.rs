@@ -69,6 +69,7 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             .env("AISH_CONTROL_MODE", "human-shell")
             .env("AISH_HANDOFF_ID", &request.handoff_id)
             .env("AISH_HANDOFF_TOKEN", &request.token)
+            .env("AI_SUGGESTION_CACHE", &request.suggestion_cache_path)
             .env(
                 "AISH_HANDOFF_CONTEXT_VERSION",
                 request.context_version.to_string(),
@@ -141,17 +142,11 @@ impl EnvironmentObserver for ProcessEnvironmentObserver {
     }
 }
 
-pub struct FileHandoffCandidatePublisher {
-    store: FileSuggestedCommandRecallStore,
-    ai_session_id: String,
-}
+pub struct FileHandoffCandidatePublisher;
 
 impl FileHandoffCandidatePublisher {
-    pub fn new(store: FileSuggestedCommandRecallStore, ai_session_id: String) -> Self {
-        Self {
-            store,
-            ai_session_id,
-        }
+    pub fn new(_store: FileSuggestedCommandRecallStore, _ai_session_id: String) -> Self {
+        Self
     }
 }
 
@@ -161,18 +156,12 @@ impl HandoffCandidatePublisher for FileHandoffCandidatePublisher {
             return Ok(());
         }
         let runtime = SystemHandoffRuntime;
+        let store =
+            FileSuggestedCommandRecallStore::new(runtime.handoff_suggestion_cache_path(handoff_id));
         let captured_at = runtime.now_ms().to_string();
-        let mut cache = self
-            .store
-            .load()
-            .map_err(|e| e.to_string())?
-            .unwrap_or_else(|| {
-                SuggestedCommandCache::new(
-                    &self.ai_session_id,
-                    interactive_shell_name(),
-                    &captured_at,
-                )
-            });
+        let mut cache = store.load().map_err(|e| e.to_string())?.unwrap_or_else(|| {
+            SuggestedCommandCache::new(handoff_id, interactive_shell_name(), &captured_at)
+        });
         cache.updated_at = captured_at.clone();
         cache.append_queue(SuggestedCommandQueue {
             turn_id: format!("handoff:{handoff_id}"),
@@ -186,7 +175,7 @@ impl HandoffCandidatePublisher for FileHandoffCandidatePublisher {
                 })
                 .collect(),
         });
-        self.store.save(&cache).map_err(|e| e.to_string())
+        store.save(&cache).map_err(|e| e.to_string())
     }
 }
 
@@ -248,6 +237,13 @@ impl HandoffRuntime for SystemHandoffRuntime {
         }
         let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    fn handoff_suggestion_cache_path(&self, handoff_id: &str) -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        PathBuf::from(home)
+            .join(".local/share/ai/suggestions")
+            .join(format!("handoff-{handoff_id}.json"))
     }
 }
 

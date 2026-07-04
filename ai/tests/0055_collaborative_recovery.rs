@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use ai::adapters::outbound::FilesystemHandoffStore;
@@ -16,7 +17,8 @@ use ai::ports::outbound::{
     CheckpointRepository, EnvironmentObservation, EnvironmentObserver, HandoffRepository,
     HandoffRuntime, HandoffShellSessionStore, HumanShellLaunchError, HumanShellLaunchRequest,
     HumanShellLauncher, HumanShellReturn, LeaseAcquireRequest, LeaseRepository,
-    NoopHandoffCandidatePublisher, NoopParentToolBarrier, ShellSessionIssueRequest,
+    NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
+    ShellSessionIssueRequest,
 };
 
 #[derive(Debug)]
@@ -65,6 +67,10 @@ impl Launcher {
                 normal_return: true,
                 exit_code: Some(0),
                 final_cwd: cwd.into(),
+                shell_session_id: "test-session".into(),
+                shell_session_dir: cwd.into(),
+                shell_log_start: 0,
+                shell_log_end: 1,
             }),
         }
     }
@@ -168,6 +174,7 @@ fn parent_request(cwd: &str) -> ParentShellExecRequest {
         cwd: cwd.into(),
         tool_call_id: "shell-call".into(),
         shell_log_start: 10,
+        suggestion_cache_path: PathBuf::from("/tmp/test-suggestions.json"),
     }
 }
 
@@ -278,6 +285,7 @@ fn abnormal_shell_exit_marks_handoff_orphaned() {
         &Observer,
         &NoopParentToolBarrier,
         &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
         &runtime,
     );
     let error = policy.intercept(parent_request(&fixture.cwd)).unwrap_err();
@@ -511,6 +519,7 @@ fn handoff_cancelled_when_shell_never_started_after_checkpoint() {
         &Observer,
         &NoopParentToolBarrier,
         &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
         &runtime,
     )
     .intercept(parent_request(&fixture.cwd))
@@ -574,6 +583,10 @@ fn ctrl_d_during_side_run_returns_to_parent() {
             normal_return: true,
             exit_code: Some(0),
             final_cwd: fixture.cwd.clone().into(),
+            shell_session_id: "test-session".into(),
+            shell_session_dir: fixture.cwd.clone().into(),
+            shell_log_start: 0,
+            shell_log_end: 1,
         },
     )
     .unwrap();

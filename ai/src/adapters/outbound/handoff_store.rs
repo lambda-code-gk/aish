@@ -81,6 +81,10 @@ impl FilesystemHandoffStore {
         Ok(self.handoff_dir(handoff_id)?.join("lease.json"))
     }
 
+    fn side_run_lock_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
+        Ok(self.handoff_dir(handoff_id)?.join("side-run-lock.json"))
+    }
+
     fn checkpoint_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
         Ok(self.handoff_dir(handoff_id)?.join("checkpoint.json"))
     }
@@ -359,6 +363,47 @@ impl LeaseRepository for FilesystemHandoffStore {
     fn release_lease(&self, handoff_id: &str) -> Result<(), HandoffStoreError> {
         self.with_handoff_lock(handoff_id, || {
             let path = self.lease_path(handoff_id)?;
+            if path.exists() {
+                fs::remove_file(path).map_err(write_err)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
+    fn try_acquire_side_run_lock(
+        &self,
+        handoff_id: &str,
+        request: &LeaseAcquireRequest,
+    ) -> Result<HandoffLease, HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let path = self.side_run_lock_path(handoff_id)?;
+            if path.is_file() {
+                let existing: HandoffLease = self.read_json(&path)?;
+                if existing.lease_expires_at_ms > request.now_ms {
+                    return Err(HandoffStoreError::LeaseConflict);
+                }
+            }
+            let lock = HandoffLease {
+                handoff_id: handoff_id.to_string(),
+                owner_client_id: request.owner_client_id.clone(),
+                owner_process_id: request.owner_process_id,
+                owner_tty: request.owner_tty.clone(),
+                owner_host: request.owner_host.clone(),
+                owner_uid: request.owner_uid,
+                lease_acquired_at_ms: request.now_ms,
+                lease_expires_at_ms: request.now_ms.saturating_add(request.lease_timeout_ms),
+                last_heartbeat_at_ms: request.now_ms,
+            };
+            self.write_json_atomic(&path, &lock)?;
+            Ok(lock)
+        })
+    }
+
+    fn release_side_run_lock(&self, handoff_id: &str) -> Result<(), HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let path = self.side_run_lock_path(handoff_id)?;
             if path.exists() {
                 fs::remove_file(path).map_err(write_err)?;
             }

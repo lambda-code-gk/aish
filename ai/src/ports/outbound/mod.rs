@@ -1,4 +1,5 @@
 mod agent_client;
+mod collaborative_child_goal;
 mod collaborative_handoff;
 mod handoff_repository;
 mod history_store;
@@ -9,6 +10,9 @@ mod suggested_command_recall_store;
 mod work_client;
 
 pub use agent_client::{AgentClient, AgentError};
+pub use collaborative_child_goal::{
+    CollaborativeChildGoalError, CollaborativeChildGoalService, NoopCollaborativeChildGoalService,
+};
 pub use collaborative_handoff::{
     EnvironmentObservation, EnvironmentObserver, HandoffCandidatePublisher, HandoffRuntime,
     HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
@@ -17,7 +21,7 @@ pub use collaborative_handoff::{
 pub use handoff_repository::{
     CheckpointRepository, CommandCandidateStore, HandoffAuditRepository, HandoffRepository,
     HandoffShellSessionStore, HandoffStoreError, LeaseAcquireRequest, LeaseHeartbeatRequest,
-    LeaseRepository, ShellSessionIssueRequest,
+    LeaseRepository, ShellSessionIssueRequest, SideRunLockRepository,
 };
 pub use history_store::{HistoryStore, HistoryStoreError};
 pub use memory_client::MemoryClient;

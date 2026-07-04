@@ -8,6 +8,7 @@ pub struct HumanShellLaunchRequest {
     pub token: String,
     pub context_version: u32,
     pub cwd: PathBuf,
+    pub suggestion_cache_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -15,6 +16,14 @@ pub struct HumanShellReturn {
     pub normal_return: bool,
     pub exit_code: Option<i32>,
     pub final_cwd: PathBuf,
+    #[serde(default)]
+    pub shell_session_id: String,
+    #[serde(default)]
+    pub shell_session_dir: PathBuf,
+    #[serde(default)]
+    pub shell_log_start: u64,
+    #[serde(default)]
+    pub shell_log_end: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +84,11 @@ pub trait HandoffRuntime: Send + Sync {
     }
     fn process_is_alive(&self, process_id: u32) -> bool {
         process_id != 0
+    }
+    fn handoff_suggestion_cache_path(&self, handoff_id: &str) -> PathBuf {
+        PathBuf::from("/tmp")
+            .join("ai-suggestions")
+            .join(format!("handoff-{handoff_id}.json"))
     }
 }
 

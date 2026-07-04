@@ -20,6 +20,10 @@ fn run_human_shell(input: &[u8]) -> (std::process::Output, aish::human_shell::Hu
         .env("AISH_HANDOFF_ID", "ho-test")
         .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
         .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
+        .env(
+            "AI_SUGGESTION_CACHE",
+            home.path().join("shared-suggestions.json"),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -51,6 +55,13 @@ fn human_shell_child_has_handoff_env_vars() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("human-shell|ho-test|opaque-test-token|1")
     );
+}
+
+#[test]
+fn human_shell_preserves_shared_suggestion_cache_through_pty_and_rcfile() {
+    let (output, _) = run_human_shell(b"printf 'CACHE=%s\n' \"$AI_SUGGESTION_CACHE\"\nexit\n");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("shared-suggestions.json"), "{stdout}");
 }
 
 #[test]

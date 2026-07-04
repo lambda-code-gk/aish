@@ -20,7 +20,8 @@ use ai::ports::outbound::{
 };
 use ai::ports::outbound::{
     EnvironmentObservation, EnvironmentObserver, HandoffCandidatePublisher, HumanShellLaunchError,
-    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn, ParentToolBarrier,
+    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+    NoopCollaborativeChildGoalService, ParentToolBarrier,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -88,6 +89,10 @@ impl HumanShellLauncher for TestLauncher {
             normal_return: true,
             exit_code: Some(17),
             final_cwd: request.cwd.clone(),
+            shell_session_id: "test-session".into(),
+            shell_session_dir: request.cwd.clone(),
+            shell_log_start: 0,
+            shell_log_end: 1,
         })
     }
 }
@@ -107,6 +112,7 @@ fn phase2_request(cwd: PathBuf) -> ParentShellExecRequest {
         cwd,
         tool_call_id: "tc".into(),
         shell_log_start: 3,
+        suggestion_cache_path: PathBuf::from("/tmp/test-suggestions.json"),
     }
 }
 
@@ -459,6 +465,7 @@ fn checkpoint_persisted_before_human_shell_spawn() {
         &TestObserver,
         &barrier,
         &publisher,
+        &NoopCollaborativeChildGoalService,
         &SystemHandoffRuntime,
     );
     policy
@@ -495,6 +502,7 @@ fn handoff_completes_normal_parent_resume_flow() {
         &TestObserver,
         &barrier,
         &publisher,
+        &NoopCollaborativeChildGoalService,
         &SystemHandoffRuntime,
     );
     let result = policy
@@ -502,8 +510,9 @@ fn handoff_completes_normal_parent_resume_flow() {
         .unwrap();
     assert_eq!(
         store.load_handoff(&result.handoff_id).unwrap().state,
-        HandoffState::Completed
+        HandoffState::Returned
     );
+    assert!(store.load_lease(&result.handoff_id).unwrap().is_some());
 }
 
 #[test]
@@ -525,6 +534,7 @@ fn handoff_records_final_shell_cwd_on_return() {
         &TestObserver,
         &barrier,
         &publisher,
+        &NoopCollaborativeChildGoalService,
         &SystemHandoffRuntime,
     );
     let result = policy
@@ -559,6 +569,7 @@ fn missing_cwd_rejects_human_shell_spawn() {
         &TestObserver,
         &barrier,
         &publisher,
+        &NoopCollaborativeChildGoalService,
         &SystemHandoffRuntime,
     );
     assert!(policy.intercept(phase2_request(missing)).is_err());
@@ -584,7 +595,7 @@ fn collaborative_audit_events_are_emitted() {
     use ai::ports::outbound::{
         EnvironmentObservation, EnvironmentObserver, HandoffRepository, HumanShellLaunchError,
         HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
-        NoopHandoffCandidatePublisher, NoopParentToolBarrier,
+        NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
     };
     use std::path::{Path, PathBuf};
 
@@ -611,6 +622,10 @@ fn collaborative_audit_events_are_emitted() {
                 normal_return: true,
                 exit_code: Some(0),
                 final_cwd: PathBuf::from("/tmp/work"),
+                shell_session_id: "test-session".into(),
+                shell_session_dir: PathBuf::from("/tmp/work"),
+                shell_log_start: 0,
+                shell_log_end: 1,
             })
         }
     }
@@ -638,6 +653,7 @@ fn collaborative_audit_events_are_emitted() {
         &Observer,
         &NoopParentToolBarrier,
         &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
         &Runtime,
     );
     let request = ParentShellExecRequest {
@@ -654,10 +670,11 @@ fn collaborative_audit_events_are_emitted() {
         cwd: cwd.clone(),
         tool_call_id: "tc".into(),
         shell_log_start: 0,
+        suggestion_cache_path: root.path().join("suggestions.json"),
     };
     policy.intercept(request).unwrap();
     let handoff = store.list_handoffs().unwrap().pop().unwrap();
-    assert_eq!(handoff.state, HandoffState::Completed);
+    assert_eq!(handoff.state, HandoffState::Returned);
     let events_path = root
         .path()
         .join("handoffs")
@@ -670,7 +687,6 @@ fn collaborative_audit_events_are_emitted() {
         CollaborativeAuditKind::LeaseAcquired,
         CollaborativeAuditKind::HumanShellStarted,
         CollaborativeAuditKind::HumanShellReturned,
-        CollaborativeAuditKind::ParentResumeCompleted,
     ] {
         let needle = serde_json::to_string(&kind)
             .unwrap()

@@ -74,6 +74,17 @@ pub trait LeaseRepository {
     }
 }
 
+/// Human-shell lifetime lease とは独立した、side agent 1 run の排他境界。
+pub trait SideRunLockRepository {
+    fn try_acquire_side_run_lock(
+        &self,
+        handoff_id: &str,
+        request: &LeaseAcquireRequest,
+    ) -> Result<HandoffLease, HandoffStoreError>;
+
+    fn release_side_run_lock(&self, handoff_id: &str) -> Result<(), HandoffStoreError>;
+}
+
 pub trait CheckpointRepository {
     fn save_checkpoint(
         &self,

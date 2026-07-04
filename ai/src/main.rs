@@ -19,11 +19,12 @@ use ai::adapters::outbound::{
     external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
     load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
     resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
-    resolve_suggestion_cache_path, smart_preprocessor_trace_enabled, AibeUnixClient,
-    AishHumanShellLauncher, ChatReadLineResult, FileHandoffCandidatePublisher, FileLogTail,
-    FileSuggestedCommandRecallStore, FilesystemHandoffStore, LocalHistoryStore, LocalRouteMetrics,
-    PreprocessorObservationDraft, ProcessEnvironmentObserver, ShellExecRenderOptions,
-    StdoutPresenter, SystemHandoffRuntime, YesExecCache,
+    resolve_suggestion_cache_path, smart_preprocessor_trace_enabled,
+    AibeCollaborativeChildGoalService, AibeUnixClient, AishHumanShellLauncher, ChatReadLineResult,
+    FileHandoffCandidatePublisher, FileLogTail, FileSuggestedCommandRecallStore,
+    FilesystemHandoffStore, LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft,
+    ProcessEnvironmentObserver, ShellExecRenderOptions, StdoutPresenter, SystemHandoffRuntime,
+    YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -34,12 +35,13 @@ use ai::application::{
     list_history, memory_cli, next_history_id, parse_request_human_action,
     persist_suggested_commands, plan_ask_launch, plan_interactive_prompt_route,
     recall_next_command, recall_prev_command, record_turn, resolve_recall_gating,
-    CollaborativeExecutionContext, CollaborativeShellEnvironment, CollaborativeShellExecPolicy,
-    HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, ParentResumeContext,
-    ParentShellExecRequest, PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus,
-    RecallGatingInput, RecallTurnContext, ReconcileStaleHandoffs, RecoveryOwner,
-    ResumeOrphanedHandoff, ResumeReturnedParent, ShellLogMode, SideAgentDispatch,
-    SideAgentInvocation, SideTurn, StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
+    suggestion_cache_path_from_checkpoint, CollaborativeExecutionContext,
+    CollaborativeShellEnvironment, CollaborativeShellExecPolicy, HistoryRecordInput,
+    HistoryReplayInput, InteractivePromptRoute, ParentResumeContext, ParentShellExecRequest,
+    PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus, RecallGatingInput,
+    RecallTurnContext, ReconcileStaleHandoffs, RecoveryOwner, ResumeOrphanedHandoff,
+    ResumeReturnedParent, ShellLogMode, SideAgentDispatch, SideAgentInvocation, SideTurn,
+    StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -62,7 +64,9 @@ use ai::domain::{
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
 use ai::ports::outbound::{
-    AgentError, HandoffRepository, HandoffRuntime, MemoryClient, NoopParentToolBarrier,
+    AgentError, CheckpointRepository, CollaborativeChildGoalService, HandoffCandidatePublisher,
+    HandoffRepository, HandoffRuntime, MemoryClient, NoopCollaborativeChildGoalService,
+    NoopParentToolBarrier,
 };
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{
@@ -451,6 +455,17 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             _ => "side turn finished",
         };
         if let Some(request) = parse_request_human_action(summary) {
+            let checkpoint = store.load_checkpoint(&side.handoff_id)?;
+            let cache_path =
+                suggestion_cache_path_from_checkpoint(&checkpoint).unwrap_or_else(|| {
+                    SystemHandoffRuntime.handoff_suggestion_cache_path(&side.handoff_id)
+                });
+            FileHandoffCandidatePublisher::new(
+                FileSuggestedCommandRecallStore::new(cache_path),
+                side.handoff_id.clone(),
+            )
+            .publish(&side.handoff_id, &request.command_candidates)
+            .map_err(anyhow::Error::msg)?;
             service.request_human_action(&side.handoff_id, request)?;
         } else {
             service.finish_side_turn(&side.handoff_id, summary)?;
@@ -1282,11 +1297,12 @@ fn run_agent_turn_core(
         _ => None,
     };
     let worker_client = AibeUnixClient::new(socket_path.clone());
-    let cancel_client = AibeUnixClient::new(socket_path);
+    let cancel_client = AibeUnixClient::new(socket_path.clone());
     let cancel_guard = TurnCancelGuard::new().map_err(|e| anyhow::anyhow!("{e}"))?;
     let cancel_requested = Arc::clone(cancel_guard.flag());
     let collaborative_cancel_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let resumed_handoffs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let mut cancel_source: Option<TurnCancelSource> = None;
 
     let use_client_tools = should_use_client_tool_stream(&request);
@@ -1299,6 +1315,7 @@ fn run_agent_turn_core(
     let silent_shell_exec_thread = silent_shell_exec;
     let cancel_requested_thread = Arc::clone(&cancel_requested);
     let collaborative_cancel_requested_thread = Arc::clone(&collaborative_cancel_requested);
+    let resumed_handoffs_thread = Arc::clone(&resumed_handoffs);
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
         aibe_shell_exec.auto_approve_patterns.read_only,
@@ -1310,12 +1327,28 @@ fn run_agent_turn_core(
         let environment_observer = ProcessEnvironmentObserver;
         let parent_tool_barrier = NoopParentToolBarrier;
         let handoff_runtime = SystemHandoffRuntime;
-        let candidate_store = FileSuggestedCommandRecallStore::new(resolve_suggestion_cache_path(
+        let cfg = AiConfig::load();
+        let child_goal_service: Box<dyn CollaborativeChildGoalService> =
+            if collaborative && cfg.memory_enabled {
+                let session = session_id.clone().unwrap_or_else(|| "default".into());
+                let memory_space_id = resolve_memory_space_id(&session, None, None, None)
+                    .map(|resolved| resolved.memory_space_id)
+                    .unwrap_or_else(|_| aibe_protocol::legacy_session_memory_space_id(&session));
+                Box::new(AibeCollaborativeChildGoalService::new(
+                    AibeUnixClient::new(socket_path.clone()),
+                    session,
+                    memory_space_id,
+                ))
+            } else {
+                Box::new(NoopCollaborativeChildGoalService)
+            };
+        let suggestion_cache_path = resolve_suggestion_cache_path(
             collaborative_meta
                 .as_ref()
                 .and_then(|m| m.1.as_deref())
                 .unwrap_or("default"),
-        ));
+        );
+        let candidate_store = FileSuggestedCommandRecallStore::new(suggestion_cache_path.clone());
         let candidate_publisher = FileHandoffCandidatePublisher::new(
             candidate_store,
             collaborative_meta
@@ -1334,6 +1367,7 @@ fn run_agent_turn_core(
             &environment_observer,
             &parent_tool_barrier,
             &candidate_publisher,
+            child_goal_service.as_ref(),
             &handoff_runtime,
         );
         let mut yes_exec_cache = if yes_exec {
@@ -1371,14 +1405,41 @@ fn run_agent_turn_core(
                             cwd: cwd.unwrap_or_else(|| PathBuf::from(".")),
                             tool_call_id: prompt.tool_call_id.clone(),
                             shell_log_start: 0,
+                            suggestion_cache_path: suggestion_cache_path.clone(),
                         };
                         return match collaborative_policy.intercept(request) {
-                            Ok(handoff_result) => ShellExecApprovalDecision {
-                                approved: true,
-                                approval_origin:
-                                    aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
-                                handoff_result: Some(handoff_result),
-                            },
+                            Ok(handoff_result) => {
+                                let owner = RecoveryOwner {
+                                    client_id: format!("ai-parent-{}", std::process::id()),
+                                    process_id: std::process::id(),
+                                    tty: std::env::var("TTY").ok(),
+                                };
+                                let parent =
+                                    ResumeReturnedParent::new(&handoff_store, &handoff_runtime);
+                                if let Err(error) =
+                                    parent.prepare(&handoff_result.handoff_id, &owner)
+                                {
+                                    eprintln!("ai: failed to resume parent handoff: {error}");
+                                    collaborative_cancel_requested_thread
+                                        .store(true, Ordering::SeqCst);
+                                    cancel_requested_thread.store(true, Ordering::SeqCst);
+                                    return ShellExecApprovalDecision {
+                                        approved: false,
+                                        approval_origin: aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                        handoff_result: None,
+                                    };
+                                }
+                                resumed_handoffs_thread
+                                    .lock()
+                                    .expect("resumed handoffs")
+                                    .push(handoff_result.handoff_id.clone());
+                                ShellExecApprovalDecision {
+                                    approved: true,
+                                    approval_origin:
+                                        aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                    handoff_result: Some(handoff_result),
+                                }
+                            }
                             Err(error) => {
                                 eprintln!("ai: collaborative handoff failed: {error}");
                                 // Denial を通常 tool result として LLM loop に戻さず、親 turn
@@ -1597,6 +1658,23 @@ fn run_agent_turn_core(
                     ClientResponse::Progress { .. } | ClientResponse::AssistantStreaming { .. }
                 ) {
                     continue;
+                }
+                let parent_result = if matches!(resp, ClientResponse::AgentTurnResult { .. }) {
+                    Ok(())
+                } else {
+                    Err(match &resp {
+                        ClientResponse::Error { message, .. } => message.clone(),
+                        ClientResponse::Cancelled { reason, .. } => reason
+                            .clone()
+                            .unwrap_or_else(|| "parent run cancelled".into()),
+                        _ => "parent run did not complete".into(),
+                    })
+                };
+                let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                let runtime = SystemHandoffRuntime;
+                for handoff_id in resumed_handoffs.lock().expect("resumed handoffs").drain(..) {
+                    ResumeReturnedParent::new(&store, &runtime)
+                        .finish(&handoff_id, parent_result.clone())?;
                 }
                 return Ok(TurnExecutionOutcome {
                     response: resp,
@@ -3100,15 +3178,14 @@ fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
             Err(error) => return Err(error.into()),
         };
     let owner = RecoveryOwner::from_runtime(&runtime);
-    let handoff = store.load_handoff(&handoff_id)?;
+    let mut handoff = store.load_handoff(&handoff_id)?;
     if handoff.state == ai::domain::HandoffState::Orphaned {
         eprintln!(
             "ai: recovering with a new shell; jobs, exports, aliases, SSH and TUI state are not restored"
         );
         let launcher = AishHumanShellLauncher::default();
         ResumeOrphanedHandoff::new(&store, &launcher, &runtime).execute(&handoff_id, &owner)?;
-        eprintln!("ai: human shell returned; run `ai resume` again to restart the parent agent");
-        return Ok(ExitCode::SUCCESS);
+        handoff = store.load_handoff(&handoff_id)?;
     }
     if handoff.state != ai::domain::HandoffState::Returned {
         return Err(

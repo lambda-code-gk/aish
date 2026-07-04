@@ -10,7 +10,7 @@ use crate::domain::{
 use crate::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository,
     HandoffRepository, HandoffRuntime, HandoffShellSessionStore, HandoffStoreError,
-    LeaseAcquireRequest, LeaseRepository,
+    LeaseAcquireRequest, LeaseRepository, SideRunLockRepository,
 };
 
 pub const HANDOFF_ENV_KEYS: [&str; 4] = [
@@ -134,6 +134,7 @@ pub trait SideAgentStore:
     + CheckpointRepository
     + HandoffShellSessionStore
     + LeaseRepository
+    + SideRunLockRepository
     + CommandCandidateStore
     + HandoffAuditRepository
 {
@@ -144,6 +145,7 @@ impl<T> SideAgentStore for T where
         + CheckpointRepository
         + HandoffShellSessionStore
         + LeaseRepository
+        + SideRunLockRepository
         + CommandCandidateStore
         + HandoffAuditRepository
 {
@@ -228,7 +230,20 @@ where
             HandoffState::HumanActive | HandoffState::SideAgentWaitingForHuman => {}
         }
 
-        self.store.try_acquire_lease(
+        if matches!(
+            handoff.state,
+            HandoffState::HumanActive | HandoffState::SideAgentWaitingForHuman
+        ) {
+            let lifetime_lease = self.store.load_lease(&env.handoff_id)?;
+            if lifetime_lease
+                .as_ref()
+                .is_none_or(|lease| lease.lease_expires_at_ms <= self.runtime.now_ms())
+            {
+                return Err(SideAgentError::Inactive);
+            }
+        }
+
+        self.store.try_acquire_side_run_lock(
             &env.handoff_id,
             &LeaseAcquireRequest {
                 owner_client_id: invocation.client_id.clone(),
@@ -301,7 +316,11 @@ where
         Ok(SideAgentDispatch::Run(SideTurn {
             handoff_id: handoff.id.clone(),
             conversation_id,
-            system_instruction: build_side_system_instruction(&handoff, &checkpoint, &observation),
+            system_instruction: ParentCollaborationContextBuilder::build(
+                &handoff,
+                &checkpoint,
+                &observation,
+            ),
             control_returned,
             collaborative_handoff: false,
         }))
@@ -353,7 +372,7 @@ where
             handoff_id,
             CollaborativeAuditKind::SideAgentWaitingForHuman,
         );
-        self.store.release_lease(handoff_id)?;
+        self.store.release_side_run_lock(handoff_id)?;
         Ok(())
     }
 
@@ -372,7 +391,7 @@ where
             handoff_id,
             CollaborativeAuditKind::SideAgentReturned,
         );
-        self.store.release_lease(handoff_id)?;
+        self.store.release_side_run_lock(handoff_id)?;
         Ok(())
     }
 }
@@ -472,12 +491,15 @@ fn update_summary(current: &str, event: &str) -> String {
     }
 }
 
-fn build_side_system_instruction(
-    handoff: &Handoff,
-    checkpoint: &crate::domain::HandoffCheckpoint,
-    observation: &crate::ports::outbound::EnvironmentObservation,
-) -> String {
-    format!(
+pub struct ParentCollaborationContextBuilder;
+
+impl ParentCollaborationContextBuilder {
+    pub fn build(
+        handoff: &Handoff,
+        checkpoint: &crate::domain::HandoffCheckpoint,
+        observation: &crate::ports::outbound::EnvironmentObservation,
+    ) -> String {
+        format!(
         "You are the side agent for collaborative human handoff.\n\
 Do not start a collaborative handoff or a nested human shell. shell_exec runs normally for this side agent.\n\
 handoff_id: {}\nparent_task_goal: {}\nwork_stage_and_plan: {}\n\
@@ -497,7 +519,8 @@ When human action is required, finish with JSON only: {{\"request_human_action\"
         observation.cwd,
         checkpoint.shell_log_start,
         handoff.conversation_snapshot_ref,
-    )
+        )
+    }
 }
 
 pub fn parse_request_human_action(content: &str) -> Option<RequestHumanAction> {

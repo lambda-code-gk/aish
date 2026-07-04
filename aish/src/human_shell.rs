@@ -21,6 +21,10 @@ pub struct HumanShellResult {
     pub normal_return: bool,
     pub exit_code: Option<i32>,
     pub final_cwd: PathBuf,
+    pub shell_session_id: String,
+    pub shell_session_dir: PathBuf,
+    pub shell_log_start: u64,
+    pub shell_log_end: u64,
 }
 
 pub const HANDOFF_ENV_KEYS: [&str; 4] = [
@@ -48,6 +52,10 @@ pub fn human_shell_result_from_marker(
         normal_return: true,
         exit_code: marker.exit_code.or(Some(child_exit_code)),
         final_cwd: PathBuf::from(marker.final_cwd),
+        shell_session_id: String::new(),
+        shell_session_dir: PathBuf::new(),
+        shell_log_start: 0,
+        shell_log_end: 0,
     }
 }
 
@@ -88,7 +96,12 @@ pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
         .take_human_return_marker()
         .ok_or_else(|| anyhow::anyhow!("human shell ended without normal return marker"))?;
     log.append(&LogEvent::Exit { code: Some(code) })?;
-    let result = human_shell_result_from_marker(marker, code);
+    let mut result = human_shell_result_from_marker(marker, code);
+    result.shell_session_id = layout.id;
+    result.shell_session_dir = layout.dir;
+    result.shell_log_end = std::fs::metadata(&layout.log_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
     write_result(result_file, &result)?;
     drop(heartbeat);
     Ok(result)

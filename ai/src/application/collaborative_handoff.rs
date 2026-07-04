@@ -5,17 +5,19 @@ use std::sync::Mutex;
 
 use crate::domain::{
     build_candidate_command, close_child_goal_on_control_returned, mark_running_tools_unknown,
-    try_transition, ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole,
-    CollaborativeAuditKind, CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff,
-    HandoffCheckpoint, HandoffEvent, HandoffState, RequestedShellExec, SuggestedCommandCache,
+    try_transition, ChildGoalAchievement, ChildGoalCloseReason, ChildGoalMeta,
+    CollaborativeAgentRole, CollaborativeAuditKind, CollaborativePolicy, CommandCandidate,
+    CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent, HandoffState,
+    RecoverableToolExecution, RecoverableToolStatus, RequestedShellExec, SuggestedCommandCache,
     SuggestedCommandCandidate, SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
-    CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository,
-    HandoffCandidatePublisher, HandoffRepository, HandoffRuntime, HandoffShellSessionStore,
-    HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
-    LeaseAcquireRequest, LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest,
-    SuggestedCommandRecallStore, SuggestedCommandRecallStoreError,
+    CheckpointRepository, CollaborativeChildGoalService, CommandCandidateStore,
+    EnvironmentObserver, HandoffAuditRepository, HandoffCandidatePublisher, HandoffRepository,
+    HandoffRuntime, HandoffShellSessionStore, HandoffStoreError, HumanShellLaunchError,
+    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn, LeaseAcquireRequest,
+    LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest, SuggestedCommandRecallStore,
+    SuggestedCommandRecallStoreError,
 };
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
@@ -61,6 +63,7 @@ pub struct ParentShellExecRequest {
     pub cwd: PathBuf,
     pub tool_call_id: String,
     pub shell_log_start: u64,
+    pub suggestion_cache_path: PathBuf,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -117,6 +120,7 @@ pub struct CollaborativeShellExecPolicy<'a, S, L, O, B, P, R> {
     observer: &'a O,
     barrier: &'a B,
     candidate_publisher: &'a P,
+    child_goal: &'a dyn CollaborativeChildGoalService,
     runtime: &'a R,
     serial: Mutex<()>,
 }
@@ -130,6 +134,7 @@ where
     P: HandoffCandidatePublisher,
     R: HandoffRuntime,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: CollaborativeExecutionContext,
         store: &'a S,
@@ -137,6 +142,7 @@ where
         observer: &'a O,
         barrier: &'a B,
         candidate_publisher: &'a P,
+        child_goal: &'a dyn CollaborativeChildGoalService,
         runtime: &'a R,
     ) -> Self {
         Self {
@@ -146,6 +152,7 @@ where
             observer,
             barrier,
             candidate_publisher,
+            child_goal,
             runtime,
             serial: Mutex::new(()),
         }
@@ -170,6 +177,7 @@ where
 
         let now = self.runtime.now_ms();
         let handoff_id = self.runtime.unique_id("handoff");
+        let suggestion_cache_path = self.runtime.handoff_suggestion_cache_path(&handoff_id);
         let child_goal_id = self.runtime.unique_id("goal");
         let candidate_text = build_candidate_command(&request.command, &request.args);
         let requested = RequestedShellExec {
@@ -246,8 +254,10 @@ where
             "observation": before,
             "handoff_host_id": self.runtime.host_id(),
             "handoff_uid": self.runtime.effective_uid(),
+            "suggestion_cache_path": suggestion_cache_path,
         })
         .to_string();
+        let human_request = format!("Review and, if appropriate, run: {candidate_text}");
         let checkpoint = HandoffCheckpoint {
             parent_task_id: request.parent_task_id,
             parent_conversation_id: request.parent_conversation_id,
@@ -265,10 +275,21 @@ where
             shell_log_start: request.shell_log_start,
             control_state: HandoffState::Creating,
             provider_metadata: None,
-            tool_executions: Vec::new(),
+            tool_executions: vec![RecoverableToolExecution {
+                tool_call_id: request.tool_call_id,
+                tool_name: "shell_exec".into(),
+                status: RecoverableToolStatus::Running,
+            }],
         };
         // Recovery checkpoint is durable before the PTY process is spawned.
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
+        let _ = self.child_goal.create_child_goal(
+            &checkpoint.child_goal,
+            &checkpoint.parent_goal,
+            &request.parent_request_summary,
+            &candidate_text,
+            &human_request,
+        );
         let token = self
             .runtime
             .secure_token()
@@ -312,6 +333,7 @@ where
             token,
             context_version: handoff.shell_generation,
             cwd: request.cwd,
+            suggestion_cache_path,
         });
         let returned = match launch_result {
             Ok(returned) => returned,
@@ -364,8 +386,14 @@ where
         handoff.shell_log_end = after.shell_log_end;
         handoff.updated_at_ms = self.runtime.now_ms();
         let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
+        checkpoint.environment_metadata =
+            merge_shell_replay_metadata(&checkpoint.environment_metadata, &returned);
         mark_running_tools_unknown(&mut checkpoint);
         close_child_goal_on_control_returned(&mut checkpoint.child_goal);
+        let _ = self.child_goal.close_child_goal(
+            &checkpoint.child_goal,
+            ChildGoalCloseReason::ControlReturned,
+        );
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
@@ -374,29 +402,6 @@ where
             &handoff_id,
             CollaborativeAuditKind::HumanShellReturned,
         );
-        self.store.release_lease(&handoff_id)?;
-        record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
-        handoff.state = transition(handoff.state, HandoffEvent::StartParentResume)?;
-        handoff.updated_at_ms = self.runtime.now_ms();
-        self.store.save_handoff(&handoff)?;
-        record_audit(
-            self.store,
-            &handoff_id,
-            CollaborativeAuditKind::ParentResumeStarted,
-        );
-        checkpoint.control_state = HandoffState::ResumingParent;
-        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-        handoff.state = transition(handoff.state, HandoffEvent::ParentResumeCompleted)?;
-        handoff.updated_at_ms = self.runtime.now_ms();
-        self.store.save_handoff(&handoff)?;
-        record_audit(
-            self.store,
-            &handoff_id,
-            CollaborativeAuditKind::ParentResumeCompleted,
-        );
-        checkpoint.control_state = HandoffState::Completed;
-        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-
         Ok(HumanHandoffResult {
             handoff_id,
             execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
@@ -418,6 +423,32 @@ where
             uncertain_tool_executions: Vec::new(),
         })
     }
+}
+
+fn merge_shell_replay_metadata(current: &str, returned: &HumanShellReturn) -> String {
+    let mut value = serde_json::from_str::<serde_json::Value>(current)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "shell_session_id".into(),
+            returned.shell_session_id.clone().into(),
+        );
+        object.insert(
+            "shell_session_dir".into(),
+            returned.shell_session_dir.display().to_string().into(),
+        );
+        object.insert("shell_log_start".into(), returned.shell_log_start.into());
+        object.insert("shell_log_end".into(), returned.shell_log_end.into());
+    }
+    value.to_string()
+}
+
+pub fn suggestion_cache_path_from_checkpoint(checkpoint: &HandoffCheckpoint) -> Option<PathBuf> {
+    serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+        .ok()?
+        .get("suggestion_cache_path")?
+        .as_str()
+        .map(PathBuf::from)
 }
 
 pub fn persist_handoff_candidates_for_recall<S: SuggestedCommandRecallStore>(

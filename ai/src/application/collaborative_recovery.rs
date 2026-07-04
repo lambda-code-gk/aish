@@ -259,10 +259,11 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReturnControlFromShell<'a, S, R> {
         handoff.human_shell_exit_code = returned.exit_code;
         handoff.final_shell_cwd = Some(returned.final_cwd.display().to_string());
         handoff.updated_at_ms = self.runtime.now_ms();
+        checkpoint.environment_metadata =
+            merge_shell_replay_metadata(&checkpoint.environment_metadata, returned);
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
-        self.store.release_lease(handoff_id)?;
         Ok(())
     }
 }
@@ -335,6 +336,7 @@ impl<'a, S: RecoveryStore, L: HumanShellLauncher, R: HandoffRuntime>
             token,
             context_version: generation,
             cwd: PathBuf::from(&checkpoint.cwd),
+            suggestion_cache_path: suggestion_cache_path(&checkpoint),
         };
         match self.launcher.launch_and_wait(&request) {
             Ok(returned) => {
@@ -356,6 +358,36 @@ impl<'a, S: RecoveryStore, L: HumanShellLauncher, R: HandoffRuntime>
             }
         }
     }
+}
+
+fn suggestion_cache_path(checkpoint: &HandoffCheckpoint) -> PathBuf {
+    serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("suggestion_cache_path")
+                .and_then(|path| path.as_str())
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(|| PathBuf::from(&checkpoint.cwd).join(".ai-suggestions.json"))
+}
+
+fn merge_shell_replay_metadata(current: &str, returned: &HumanShellReturn) -> String {
+    let mut value = serde_json::from_str::<serde_json::Value>(current)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "shell_session_id".into(),
+            returned.shell_session_id.clone().into(),
+        );
+        object.insert(
+            "shell_session_dir".into(),
+            returned.shell_session_dir.display().to_string().into(),
+        );
+        object.insert("shell_log_start".into(), returned.shell_log_start.into());
+        object.insert("shell_log_end".into(), returned.shell_log_end.into());
+    }
+    value.to_string()
 }
 
 pub struct ResumeReturnedParent<'a, S, R> {

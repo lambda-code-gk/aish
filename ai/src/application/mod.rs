@@ -26,8 +26,9 @@ pub use ask_prompt_input::{
     classify_from_raw_args, plan_interactive_prompt_route, InteractivePromptRoute,
 };
 pub use collaborative_handoff::{
-    persist_handoff_candidates_for_recall, CollaborativeExecutionContext,
-    CollaborativeHandoffError, CollaborativeShellExecPolicy, ParentShellExecRequest,
+    persist_handoff_candidates_for_recall, suggestion_cache_path_from_checkpoint,
+    CollaborativeExecutionContext, CollaborativeHandoffError, CollaborativeShellExecPolicy,
+    ParentShellExecRequest,
 };
 pub use collaborative_recovery::{
     has_unknown_tools, list_recoverable_handoffs, select_recoverable_handoff, CancelHandoff,
@@ -37,8 +38,9 @@ pub use collaborative_recovery::{
 };
 pub use collaborative_side_agent::{
     parse_request_human_action, CollaborativeShellEnvironment, HumanControlReturned,
-    ReadCollaborativeStatus, RequestHumanAction, SideAgentDispatch, SideAgentError,
-    SideAgentInvocation, SideTurn, StartOrResumeSideAgent, HANDOFF_ENV_KEYS,
+    ParentCollaborationContextBuilder, ReadCollaborativeStatus, RequestHumanAction,
+    SideAgentDispatch, SideAgentError, SideAgentInvocation, SideTurn, StartOrResumeSideAgent,
+    HANDOFF_ENV_KEYS,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

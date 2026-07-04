@@ -14,7 +14,8 @@ use ai::domain::{
 };
 use ai::ports::outbound::{
     CheckpointRepository, EnvironmentObservation, EnvironmentObserver, HandoffRepository,
-    HandoffRuntime, HandoffShellSessionStore, ShellSessionIssueRequest,
+    HandoffRuntime, HandoffShellSessionStore, LeaseAcquireRequest, LeaseRepository,
+    ShellSessionIssueRequest,
 };
 use tempfile::TempDir;
 
@@ -192,6 +193,27 @@ fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &s
             },
         )
         .unwrap();
+    if matches!(
+        state,
+        HandoffState::HumanActive
+            | HandoffState::SideAgentRunning
+            | HandoffState::SideAgentWaitingForHuman
+    ) {
+        store
+            .try_acquire_lease(
+                "handoff-test",
+                &LeaseAcquireRequest {
+                    owner_client_id: "ai-parent-42".into(),
+                    owner_process_id: 42,
+                    owner_tty: None,
+                    owner_host: host.into(),
+                    owner_uid: uid,
+                    now_ms: 1,
+                    lease_timeout_ms: 120_000,
+                },
+            )
+            .unwrap();
+    }
 }
 
 fn run_turn(fixture: &Fixture, note: Option<&str>) -> ai::application::SideTurn {
@@ -465,6 +487,20 @@ fn side_agent_reuses_conversation_in_handoff() {
         other => panic!("expected side run, got {other:?}"),
     };
     assert_eq!(first, second);
+}
+
+#[test]
+fn side_run_does_not_replace_or_release_parent_lifetime_lease() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+
+    run_turn(&fixture, None);
+    fixture
+        .service()
+        .finish_side_turn("handoff-test", "done")
+        .unwrap();
+
+    let lease = fixture.store.load_lease("handoff-test").unwrap().unwrap();
+    assert_eq!(lease.owner_client_id, "ai-parent-42");
 }
 
 #[test]
