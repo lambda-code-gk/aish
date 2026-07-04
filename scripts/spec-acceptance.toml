@@ -2229,3 +2229,752 @@ description = "atomic write 失敗時 journal は committed にならない"
 test = "journal_is_not_committed_when_atomic_write_fails"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
 pending = false
+
+# --- 0055 Collaborative Human Handoff ---
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_state_transitions"
+description = "Handoff 状態遷移が domain で検証される"
+test = "handoff_state_transitions_are_validated"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "lease_exclusive"
+description = "handoff lease の排他取得"
+test = "handoff_lease_rejects_concurrent_owner"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "token_hash_not_plaintext"
+description = "token は hash のみ永続化"
+test = "handoff_store_persists_token_hash_only"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "shell_generation_monotonic"
+description = "shell generation 増加で旧 token 失効"
+test = "shell_session_generation_invalidates_old_token"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "candidate_command_no_split"
+description = "候補コマンドを shell 演算子で分解しない"
+test = "candidate_command_preserves_shell_operators_in_args"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "candidate_source_preserved"
+description = "command candidate の source 保持"
+test = "command_candidate_source_roundtrip"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "child_goal_close_reason"
+description = "child goal 終了理由 control_returned"
+test = "child_goal_records_control_returned_not_achievement"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "checkpoint_required_fields"
+description = "checkpoint 必須フィールド"
+test = "checkpoint_contains_required_recovery_fields"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "human_handoff_result_dto"
+description = "HumanHandoffResult serde roundtrip"
+test = "human_handoff_result_serde_roundtrip"
+file_glob = "aibe-protocol/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "collaborative_flag_starts_parent"
+description = "ai --collaborative で親 policy 有効"
+test = "collaborative_flag_enables_parent_policy"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "parent_shell_exec_handoff"
+description = "親 shell_exec が handoff へ変換"
+test = "parent_shell_exec_creates_handoff_instead_of_exec"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "normal_shell_exec_unchanged"
+description = "通常モード shell_exec は自動実行のまま"
+test = "normal_mode_shell_exec_still_auto_executes"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "non_parent_role_skips_handoff"
+description = "PARENT 以外は handoff しない"
+test = "non_parent_role_skips_handoff"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "shell_exec_not_yes_no_approval"
+description = "協調モードで yes/no 承認に置換されない"
+test = "collaborative_shell_exec_skips_approval_prompt"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "parent_tools_barrier_before_handoff"
+description = "handoff 前に開始済み親ツールを完了"
+test = "parent_tools_complete_before_handoff_starts"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "cwd_missing_rejects_handoff"
+description = "cwd 不存在時は shell 起動せずエラー"
+test = "missing_cwd_rejects_human_shell_spawn"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "checkpoint_before_shell"
+description = "shell 起動前に checkpoint が存在"
+test = "checkpoint_persisted_before_human_shell_spawn"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "handoff_env_set_on_spawn"
+description = "human shell に handoff env が設定される"
+test = "human_shell_child_has_handoff_env_vars"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "candidate_in_recall_queue"
+description = "候補が recall から取得できる"
+test = "handoff_candidate_available_via_recall"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "candidate_inserts_command_only"
+description = "Alt+. は command 文字列のみ挿入"
+test = "recall_inserts_command_text_only"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "recall_prev_cycles_candidates"
+description = "Alt+, で逆順に候補をたどれる"
+test = "recall_prev_cycles_handoff_candidates"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "candidate_not_treated_as_executed"
+description = "候補挿入だけでは達成扱いにしない"
+test = "candidate_insertion_does_not_mark_command_executed"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "human_shell_ctrl_d_returns"
+description = "Ctrl+D で親へ制御返却"
+test = "human_shell_ctrl_d_returns_control_to_parent"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "human_shell_exit_returns"
+description = "exit / exit 1 も正常返却"
+test = "human_shell_exit_returns_control_regardless_of_code"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "final_shell_cwd_recorded"
+description = "終了時 final cwd を保存"
+test = "handoff_records_final_shell_cwd_on_return"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "tool_result_not_success"
+description = "requested_command_completion=unknown"
+test = "handoff_tool_result_marks_command_completion_unknown"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "parent_reobserves"
+description = "返却後に再観測コンテキストを親へ渡す"
+test = "parent_receives_reobservation_after_handoff"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "parent_state_normal_flow"
+description = "RETURNED→RESUMING_PARENT→COMPLETED"
+test = "handoff_completes_normal_parent_resume_flow"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "no_parallel_human_shells"
+description = "2 つ目の handoff は直列待ち"
+test = "second_shell_exec_waits_for_first_handoff"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_conversation_continues"
+description = "side agent conversation 継続"
+test = "side_agent_reuses_conversation_in_handoff"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_conversation_unique"
+description = "handoff あたり side conversation は 1 つ"
+test = "side_conversation_unique_per_handoff"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_inherits_parent_context"
+description = "side turn に親文脈が含まれる"
+test = "side_agent_receives_parent_task_context"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "conversation_summary_on_side_turn"
+description = "side 前後で要約が更新される"
+test = "conversation_summary_updates_on_side_turn"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_shell_exec_normal"
+description = "side の shell_exec は自動実行"
+test = "side_agent_shell_exec_executes_normally"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "request_human_action"
+description = "人間待ちで新 shell を作らない"
+test = "side_agent_waiting_does_not_spawn_new_shell"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "bare_ai_human_active_ui"
+description = "HUMAN_ACTIVE で裸 ai が入力 UI"
+test = "bare_ai_in_human_active_opens_input_ui"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "bare_ai_resumes_side"
+description = "WAITING で裸 ai が side 再開"
+test = "bare_ai_resumes_side_agent_from_waiting"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "ai_note_becomes_user_note"
+description = "ai 補足が user_note に"
+test = "ai_with_note_sets_user_note_on_resume"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "human_control_returned_fields"
+description = "HumanControlReturned 必須フィールド"
+test = "human_control_returned_includes_required_fields"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_agent_running_blocks_new_run"
+description = "RUNNING 中は新 run 拒否"
+test = "side_agent_running_rejects_new_run"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "standalone_ignores_handoff"
+description = "--standalone は handoff 無視"
+test = "standalone_mode_ignores_handoff_context"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "standalone_strips_handoff_env"
+description = "standalone 子に token 無し"
+test = "standalone_child_process_has_no_handoff_token"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "ai_status_no_llm"
+description = "ai status は LLM を呼ばない"
+test = "ai_status_does_not_invoke_llm"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "status_no_token"
+description = "status 出力に token 無し"
+test = "ai_status_never_prints_handoff_token"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "status_shows_handoff_fields"
+description = "協調 handoff フィールドを表示"
+test = "ai_status_shows_collaborative_handoff_fields"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "existing_ai_status_regression"
+description = "handoff 無し時は従来 status"
+test = "ai_status_unchanged_without_active_handoff"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "stale_token_rejected"
+description = "古い generation を拒否"
+test = "stale_handoff_token_is_rejected"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "uid_mismatch_rejected"
+description = "UID 不一致を拒否"
+test = "handoff_rejected_when_effective_uid_mismatches"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "host_id_mismatch_rejected"
+description = "host ID 不一致を拒否"
+test = "handoff_rejected_when_host_id_mismatches"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "tampered_handoff_id_rejected"
+description = "改変 handoff ID を拒否"
+test = "tampered_handoff_id_is_rejected"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "incomplete_env_no_fallback"
+description = "env 欠落で通常 ai に落とさない"
+test = "incomplete_handoff_env_shows_error_not_fallback"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "nested_collaborative_rejected"
+description = "入れ子 --collaborative 拒否"
+test = "nested_collaborative_flag_is_rejected"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_no_nested_human_shell"
+description = "side から human shell 起動禁止"
+test = "side_agent_cannot_spawn_nested_human_shell"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "orphaned_requires_resume"
+description = "ORPHANED は ai resume を促す"
+test = "orphaned_handoff_direct_ai_shows_resume_hint"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "token_not_in_llm_context"
+description = "LLM 入力に token 無し"
+test = "handoff_token_not_in_llm_context"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "orphaned_on_abnormal_exit"
+description = "異常終了で ORPHANED"
+test = "abnormal_shell_exit_marks_handoff_orphaned"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "orphaned_on_parent_crash"
+description = "親プロセス消失で ORPHANED"
+test = "parent_process_loss_marks_handoff_orphaned"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "resume_orphaned_shell"
+description = "ai resume で新 human shell"
+test = "resume_orphaned_spawns_new_shell_with_rotated_token"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "resume_rejects_old_token"
+description = "旧 token を拒否"
+test = "resume_rotates_token_and_rejects_old_generation"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "resume_exclusive"
+description = "二重 resume 拒否"
+test = "second_resume_rejected_while_lease_active"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "resume_lists_multiple_handoffs"
+description = "複数 handoff 時に一覧表示"
+test = "resume_lists_multiple_recoverable_handoffs"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "resume_returned_parent_only"
+description = "RETURNED は親のみ再開"
+test = "resume_returned_restarts_parent_without_shell"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "parent_semantic_resume"
+description = "意味的親 run 再開"
+test = "resumed_parent_run_carries_pending_shell_exec_context"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "unknown_tools_not_reexecuted"
+description = "UNKNOWN を自動再実行しない"
+test = "recovery_does_not_auto_rerun_unknown_tools"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "side_crash_unknown_tools"
+description = "side クラッシュで UNKNOWN"
+test = "side_agent_crash_marks_running_tools_unknown"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "waiting_for_human_survives_reboot"
+description = "WAITING 状態を復旧後も維持"
+test = "resume_preserves_pending_human_request_state"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "checkpoint_before_shell_crash"
+description = "checkpoint 後 shell 前失敗で CANCELLED"
+test = "handoff_cancelled_when_shell_never_started_after_checkpoint"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "parent_resume_failed_returns"
+description = "RESUMING_PARENT 失敗で RETURNED"
+test = "parent_resume_failure_returns_to_returned_state"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "child_goal_open_while_orphaned"
+description = "ORPHANED では child goal を閉じない"
+test = "orphaned_handoff_keeps_child_goal_open"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "side_running_ctrl_d_interrupts"
+description = "side 実行中 Ctrl+D で RETURNED"
+test = "ctrl_d_during_side_run_returns_to_parent"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "lease_lost_no_auto_rerun"
+description = "lease 失効だけでは自動再開しない"
+test = "lease_expiry_alone_does_not_auto_resume_parent"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "prompt_shows_collaborative_state"
+description = "プロンプトに協調状態"
+test = "human_shell_prompt_shows_collaborative_status"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "prompt_waiting_shows_hint"
+description = "人間待ち時のプロンプト表示"
+test = "human_shell_prompt_shows_waiting_for_side_agent"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "token_redacted_in_shell_log"
+description = "shell log に token 無し"
+test = "handoff_token_redacted_from_shell_log"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "token_not_in_replay"
+description = "replay に token 無し"
+test = "handoff_token_not_in_replay_output"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "ctrl_c_does_not_kill_parent"
+description = "Ctrl+C が親を終了しない"
+test = "ctrl_c_in_human_shell_does_not_terminate_parent"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "job_control_works"
+description = "Ctrl+Z / fg / bg が動作"
+test = "human_shell_job_control_fg_bg"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "long_running_lease_held"
+description = "長時間コマンド中 lease 維持"
+test = "heartbeat_maintains_lease_during_long_command"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "audit_events_emitted"
+description = "監査イベントが記録される"
+test = "collaborative_audit_events_are_emitted"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "collaborative_config_wired"
+description = "[collaborative] 設定が読める"
+test = "collaborative_config_defaults_match_spec"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "normal_ai_unchanged_regression"
+description = "非協調 ai smoke"
+test = "normal_ai_entry_unchanged_regression"
+file_glob = "ai/tests/0055_collaborative_regression.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "docs_architecture_synced"
+description = "architecture.md に協調節"
+test = "docs_architecture_mentions_collaborative_handoff"
+file_glob = "ai/tests/0055_collaborative_regression.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "manual_checklist_exists"
+description = "manual 手順あり"
+test = "manual_collaborative_handoff_checklist_exists"
+file_glob = "ai/tests/0055_collaborative_regression.rs"
+pending = true
