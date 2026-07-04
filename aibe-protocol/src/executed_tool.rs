@@ -282,6 +282,7 @@ fn tool_approval_origin_audit_suffix(origin: ToolApprovalOrigin) -> &'static str
     match origin {
         ToolApprovalOrigin::UiYes => "ui=y",
         ToolApprovalOrigin::UiNo => "ui=n",
+        ToolApprovalOrigin::Unavailable => "ui=unavailable",
     }
 }
 

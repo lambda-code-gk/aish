@@ -66,6 +66,8 @@ pub struct DiffSummary {
     pub lines_removed: usize,
     pub before_bytes: usize,
     pub after_bytes: usize,
+    /// diff 作業量上限等で行数集計を省略した場合は false。
+    pub line_stats_known: bool,
 }
 
 impl DiffSummary {
@@ -75,9 +77,14 @@ impl DiffSummary {
             FileChangeOperation::Create => "create",
             FileChangeOperation::Replace | FileChangeOperation::Patch => "modify",
         };
+        let line_part = if self.line_stats_known {
+            format!("+{} -{}", self.lines_added, self.lines_removed)
+        } else {
+            "line changes unknown".to_string()
+        };
         format!(
-            "{verb} {display_path} (+{} -{}, {} -> {} bytes)",
-            self.lines_added, self.lines_removed, self.before_bytes, self.after_bytes
+            "{verb} {display_path} ({line_part}, {} -> {} bytes)",
+            self.before_bytes, self.after_bytes
         )
     }
 }

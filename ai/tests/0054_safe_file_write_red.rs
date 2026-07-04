@@ -175,8 +175,7 @@ mod phase8_file_write_approval_ui {
     #[test]
     fn file_write_approval_ui_rejects_non_tty() {
         let decision = file_write_approval_decision_from_input(false, "y\n");
-        assert!(!decision.approved);
-        assert_eq!(decision.approval_origin, ToolApprovalOrigin::UiNo);
+        assert_eq!(decision, ToolApprovalDecision::Unavailable);
     }
 
     #[test]
@@ -207,11 +206,7 @@ mod phase8_file_write_approval_ui {
                 |prompt: ToolApprovalPrompt| {
                     seen = true;
                     assert_eq!(prompt.tool_name, WRITE_FILE);
-                    let decision = file_write_approval_decision_from_input(true, "y\n");
-                    ToolApprovalDecision {
-                        approved: decision.approved,
-                        approval_origin: decision.approval_origin,
-                    }
+                    file_write_approval_decision_from_input(true, "y\n")
                 },
             ),
         )
@@ -240,13 +235,7 @@ mod phase8_file_write_approval_ui {
                     approved: false,
                     approval_origin: aibe_protocol::ShellExecApprovalOrigin::UiNo,
                 },
-                |_| {
-                    let decision = file_write_approval_decision_from_input(true, "n\n");
-                    ToolApprovalDecision {
-                        approved: decision.approved,
-                        approval_origin: decision.approval_origin,
-                    }
-                },
+                |_| file_write_approval_decision_from_input(true, "n\n"),
             ),
         )
         .expect("agent turn");

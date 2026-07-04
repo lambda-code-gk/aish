@@ -33,10 +33,7 @@ fn aibe_client_tool_approval_roundtrip() {
                 seen_prompt = true;
                 assert_eq!(prompt.tool_name, WRITE_FILE);
                 assert_eq!(prompt.preview, "+hello\n");
-                ToolApprovalDecision {
-                    approved: true,
-                    approval_origin: ToolApprovalOrigin::UiYes,
-                }
+                ToolApprovalDecision::Approved(ToolApprovalOrigin::UiYes)
             },
         ),
     )

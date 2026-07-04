@@ -96,6 +96,8 @@ pub enum ShellExecApprovalOrigin {
 pub enum ToolApprovalOrigin {
     UiYes,
     UiNo,
+    /// 対話 stdin が使えない等、承認 UI 自体が利用不能。
+    Unavailable,
 }
 
 /// プロトコル上のメッセージ（serde 用）。

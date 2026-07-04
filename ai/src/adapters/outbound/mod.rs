@@ -26,6 +26,7 @@ mod terminal_size;
 pub mod toml_config;
 mod yes_exec_cache;
 
+pub use ::aibe_client::ToolApprovalDecision;
 pub use aibe_client::AibeUnixClient;
 pub use aibe_config::{load_shell_exec_approval, AibeShellExecApproval};
 pub use aibe_external_commands::external_command_names;
@@ -42,7 +43,7 @@ pub use file_write_approval_ui::{
     approval_prompt_stderr_lines as file_write_approval_prompt_stderr_lines,
     escape_for_file_write_approval_display, file_write_approval_decision_from_input,
     parse_file_write_approval_choice, prompt_file_write_approval,
-    stdin_ready_for_file_write_approval, ToolApprovalDecision,
+    stdin_ready_for_file_write_approval,
 };
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{

@@ -159,14 +159,10 @@ impl FilesystemFileChangeJournal {
             "status".to_string(),
             serde_json::Value::String(status.to_string()),
         );
-        write_private_file(
-            &meta_path,
-            serde_json::to_string_pretty(&value)
-                .map_err(|_| FileChangeJournalError::Failed)?
-                .as_bytes(),
-        )
-        .map_err(|_| FileChangeJournalError::Failed)?;
-        Ok(())
+        let updated =
+            serde_json::to_string_pretty(&value).map_err(|_| FileChangeJournalError::Failed)?;
+        atomic_write_private_file(&meta_path, updated.as_bytes())
+            .map_err(|_| FileChangeJournalError::Failed)
     }
 
     fn ensure_capacity(&self, incoming_bytes: u64) -> Result<(), FileChangeJournalError> {
@@ -230,6 +226,10 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
+}
+
+fn atomic_write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    super::secure_fs::atomic_write_in_place(path, bytes, Some(0o600), ".metadata-")
 }
 
 fn next_change_id() -> String {
@@ -389,7 +389,6 @@ mod tests {
                 after_bytes: 3,
                 file_mode: None,
                 operation: FileChangeOperation::Create,
-                raw_patch: Some("should not persist".to_string()),
             })
             .expect("save");
         assert!(!entry.dir.join("before.bin").exists());

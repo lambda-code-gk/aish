@@ -213,7 +213,6 @@ impl ToolExecutor for ApplyPatchTool {
             tool_name: self.name().as_str().to_string(),
             plan,
             sanitized_arguments: sanitized,
-            raw_patch: Some(parsed.patch),
         };
 
         match self.executor.execute(request, ctx, None, None).await {

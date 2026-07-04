@@ -182,6 +182,8 @@ impl ToolApprovalGate for ConnectionApprovalGate {
             if id == prompt_id && turn_id == self.turn_id && tc_id == tool_call_id {
                 return if approved {
                     ToolApprovalGateOutcome::Approved(approval_origin)
+                } else if approval_origin == aibe_protocol::ToolApprovalOrigin::Unavailable {
+                    ToolApprovalGateOutcome::Unavailable
                 } else {
                     ToolApprovalGateOutcome::Denied(approval_origin)
                 };

@@ -241,7 +241,6 @@ async fn execute_inner(
             after_bytes: request.plan.after_bytes.len(),
             file_mode: preserve_mode,
             operation: request.plan.operation,
-            raw_patch: request.raw_patch.clone(),
         })
         .await;
 
@@ -295,15 +294,27 @@ async fn execute_inner(
         .await
         .is_err()
     {
-        let executed = error_executed(
-            &request,
+        let output = format!(
+            "wrote {} bytes (change_id={}) warning: journal commit status update failed",
+            request.plan.after_bytes.len(),
+            entry.change_id
+        );
+        let mut executed = ExecutedToolCall::ok(
+            request.tool_call_id.clone(),
+            request.tool_name.clone(),
+            request.sanitized_arguments.clone(),
+            output,
+        )
+        .with_file_write_audit(
             approval_mode_str,
             approval_outcome_for_mode(approval_mode, approval_origin),
             approval_origin,
-            FileChangeError::JournalFailed,
-            "journal status update failed",
         );
-        return Err((FileChangeError::JournalFailed, executed));
+        executed.risk_class = Some(ToolRiskClass::WriteLike);
+        return Ok(FileChangeExecuteResult {
+            change_id: entry.change_id,
+            executed,
+        });
     }
 
     let output = format!(

@@ -15,7 +15,6 @@ pub struct FileChangeExecuteRequest {
     pub tool_name: String,
     pub plan: FileChangePlan,
     pub sanitized_arguments: Value,
-    pub raw_patch: Option<String>,
 }
 
 /// 成功時の commit 結果。

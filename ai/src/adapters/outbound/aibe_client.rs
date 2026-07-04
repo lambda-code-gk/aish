@@ -39,11 +39,7 @@ fn shell_exec_approval_callback(
 }
 
 fn tool_approval_callback(prompt: aibe_client::ToolApprovalPrompt) -> ToolApprovalDecision {
-    let decision = prompt_file_write_approval(prompt);
-    ToolApprovalDecision {
-        approved: decision.approved,
-        approval_origin: decision.approval_origin,
-    }
+    prompt_file_write_approval(prompt)
 }
 
 impl AibeUnixClient {

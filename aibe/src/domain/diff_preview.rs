@@ -48,6 +48,7 @@ pub fn build_unified_diff_preview_bounded(
         lines_removed: 0,
         before_bytes,
         after_bytes,
+        line_stats_known: false,
     };
 
     if diff_work_exceeds_limits(
@@ -76,6 +77,7 @@ pub fn build_unified_diff_preview_bounded(
         summary: DiffSummary {
             lines_added,
             lines_removed,
+            line_stats_known: true,
             ..summary
         },
         preview_truncated,
@@ -303,5 +305,10 @@ mod tests {
         assert!(preview.preview_truncated);
         assert_eq!(preview.summary.before_bytes, before.len());
         assert_eq!(preview.summary.after_bytes, after.len());
+        assert!(!preview.summary.line_stats_known);
+        assert!(preview
+            .summary
+            .display_line("big.txt")
+            .contains("line changes unknown"));
     }
 }

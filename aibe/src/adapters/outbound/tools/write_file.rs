@@ -168,7 +168,6 @@ impl ToolExecutor for WriteFileTool {
             tool_name: self.name().as_str().to_string(),
             plan,
             sanitized_arguments: sanitized,
-            raw_patch: None,
         };
 
         match self.executor.execute(request, ctx, None, None).await {

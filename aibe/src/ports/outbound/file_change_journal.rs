@@ -19,8 +19,6 @@ pub struct JournalSaveRequest {
     pub after_bytes: usize,
     pub file_mode: Option<u32>,
     pub operation: FileChangeOperation,
-    /// 監査用。metadata には保存しない。
-    pub raw_patch: Option<String>,
 }
 
 /// 保存済み journal エントリ。

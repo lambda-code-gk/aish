@@ -143,7 +143,6 @@ pub fn create_request(
         tool_name: "write_file".into(),
         plan,
         sanitized_arguments: sanitized,
-        raw_patch: None,
     }
 }
 

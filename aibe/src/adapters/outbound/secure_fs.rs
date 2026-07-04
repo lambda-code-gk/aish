@@ -2,7 +2,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,26 +14,18 @@ pub(crate) fn create_dir_0700(path: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn set_permissions_0600(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    fs::set_permissions(path, perms)
+    set_permissions_mode(path, 0o600)
 }
 
 pub(crate) fn set_permissions_0700(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o700);
-    fs::set_permissions(path, perms)
+    set_permissions_mode(path, 0o700)
 }
 
-fn default_create_mode() -> u32 {
-    let umask = unsafe {
-        let old = libc::umask(0);
-        libc::umask(old);
-        old
-    };
-    0o666 & !umask
+fn set_permissions_mode(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(mode);
+    fs::set_permissions(path, perms)
 }
 
 /// 同ディレクトリへ temp を書き、rename で置換する（設計 §18）。
@@ -52,21 +44,33 @@ pub(crate) fn atomic_write_in_place(
     let temp = parent.join(format!("{temp_prefix}{}.{}.tmp", std::process::id(), seq));
 
     let result = (|| {
-        let mode = preserve_mode.unwrap_or_else(default_create_mode) & 0o777;
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(mode)
-            .open(&temp)?;
-        set_permissions_0600(&temp)?;
+        let final_mode = if let Some(mode) = preserve_mode {
+            mode & 0o777
+        } else {
+            let file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o666)
+                .open(&temp)?;
+            drop(file);
+            let mode = fs::metadata(&temp)?.permissions().mode() & 0o777;
+            set_permissions_mode(&temp, 0o600)?;
+            mode
+        };
+
+        let mut file = if preserve_mode.is_some() {
+            OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&temp)?
+        } else {
+            OpenOptions::new().write(true).open(&temp)?
+        };
         file.write_all(bytes)?;
         file.sync_all()?;
+        set_permissions_mode(&temp, final_mode)?;
         fs::rename(&temp, path)?;
-        if let Some(mode) = preserve_mode {
-            set_permissions_mode(path, mode)?;
-        } else {
-            set_permissions_mode(path, default_create_mode())?;
-        }
         let _ = File::open(parent).and_then(|f| f.sync_all());
         Ok(())
     })();
@@ -75,11 +79,4 @@ pub(crate) fn atomic_write_in_place(
         let _ = fs::remove_file(&temp);
     }
     result
-}
-
-fn set_permissions_mode(path: &Path, mode: u32) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(mode);
-    fs::set_permissions(path, perms)
 }

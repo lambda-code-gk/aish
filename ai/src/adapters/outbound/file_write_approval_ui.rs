@@ -2,6 +2,7 @@
 
 use std::io::{IsTerminal, Write};
 
+use aibe_client::ToolApprovalDecision;
 use aibe_client::ToolApprovalPrompt;
 use aibe_protocol::ToolApprovalOrigin;
 
@@ -75,42 +76,19 @@ pub fn parse_file_write_approval_choice(line: &str) -> Option<bool> {
     }
 }
 
-fn denied_non_tty() -> ToolApprovalDecision {
-    ToolApprovalDecision {
-        approved: false,
-        approval_origin: ToolApprovalOrigin::UiNo,
-    }
-}
-
 /// テスト向け: stdin 準備状態と入力行から承認結果を決める。
 pub fn file_write_approval_decision_from_input(
     stdin_ready: bool,
     choice_line: &str,
 ) -> ToolApprovalDecision {
     if !stdin_ready {
-        return denied_non_tty();
+        return ToolApprovalDecision::Unavailable;
     }
     match parse_file_write_approval_choice(choice_line) {
-        Some(true) => ToolApprovalDecision {
-            approved: true,
-            approval_origin: ToolApprovalOrigin::UiYes,
-        },
-        Some(false) => ToolApprovalDecision {
-            approved: false,
-            approval_origin: ToolApprovalOrigin::UiNo,
-        },
-        None => ToolApprovalDecision {
-            approved: false,
-            approval_origin: ToolApprovalOrigin::UiNo,
-        },
+        Some(true) => ToolApprovalDecision::Approved(ToolApprovalOrigin::UiYes),
+        Some(false) => ToolApprovalDecision::Denied(ToolApprovalOrigin::UiNo),
+        None => ToolApprovalDecision::Denied(ToolApprovalOrigin::UiNo),
     }
-}
-
-/// write-like tool 承認の応答（`aibe-client` transport へ返す）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToolApprovalDecision {
-    pub approved: bool,
-    pub approval_origin: ToolApprovalOrigin,
 }
 
 /// ユーザーに yes/no を求め、承認なら decision を返す。
@@ -119,19 +97,19 @@ pub fn prompt_file_write_approval(prompt: ToolApprovalPrompt) -> ToolApprovalDec
         eprintln!("{line}");
     }
     if !stdin_ready_for_file_write_approval() {
-        eprintln!("ai: file write denied (non-interactive stdin)");
-        return denied_non_tty();
+        eprintln!("ai: file write approval unavailable (non-interactive stdin)");
+        return ToolApprovalDecision::Unavailable;
     }
     eprint!("Apply this change? [y/N] ");
     let _ = std::io::stderr().flush();
     let mut line = String::new();
     let Ok(n) = std::io::stdin().read_line(&mut line) else {
-        eprintln!("ai: file write denied (stdin unavailable)");
-        return denied_non_tty();
+        eprintln!("ai: file write approval unavailable (stdin read failed)");
+        return ToolApprovalDecision::Unavailable;
     };
     if n == 0 {
-        eprintln!("ai: file write denied (non-interactive stdin)");
-        return denied_non_tty();
+        eprintln!("ai: file write approval unavailable (non-interactive stdin)");
+        return ToolApprovalDecision::Unavailable;
     }
     file_write_approval_decision_from_input(true, &line)
 }
@@ -201,9 +179,8 @@ mod tests {
     }
 
     #[test]
-    fn non_tty_denies_before_read() {
+    fn non_tty_is_unavailable() {
         let decision = file_write_approval_decision_from_input(false, "y\n");
-        assert!(!decision.approved);
-        assert_eq!(decision.approval_origin, ToolApprovalOrigin::UiNo);
+        assert_eq!(decision, ToolApprovalDecision::Unavailable);
     }
 }

@@ -45,10 +45,21 @@ pub struct ToolApprovalPrompt {
     pub preview_truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolApprovalDecision {
-    pub approved: bool,
-    pub approval_origin: ToolApprovalOrigin,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolApprovalDecision {
+    Approved(ToolApprovalOrigin),
+    Denied(ToolApprovalOrigin),
+    Unavailable,
+}
+
+impl ToolApprovalDecision {
+    pub fn to_wire(self) -> (bool, ToolApprovalOrigin) {
+        match self {
+            Self::Approved(origin) => (true, origin),
+            Self::Denied(origin) => (false, origin),
+            Self::Unavailable => (false, ToolApprovalOrigin::Unavailable),
+        }
+    }
 }
 
 /// `agent_turn` 中の承認 callback 集約（設計 §14.4）。
@@ -76,10 +87,7 @@ where
 }
 
 fn deny_tool_approval(_: ToolApprovalPrompt) -> ToolApprovalDecision {
-    ToolApprovalDecision {
-        approved: false,
-        approval_origin: ToolApprovalOrigin::UiNo,
-    }
+    ToolApprovalDecision::Denied(ToolApprovalOrigin::UiNo)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,14 +285,15 @@ pub fn agent_turn_with_client_tools_on_stream(
                     preview: preview.clone(),
                     preview_truncated,
                 });
+                let (approved, approval_origin) = decision.to_wire();
                 send_request(
                     &mut writer,
                     &ClientRequest::ToolApproval {
                         id,
                         turn_id,
                         tool_call_id,
-                        approved: decision.approved,
-                        approval_origin: decision.approval_origin,
+                        approved,
+                        approval_origin,
                     },
                 )
                 .map_err(ClientError::Connect)?;

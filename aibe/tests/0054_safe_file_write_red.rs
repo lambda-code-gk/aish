@@ -464,7 +464,6 @@ fn journal_capacity_exceeded_blocks_write() {
         after_bytes: 5,
         file_mode: Some(0o644),
         operation: FileChangeOperation::Replace,
-        raw_patch: None,
     }));
     assert!(first.is_ok(), "first journal save should fit");
 
@@ -478,7 +477,6 @@ fn journal_capacity_exceeded_blocks_write() {
         after_bytes: 5,
         file_mode: Some(0o644),
         operation: FileChangeOperation::Replace,
-        raw_patch: None,
     }));
     assert!(matches!(
         second,
@@ -509,7 +507,6 @@ fn journal_records_absent_before_for_create() {
             after_bytes: 3,
             file_mode: None,
             operation: FileChangeOperation::Create,
-            raw_patch: None,
         }))
         .expect("save");
     assert!(!entry.dir.join("before.bin").exists());
@@ -529,7 +526,6 @@ fn journal_metadata_excludes_raw_patch() {
         .enable_all()
         .build()
         .expect("runtime");
-    let patch = "+++ b/file\n+secret patch body\n".to_string();
     let entry = rt
         .block_on(journal.save_before(JournalSaveRequest {
             tool: "apply_patch".to_string(),
@@ -541,15 +537,15 @@ fn journal_metadata_excludes_raw_patch() {
             after_bytes: 4,
             file_mode: Some(0o644),
             operation: FileChangeOperation::Patch,
-            raw_patch: Some(patch.clone()),
         }))
         .expect("save");
     let meta_text = std::fs::read_to_string(entry.dir.join("metadata.json")).expect("read meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta_text).expect("parse meta");
     assert!(
-        !meta_text.contains("secret patch body"),
-        "raw patch must not be persisted in metadata"
+        meta.get("raw_patch").is_none(),
+        "journal metadata must not contain raw patch fields"
     );
-    assert!(!meta_text.contains("+++ b/file"));
+    assert!(!meta_text.contains("+++"));
 }
 
 #[test]
@@ -576,7 +572,6 @@ fn journal_uses_restricted_permissions() {
             after_bytes: 6,
             file_mode: Some(0o644),
             operation: FileChangeOperation::Replace,
-            raw_patch: None,
         }))
         .expect("save");
     assert_eq!(path_mode(&root).expect("root mode"), 0o700);
@@ -615,7 +610,6 @@ fn journal_retention_cleanup_removes_expired() {
             after_bytes: 1,
             file_mode: None,
             operation: FileChangeOperation::Create,
-            raw_patch: None,
         }))
         .expect("save");
     set_journal_created_at_for_test(&entry.dir, "2000-01-01T00:00:00Z").expect("backdate");
@@ -650,7 +644,6 @@ fn journal_saves_before_state_bytes() {
             after_bytes: 6,
             file_mode: Some(0o644),
             operation: FileChangeOperation::Replace,
-            raw_patch: None,
         }))
         .expect("save");
     let saved = std::fs::read(entry.dir.join("before.bin")).expect("before.bin");
@@ -1531,10 +1524,7 @@ fn mixed_shell_and_write_approval_in_one_turn() {
             |prompt: ToolApprovalPrompt| {
                 tool_seen = true;
                 assert_eq!(prompt.tool_name, WRITE_FILE);
-                ToolApprovalDecision {
-                    approved: false,
-                    approval_origin: ToolApprovalOrigin::UiNo,
-                }
+                ToolApprovalDecision::Denied(ToolApprovalOrigin::UiNo)
             },
         ),
     )

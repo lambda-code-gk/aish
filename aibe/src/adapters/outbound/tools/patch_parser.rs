@@ -171,6 +171,63 @@ fn count_hunk_lines(lines: &[PatchLine]) -> (usize, usize) {
     (old, new)
 }
 
+fn expected_new_start(hunk: &PatchHunk, line_offset: i64) -> Result<usize, PatchError> {
+    if hunk.old_len == 0 {
+        if hunk.old_start == 0 {
+            let start = 1_i64.saturating_add(line_offset);
+            if start < 1 {
+                return Err(PatchError::InvalidPatch);
+            }
+            return Ok(start as usize);
+        }
+        let start = i64::from(hunk.old_start as u32)
+            .saturating_add(1)
+            .saturating_add(line_offset);
+        if start < 1 {
+            return Err(PatchError::InvalidPatch);
+        }
+        return Ok(start as usize);
+    }
+    if hunk.new_len == 0 {
+        let start = i64::from(hunk.old_start as u32)
+            .saturating_add(line_offset)
+            .saturating_sub(i64::from(hunk.old_len as u32));
+        if start < 1 {
+            return Err(PatchError::InvalidPatch);
+        }
+        return Ok(start as usize);
+    }
+    let start = i64::from(hunk.old_start as u32).saturating_add(line_offset);
+    if start < 1 {
+        return Err(PatchError::InvalidPatch);
+    }
+    Ok(start as usize)
+}
+
+fn apply_position(hunk: &PatchHunk, line_offset: i64) -> Result<usize, PatchError> {
+    if hunk.old_len == 0 {
+        if hunk.old_start == 0 {
+            let pos = line_offset;
+            if pos < 0 {
+                return Err(PatchError::PatchConflict);
+            }
+            return Ok(pos as usize);
+        }
+        let pos = i64::from(hunk.old_start as u32).saturating_add(line_offset);
+        if pos < 0 {
+            return Err(PatchError::PatchConflict);
+        }
+        return Ok(pos as usize);
+    }
+    let pos = i64::from(hunk.old_start as u32)
+        .saturating_sub(1)
+        .saturating_add(line_offset);
+    if pos < 0 {
+        return Err(PatchError::PatchConflict);
+    }
+    Ok(pos as usize)
+}
+
 /// ファイル行へ hunk を適用する（fuzzy match なし）。
 pub(crate) fn apply_hunks_to_lines(
     file_lines: &FileLines,
@@ -181,28 +238,12 @@ pub(crate) fn apply_hunks_to_lines(
     let mut line_offset = 0i64;
 
     for hunk in hunks {
-        let expected_new_start = if hunk.old_start == 0 && hunk.old_len == 0 {
-            hunk.new_start
-        } else {
-            let idx = hunk.old_start as i64 + line_offset;
-            if idx < 1 {
-                return Err(PatchError::InvalidPatch);
-            }
-            idx as usize
-        };
+        let expected_new_start = expected_new_start(hunk, line_offset)?;
         if hunk.new_start != expected_new_start {
             return Err(PatchError::InvalidPatch);
         }
 
-        let pos = if hunk.old_start == 0 && hunk.old_len == 0 {
-            0
-        } else {
-            let idx = hunk.old_start as i64 - 1 + line_offset;
-            if idx < 0 {
-                return Err(PatchError::PatchConflict);
-            }
-            idx as usize
-        };
+        let pos = apply_position(hunk, line_offset)?;
         if pos > lines.len() {
             return Err(PatchError::PatchConflict);
         }
@@ -394,5 +435,80 @@ mod tests {
         let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
         assert_eq!(result.lines, vec!["line".to_string()]);
         assert!(!result.trailing_newline);
+    }
+
+    #[test]
+    fn patch_can_insert_into_non_empty_file() {
+        let file = lines("line1\nline2\n");
+        let patch = "@@ -1,0 +2,1 @@\n+inserted\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(
+            result.lines,
+            vec![
+                "line1".to_string(),
+                "inserted".to_string(),
+                "line2".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn patch_can_append_to_non_empty_file() {
+        let file = lines("line1\nline2\nline3\n");
+        let patch = "@@ -3,0 +4,1 @@\n+appended\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(
+            result.lines,
+            vec![
+                "line1".to_string(),
+                "line2".to_string(),
+                "line3".to_string(),
+                "appended".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn patch_can_delete_line_without_context() {
+        let file = lines("line1\nline2\nline3\n");
+        let patch = "@@ -2,1 +1,0 @@\n-line2\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(result.lines, vec!["line1".to_string(), "line3".to_string()]);
+    }
+
+    #[test]
+    fn patch_can_insert_at_beginning_of_non_empty_file() {
+        let file = lines("line1\nline2\n");
+        let patch = "@@ -0,0 +1,1 @@\n+first\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(
+            result.lines,
+            vec![
+                "first".to_string(),
+                "line1".to_string(),
+                "line2".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn patch_can_apply_multiple_zero_length_hunks() {
+        let file = lines("line1\nline2\n");
+        let patch = "@@ -1,0 +2,1 @@\n+middle\n@@ -2,0 +4,1 @@\n+tail\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(
+            result.lines,
+            vec![
+                "line1".to_string(),
+                "middle".to_string(),
+                "line2".to_string(),
+                "tail".to_string(),
+            ]
+        );
     }
 }
