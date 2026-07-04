@@ -3,6 +3,7 @@ mod ask_launch;
 mod ask_prompt_input;
 pub mod client_tools;
 mod collaborative_handoff;
+mod collaborative_recovery;
 mod collaborative_side_agent;
 mod feature_executor;
 mod history;
@@ -27,6 +28,12 @@ pub use ask_prompt_input::{
 pub use collaborative_handoff::{
     persist_handoff_candidates_for_recall, CollaborativeExecutionContext,
     CollaborativeHandoffError, CollaborativeShellExecPolicy, ParentShellExecRequest,
+};
+pub use collaborative_recovery::{
+    has_unknown_tools, list_recoverable_handoffs, select_recoverable_handoff, CancelHandoff,
+    CollaborativeRecoveryError, MarkOrphaned, ParentResumeContext, ReconcileStaleHandoffs,
+    RecoverableHandoffSummary, RecoveryOwner, ResumeOrphanedHandoff, ResumeReturnedParent,
+    ReturnControlFromShell,
 };
 pub use collaborative_side_agent::{
     parse_request_human_action, CollaborativeShellEnvironment, HumanControlReturned,

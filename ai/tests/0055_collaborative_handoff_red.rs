@@ -176,6 +176,7 @@ fn sample_checkpoint(handoff_id: &str) -> HandoffCheckpoint {
         shell_log_start: 10,
         control_state: HandoffState::Creating,
         provider_metadata: None,
+        tool_executions: Vec::new(),
     }
 }
 

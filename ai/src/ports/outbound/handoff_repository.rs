@@ -16,6 +16,14 @@ pub struct LeaseAcquireRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct LeaseHeartbeatRequest {
+    pub owner_client_id: String,
+    pub owner_process_id: u32,
+    pub now_ms: u64,
+    pub lease_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct ShellSessionIssueRequest {
     pub generation: u32,
     pub token_plaintext: String,
@@ -52,6 +60,13 @@ pub trait LeaseRepository {
     ) -> Result<HandoffLease, HandoffStoreError>;
 
     fn load_lease(&self, handoff_id: &str) -> Result<Option<HandoffLease>, HandoffStoreError>;
+
+    /// owner が一致する lease を原子的に延長する。失効済み lease は延長しない。
+    fn heartbeat_lease(
+        &self,
+        handoff_id: &str,
+        request: &LeaseHeartbeatRequest,
+    ) -> Result<HandoffLease, HandoffStoreError>;
 
     /// 正常に side run が終了・人間待ちへ遷移した時の lease 解放。
     fn release_lease(&self, _handoff_id: &str) -> Result<(), HandoffStoreError> {

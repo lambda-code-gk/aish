@@ -196,6 +196,11 @@ pub enum AiCommand {
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         socket: Option<PathBuf>,
     },
+    /// Recover an ORPHANED human shell or resume a RETURNED parent run
+    Resume {
+        /// Handoff ID. Required when multiple handoffs are recoverable.
+        handoff_id: Option<String>,
+    },
     /// Check whether the aibe socket is alive
     Ping {
         #[arg(long, short = 'q')]

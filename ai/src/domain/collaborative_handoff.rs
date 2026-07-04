@@ -216,6 +216,44 @@ pub struct HandoffCheckpoint {
     pub control_state: HandoffState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_metadata: Option<String>,
+    /// handoff 中断時に確定できなかった tool execution。
+    #[serde(default)]
+    pub tool_executions: Vec<RecoverableToolExecution>,
+}
+
+/// handoff checkpoint に保存する provider 非依存の tool execution 状態。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoverableToolExecution {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub status: RecoverableToolStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RecoverableToolStatus {
+    Requested,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    Unknown,
+}
+
+/// process 消失後は RUNNING の成否を推測せず UNKNOWN に確定する。
+pub fn mark_running_tools_unknown(checkpoint: &mut HandoffCheckpoint) -> Vec<String> {
+    checkpoint
+        .tool_executions
+        .iter_mut()
+        .filter_map(|tool| {
+            if tool.status == RecoverableToolStatus::Running {
+                tool.status = RecoverableToolStatus::Unknown;
+                Some(tool.tool_call_id.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -273,6 +311,9 @@ pub fn try_transition(
         (HandoffState::Creating, HandoffEvent::ShellReady) => HandoffState::HumanActive,
         (HandoffState::Creating, HandoffEvent::ShellLaunchFailed)
         | (HandoffState::Creating, HandoffEvent::Cancel) => HandoffState::Cancelled,
+        // launcher adapter は side process が接続できるよう spawn 直前に HUMAN_ACTIVE を
+        // durable にする。exec 自体が失敗した場合だけこの補償遷移を使う。
+        (HandoffState::HumanActive, HandoffEvent::ShellLaunchFailed) => HandoffState::Cancelled,
         (HandoffState::HumanActive, HandoffEvent::StartSideAgent) => HandoffState::SideAgentRunning,
         (HandoffState::HumanActive, HandoffEvent::HumanReturned) => HandoffState::Returned,
         (HandoffState::SideAgentRunning, HandoffEvent::SideAgentWaiting) => {
@@ -407,6 +448,7 @@ pub fn checkpoint_serialized_field_names() -> HashSet<String> {
         shell_log_start: 0,
         control_state: HandoffState::Creating,
         provider_metadata: None,
+        tool_executions: Vec::new(),
     };
     let value = serde_json::to_value(sample).expect("checkpoint sample");
     value

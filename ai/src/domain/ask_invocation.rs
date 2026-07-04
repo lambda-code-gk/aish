@@ -25,6 +25,7 @@ pub fn is_known_cli_head(word: &str) -> bool {
             | "history"
             | "status"
             | "doctor"
+            | "resume"
             | "ping"
             | "smart"
             | "complete"

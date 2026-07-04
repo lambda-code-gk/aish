@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0055_collaborative-human-handoff-spec.md](../spec/0055_collaborative-human-handoff-spec.md)  
 > **マスター**: [0055_collaborative-human-handoff-implementation-spec.md](0055_collaborative-human-handoff-implementation-spec.md)  
-> **状態**: 未着手  
+> **状態**: Phase 4 完了
 > **前提**: Phase 3 完了
 
 ## 0. 目的
@@ -43,22 +43,22 @@
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `orphaned_on_abnormal_exit` | 異常終了で ORPHANED、親は自動再開しない | `abnormal_shell_exit_marks_handoff_orphaned` | true |
-| `orphaned_on_parent_crash` | 親プロセス消失で ORPHANED | `parent_process_loss_marks_handoff_orphaned` | true |
-| `resume_orphaned_shell` | `ai resume` で新 human shell | `resume_orphaned_spawns_new_shell_with_rotated_token` | true |
-| `resume_rejects_old_token` | 旧 token / generation を拒否 | `resume_rotates_token_and_rejects_old_generation` | true |
-| `resume_exclusive` | 二重 resume 拒否 | `second_resume_rejected_while_lease_active` | true |
-| `resume_lists_multiple_handoffs` | 複数時に一覧と ID 要求 | `resume_lists_multiple_recoverable_handoffs` | true |
-| `resume_returned_parent_only` | RETURNED は shell なしで親再開 | `resume_returned_restarts_parent_without_shell` | true |
-| `parent_semantic_resume` | 新 parent run に保留 ShellExec 文脈 | `resumed_parent_run_carries_pending_shell_exec_context` | true |
-| `unknown_tools_not_reexecuted` | UNKNOWN を自動再実行しない | `recovery_does_not_auto_rerun_unknown_tools` | true |
-| `side_crash_unknown_tools` | side クラッシュで UNKNOWN | `side_agent_crash_marks_running_tools_unknown` | true |
-| `waiting_for_human_survives_reboot` | WAITING 状態を復旧後も維持可 | `resume_preserves_pending_human_request_state` | true |
-| `checkpoint_before_shell_crash` | checkpoint 後 shell 前失敗で CANCELLED | `handoff_cancelled_when_shell_never_started_after_checkpoint` | true |
-| `parent_resume_failed_returns` | RESUMING_PARENT 失敗で RETURNED | `parent_resume_failure_returns_to_returned_state` | true |
-| `child_goal_open_while_orphaned` | ORPHANED では child goal を閉じない | `orphaned_handoff_keeps_child_goal_open` | true |
-| `side_running_ctrl_d_interrupts` | side 実行中 Ctrl+D で RETURNED | `ctrl_d_during_side_run_returns_to_parent` | true |
-| `lease_lost_no_auto_rerun` | lease 失効だけでは自動再実行しない | `lease_expiry_alone_does_not_auto_resume_parent` | true |
+| `orphaned_on_abnormal_exit` | 異常終了で ORPHANED、親は自動再開しない | `abnormal_shell_exit_marks_handoff_orphaned` | false |
+| `orphaned_on_parent_crash` | 親プロセス消失で ORPHANED | `parent_process_loss_marks_handoff_orphaned` | false |
+| `resume_orphaned_shell` | `ai resume` で新 human shell | `resume_orphaned_spawns_new_shell_with_rotated_token` | false |
+| `resume_rejects_old_token` | 旧 token / generation を拒否 | `resume_rotates_token_and_rejects_old_generation` | false |
+| `resume_exclusive` | 二重 resume 拒否 | `second_resume_rejected_while_lease_active` | false |
+| `resume_lists_multiple_handoffs` | 複数時に一覧と ID 要求 | `resume_lists_multiple_recoverable_handoffs` | false |
+| `resume_returned_parent_only` | RETURNED は shell なしで親再開 | `resume_returned_restarts_parent_without_shell` | false |
+| `parent_semantic_resume` | 新 parent run に保留 ShellExec 文脈 | `resumed_parent_run_carries_pending_shell_exec_context` | false |
+| `unknown_tools_not_reexecuted` | UNKNOWN を自動再実行しない | `recovery_does_not_auto_rerun_unknown_tools` | false |
+| `side_crash_unknown_tools` | side クラッシュで UNKNOWN | `side_agent_crash_marks_running_tools_unknown` | false |
+| `waiting_for_human_survives_reboot` | WAITING 状態を復旧後も維持可 | `resume_preserves_pending_human_request_state` | false |
+| `checkpoint_before_shell_crash` | checkpoint 後 shell 前失敗で CANCELLED | `handoff_cancelled_when_shell_never_started_after_checkpoint` | false |
+| `parent_resume_failed_returns` | RESUMING_PARENT 失敗で RETURNED | `parent_resume_failure_returns_to_returned_state` | false |
+| `child_goal_open_while_orphaned` | ORPHANED では child goal を閉じない | `orphaned_handoff_keeps_child_goal_open` | false |
+| `side_running_ctrl_d_interrupts` | side 実行中 Ctrl+D で RETURNED | `ctrl_d_during_side_run_returns_to_parent` | false |
+| `lease_lost_no_auto_rerun` | lease 失効だけでは自動再実行しない | `lease_expiry_alone_does_not_auto_resume_parent` | false |
 
 ## 3. 変更ファイル（目安）
 

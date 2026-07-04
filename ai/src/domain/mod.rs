@@ -33,12 +33,13 @@ pub use ask_invocation::{
 pub use collaborative_handoff::{
     build_candidate_command, cancel_handoff, checkpoint_has_required_fields,
     checkpoint_serialized_field_names, close_child_goal_on_control_returned, hash_handoff_token,
-    is_valid_handoff_id, should_close_child_goal, try_transition, validate_handoff_id,
-    validate_shell_token, verify_handoff_token, CancelHandoffError, ChildGoalAchievement,
-    ChildGoalCloseReason, ChildGoalMeta, CollaborativeAgentRole, CollaborativePolicy,
-    CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent,
-    HandoffLease, HandoffShellSession, HandoffState, HandoffTransitionError, InvalidHandoffIdError,
-    RequestedShellExec, CHECKPOINT_REQUIRED_FIELD_NAMES, HANDOFF_SCHEMA_VERSION,
+    is_valid_handoff_id, mark_running_tools_unknown, should_close_child_goal, try_transition,
+    validate_handoff_id, validate_shell_token, verify_handoff_token, CancelHandoffError,
+    ChildGoalAchievement, ChildGoalCloseReason, ChildGoalMeta, CollaborativeAgentRole,
+    CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint,
+    HandoffEvent, HandoffLease, HandoffShellSession, HandoffState, HandoffTransitionError,
+    InvalidHandoffIdError, RecoverableToolExecution, RecoverableToolStatus, RequestedShellExec,
+    CHECKPOINT_REQUIRED_FIELD_NAMES, HANDOFF_SCHEMA_VERSION,
 };
 pub use console_hint::{
     resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,

@@ -2734,7 +2734,7 @@ id = "orphaned_on_abnormal_exit"
 description = "異常終了で ORPHANED"
 test = "abnormal_shell_exit_marks_handoff_orphaned"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2743,7 +2743,7 @@ id = "orphaned_on_parent_crash"
 description = "親プロセス消失で ORPHANED"
 test = "parent_process_loss_marks_handoff_orphaned"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2752,7 +2752,7 @@ id = "resume_orphaned_shell"
 description = "ai resume で新 human shell"
 test = "resume_orphaned_spawns_new_shell_with_rotated_token"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2761,7 +2761,7 @@ id = "resume_rejects_old_token"
 description = "旧 token を拒否"
 test = "resume_rotates_token_and_rejects_old_generation"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2770,7 +2770,7 @@ id = "resume_exclusive"
 description = "二重 resume 拒否"
 test = "second_resume_rejected_while_lease_active"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2779,7 +2779,7 @@ id = "resume_lists_multiple_handoffs"
 description = "複数 handoff 時に一覧表示"
 test = "resume_lists_multiple_recoverable_handoffs"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2788,7 +2788,7 @@ id = "resume_returned_parent_only"
 description = "RETURNED は親のみ再開"
 test = "resume_returned_restarts_parent_without_shell"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2797,7 +2797,7 @@ id = "parent_semantic_resume"
 description = "意味的親 run 再開"
 test = "resumed_parent_run_carries_pending_shell_exec_context"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2806,7 +2806,7 @@ id = "unknown_tools_not_reexecuted"
 description = "UNKNOWN を自動再実行しない"
 test = "recovery_does_not_auto_rerun_unknown_tools"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2815,7 +2815,7 @@ id = "side_crash_unknown_tools"
 description = "side クラッシュで UNKNOWN"
 test = "side_agent_crash_marks_running_tools_unknown"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2824,7 +2824,7 @@ id = "waiting_for_human_survives_reboot"
 description = "WAITING 状態を復旧後も維持"
 test = "resume_preserves_pending_human_request_state"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2833,7 +2833,7 @@ id = "checkpoint_before_shell_crash"
 description = "checkpoint 後 shell 前失敗で CANCELLED"
 test = "handoff_cancelled_when_shell_never_started_after_checkpoint"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2842,7 +2842,7 @@ id = "parent_resume_failed_returns"
 description = "RESUMING_PARENT 失敗で RETURNED"
 test = "parent_resume_failure_returns_to_returned_state"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2851,7 +2851,7 @@ id = "child_goal_open_while_orphaned"
 description = "ORPHANED では child goal を閉じない"
 test = "orphaned_handoff_keeps_child_goal_open"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2860,7 +2860,7 @@ id = "side_running_ctrl_d_interrupts"
 description = "side 実行中 Ctrl+D で RETURNED"
 test = "ctrl_d_during_side_run_returns_to_parent"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2869,7 +2869,7 @@ id = "lease_lost_no_auto_rerun"
 description = "lease 失効だけでは自動再開しない"
 test = "lease_expiry_alone_does_not_auto_resume_parent"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"

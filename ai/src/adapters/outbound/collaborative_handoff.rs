@@ -71,6 +71,12 @@ impl HumanShellLauncher for AishHumanShellLauncher {
                 "AISH_HANDOFF_CONTEXT_VERSION",
                 request.context_version.to_string(),
             )
+            .env(
+                "AISH_HANDOFF_STORE_ROOT",
+                crate::adapters::outbound::FilesystemHandoffStore::default_root(),
+            )
+            .env("AISH_HANDOFF_HEARTBEAT_INTERVAL_MS", "30000")
+            .env("AISH_HANDOFF_LEASE_TIMEOUT_MS", "120000")
             .status()
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
         let raw = std::fs::read_to_string(&result_path)
@@ -214,6 +220,22 @@ impl HandoffRuntime for SystemHandoffRuntime {
 
     fn effective_uid(&self) -> u32 {
         unsafe { libc::geteuid() }
+    }
+
+    fn process_id(&self) -> u32 {
+        std::process::id()
+    }
+
+    fn tty(&self) -> Option<String> {
+        std::env::var("TTY").ok()
+    }
+
+    fn process_is_alive(&self, process_id: u32) -> bool {
+        if process_id == 0 {
+            return false;
+        }
+        let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }
 

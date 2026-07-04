@@ -178,6 +178,7 @@ fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &s
                 shell_log_start: 100,
                 control_state: state,
                 provider_metadata: Some("mock".into()),
+                tool_executions: Vec::new(),
             },
         )
         .unwrap();

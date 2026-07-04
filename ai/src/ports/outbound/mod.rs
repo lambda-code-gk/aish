@@ -16,7 +16,8 @@ pub use collaborative_handoff::{
 };
 pub use handoff_repository::{
     CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
-    HandoffStoreError, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
+    HandoffStoreError, LeaseAcquireRequest, LeaseHeartbeatRequest, LeaseRepository,
+    ShellSessionIssueRequest,
 };
 pub use history_store::{HistoryStore, HistoryStoreError};
 pub use memory_client::MemoryClient;

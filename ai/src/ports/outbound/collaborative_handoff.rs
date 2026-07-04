@@ -67,6 +67,15 @@ pub trait HandoffRuntime: Send + Sync {
     fn effective_uid(&self) -> u32 {
         0
     }
+    fn process_id(&self) -> u32 {
+        0
+    }
+    fn tty(&self) -> Option<String> {
+        None
+    }
+    fn process_is_alive(&self, process_id: u32) -> bool {
+        process_id != 0
+    }
 }
 
 #[derive(Debug, Default)]

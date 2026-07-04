@@ -13,7 +13,8 @@ use crate::domain::{
 };
 use crate::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
-    HandoffStoreError, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
+    HandoffStoreError, LeaseAcquireRequest, LeaseHeartbeatRequest, LeaseRepository,
+    ShellSessionIssueRequest,
 };
 
 #[derive(Debug, Clone)]
@@ -315,6 +316,27 @@ impl LeaseRepository for FilesystemHandoffStore {
                 return Ok(None);
             }
             Ok(Some(self.read_json(&path)?))
+        })
+    }
+
+    fn heartbeat_lease(
+        &self,
+        handoff_id: &str,
+        request: &LeaseHeartbeatRequest,
+    ) -> Result<HandoffLease, HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let path = self.lease_path(handoff_id)?;
+            let mut lease: HandoffLease = self.read_json(&path)?;
+            if lease.owner_client_id != request.owner_client_id
+                || lease.owner_process_id != request.owner_process_id
+                || lease.lease_expires_at_ms <= request.now_ms
+            {
+                return Err(HandoffStoreError::LeaseConflict);
+            }
+            lease.last_heartbeat_at_ms = request.now_ms;
+            lease.lease_expires_at_ms = request.now_ms.saturating_add(request.lease_timeout_ms);
+            self.write_json_atomic(&path, &lease)?;
+            Ok(lease)
         })
     }
 

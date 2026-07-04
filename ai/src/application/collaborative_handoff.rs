@@ -4,16 +4,18 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::domain::{
-    build_candidate_command, try_transition, ChildGoalAchievement, ChildGoalMeta,
-    CollaborativeAgentRole, CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff,
-    HandoffCheckpoint, HandoffEvent, HandoffState, RequestedShellExec, SuggestedCommandCache,
+    build_candidate_command, close_child_goal_on_control_returned, mark_running_tools_unknown,
+    try_transition, ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole,
+    CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint,
+    HandoffEvent, HandoffState, RequestedShellExec, SuggestedCommandCache,
     SuggestedCommandCandidate, SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffCandidatePublisher,
     HandoffRepository, HandoffRuntime, HandoffShellSessionStore, HandoffStoreError,
-    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, ParentToolBarrier,
-    ShellSessionIssueRequest, SuggestedCommandRecallStore, SuggestedCommandRecallStoreError,
+    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, LeaseAcquireRequest,
+    LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest, SuggestedCommandRecallStore,
+    SuggestedCommandRecallStoreError,
 };
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
@@ -82,11 +84,19 @@ pub enum CollaborativeHandoffError {
 }
 
 pub trait CollaborativeHandoffStore:
-    HandoffRepository + CheckpointRepository + CommandCandidateStore + HandoffShellSessionStore
+    HandoffRepository
+    + CheckpointRepository
+    + CommandCandidateStore
+    + HandoffShellSessionStore
+    + LeaseRepository
 {
 }
 impl<T> CollaborativeHandoffStore for T where
-    T: HandoffRepository + CheckpointRepository + CommandCandidateStore + HandoffShellSessionStore
+    T: HandoffRepository
+        + CheckpointRepository
+        + CommandCandidateStore
+        + HandoffShellSessionStore
+        + LeaseRepository
 {
 }
 
@@ -235,6 +245,7 @@ where
             shell_log_start: request.shell_log_start,
             control_state: HandoffState::Creating,
             provider_metadata: None,
+            tool_executions: Vec::new(),
         };
         // Recovery checkpoint is durable before the PTY process is spawned.
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
@@ -250,16 +261,59 @@ where
                 now_ms: now,
             },
         )?;
+        self.store.try_acquire_lease(
+            &handoff_id,
+            &LeaseAcquireRequest {
+                owner_client_id: format!("ai-parent-{}", self.runtime.process_id()),
+                owner_process_id: self.runtime.process_id(),
+                owner_tty: self.runtime.tty(),
+                owner_host: self.runtime.host_id(),
+                owner_uid: self.runtime.effective_uid(),
+                now_ms: now,
+                lease_timeout_ms: 120_000,
+            },
+        )?;
         handoff.state = transition(handoff.state, HandoffEvent::ShellReady)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
 
-        let returned = self.launcher.launch_and_wait(&HumanShellLaunchRequest {
+        let launch_result = self.launcher.launch_and_wait(&HumanShellLaunchRequest {
             handoff_id: handoff_id.clone(),
             token,
-            context_version: HANDOFF_SCHEMA_VERSION,
+            context_version: handoff.shell_generation,
             cwd: request.cwd,
-        })?;
+        });
+        let returned = match launch_result {
+            Ok(returned) => returned,
+            Err(error) => {
+                // spawn 前の失敗は durable checkpoint を CANCELLED にする。spawn 後に
+                // normal-return marker が無い場合は成果を推測せず ORPHANED。
+                handoff = self.store.load_handoff(&handoff_id)?;
+                let event = match error {
+                    HumanShellLaunchError::MissingReturnMarker => HandoffEvent::Orphaned,
+                    HumanShellLaunchError::MissingCwd(_) | HumanShellLaunchError::Failed(_) => {
+                        HandoffEvent::ShellLaunchFailed
+                    }
+                };
+                handoff.state = transition(handoff.state, event)?;
+                handoff.return_reason = Some(
+                    match event {
+                        HandoffEvent::Orphaned => "abnormal_shell_exit",
+                        _ => "shell_launch_failed",
+                    }
+                    .into(),
+                );
+                handoff.updated_at_ms = self.runtime.now_ms();
+                let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
+                checkpoint.control_state = handoff.state;
+                self.store.save_checkpoint(&handoff_id, &checkpoint)?;
+                self.store.save_handoff(&handoff)?;
+                self.store.release_lease(&handoff_id)?;
+                return Err(error.into());
+            }
+        };
+        // side agent が shell lifetime 中に状態を更新し得るため、保存済み状態を再読込する。
+        handoff = self.store.load_handoff(&handoff_id)?;
         handoff.state = transition(handoff.state, HandoffEvent::HumanReturned)?;
         handoff.return_reason = Some("control_returned".into());
         handoff.human_shell_exit_code = returned.exit_code;
@@ -271,13 +325,23 @@ where
         handoff.after_observation_ref = Some(after_ref.clone());
         handoff.shell_log_end = after.shell_log_end;
         handoff.updated_at_ms = self.runtime.now_ms();
+        let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
+        mark_running_tools_unknown(&mut checkpoint);
+        close_child_goal_on_control_returned(&mut checkpoint.child_goal);
+        checkpoint.control_state = HandoffState::Returned;
+        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        self.store.release_lease(&handoff_id)?;
         handoff.state = transition(handoff.state, HandoffEvent::StartParentResume)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
+        checkpoint.control_state = HandoffState::ResumingParent;
+        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         handoff.state = transition(handoff.state, HandoffEvent::ParentResumeCompleted)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
+        checkpoint.control_state = HandoffState::Completed;
+        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
 
         Ok(HumanHandoffResult {
             handoff_id,
