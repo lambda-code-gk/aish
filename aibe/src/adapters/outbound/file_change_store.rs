@@ -38,4 +38,13 @@ impl FileChangeStore for FilesystemFileChangeStore {
     async fn path_exists(&self, path: &Path) -> bool {
         path.exists()
     }
+
+    async fn file_byte_len(&self, path: &Path) -> Result<Option<u64>, FileChangeStoreError> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        std::fs::metadata(path)
+            .map(|meta| Some(meta.len()))
+            .map_err(|_| FileChangeStoreError)
+    }
 }

@@ -1,8 +1,12 @@
 //! AIBE 生成 unified diff preview（設計 §16）。
 
+use similar::{ChangeTag, TextDiff};
+
 use crate::domain::{DiffPreview, DiffSummary, FileChangeOperation};
+use crate::ports::outbound::config::{DEFAULT_MAX_DIFF_LINES, DEFAULT_MAX_DIFF_WORK};
 
 const CONTEXT_LINES: usize = 3;
+const OMITTED_MESSAGE: &str = "diff preview omitted: change too large\n";
 
 /// 変更前後から unified diff preview を生成する。
 pub fn build_unified_diff_preview(
@@ -12,10 +16,52 @@ pub fn build_unified_diff_preview(
     operation: FileChangeOperation,
     max_preview_bytes: usize,
 ) -> DiffPreview {
+    build_unified_diff_preview_bounded(
+        display_path,
+        before,
+        after,
+        operation,
+        max_preview_bytes,
+        DEFAULT_MAX_DIFF_LINES,
+        DEFAULT_MAX_DIFF_WORK,
+    )
+}
+
+/// 行数・作業量上限付きで unified diff preview を生成する。
+pub fn build_unified_diff_preview_bounded(
+    display_path: &str,
+    before: Option<&[u8]>,
+    after: &[u8],
+    operation: FileChangeOperation,
+    max_preview_bytes: usize,
+    max_diff_lines: usize,
+    max_diff_work: usize,
+) -> DiffPreview {
     let before_bytes = before.map_or(0, |b| b.len());
     let after_bytes = after.len();
     let old_lines = before.map(split_text_lines).unwrap_or_default();
     let new_lines = split_text_lines(after);
+
+    let summary = DiffSummary {
+        operation,
+        lines_added: 0,
+        lines_removed: 0,
+        before_bytes,
+        after_bytes,
+    };
+
+    if diff_work_exceeds_limits(
+        old_lines.len(),
+        new_lines.len(),
+        max_diff_lines,
+        max_diff_work,
+    ) {
+        return DiffPreview {
+            diff_text: OMITTED_MESSAGE.to_string(),
+            summary,
+            preview_truncated: true,
+        };
+    }
 
     let (lines_removed, lines_added) = count_line_changes(&old_lines, &new_lines);
     let mut diff_body = render_unified_diff(display_path, &old_lines, &new_lines, before.is_none());
@@ -28,14 +74,24 @@ pub fn build_unified_diff_preview(
     DiffPreview {
         diff_text: diff_body,
         summary: DiffSummary {
-            operation,
             lines_added,
             lines_removed,
-            before_bytes,
-            after_bytes,
+            ..summary
         },
         preview_truncated,
     }
+}
+
+fn diff_work_exceeds_limits(
+    old_line_count: usize,
+    new_line_count: usize,
+    max_diff_lines: usize,
+    max_diff_work: usize,
+) -> bool {
+    if old_line_count > max_diff_lines || new_line_count > max_diff_lines {
+        return true;
+    }
+    old_line_count.saturating_mul(new_line_count) > max_diff_work
 }
 
 fn split_text_lines(bytes: &[u8]) -> Vec<String> {
@@ -168,44 +224,16 @@ fn line_positions_at_op(ops: &[DiffOp], op_idx: usize) -> (usize, usize) {
 }
 
 fn diff_ops(old: &[String], new: &[String]) -> Vec<DiffOp> {
-    let n = old.len();
-    let m = new.len();
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            if old[i] == new[j] {
-                dp[i][j] = dp[i + 1][j + 1] + 1;
-            } else {
-                dp[i][j] = dp[i + 1][j].max(dp[i][j + 1]);
-            }
-        }
-    }
-
-    let mut ops = Vec::new();
-    let mut i = 0usize;
-    let mut j = 0usize;
-    while i < n && j < m {
-        if old[i] == new[j] {
-            ops.push(DiffOp::Equal);
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            ops.push(DiffOp::Delete);
-            i += 1;
-        } else {
-            ops.push(DiffOp::Insert);
-            j += 1;
-        }
-    }
-    while i < n {
-        ops.push(DiffOp::Delete);
-        i += 1;
-    }
-    while j < m {
-        ops.push(DiffOp::Insert);
-        j += 1;
-    }
-    ops
+    let old_refs: Vec<&str> = old.iter().map(String::as_str).collect();
+    let new_refs: Vec<&str> = new.iter().map(String::as_str).collect();
+    let diff = TextDiff::from_slices(&old_refs, &new_refs);
+    diff.iter_all_changes()
+        .map(|change| match change.tag() {
+            ChangeTag::Equal => DiffOp::Equal,
+            ChangeTag::Delete => DiffOp::Delete,
+            ChangeTag::Insert => DiffOp::Insert,
+        })
+        .collect()
 }
 
 fn truncate_at_line_boundary(text: &str, max_bytes: usize) -> String {
@@ -256,5 +284,24 @@ mod tests {
         assert!(preview
             .diff_text
             .starts_with("--- a/src/main.rs\n+++ b/src/main.rs\n"));
+    }
+
+    #[test]
+    fn diff_preview_large_line_count_is_bounded() {
+        let before: String = (0..12_000).map(|i| format!("old-{i}\n")).collect();
+        let after: String = (0..12_000).map(|i| format!("new-{i}\n")).collect();
+        let preview = build_unified_diff_preview_bounded(
+            "big.txt",
+            Some(before.as_bytes()),
+            after.as_bytes(),
+            FileChangeOperation::Replace,
+            32_768,
+            10_000,
+            1_000_000,
+        );
+        assert_eq!(preview.diff_text, OMITTED_MESSAGE);
+        assert!(preview.preview_truncated);
+        assert_eq!(preview.summary.before_bytes, before.len());
+        assert_eq!(preview.summary.after_bytes, after.len());
     }
 }

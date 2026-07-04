@@ -181,7 +181,7 @@ fn apply_patch_definition() -> ToolDefinition {
             "properties": {
                 "path": { "type": "string", "description": "File path relative to client cwd" },
                 "patch": { "type": "string", "description": "Strict unified diff hunk without file headers" },
-                "expected_sha256": { "type": "string", "description": "SHA-256 of current file bytes (lowercase hex); use empty string for absent file" }
+                "expected_sha256": { "type": "string", "description": "SHA-256 of current file bytes (lowercase hex)" }
             },
             "required": ["path", "patch", "expected_sha256"]
         }),

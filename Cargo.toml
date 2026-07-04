@@ -25,6 +25,7 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 reedline = "0.48"
 shell-words = "1.1"
 sha2 = "0.10"
+similar = "2"
 
 [profile.dev]
 debug = "line-tables-only"

@@ -73,6 +73,7 @@ pub(crate) async fn resolve_write_target(
 pub(crate) async fn load_before_snapshot(
     canonical: &Path,
     mode: WriteFileMode,
+    max_file_bytes: usize,
 ) -> Result<FileSnapshot, (&'static str, String)> {
     match mode {
         WriteFileMode::Create => {
@@ -91,10 +92,16 @@ pub(crate) async fn load_before_snapshot(
             if !canonical.is_file() {
                 return Err(("target_not_found", "target file does not exist".into()));
             }
+            let metadata = tokio::fs::metadata(canonical)
+                .await
+                .map_err(|e| ("target_not_found", e.to_string()))?;
+            if metadata.len() > max_file_bytes as u64 {
+                return Err(map_text_error(crate::domain::FileTextError::FileTooLarge));
+            }
             let bytes = tokio::fs::read(canonical)
                 .await
                 .map_err(|e| ("target_not_found", e.to_string()))?;
-            if let Err(err) = check_file_size(bytes.len(), usize::MAX) {
+            if let Err(err) = check_file_size(bytes.len(), max_file_bytes) {
                 return Err(map_text_error(err));
             }
             let content = validate_utf8_bytes(&bytes).map_err(map_text_error)?;
@@ -175,14 +182,21 @@ pub(crate) fn sanitized_write_file_args(
 
 pub(crate) async fn load_patch_target_snapshot(
     canonical: &Path,
+    max_file_bytes: usize,
 ) -> Result<(FileSnapshot, LineEnding), (&'static str, String)> {
     if !canonical.is_file() {
         return Err(("target_not_found", "target file does not exist".into()));
     }
+    let metadata = tokio::fs::metadata(canonical)
+        .await
+        .map_err(|e| ("target_not_found", e.to_string()))?;
+    if metadata.len() > max_file_bytes as u64 {
+        return Err(map_text_error(crate::domain::FileTextError::FileTooLarge));
+    }
     let bytes = tokio::fs::read(canonical)
         .await
         .map_err(|e| ("target_not_found", e.to_string()))?;
-    if let Err(err) = check_file_size(bytes.len(), usize::MAX) {
+    if let Err(err) = check_file_size(bytes.len(), max_file_bytes) {
         return Err(map_text_error(err));
     }
     let content = validate_utf8_bytes(&bytes).map_err(map_text_error)?;

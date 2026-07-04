@@ -86,7 +86,7 @@ impl FilesystemFileChangeJournal {
             after_bytes: request.after_bytes,
             file_mode: request.file_mode,
             operation: request.operation.as_str().to_string(),
-            status: "committed".to_string(),
+            status: "prepared".to_string(),
         };
 
         let metadata_json =
@@ -143,6 +143,32 @@ impl FilesystemFileChangeJournal {
         Ok(())
     }
 
+    pub(crate) fn mark_status_sync(
+        &self,
+        entry: &JournalEntry,
+        status: &str,
+    ) -> Result<(), FileChangeJournalError> {
+        let meta_path = entry.dir.join("metadata.json");
+        let text = fs::read_to_string(&meta_path).map_err(|_| FileChangeJournalError::Failed)?;
+        let mut value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|_| FileChangeJournalError::Failed)?;
+        let Some(obj) = value.as_object_mut() else {
+            return Err(FileChangeJournalError::Failed);
+        };
+        obj.insert(
+            "status".to_string(),
+            serde_json::Value::String(status.to_string()),
+        );
+        write_private_file(
+            &meta_path,
+            serde_json::to_string_pretty(&value)
+                .map_err(|_| FileChangeJournalError::Failed)?
+                .as_bytes(),
+        )
+        .map_err(|_| FileChangeJournalError::Failed)?;
+        Ok(())
+    }
+
     fn ensure_capacity(&self, incoming_bytes: u64) -> Result<(), FileChangeJournalError> {
         self.cleanup_expired_sync()?;
         let used = dir_size(&self.config.root).unwrap_or(0);
@@ -164,6 +190,14 @@ impl FileChangeJournal for FilesystemFileChangeJournal {
 
     async fn cleanup_expired(&self) -> Result<(), FileChangeJournalError> {
         self.cleanup_expired_sync()
+    }
+
+    async fn mark_status(
+        &self,
+        entry: &JournalEntry,
+        status: &str,
+    ) -> Result<(), FileChangeJournalError> {
+        self.mark_status_sync(entry, status)
     }
 }
 

@@ -140,6 +140,55 @@ impl WritePathPolicy {
         }
         Ok(canonical)
     }
+
+    /// 承認後の path 再検証（symlink / allowed root / file type）。
+    pub async fn revalidate_write_path(
+        &self,
+        ctx: &ToolExecutionContext,
+        path: &Path,
+        expect_absent: bool,
+    ) -> Result<PathBuf, SafePathError> {
+        let canonical = self.resolve_write_path(ctx, path).await?;
+        if expect_absent {
+            if tokio::fs::try_exists(&canonical)
+                .await
+                .map_err(|e| SafePathError::path_not_allowed(e.to_string()))?
+            {
+                return Err(SafePathError::path_not_allowed(
+                    "target file already exists",
+                ));
+            }
+            let parent = canonical.parent().ok_or_else(|| {
+                SafePathError::path_not_allowed("parent directory does not exist")
+            })?;
+            if !parent.is_dir() {
+                return Err(SafePathError::path_not_allowed(
+                    "parent directory does not exist",
+                ));
+            }
+        } else if let Ok(meta) = tokio::fs::symlink_metadata(&canonical).await {
+            if meta.file_type().is_symlink() {
+                return Err(SafePathError::symlink_not_allowed(
+                    "target path is a symlink",
+                ));
+            }
+            if !meta.is_file() {
+                return Err(SafePathError::unsupported_file_type(
+                    "target is not a regular file",
+                ));
+            }
+            if is_unsupported_file_type(&meta) {
+                return Err(SafePathError::unsupported_file_type(
+                    "special files are not supported",
+                ));
+            }
+        } else {
+            return Err(SafePathError::path_not_allowed(
+                "target file does not exist",
+            ));
+        }
+        Ok(canonical)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

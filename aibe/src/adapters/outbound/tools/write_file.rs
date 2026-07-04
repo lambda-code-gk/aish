@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::{Capability, ExecutedToolCall, ToolName, ToolResult};
+use crate::domain::{
+    sanitize_write_file_arguments_best_effort, Capability, ExecutedToolCall, ToolName, ToolResult,
+};
 use crate::ports::outbound::{
     FileChangeError, FileChangeExecuteRequest, FileChangeExecutor, FileWriteConfig,
     ToolExecutionContext, ToolExecutor,
@@ -75,16 +77,16 @@ impl ToolExecutor for WriteFileTool {
         ctx: &ToolExecutionContext,
     ) -> (ExecutedToolCall, ToolResult) {
         let id = tool_call_id.to_string();
-        let args_value = arguments.clone();
+        let audit_args = sanitize_write_file_arguments_best_effort(arguments);
 
         if let Err(denied) = ctx.require_capability(Capability::FileWrite) {
-            return Self::tool_err(id, args_value, "capability_denied", denied.message());
+            return Self::tool_err(id, audit_args, "capability_denied", denied.message());
         }
 
         if !self.config.enabled {
             return Self::tool_err(
                 id,
-                args_value,
+                audit_args,
                 "tool_disabled",
                 "file write tools are disabled",
             );
@@ -95,7 +97,7 @@ impl ToolExecutor for WriteFileTool {
             Err(e) => {
                 return Self::tool_err(
                     id,
-                    args_value,
+                    audit_args,
                     "invalid_arguments",
                     format!("invalid arguments: {e}"),
                 );
@@ -105,7 +107,7 @@ impl ToolExecutor for WriteFileTool {
         if parsed.path.trim().is_empty() {
             return Self::tool_err(
                 id,
-                args_value,
+                audit_args,
                 "invalid_arguments",
                 "path must not be empty",
             );
@@ -116,7 +118,7 @@ impl ToolExecutor for WriteFileTool {
             None => {
                 return Self::tool_err(
                     id,
-                    args_value,
+                    audit_args,
                     "invalid_arguments",
                     "mode must be create or replace",
                 );
@@ -126,23 +128,24 @@ impl ToolExecutor for WriteFileTool {
         if let Err((code, msg)) =
             validate_write_content(&parsed.content, self.config.max_file_bytes)
         {
-            return Self::tool_err(id, args_value, code, msg);
+            return Self::tool_err(id, audit_args, code, msg);
         }
 
         let canonical = match resolve_write_target(&self.path_policy, ctx, &parsed.path).await {
             Ok(p) => p,
-            Err((code, msg)) => return Self::tool_err(id, args_value, code, msg),
+            Err((code, msg)) => return Self::tool_err(id, audit_args, code, msg),
         };
 
-        let before = match load_before_snapshot(&canonical, mode).await {
+        let before = match load_before_snapshot(&canonical, mode, self.config.max_file_bytes).await
+        {
             Ok(s) => s,
-            Err((code, msg)) => return Self::tool_err(id, args_value, code, msg),
+            Err((code, msg)) => return Self::tool_err(id, audit_args, code, msg),
         };
 
         if let Err((code, msg)) =
             verify_expected_hash(mode, parsed.expected_sha256.as_deref(), &before)
         {
-            return Self::tool_err(id, args_value, code, msg);
+            return Self::tool_err(id, audit_args, code, msg);
         }
 
         let sanitized = sanitized_write_file_args(

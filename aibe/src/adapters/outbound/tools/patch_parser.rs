@@ -13,9 +13,9 @@ pub(crate) struct PatchHunk {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PatchLine {
-    Context(String),
-    Remove(String),
-    Add(String),
+    Context(String, bool),
+    Remove(String, bool),
+    Add(String, bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +23,12 @@ pub(crate) enum PatchError {
     InvalidPatch,
     PatchConflict,
     OverlappingHunks,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AppliedPatch {
+    pub lines: Vec<String>,
+    pub trailing_newline: bool,
 }
 
 pub(crate) fn parse_unified_hunks(patch: &str) -> Result<Vec<PatchHunk>, PatchError> {
@@ -70,10 +76,11 @@ pub(crate) fn parse_unified_hunks(patch: &str) -> Result<Vec<PatchHunk>, PatchEr
                     return Err(PatchError::InvalidPatch);
                 };
                 match last {
-                    PatchLine::Context(s) | PatchLine::Remove(s) => {
-                        *s = strip_trailing_newline(s);
+                    PatchLine::Context(_, no_newline)
+                    | PatchLine::Remove(_, no_newline)
+                    | PatchLine::Add(_, no_newline) => {
+                        *no_newline = true;
                     }
-                    PatchLine::Add(_) => return Err(PatchError::InvalidPatch),
                 }
                 continue;
             }
@@ -84,9 +91,9 @@ pub(crate) fn parse_unified_hunks(patch: &str) -> Result<Vec<PatchHunk>, PatchEr
                 .map(|c| (c, &raw[c.len_utf8()..]))
                 .ok_or(PatchError::InvalidPatch)?;
             let parsed = match prefix {
-                ' ' => PatchLine::Context(rest.to_string()),
-                '-' => PatchLine::Remove(rest.to_string()),
-                '+' => PatchLine::Add(rest.to_string()),
+                ' ' => PatchLine::Context(rest.to_string(), false),
+                '-' => PatchLine::Remove(rest.to_string(), false),
+                '+' => PatchLine::Add(rest.to_string(), false),
                 _ => return Err(PatchError::InvalidPatch),
             };
             hunk_lines.push(parsed);
@@ -153,37 +160,49 @@ fn count_hunk_lines(lines: &[PatchLine]) -> (usize, usize) {
     let mut new = 0usize;
     for line in lines {
         match line {
-            PatchLine::Context(_) => {
+            PatchLine::Context(_, _) => {
                 old += 1;
                 new += 1;
             }
-            PatchLine::Remove(_) => old += 1,
-            PatchLine::Add(_) => new += 1,
+            PatchLine::Remove(_, _) => old += 1,
+            PatchLine::Add(_, _) => new += 1,
         }
     }
     (old, new)
 }
 
-fn strip_trailing_newline(line: &str) -> String {
-    if let Some(stripped) = line.strip_suffix("\r\n") {
-        stripped.to_string()
-    } else if let Some(stripped) = line.strip_suffix('\n') {
-        stripped.to_string()
-    } else {
-        line.to_string()
-    }
-}
-
 /// ファイル行へ hunk を適用する（fuzzy match なし）。
 pub(crate) fn apply_hunks_to_lines(
-    file_lines: &[String],
+    file_lines: &FileLines,
     hunks: &[PatchHunk],
-) -> Result<Vec<String>, PatchError> {
-    let mut lines = file_lines.to_vec();
+) -> Result<AppliedPatch, PatchError> {
+    let mut lines = file_lines.lines.clone();
+    let mut trailing_newline = file_lines.trailing_newline;
     let mut line_offset = 0i64;
 
     for hunk in hunks {
-        let pos = (hunk.old_start as i64 - 1 + line_offset) as usize;
+        let expected_new_start = if hunk.old_start == 0 && hunk.old_len == 0 {
+            hunk.new_start
+        } else {
+            let idx = hunk.old_start as i64 + line_offset;
+            if idx < 1 {
+                return Err(PatchError::InvalidPatch);
+            }
+            idx as usize
+        };
+        if hunk.new_start != expected_new_start {
+            return Err(PatchError::InvalidPatch);
+        }
+
+        let pos = if hunk.old_start == 0 && hunk.old_len == 0 {
+            0
+        } else {
+            let idx = hunk.old_start as i64 - 1 + line_offset;
+            if idx < 0 {
+                return Err(PatchError::PatchConflict);
+            }
+            idx as usize
+        };
         if pos > lines.len() {
             return Err(PatchError::PatchConflict);
         }
@@ -191,29 +210,42 @@ pub(crate) fn apply_hunks_to_lines(
         let mut verify_idx = pos;
         for hunk_line in &hunk.lines {
             match hunk_line {
-                PatchLine::Context(expected) | PatchLine::Remove(expected) => {
+                PatchLine::Context(expected, _) | PatchLine::Remove(expected, _) => {
                     if verify_idx >= lines.len() || &lines[verify_idx] != expected {
                         return Err(PatchError::PatchConflict);
                     }
                     verify_idx += 1;
                 }
-                PatchLine::Add(_) => {}
+                PatchLine::Add(_, _) => {}
             }
         }
 
         let remove_end = verify_idx;
         let mut replacement = Vec::new();
+        let mut replacement_last_no_newline = false;
         for hunk_line in &hunk.lines {
             match hunk_line {
-                PatchLine::Context(s) | PatchLine::Add(s) => replacement.push(s.clone()),
-                PatchLine::Remove(_) => {}
+                PatchLine::Context(s, no_newline) | PatchLine::Add(s, no_newline) => {
+                    replacement.push(s.clone());
+                    replacement_last_no_newline = *no_newline;
+                }
+                PatchLine::Remove(_, _) => {}
             }
         }
         lines.splice(pos..remove_end, replacement);
+        if pos + hunk.new_len > lines.len() {
+            return Err(PatchError::PatchConflict);
+        }
+        if hunk.new_len > 0 && pos + hunk.new_len == lines.len() {
+            trailing_newline = !replacement_last_no_newline;
+        }
         line_offset += hunk.new_len as i64 - hunk.old_len as i64;
     }
 
-    Ok(lines)
+    Ok(AppliedPatch {
+        lines,
+        trailing_newline,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -273,8 +305,8 @@ pub(crate) fn encode_file_lines(
 mod tests {
     use super::*;
 
-    fn lines(text: &str) -> Vec<String> {
-        split_file_lines(text.as_bytes(), LineEnding::Lf).lines
+    fn lines(text: &str) -> FileLines {
+        split_file_lines(text.as_bytes(), LineEnding::Lf)
     }
 
     #[test]
@@ -303,12 +335,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_new_start() {
+        let file = lines("line1\nline2\n");
+        let patch = "@@ -1,1 +999,1 @@\n-old\n+new\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        assert!(matches!(
+            apply_hunks_to_lines(&file, &hunks),
+            Err(PatchError::InvalidPatch)
+        ));
+    }
+
+    #[test]
     fn applies_single_hunk() {
         let file = lines("line1\nline2\nline3\n");
         let patch = "@@ -2,1 +2,1 @@\n-line2\n+LINE2\n";
         let hunks = parse_unified_hunks(patch).expect("parse");
         let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
-        assert_eq!(result, lines("line1\nLINE2\nline3\n"));
+        assert_eq!(result.lines, lines("line1\nLINE2\nline3\n").lines);
+        assert!(result.trailing_newline);
     }
 
     #[test]
@@ -316,9 +360,39 @@ mod tests {
         let file = lines("line1\nline2\n");
         let patch = "@@ -2,1 +2,1 @@\n-wrong\n+new\n";
         let hunks = parse_unified_hunks(patch).expect("parse");
-        assert_eq!(
+        assert!(matches!(
             apply_hunks_to_lines(&file, &hunks),
             Err(PatchError::PatchConflict)
-        );
+        ));
+    }
+
+    #[test]
+    fn patch_can_insert_into_empty_file() {
+        let file = lines("");
+        let patch = "@@ -0,0 +1,1 @@\n+first line\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(result.lines, vec!["first line".to_string()]);
+        assert!(result.trailing_newline);
+    }
+
+    #[test]
+    fn patch_can_add_trailing_newline() {
+        let file = lines("line");
+        let patch = "@@ -1,1 +1,1 @@\n-line\n\\ No newline at end of file\n+line\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(result.lines, vec!["line".to_string()]);
+        assert!(result.trailing_newline);
+    }
+
+    #[test]
+    fn patch_can_remove_trailing_newline() {
+        let file = lines("line\n");
+        let patch = "@@ -1,1 +1,1 @@\n-line\n+line\n\\ No newline at end of file\n";
+        let hunks = parse_unified_hunks(patch).expect("parse");
+        let result = apply_hunks_to_lines(&file, &hunks).expect("apply");
+        assert_eq!(result.lines, vec!["line".to_string()]);
+        assert!(!result.trailing_newline);
     }
 }

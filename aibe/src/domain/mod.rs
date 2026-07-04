@@ -47,8 +47,11 @@ pub use feature_registry::{
     FeaturePackResolution, FeatureRegistry, FeatureRegistryError,
 };
 pub use file_change::{
-    prepare_file_change_plan, sanitize_apply_patch_arguments, sanitize_write_file_arguments,
-    BeforeState, DiffPreview, DiffSummary, FileChangeOperation, FileChangePlan, FileSnapshot,
+    prepare_file_change_plan, sanitize_apply_patch_arguments,
+    sanitize_apply_patch_arguments_best_effort, sanitize_arguments_fallback,
+    sanitize_tool_arguments_for_audit, sanitize_write_file_arguments,
+    sanitize_write_file_arguments_best_effort, BeforeState, DiffPreview, DiffSummary,
+    FileChangeOperation, FileChangePlan, FileSnapshot,
 };
 pub use file_text::{
     check_file_size, detect_line_ending, has_trailing_newline, reject_mixed_line_endings,

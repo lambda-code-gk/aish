@@ -29,6 +29,10 @@ pub const DEFAULT_MAX_FILE_WRITE_BYTES: usize = 1_048_576;
 pub const DEFAULT_MAX_PATCH_BYTES: usize = 1_048_576;
 /// 承認 UI 向け diff preview の既定上限（バイト）。
 pub const DEFAULT_MAX_PREVIEW_BYTES: usize = 32_768;
+/// diff preview 生成時の行数上限（超過時は preview を省略）。
+pub const DEFAULT_MAX_DIFF_LINES: usize = 10_000;
+/// diff preview 生成時の作業量上限（old_lines × new_lines の概算）。
+pub const DEFAULT_MAX_DIFF_WORK: usize = 1_000_000;
 /// rollback journal の既定保持日数。
 pub const DEFAULT_JOURNAL_RETENTION_DAYS: u32 = 7;
 /// rollback journal の既定容量上限（バイト）。

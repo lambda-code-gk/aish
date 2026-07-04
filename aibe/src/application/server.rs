@@ -11,9 +11,9 @@ use crate::adapters::inbound::unix_socket_server;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use crate::adapters::outbound::tools::build_registry;
 use crate::adapters::outbound::{
-    ConversationStore as FilesystemConversationStore, EnvLlmCallTracer, FileChangeJournalConfig,
-    FilesystemFeatureRegistryLoader, FilesystemFileChangeJournal, FilesystemFileChangeStore,
-    StaticCapabilityPolicy, TomlConfig,
+    ConfigWritePathRevalidator, ConversationStore as FilesystemConversationStore, EnvLlmCallTracer,
+    FileChangeJournalConfig, FilesystemFeatureRegistryLoader, FilesystemFileChangeJournal,
+    FilesystemFileChangeStore, StaticCapabilityPolicy, TomlConfig,
 };
 #[cfg(feature = "memory")]
 use crate::adapters::outbound::{
@@ -42,7 +42,13 @@ pub fn build_file_change_executor(config: &FileWriteConfig) -> Arc<dyn FileChang
         max_bytes: config.journal_max_bytes,
     }));
     let store = Arc::new(FilesystemFileChangeStore);
-    Arc::new(FileChangeService::new(config.clone(), journal, store))
+    let path_revalidator = Arc::new(ConfigWritePathRevalidator::from_config(config));
+    Arc::new(FileChangeService::new(
+        config.clone(),
+        journal,
+        store,
+        path_revalidator,
+    ))
 }
 
 /// テスト / composition root 向けの既定 tool registry。

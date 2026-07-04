@@ -8,7 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::{
-    FileChangeJournalConfig, FilesystemFileChangeJournal, FilesystemFileChangeStore,
+    ConfigWritePathRevalidator, FileChangeJournalConfig, FilesystemFileChangeJournal,
+    FilesystemFileChangeStore,
 };
 use aibe::application::file_change_service::FileChangeService;
 use aibe::domain::{
@@ -95,8 +96,11 @@ impl ToolApprovalGate for TestToolApprovalGate {
     }
 }
 
-pub fn test_ctx(gate: Option<Arc<dyn ToolApprovalGate>>) -> ToolExecutionContext {
-    let cwd = ClientCwd::new(std::env::temp_dir()).expect("cwd");
+pub fn test_ctx(
+    gate: Option<Arc<dyn ToolApprovalGate>>,
+    cwd: &std::path::Path,
+) -> ToolExecutionContext {
+    let cwd = ClientCwd::new(cwd.to_path_buf()).expect("cwd");
     let mut ctx = ToolExecutionContext::new(cwd).with_turn_id("turn-test");
     if let Some(gate) = gate {
         ctx = ctx.with_tool_approval_gate(gate);
@@ -111,7 +115,8 @@ pub fn test_service(config: FileWriteConfig, journal_root: PathBuf) -> FileChang
         max_bytes: 1_000_000,
     }));
     let store = Arc::new(FilesystemFileChangeStore);
-    FileChangeService::new(config, journal, store)
+    let path_revalidator = Arc::new(ConfigWritePathRevalidator::from_config(&config));
+    FileChangeService::new(config, journal, store, path_revalidator)
 }
 
 pub fn create_request(
@@ -179,7 +184,7 @@ async fn file_change_fake_gate_yes_commits() {
         sanitize_write_file_arguments("out.txt", "create", None, "hello\n"),
     );
     let result = service
-        .execute(request, &test_ctx(Some(gate)), None, None)
+        .execute(request, &test_ctx(Some(gate), dir.path()), None, None)
         .await
         .expect("commit");
     assert!(path.is_file());
@@ -213,7 +218,7 @@ async fn file_change_fake_gate_no_leaves_file_unchanged() {
         ),
     );
     let (err, _) = service
-        .execute(request, &test_ctx(Some(gate)), None, None)
+        .execute(request, &test_ctx(Some(gate), dir.path()), None, None)
         .await
         .expect_err("denied");
     assert_eq!(err, FileChangeError::ApprovalDenied);
@@ -238,7 +243,7 @@ async fn file_write_never_mode_denies_execution() {
         sanitize_write_file_arguments("out.txt", "create", None, "hello\n"),
     );
     let (err, executed) = service
-        .execute(request, &test_ctx(Some(gate)), None, None)
+        .execute(request, &test_ctx(Some(gate), dir.path()), None, None)
         .await
         .expect_err("denied");
     assert_eq!(err, FileChangeError::WriteDeniedByPolicy);
@@ -264,7 +269,12 @@ async fn file_write_always_mode_skips_prompt() {
         sanitize_write_file_arguments("out.txt", "create", None, "hello\n"),
     );
     service
-        .execute(request, &test_ctx(Some(gate.clone())), None, None)
+        .execute(
+            request,
+            &test_ctx(Some(gate.clone()), dir.path()),
+            None,
+            None,
+        )
         .await
         .expect("commit");
     assert_eq!(gate.prompt_count(), 0);
@@ -286,7 +296,7 @@ async fn file_write_disabled_returns_tool_disabled() {
         sanitize_write_file_arguments("out.txt", "create", None, "hello\n"),
     );
     let (err, executed) = service
-        .execute(request, &test_ctx(None), None, None)
+        .execute(request, &test_ctx(None, dir.path()), None, None)
         .await
         .expect_err("disabled");
     assert_eq!(err, FileChangeError::ToolDisabled);
@@ -306,7 +316,7 @@ async fn file_change_missing_gate_returns_unavailable() {
         sanitize_write_file_arguments("out.txt", "create", None, "hello\n"),
     );
     let (err, executed) = service
-        .execute(request, &test_ctx(None), None, None)
+        .execute(request, &test_ctx(None, dir.path()), None, None)
         .await
         .expect_err("unavailable");
     assert_eq!(err, FileChangeError::ApprovalUnavailable);
@@ -337,7 +347,12 @@ async fn file_change_cancel_during_approval_writes_nothing() {
         cancel_clone.cancel();
     });
     let (err, _) = service
-        .execute(request, &test_ctx(Some(gate)), Some(&cancel), None)
+        .execute(
+            request,
+            &test_ctx(Some(gate), dir.path()),
+            Some(&cancel),
+            None,
+        )
         .await
         .expect_err("cancelled");
     assert_eq!(err, FileChangeError::Cancelled);
@@ -376,7 +391,7 @@ async fn file_change_revalidate_detects_stale_file() {
         ),
     );
     let (err, _) = service
-        .execute(request, &test_ctx(Some(gate)), None, None)
+        .execute(request, &test_ctx(Some(gate), dir.path()), None, None)
         .await
         .expect_err("stale");
     assert_eq!(err, FileChangeError::StaleFile);
@@ -406,7 +421,7 @@ async fn file_change_sanitizes_executed_tool_arguments() {
     assert!(!patch_sanitized.to_string().contains("patch body"));
 
     let result = service
-        .execute(request, &test_ctx(Some(gate)), None, None)
+        .execute(request, &test_ctx(Some(gate), dir.path()), None, None)
         .await
         .expect("commit");
     let args = result.executed.arguments.to_string();

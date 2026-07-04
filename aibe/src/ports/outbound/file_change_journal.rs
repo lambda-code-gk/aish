@@ -47,4 +47,10 @@ pub trait FileChangeJournal: Send + Sync {
     ) -> Result<JournalEntry, FileChangeJournalError>;
 
     async fn cleanup_expired(&self) -> Result<(), FileChangeJournalError>;
+
+    async fn mark_status(
+        &self,
+        entry: &JournalEntry,
+        status: &str,
+    ) -> Result<(), FileChangeJournalError>;
 }

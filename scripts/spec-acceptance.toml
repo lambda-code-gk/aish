@@ -2130,3 +2130,102 @@ description = "§28.2 既存修正シナリオ"
 test = "acceptance_apply_patch_flow"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
 pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "write_file_error_sanitizes_content"
+description = "write_file エラー経路で raw content を監査に残さない"
+test = "write_file_error_does_not_audit_raw_content"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "apply_patch_error_sanitizes_patch"
+description = "apply_patch エラー経路で raw patch を監査に残さない"
+test = "apply_patch_error_does_not_audit_raw_patch"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "write_tool_capability_sanitizes_args"
+description = "capability 拒否時に write 引数をサニタイズ"
+test = "write_tool_capability_rejection_sanitizes_arguments"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "diff_preview_bounded_line_count"
+description = "大量行 diff で OOM せず preview を省略"
+test = "diff_preview_large_line_count_is_bounded"
+file_glob = "aibe/src/domain/diff_preview.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "write_revalidates_parent_symlink"
+description = "承認後に parent symlink を再検証"
+test = "write_revalidates_parent_symlink_after_approval"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "write_revalidates_target_symlink"
+description = "承認後に target symlink を再検証"
+test = "write_revalidates_target_symlink_after_approval"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "replace_rejects_oversized_before_read"
+description = "既存ファイルのサイズ上限を read 前に適用"
+test = "replace_rejects_oversized_existing_file_before_read"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "patch_add_trailing_newline"
+description = "patch で末尾改行を追加できる"
+test = "patch_can_add_trailing_newline"
+file_glob = "aibe/src/adapters/outbound/tools/patch_parser.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "patch_remove_trailing_newline"
+description = "patch で末尾改行を削除できる"
+test = "patch_can_remove_trailing_newline"
+file_glob = "aibe/src/adapters/outbound/tools/patch_parser.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "patch_insert_empty_file"
+description = "空ファイルへ patch 挿入できる"
+test = "patch_can_insert_into_empty_file"
+file_glob = "aibe/src/adapters/outbound/tools/patch_parser.rs"
+pending = false
+
+[[cases]]
+spec = "0054"
+phase = 10
+id = "journal_not_committed_on_write_fail"
+description = "atomic write 失敗時 journal は committed にならない"
+test = "journal_is_not_committed_when_atomic_write_fails"
+file_glob = "aibe/tests/0054_safe_file_write_red.rs"
+pending = false

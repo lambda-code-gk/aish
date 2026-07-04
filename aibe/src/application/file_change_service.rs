@@ -12,7 +12,7 @@ use crate::ports::outbound::{
     FileChangeError, FileChangeExecuteRequest, FileChangeExecuteResult, FileChangeExecutor,
     FileChangeJournal, FileChangeJournalError, FileChangeStore, FileWriteApprovalMode,
     FileWriteConfig, JournalSaveRequest, ToolApprovalGateOutcome, ToolApprovalPromptRequest,
-    ToolExecutionContext, TurnCancellation, TurnEventSink,
+    ToolExecutionContext, TurnCancellation, TurnEventSink, WritePathRevalidator,
 };
 
 pub use crate::domain::{sanitize_apply_patch_arguments, sanitize_write_file_arguments};
@@ -22,6 +22,7 @@ pub struct FileChangeService {
     config: FileWriteConfig,
     journal: Arc<dyn FileChangeJournal>,
     store: Arc<dyn FileChangeStore>,
+    path_revalidator: Arc<dyn WritePathRevalidator>,
 }
 
 impl FileChangeService {
@@ -29,11 +30,13 @@ impl FileChangeService {
         config: FileWriteConfig,
         journal: Arc<dyn FileChangeJournal>,
         store: Arc<dyn FileChangeStore>,
+        path_revalidator: Arc<dyn WritePathRevalidator>,
     ) -> Self {
         Self {
             config,
             journal,
             store,
+            path_revalidator,
         }
     }
 
@@ -213,7 +216,7 @@ async fn execute_inner(
         }
     }
 
-    if let Err(err) = revalidate(service, &request.plan).await {
+    if let Err(err) = revalidate(service, &request, ctx).await {
         let executed = error_executed(
             &request,
             approval_mode_str,
@@ -274,6 +277,7 @@ async fn execute_inner(
         .await
         .is_err()
     {
+        let _ = service.journal.mark_status(&entry, "commit_failed").await;
         let executed = error_executed(
             &request,
             approval_mode_str,
@@ -283,6 +287,23 @@ async fn execute_inner(
             "atomic write failed",
         );
         return Err((FileChangeError::WriteFailed, executed));
+    }
+
+    if service
+        .journal
+        .mark_status(&entry, "committed")
+        .await
+        .is_err()
+    {
+        let executed = error_executed(
+            &request,
+            approval_mode_str,
+            approval_outcome_for_mode(approval_mode, approval_origin),
+            approval_origin,
+            FileChangeError::JournalFailed,
+            "journal status update failed",
+        );
+        return Err((FileChangeError::JournalFailed, executed));
     }
 
     let output = format!(
@@ -311,8 +332,27 @@ async fn execute_inner(
 
 async fn revalidate(
     service: &FileChangeService,
-    plan: &FileChangePlan,
+    request: &FileChangeExecuteRequest,
+    ctx: &ToolExecutionContext,
 ) -> Result<(), FileChangeError> {
+    let plan = &request.plan;
+    let rel_path = request
+        .sanitized_arguments
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or(FileChangeError::StaleFile)?;
+
+    let policy = &service.path_revalidator;
+    let expect_absent = plan.operation == FileChangeOperation::Create;
+    let canonical = policy
+        .revalidate_write_path(ctx, std::path::Path::new(rel_path), expect_absent)
+        .await
+        .map_err(|_| FileChangeError::StaleFile)?;
+
+    if canonical != plan.path {
+        return Err(FileChangeError::StaleFile);
+    }
+
     let path = &plan.path;
     match plan.operation {
         FileChangeOperation::Create => {
@@ -322,6 +362,17 @@ async fn revalidate(
         }
         FileChangeOperation::Replace | FileChangeOperation::Patch => {
             if !service.store.is_regular_file(path).await {
+                return Err(FileChangeError::StaleFile);
+            }
+            let current_len = service
+                .store
+                .file_byte_len(path)
+                .await
+                .map_err(|_| FileChangeError::StaleFile)?;
+            let Some(current_len) = current_len else {
+                return Err(FileChangeError::StaleFile);
+            };
+            if current_len > service.config.max_file_bytes as u64 {
                 return Err(FileChangeError::StaleFile);
             }
             let current = service

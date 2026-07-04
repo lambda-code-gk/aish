@@ -164,3 +164,108 @@ pub fn sanitize_apply_patch_arguments(
         "hunk_count": hunk_count,
     })
 }
+
+/// 監査記録用にツール引数から機密フィールドを除去する（best-effort）。
+pub fn sanitize_tool_arguments_for_audit(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    match tool_name {
+        crate::domain::WRITE_FILE => sanitize_write_file_arguments_best_effort(arguments),
+        crate::domain::APPLY_PATCH => sanitize_apply_patch_arguments_best_effort(arguments),
+        _ => sanitize_arguments_fallback(arguments, &[]),
+    }
+}
+
+/// `write_file` 引数の best-effort サニタイズ（parse 失敗時も content を残さない）。
+pub fn sanitize_write_file_arguments_best_effort(
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        path: Option<String>,
+        mode: Option<String>,
+        content: Option<String>,
+        expected_sha256: Option<String>,
+    }
+
+    if let Ok(parsed) = serde_json::from_value::<Args>(arguments.clone()) {
+        let path = parsed.path.unwrap_or_default();
+        let mode = parsed.mode.unwrap_or_else(|| "unknown".to_string());
+        let content_len = parsed.content.map(|c| c.len()).unwrap_or(0);
+        let mut value = serde_json::json!({
+            "path": path,
+            "mode": mode,
+            "content_bytes": content_len,
+        });
+        if let Some(hash) = parsed.expected_sha256 {
+            value["expected_sha256"] = serde_json::Value::String(hash);
+        }
+        return value;
+    }
+    sanitize_arguments_fallback(arguments, &["content"])
+}
+
+/// `apply_patch` 引数の best-effort サニタイズ（parse 失敗時も patch を残さない）。
+pub fn sanitize_apply_patch_arguments_best_effort(
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    #[derive(serde::Deserialize)]
+    struct Args {
+        path: Option<String>,
+        patch: Option<String>,
+        expected_sha256: Option<String>,
+    }
+
+    if let Ok(parsed) = serde_json::from_value::<Args>(arguments.clone()) {
+        let path = parsed.path.unwrap_or_default();
+        let patch_len = parsed.patch.map(|p| p.len()).unwrap_or(0);
+        let mut value = serde_json::json!({
+            "path": path,
+            "patch_bytes": patch_len,
+            "hunk_count": 0,
+        });
+        if let Some(hash) = parsed.expected_sha256 {
+            value["expected_sha256"] = serde_json::Value::String(hash);
+        }
+        return value;
+    }
+    sanitize_arguments_fallback(arguments, &["patch"])
+}
+
+/// 任意 JSON 引数から機密キーをバイト数に置換する。
+pub fn sanitize_arguments_fallback(
+    arguments: &serde_json::Value,
+    strip_keys: &[&str],
+) -> serde_json::Value {
+    match arguments {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            let mut keys = Vec::new();
+            for (key, value) in map {
+                keys.push(key.clone());
+                if strip_keys.contains(&key.as_str()) {
+                    let byte_len = match value {
+                        serde_json::Value::String(s) => s.len(),
+                        other => other.to_string().len(),
+                    };
+                    out.insert(
+                        format!("{key}_bytes"),
+                        serde_json::Value::Number(byte_len.into()),
+                    );
+                } else {
+                    out.insert(key.clone(), value.clone());
+                }
+            }
+            keys.sort();
+            out.insert(
+                "argument_keys".to_string(),
+                serde_json::Value::Array(keys.into_iter().map(serde_json::Value::String).collect()),
+            );
+            serde_json::Value::Object(out)
+        }
+        other => serde_json::json!({
+            "argument_bytes": other.to_string().len(),
+        }),
+    }
+}

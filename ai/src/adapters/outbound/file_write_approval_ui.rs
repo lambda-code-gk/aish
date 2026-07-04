@@ -5,11 +5,22 @@ use std::io::{IsTerminal, Write};
 use aibe_client::ToolApprovalPrompt;
 use aibe_protocol::ToolApprovalOrigin;
 
-use super::shell_exec_approval_ui::escape_for_shell_exec_approval_display;
-
-/// 承認プロンプト用に制御文字を escape して表示用文字列にする。
+/// 承認プロンプト用に **制御文字のみ** escape し、UTF-8 テキスト（日本語等）はそのまま表示する。
 pub fn escape_for_file_write_approval_display(s: &str) -> String {
-    escape_for_shell_exec_approval_display(s)
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii_control() {
+            match ch {
+                '\t' => out.push_str("\\t"),
+                '\r' => out.push_str("\\r"),
+                '\n' => out.push_str("\\n"),
+                _ => out.push_str(&format!("\\x{:02x}", ch as u32)),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 /// stderr へ出す承認プロンプト行（設計 §15.1）。
@@ -151,6 +162,15 @@ mod tests {
         assert!(escaped.contains("\\x1b"));
         assert!(escaped.contains("\\n"));
         assert!(!escaped.contains('\x1b'));
+    }
+
+    #[test]
+    fn preserves_japanese_and_punctuation_in_preview() {
+        let raw = "Line 5: ビルドの最適化と効率の改善が進行中です。\nLet's ensure";
+        let escaped = escape_for_file_write_approval_display(raw);
+        assert!(escaped.contains("ビルドの最適化"));
+        assert!(escaped.contains("Let's ensure"));
+        assert!(!escaped.contains("\\xe3"));
     }
 
     #[test]

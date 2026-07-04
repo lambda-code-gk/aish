@@ -25,6 +25,7 @@ mod toml_config;
 pub mod tools;
 #[cfg(feature = "memory")]
 mod work_store;
+mod write_path_revalidator;
 
 pub use crate::ports::outbound::{
     ConversationIndexEntry, ConversationSnapshot, ConversationStoreError,
@@ -58,3 +59,4 @@ pub use scripted_mock_llm::{DeltaStreamingMockLlm, ScriptedMockLlm};
 pub use toml_config::TomlConfig;
 #[cfg(feature = "memory")]
 pub use work_store::FilesystemWorkStore;
+pub use write_path_revalidator::ConfigWritePathRevalidator;

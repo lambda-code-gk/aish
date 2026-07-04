@@ -27,4 +27,7 @@ pub trait FileChangeStore: Send + Sync {
 
     /// 対象 path が存在するか（create revalidate 用）。
     async fn path_exists(&self, path: &Path) -> bool;
+
+    /// 通常ファイルの byte 長。不存在または非ファイルなら `Ok(None)`。
+    async fn file_byte_len(&self, path: &Path) -> Result<Option<u64>, FileChangeStoreError>;
 }

@@ -139,6 +139,17 @@ mod phase8_file_write_approval_ui {
     }
 
     #[test]
+    fn file_write_approval_ui_preserves_japanese_preview() {
+        let mut prompt = sample_tool_prompt();
+        prompt.preview =
+            "--- a/test.txt\n+++ b/test.txt\n@@\n-Line 5: old\n+Line 5: ビルドの最適化\n".into();
+        let lines = file_write_approval_prompt_stderr_lines(&prompt);
+        let joined = lines.join("\n");
+        assert!(joined.contains("ビルドの最適化"));
+        assert!(!joined.contains("\\xe3"));
+    }
+
+    #[test]
     fn file_write_approval_ui_escapes_control_chars() {
         let mut prompt = sample_tool_prompt();
         prompt.preview = "\x1b[31msecret\x1b[0m\n".into();

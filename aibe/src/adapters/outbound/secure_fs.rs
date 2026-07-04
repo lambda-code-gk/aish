@@ -27,6 +27,15 @@ pub(crate) fn set_permissions_0700(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, perms)
 }
 
+fn default_create_mode() -> u32 {
+    let umask = unsafe {
+        let old = libc::umask(0);
+        libc::umask(old);
+        old
+    };
+    0o666 & !umask
+}
+
 /// 同ディレクトリへ temp を書き、rename で置換する（設計 §18）。
 pub(crate) fn atomic_write_in_place(
     path: &Path,
@@ -43,7 +52,7 @@ pub(crate) fn atomic_write_in_place(
     let temp = parent.join(format!("{temp_prefix}{}.{}.tmp", std::process::id(), seq));
 
     let result = (|| {
-        let mode = preserve_mode.unwrap_or(0o666) & 0o777;
+        let mode = preserve_mode.unwrap_or_else(default_create_mode) & 0o777;
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -55,6 +64,8 @@ pub(crate) fn atomic_write_in_place(
         fs::rename(&temp, path)?;
         if let Some(mode) = preserve_mode {
             set_permissions_mode(path, mode)?;
+        } else {
+            set_permissions_mode(path, default_create_mode())?;
         }
         let _ = File::open(parent).and_then(|f| f.sync_all());
         Ok(())

@@ -11,8 +11,9 @@ use aibe::adapters::outbound::tools::{
     FILE_METADATA_PREFIX,
 };
 use aibe::adapters::outbound::{
-    path_mode, read_journal_metadata, set_journal_created_at_for_test, FileChangeJournalConfig,
-    FilesystemFileChangeJournal, FilesystemFileChangeStore, StaticCapabilityPolicy,
+    path_mode, read_journal_metadata, set_journal_created_at_for_test, ConfigWritePathRevalidator,
+    FileChangeJournalConfig, FilesystemFileChangeJournal, FilesystemFileChangeStore,
+    StaticCapabilityPolicy,
 };
 use aibe::application::file_change_service::FileChangeService;
 use aibe::application::tool_round::{RoundOutcome, ToolRoundExecutor};
@@ -23,10 +24,10 @@ use aibe::domain::{
 };
 use aibe::ports::outbound::FileChangeExecutor;
 use aibe::ports::outbound::{
-    FileChangeJournal, FileChangeJournalError, FileWriteApprovalMode, FileWriteConfig,
-    JournalSaveRequest, LlmProvider, NoopLlmCallTracer, ReadFileConfig, ToolApprovalGate,
-    ToolApprovalGateOutcome, ToolApprovalPromptRequest, ToolDefinition, ToolExecutionContext,
-    ToolExecutor, ToolsConfig,
+    FileChangeJournal, FileChangeJournalError, FileChangeStore, FileChangeStoreError,
+    FileWriteApprovalMode, FileWriteConfig, JournalSaveRequest, LlmProvider, NoopLlmCallTracer,
+    ReadFileConfig, ToolApprovalGate, ToolApprovalGateOutcome, ToolApprovalPromptRequest,
+    ToolDefinition, ToolExecutionContext, ToolExecutor, ToolsConfig,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -752,7 +753,13 @@ fn phase6_service(dir: &Path, config: FileWriteConfig) -> Arc<dyn FileChangeExec
         max_bytes: 1_000_000,
     }));
     let store = Arc::new(FilesystemFileChangeStore);
-    Arc::new(FileChangeService::new(config, journal, store))
+    let path_revalidator = Arc::new(ConfigWritePathRevalidator::from_config(&config));
+    Arc::new(FileChangeService::new(
+        config,
+        journal,
+        store,
+        path_revalidator,
+    ))
 }
 
 fn phase6_ctx(dir: &Path, gate: Option<Arc<dyn ToolApprovalGate>>) -> ToolExecutionContext {
@@ -2077,4 +2084,283 @@ async fn read_until_tool_approval_prompt(
             return line;
         }
     }
+}
+
+#[tokio::test]
+async fn write_file_error_does_not_audit_raw_content() {
+    let dir = tempdir().expect("tempdir");
+    let (executed, result) = run_write_file(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "secret.txt",
+            "mode": "invalid-mode",
+            "content": "API_KEY=super-secret",
+        }),
+    )
+    .await;
+    assert!(result.is_error);
+    let args = executed.arguments;
+    assert_eq!(args["content_bytes"], 20);
+    assert!(args.get("content").is_none());
+    assert_eq!(args["path"], "secret.txt");
+}
+
+#[tokio::test]
+async fn apply_patch_error_does_not_audit_raw_patch() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "line\n").expect("seed");
+    let (executed, _) = run_apply_patch(
+        dir.path(),
+        phase6_write_config(FileWriteApprovalMode::Always),
+        None,
+        json!({
+            "path": "note.txt",
+            "patch": "not a valid patch",
+            "expected_sha256": sha256_hex(b"line\n"),
+        }),
+    )
+    .await;
+    let args = executed.arguments;
+    assert!(args.get("patch").is_none());
+    assert_eq!(args["patch_bytes"], 17);
+}
+
+#[tokio::test]
+async fn write_tool_capability_rejection_sanitizes_arguments() {
+    let dir = tempdir().expect("tempdir");
+    let config = phase6_write_config(FileWriteApprovalMode::Always);
+    let tool = Arc::new(phase6_tool(dir.path(), config)) as Arc<dyn ToolExecutor>;
+    let registry = Arc::new(DefaultToolRegistry::from_executors([tool]).expect("registry"));
+    let llm = WriteRoundLlm::write_file_call();
+    let executor = ToolRoundExecutor::new(
+        llm,
+        registry,
+        ToolsConfig::default(),
+        Arc::new(NoopLlmCallTracer),
+    );
+    let cwd = ClientCwd::new(dir.path().to_path_buf()).expect("cwd");
+    let ctx = ToolExecutionContext::new(cwd)
+        .with_turn_id("cap-sanitize")
+        .with_capability_policy(StaticCapabilityPolicy::memory_read_only());
+    let outcome = executor
+        .run_one_round(
+            &[ChatMessage::user("write")],
+            &[ToolName::write_file()],
+            &[],
+            &ctx,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .expect("round");
+    match outcome {
+        RoundOutcome::Continue { executed, .. } => {
+            assert_eq!(executed.len(), 1);
+            assert_eq!(executed[0].error.as_deref(), Some("capability_denied"));
+            assert!(executed[0].arguments.get("content").is_none());
+            assert_eq!(executed[0].arguments["content_bytes"], 6);
+        }
+        _ => panic!("expected Continue"),
+    }
+}
+
+#[tokio::test]
+async fn replace_rejects_oversized_existing_file_before_read() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("big.txt");
+    let mut config = phase6_write_config(FileWriteApprovalMode::Always);
+    config.max_file_bytes = 16;
+    std::fs::write(&path, vec![b'x'; 32]).expect("seed");
+    let hash = sha256_hex(&vec![b'x'; 32]);
+    let (executed, result) = run_write_file(
+        dir.path(),
+        config,
+        None,
+        json!({
+            "path": "big.txt",
+            "mode": "replace",
+            "expected_sha256": hash,
+            "content": "small\n",
+        }),
+    )
+    .await;
+    assert!(result.is_error);
+    assert_eq!(executed.error.as_deref(), Some("file_too_large"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn write_revalidates_parent_symlink_after_approval() {
+    use std::os::unix::fs::symlink;
+
+    use aibe_protocol::ToolApprovalOrigin;
+
+    let base = tempdir().expect("base");
+    let outside = tempdir().expect("outside");
+    let project = base.path().join("project");
+    std::fs::create_dir_all(&project).expect("mkdir");
+    std::fs::write(project.join("note.txt"), "before\n").expect("seed");
+    let hash = sha256_hex(b"before\n");
+
+    let gate = Phase6ApprovalGate::delayed(
+        ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
+        Duration::from_millis(200),
+    );
+    let base_for_task = base.path().to_path_buf();
+    let outside_path = outside.path().to_path_buf();
+    let swapper = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let project = base_for_task.join("project");
+        std::fs::remove_dir_all(&project).expect("remove project");
+        symlink(&outside_path, &project).expect("symlink project");
+        std::fs::write(outside_path.join("note.txt"), "before\n").expect("same hash outside");
+    });
+
+    let (executed, _) = run_write_file(
+        base.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate),
+        json!({
+            "path": "project/note.txt",
+            "mode": "replace",
+            "content": "after\n",
+            "expected_sha256": hash,
+        }),
+    )
+    .await;
+    swapper.await.expect("swapper");
+    assert_eq!(executed.error.as_deref(), Some("stale_file"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn write_revalidates_target_symlink_after_approval() {
+    use std::os::unix::fs::symlink;
+
+    use aibe_protocol::ToolApprovalOrigin;
+
+    let base = tempdir().expect("base");
+    let outside = tempdir().expect("outside");
+    std::fs::write(base.path().join("note.txt"), "before\n").expect("seed");
+    let hash = sha256_hex(b"before\n");
+
+    let gate = Phase6ApprovalGate::delayed(
+        ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
+        Duration::from_millis(200),
+    );
+    let target = base.path().join("note.txt");
+    let outside_file = outside.path().join("note.txt");
+    let swapper = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        std::fs::remove_file(&target).expect("remove");
+        std::fs::write(&outside_file, "before\n").expect("same bytes");
+        symlink(&outside_file, &target).expect("symlink target");
+    });
+
+    let (executed, _) = run_write_file(
+        base.path(),
+        phase6_write_config(FileWriteApprovalMode::Ask),
+        Some(gate),
+        json!({
+            "path": "note.txt",
+            "mode": "replace",
+            "content": "after\n",
+            "expected_sha256": hash,
+        }),
+    )
+    .await;
+    swapper.await.expect("swapper");
+    assert_eq!(executed.error.as_deref(), Some("stale_file"));
+}
+
+struct FailingCommitStore;
+
+#[async_trait]
+impl FileChangeStore for FailingCommitStore {
+    async fn commit_atomic(
+        &self,
+        _path: &Path,
+        _content: &[u8],
+        _preserve_mode: Option<u32>,
+    ) -> Result<(), FileChangeStoreError> {
+        Err(FileChangeStoreError)
+    }
+
+    async fn is_regular_file(&self, path: &Path) -> bool {
+        path.is_file()
+    }
+
+    async fn read_file_bytes(&self, path: &Path) -> Result<Option<Vec<u8>>, FileChangeStoreError> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        std::fs::read(path)
+            .map(Some)
+            .map_err(|_| FileChangeStoreError)
+    }
+
+    async fn path_exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    async fn file_byte_len(&self, path: &Path) -> Result<Option<u64>, FileChangeStoreError> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        std::fs::metadata(path)
+            .map(|meta| Some(meta.len()))
+            .map_err(|_| FileChangeStoreError)
+    }
+}
+
+#[tokio::test]
+async fn journal_is_not_committed_when_atomic_write_fails() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("note.txt"), "before\n").expect("seed");
+    let journal = Arc::new(FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+        root: dir.path().join("journal"),
+        retention_days: 7,
+        max_bytes: 1_000_000,
+    }));
+    let service = Arc::new(FileChangeService::new(
+        phase6_write_config(FileWriteApprovalMode::Always),
+        journal,
+        Arc::new(FailingCommitStore),
+        Arc::new(ConfigWritePathRevalidator::from_config(
+            &phase6_write_config(FileWriteApprovalMode::Always),
+        )),
+    ));
+    let tool = WriteFileTool::new(phase6_write_config(FileWriteApprovalMode::Always), service);
+    let ctx = phase6_ctx(dir.path(), None);
+    let hash = sha256_hex(b"before\n");
+    let (executed, _) = tool
+        .execute(
+            "call-journal",
+            &json!({
+                "path": "note.txt",
+                "mode": "replace",
+                "content": "after\n",
+                "expected_sha256": hash,
+            }),
+            30_000,
+            &ctx,
+        )
+        .await;
+    assert_eq!(executed.error.as_deref(), Some("write_failed"));
+
+    let dates = std::fs::read_dir(dir.path().join("journal"))
+        .expect("journal root")
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(dates.len(), 1);
+    let changes = std::fs::read_dir(dates[0].path())
+        .expect("date dir")
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 1);
+    let meta = read_journal_metadata(&changes[0].path()).expect("metadata");
+    assert_eq!(meta["status"], "commit_failed");
 }

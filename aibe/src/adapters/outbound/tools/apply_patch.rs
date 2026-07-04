@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::{Capability, ExecutedToolCall, ToolName, ToolResult};
+use crate::domain::{
+    sanitize_apply_patch_arguments_best_effort, Capability, ExecutedToolCall, ToolName, ToolResult,
+};
 use crate::ports::outbound::{
     FileChangeError, FileChangeExecuteRequest, FileChangeExecutor, FileWriteConfig,
     ToolExecutionContext, ToolExecutor,
@@ -85,16 +87,16 @@ impl ToolExecutor for ApplyPatchTool {
         ctx: &ToolExecutionContext,
     ) -> (ExecutedToolCall, ToolResult) {
         let id = tool_call_id.to_string();
-        let args_value = arguments.clone();
+        let audit_args = sanitize_apply_patch_arguments_best_effort(arguments);
 
         if let Err(denied) = ctx.require_capability(Capability::FileWrite) {
-            return Self::tool_err(id, args_value, "capability_denied", denied.message());
+            return Self::tool_err(id, audit_args, "capability_denied", denied.message());
         }
 
         if !self.config.enabled {
             return Self::tool_err(
                 id,
-                args_value,
+                audit_args,
                 "tool_disabled",
                 "file write tools are disabled",
             );
@@ -105,7 +107,7 @@ impl ToolExecutor for ApplyPatchTool {
             Err(e) => {
                 return Self::tool_err(
                     id,
-                    args_value,
+                    audit_args,
                     "invalid_arguments",
                     format!("invalid arguments: {e}"),
                 );
@@ -115,55 +117,56 @@ impl ToolExecutor for ApplyPatchTool {
         if parsed.path.trim().is_empty() {
             return Self::tool_err(
                 id,
-                args_value,
+                audit_args,
                 "invalid_arguments",
                 "path must not be empty",
             );
         }
 
         if parsed.patch.is_empty() {
-            return Self::tool_err(id, args_value, "invalid_patch", "patch must not be empty");
+            return Self::tool_err(id, audit_args, "invalid_patch", "patch must not be empty");
         }
 
         if parsed.patch.len() > self.config.max_patch_bytes {
-            return Self::tool_err(id, args_value, "input_too_large", "patch too large");
+            return Self::tool_err(id, audit_args, "input_too_large", "patch too large");
         }
 
         let canonical = match resolve_write_target(&self.path_policy, ctx, &parsed.path).await {
             Ok(p) => p,
-            Err((code, msg)) => return Self::tool_err(id, args_value, code, msg),
+            Err((code, msg)) => return Self::tool_err(id, audit_args, code, msg),
         };
 
-        let (before, line_ending) = match load_patch_target_snapshot(&canonical).await {
-            Ok(s) => s,
-            Err((code, msg)) => return Self::tool_err(id, args_value, code, msg),
-        };
+        let (before, line_ending) =
+            match load_patch_target_snapshot(&canonical, self.config.max_file_bytes).await {
+                Ok(s) => s,
+                Err((code, msg)) => return Self::tool_err(id, audit_args, code, msg),
+            };
 
         if let Err((code, msg)) = verify_patch_expected_hash(&parsed.expected_sha256, &before) {
-            return Self::tool_err(id, args_value, code, msg);
+            return Self::tool_err(id, audit_args, code, msg);
         }
 
         let hunks = match parse_unified_hunks(&parsed.patch) {
             Ok(h) => h,
             Err(err) => {
                 let (code, msg) = Self::map_patch_error(err);
-                return Self::tool_err(id, args_value, code, msg);
+                return Self::tool_err(id, audit_args, code, msg);
             }
         };
 
         let before_bytes = before.bytes.as_deref().unwrap_or_default();
         let file_lines = split_file_lines(before_bytes, line_ending);
-        let after_lines = match apply_hunks_to_lines(&file_lines.lines, &hunks) {
-            Ok(lines) => lines,
+        let applied = match apply_hunks_to_lines(&file_lines, &hunks) {
+            Ok(applied) => applied,
             Err(err) => {
                 let (code, msg) = Self::map_patch_error(err);
-                return Self::tool_err(id, args_value, code, msg);
+                return Self::tool_err(id, audit_args, code, msg);
             }
         };
 
-        let after_bytes = encode_file_lines(&after_lines, line_ending, file_lines.trailing_newline);
+        let after_bytes = encode_file_lines(&applied.lines, line_ending, applied.trailing_newline);
         if after_bytes.len() > self.config.max_file_bytes {
-            return Self::tool_err(id, args_value, "input_too_large", "result file too large");
+            return Self::tool_err(id, audit_args, "input_too_large", "result file too large");
         }
 
         let sanitized = sanitized_apply_patch_args(
