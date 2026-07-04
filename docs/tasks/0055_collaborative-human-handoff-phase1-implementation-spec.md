@@ -3,7 +3,7 @@
 > **種別**: 実装指示書（`docs/tasks/`）  
 > **設計正本**: [0055_collaborative-human-handoff-spec.md](../spec/0055_collaborative-human-handoff-spec.md)  
 > **マスター**: [0055_collaborative-human-handoff-implementation-spec.md](0055_collaborative-human-handoff-implementation-spec.md)  
-> **状態**: 未着手  
+> **状態**: Phase 1 完了 / Phase 2–5 未着手  
 > **前提**: なし
 
 ## 0. 目的
@@ -44,15 +44,15 @@ Handoff / lease / checkpoint / command candidate の **domain 型と永続化契
 
 | id | 条件 | テスト関数 | pending |
 |----|------|------------|---------|
-| `handoff_state_transitions` | 正常・side・異常遷移が domain で検証される | `handoff_state_transitions_are_validated` | true |
-| `lease_exclusive` | 同時 lease 取得の 2 件目が拒否される | `handoff_lease_rejects_concurrent_owner` | true |
-| `token_hash_not_plaintext` | store が平文 token を保持しない | `handoff_store_persists_token_hash_only` | true |
-| `shell_generation_monotonic` | 新 session で generation が増加し旧 token が失効扱い | `shell_session_generation_invalidates_old_token` | true |
-| `candidate_command_no_split` | `command`+`args` から候補を組み立て、`\|\|` 等を分解しない | `candidate_command_preserves_shell_operators_in_args` | true |
-| `candidate_source_preserved` | PARENT_AGENT 等 source が保持される | `command_candidate_source_roundtrip` | true |
-| `child_goal_close_reason` | 終了時 `close_reason=control_returned` | `child_goal_records_control_returned_not_achievement` | true |
-| `checkpoint_required_fields` | checkpoint に必須フィールドが含まれる | `checkpoint_contains_required_recovery_fields` | true |
-| `human_handoff_result_dto` | `HumanHandoffResult` serde roundtrip | `human_handoff_result_serde_roundtrip` | true |
+| `handoff_state_transitions` | 正常・side・異常遷移が domain で検証される | `handoff_state_transitions_are_validated` | false |
+| `lease_exclusive` | 同時 lease 取得の 2 件目が拒否される | `handoff_lease_rejects_concurrent_owner` | false |
+| `token_hash_not_plaintext` | store が平文 token を保持しない | `handoff_store_persists_token_hash_only` | false |
+| `shell_generation_monotonic` | 新 session で generation が増加し旧 token が失効扱い | `shell_session_generation_invalidates_old_token` | false |
+| `candidate_command_no_split` | `command`+`args` から候補を組み立て、`\|\|` 等を分解しない | `candidate_command_preserves_shell_operators_in_args` | false |
+| `candidate_source_preserved` | PARENT_AGENT 等 source が保持される | `command_candidate_source_roundtrip` | false |
+| `child_goal_close_reason` | 終了時 `close_reason=control_returned` | `child_goal_records_control_returned_not_achievement` | false |
+| `checkpoint_required_fields` | checkpoint に必須フィールドが含まれる | `checkpoint_contains_required_recovery_fields` | false |
+| `human_handoff_result_dto` | `HumanHandoffResult` serde roundtrip | `human_handoff_result_serde_roundtrip` | false |
 
 ## 3. 変更ファイル（目安）
 

@@ -42,4 +42,3 @@ fn human_shell_prompt_shows_collaborative_status() {
 fn human_shell_prompt_shows_waiting_for_side_agent() {
     panic!("0055 phase5 not implemented");
 }
-

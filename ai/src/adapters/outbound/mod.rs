@@ -6,6 +6,7 @@ mod dynamic_completion;
 mod external_editor;
 mod file_log;
 mod file_write_approval_ui;
+mod handoff_store;
 mod local_history;
 mod memory_recipe_approval_ui;
 mod output_filter;
@@ -45,6 +46,7 @@ pub use file_write_approval_ui::{
     parse_file_write_approval_choice, prompt_file_write_approval,
     stdin_ready_for_file_write_approval,
 };
+pub use handoff_store::FilesystemHandoffStore;
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{
     parse_memory_recipe_apply_choice, prompt_memory_recipe_apply,

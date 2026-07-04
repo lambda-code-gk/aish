@@ -156,4 +156,3 @@ fn standalone_mode_ignores_handoff_context() {
 fn tampered_handoff_id_is_rejected() {
     panic!("0055 phase3 not implemented");
 }
-

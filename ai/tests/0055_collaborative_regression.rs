@@ -18,4 +18,3 @@ fn manual_collaborative_handoff_checklist_exists() {
 fn normal_ai_entry_unchanged_regression() {
     panic!("0055 phase5 not implemented");
 }
-

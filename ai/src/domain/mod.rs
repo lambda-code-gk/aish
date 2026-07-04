@@ -2,6 +2,7 @@ mod ask;
 mod ask_arg_order;
 mod ask_invocation;
 pub mod client_tools;
+pub mod collaborative_handoff;
 mod console_context;
 mod console_hint;
 mod history;
@@ -28,6 +29,16 @@ pub use ask_arg_order::{validate_ask_arg_order, AskArgOrderError};
 pub use ask_invocation::{
     classify_ask_invocation, is_known_cli_head, should_enter_interactive_prompt_mode,
     AskInvocationSource,
+};
+pub use collaborative_handoff::{
+    build_candidate_command, cancel_handoff, checkpoint_has_required_fields,
+    checkpoint_serialized_field_names, close_child_goal_on_control_returned, hash_handoff_token,
+    is_valid_handoff_id, should_close_child_goal, try_transition, validate_handoff_id,
+    validate_shell_token, verify_handoff_token, CancelHandoffError, ChildGoalAchievement,
+    ChildGoalCloseReason, ChildGoalMeta, CollaborativeAgentRole, CollaborativePolicy,
+    CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent,
+    HandoffLease, HandoffShellSession, HandoffState, HandoffTransitionError, InvalidHandoffIdError,
+    RequestedShellExec, CHECKPOINT_REQUIRED_FIELD_NAMES, HANDOFF_SCHEMA_VERSION,
 };
 pub use console_hint::{
     resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,

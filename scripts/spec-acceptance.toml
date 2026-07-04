@@ -2239,7 +2239,7 @@ id = "handoff_state_transitions"
 description = "Handoff 状態遷移が domain で検証される"
 test = "handoff_state_transitions_are_validated"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2248,7 +2248,7 @@ id = "lease_exclusive"
 description = "handoff lease の排他取得"
 test = "handoff_lease_rejects_concurrent_owner"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2257,7 +2257,7 @@ id = "token_hash_not_plaintext"
 description = "token は hash のみ永続化"
 test = "handoff_store_persists_token_hash_only"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2266,7 +2266,7 @@ id = "shell_generation_monotonic"
 description = "shell generation 増加で旧 token 失効"
 test = "shell_session_generation_invalidates_old_token"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2275,7 +2275,7 @@ id = "candidate_command_no_split"
 description = "候補コマンドを shell 演算子で分解しない"
 test = "candidate_command_preserves_shell_operators_in_args"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2284,7 +2284,7 @@ id = "candidate_source_preserved"
 description = "command candidate の source 保持"
 test = "command_candidate_source_roundtrip"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2293,7 +2293,7 @@ id = "child_goal_close_reason"
 description = "child goal 終了理由 control_returned"
 test = "child_goal_records_control_returned_not_achievement"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2302,7 +2302,7 @@ id = "checkpoint_required_fields"
 description = "checkpoint 必須フィールド"
 test = "checkpoint_contains_required_recovery_fields"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -2311,7 +2311,7 @@ id = "human_handoff_result_dto"
 description = "HumanHandoffResult serde roundtrip"
 test = "human_handoff_result_serde_roundtrip"
 file_glob = "aibe-protocol/tests/0055_collaborative_handoff_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
