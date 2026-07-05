@@ -136,6 +136,18 @@ pub struct HandoffShellSession {
 #[serde(rename_all = "snake_case")]
 pub enum ChildGoalCloseReason {
     ControlReturned,
+    /// shell 起動失敗・cancel 等の補償 Pop。
+    Compensated,
+}
+
+/// child goal Work Pop の永続化状態。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildGoalCloseState {
+    Pending,
+    Completed,
+    Conflict,
+    Failed,
 }
 
 /// child goal 達成可否。
@@ -157,8 +169,13 @@ pub struct ChildGoalMeta {
     /// Work stack 上の child work ID（Push 時に設定）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_id: Option<u64>,
+    /// active Work 不在時に自動作成した一時 root Work ID。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_root_work_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_reason: Option<ChildGoalCloseReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_state: Option<ChildGoalCloseState>,
     pub achievement: ChildGoalAchievement,
 }
 
@@ -258,6 +275,7 @@ pub struct RecoverableToolExecution {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RecoverableToolStatus {
     Requested,
+    Approved,
     Running,
     Completed,
     Failed,
@@ -517,10 +535,20 @@ pub fn validate_shell_token(
         .is_some_and(|s| verify_handoff_token(token, &s.token_hash))
 }
 
-/// human shell 正常返却時のみ child goal を閉じる。
-pub fn close_child_goal_on_control_returned(goal: &mut ChildGoalMeta) {
-    goal.close_reason = Some(ChildGoalCloseReason::ControlReturned);
+/// child goal Pop 成功後に checkpoint メタを終了済みへ更新する。
+pub fn mark_child_goal_closed(goal: &mut ChildGoalMeta, reason: ChildGoalCloseReason) {
+    goal.close_reason = Some(reason);
+    goal.close_state = Some(ChildGoalCloseState::Completed);
     goal.achievement = ChildGoalAchievement::Unknown;
+}
+
+/// human shell 正常返却時のみ child goal を閉じる（後方互換）。
+pub fn close_child_goal_on_control_returned(goal: &mut ChildGoalMeta) {
+    mark_child_goal_closed(goal, ChildGoalCloseReason::ControlReturned);
+}
+
+pub fn child_goal_close_is_conflict(error: &str) -> bool {
+    error.contains("active work mismatch") || error.contains("active work conflict")
 }
 
 pub fn should_close_child_goal(state: HandoffState) -> bool {
@@ -558,7 +586,9 @@ pub fn checkpoint_serialized_field_names() -> HashSet<String> {
             handoff_id: String::new(),
             parent_goal_id: None,
             work_id: None,
+            auto_root_work_id: None,
             close_reason: None,
+            close_state: None,
             achievement: ChildGoalAchievement::Unknown,
         },
         conversation_snapshot: String::new(),
@@ -653,7 +683,9 @@ mod unit_tests {
                 handoff_id: "handoff".into(),
                 parent_goal_id: None,
                 work_id: None,
+                auto_root_work_id: None,
                 close_reason: None,
+                close_state: None,
                 achievement: ChildGoalAchievement::Unknown,
             },
             conversation_snapshot: "snap".into(),
@@ -707,7 +739,9 @@ mod unit_tests {
                 handoff_id: "handoff".into(),
                 parent_goal_id: None,
                 work_id: None,
+                auto_root_work_id: None,
                 close_reason: None,
+                close_state: None,
                 achievement: ChildGoalAchievement::Unknown,
             },
             conversation_snapshot: "snap".into(),

@@ -41,7 +41,12 @@
 | `normal_ai_unchanged_regression` | 非協調 `ai` smoke | `normal_ai_entry_unchanged_regression` | true |
 | `docs_architecture_synced` | architecture.md に協調節 | `docs_architecture_mentions_collaborative_handoff` | true |
 | `manual_checklist_exists` | manual 手順あり | `manual_collaborative_handoff_checklist_exists` | true |
-| `reconcile_orphan_side_run_lock` | HUMAN_ACTIVE 時に stale side-run lock を除去 | `reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active` | false |
+| `side_run_atomic_start` | side agent 開始を store lock 内で atomic 化 | `start_side_run_atomically_clears_stale_lock_for_human_active` | false |
+| `child_work_without_active_work` | active Work なしでも child Work を Start→Push→Pop | `handoff_creates_child_work_without_active_work_and_pops_on_return` | false |
+| `child_work_launch_failure_compensation` | shell 起動失敗時に child Work を補償 Pop | `handoff_shell_launch_failure_compensates_child_work` | false |
+| `orphaned_shell_preserves_child_work` | ORPHANED 遷移時は child Work を維持 | `handoff_orphaned_shell_exit_preserves_child_work` | false |
+| `resume_memory_space_from_checkpoint` | resume 時 child goal が checkpoint の session / memory space を使う | `resolve_handoff_child_goal_context_uses_checkpoint_session` | false |
+| `resume_requires_work_service_when_child_open` | 未完了 child Work がある handoff 復旧では Noop を選ばない | `handoff_requires_child_goal_service_when_work_open` | false |
 | `durable_tool_lifecycle` | checkpoint へ RUNNING/完了 tool lifecycle を記録 | `tool_lifecycle_records_running_and_syncs_completed` | false |
 | `parent_resume_tool_lifecycle` | 親 RESUMING_PARENT turn の tool lifecycle を checkpoint へ同期 | `parent_resume_tool_lifecycle_syncs_completed_tools` | false |
 

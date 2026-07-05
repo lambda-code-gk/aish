@@ -32,16 +32,18 @@ pub use ask_invocation::{
 };
 pub use collaborative_handoff::{
     build_candidate_command, cancel_handoff, checkpoint_has_required_fields,
-    checkpoint_serialized_field_names, close_child_goal_on_control_returned,
-    deterministic_candidate_id, finalize_running_tools, hash_handoff_token, is_valid_handoff_id,
-    mark_running_tools_unknown, mark_tool_completed, record_tool_running, should_close_child_goal,
+    checkpoint_serialized_field_names, child_goal_close_is_conflict,
+    close_child_goal_on_control_returned, deterministic_candidate_id, finalize_running_tools,
+    hash_handoff_token, is_valid_handoff_id, mark_child_goal_closed, mark_running_tools_unknown,
+    mark_tool_completed, record_tool_running, should_close_child_goal,
     sync_tool_executions_from_executed, try_transition, upsert_tool_execution, validate_handoff_id,
     validate_shell_token, verify_handoff_token, CancelHandoffError, ChildGoalAchievement,
-    ChildGoalCloseReason, ChildGoalMeta, CollaborativeAgentRole, CollaborativeAuditKind,
-    CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint,
-    HandoffEvent, HandoffLease, HandoffShellSession, HandoffState, HandoffTransitionError,
-    InvalidHandoffIdError, RecoverableToolExecution, RecoverableToolStatus, RequestHumanAction,
-    RequestedShellExec, CHECKPOINT_REQUIRED_FIELD_NAMES, HANDOFF_SCHEMA_VERSION,
+    ChildGoalCloseReason, ChildGoalCloseState, ChildGoalMeta, CollaborativeAgentRole,
+    CollaborativeAuditKind, CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff,
+    HandoffCheckpoint, HandoffEvent, HandoffLease, HandoffShellSession, HandoffState,
+    HandoffTransitionError, InvalidHandoffIdError, RecoverableToolExecution, RecoverableToolStatus,
+    RequestHumanAction, RequestedShellExec, CHECKPOINT_REQUIRED_FIELD_NAMES,
+    HANDOFF_SCHEMA_VERSION,
 };
 pub use console_hint::{
     resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,

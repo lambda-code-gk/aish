@@ -543,6 +543,50 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
             Ok(())
         })
     }
+
+    fn start_side_run_atomically(
+        &self,
+        handoff_id: &str,
+        request: &LeaseAcquireRequest,
+        owner_is_alive: &dyn Fn(u32) -> bool,
+        update: &mut dyn FnMut(
+            &mut Handoff,
+            &mut HandoffCheckpoint,
+        ) -> Result<(), HandoffStoreError>,
+    ) -> Result<(), HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
+            let mut checkpoint: HandoffCheckpoint =
+                self.read_json(&self.checkpoint_path(handoff_id)?)?;
+            let side_path = self.side_run_lock_path(handoff_id)?;
+            if side_path.is_file() {
+                let existing: HandoffLease = self.read_json(&side_path)?;
+                if existing.lease_expires_at_ms > request.now_ms
+                    && owner_is_alive(existing.owner_process_id)
+                {
+                    return Err(HandoffStoreError::LeaseConflict);
+                }
+                fs::remove_file(&side_path).map_err(write_err)?;
+            }
+            update(&mut handoff, &mut checkpoint)?;
+            let lock = HandoffLease {
+                handoff_id: handoff_id.to_string(),
+                owner_client_id: request.owner_client_id.clone(),
+                owner_process_id: request.owner_process_id,
+                owner_tty: request.owner_tty.clone(),
+                owner_host: request.owner_host.clone(),
+                owner_uid: request.owner_uid,
+                lease_acquired_at_ms: request.now_ms,
+                lease_expires_at_ms: request.now_ms.saturating_add(request.lease_timeout_ms),
+                last_heartbeat_at_ms: request.now_ms,
+            };
+            self.write_json_atomic(&side_path, &lock)?;
+            handoff.updated_at_ms = request.now_ms;
+            self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
+            self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
+            Ok(())
+        })
+    }
 }
 
 impl CheckpointRepository for FilesystemHandoffStore {

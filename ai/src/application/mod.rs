@@ -2,6 +2,7 @@ mod ask;
 mod ask_launch;
 mod ask_prompt_input;
 pub mod client_tools;
+mod collaborative_child_goal_lifecycle;
 mod collaborative_handoff;
 mod collaborative_parent_context;
 mod collaborative_recovery;
@@ -28,6 +29,10 @@ pub use ask_launch::{ensure_aibe_if_needed, plan_ask_launch, AskLaunchPlan};
 pub use ask_prompt_input::{
     classify_from_raw_args, plan_interactive_prompt_route, InteractivePromptRoute,
 };
+pub use collaborative_child_goal_lifecycle::{
+    child_goal_environment_patch, close_child_goal_durable, compensate_child_goal_durable,
+    handoff_requires_child_goal_service, persist_child_goal_checkpoint,
+};
 pub use collaborative_handoff::{
     persist_handoff_candidates_for_recall, suggestion_cache_path_from_checkpoint,
     CollaborativeExecutionContext, CollaborativeHandoffError, CollaborativeShellExecPolicy,
@@ -35,7 +40,9 @@ pub use collaborative_handoff::{
 };
 pub use collaborative_parent_context::{
     build_conversation_snapshot, build_enriched_parent_handoff_context, checkpoint_memory_space_id,
-    query_collaborative_memory_prompt_block, query_work_snapshot, EnrichedParentHandoffContext,
+    query_collaborative_memory_prompt_block, query_work_snapshot,
+    resolve_handoff_child_goal_context, resolve_handoff_memory_space_id,
+    EnrichedParentHandoffContext,
 };
 pub use collaborative_recovery::{
     has_unknown_tools, list_recoverable_handoffs, select_recoverable_handoff, CancelHandoff,
@@ -51,7 +58,8 @@ pub use collaborative_side_agent::{
 };
 pub use collaborative_tool_tracking::{
     finalize_handoff_running_tools, finalize_parent_resume_tool_tracking,
-    record_handoff_tool_running, sync_handoff_tool_executions,
+    record_handoff_tool_approved, record_handoff_tool_requested, record_handoff_tool_running,
+    sync_handoff_tool_executions, ResumedHandoffSync,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

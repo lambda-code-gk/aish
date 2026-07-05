@@ -513,7 +513,7 @@ fn collaborative_handoff_real_pty_ctrl_d_parent_resume_flow() {
         process_id: runtime.process_id(),
         tty: None,
     };
-    let resume = ResumeReturnedParent::new(&store, &runtime);
+    let resume = ResumeReturnedParent::new(&store, &Observer, &runtime);
     resume
         .prepare(&result.handoff_id, &owner)
         .expect("parent must re-acquire lease after real human shell return");

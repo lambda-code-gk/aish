@@ -114,6 +114,18 @@ pub trait SideRunLockRepository {
             &mut HandoffCheckpoint,
         ) -> Result<(), HandoffStoreError>,
     ) -> Result<(), HandoffStoreError>;
+
+    /// handoff / checkpoint / side-run lock 取得を同一 store lock 内で行う。
+    fn start_side_run_atomically(
+        &self,
+        handoff_id: &str,
+        request: &LeaseAcquireRequest,
+        owner_is_alive: &dyn Fn(u32) -> bool,
+        update: &mut dyn FnMut(
+            &mut Handoff,
+            &mut HandoffCheckpoint,
+        ) -> Result<(), HandoffStoreError>,
+    ) -> Result<(), HandoffStoreError>;
 }
 
 pub trait CheckpointRepository {

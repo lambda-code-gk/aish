@@ -7,7 +7,7 @@ use ai::application::{
     record_handoff_tool_running, select_recoverable_handoff, CollaborativeExecutionContext,
     CollaborativeRecoveryError, CollaborativeShellExecPolicy, MarkOrphaned, ParentShellExecRequest,
     ReconcileStaleHandoffs, RecoveryOwner, ResumeOrphanedHandoff, ResumeReturnedParent,
-    ReturnControlFromShell,
+    ResumedHandoffSync, ReturnControlFromShell,
 };
 use ai::domain::{
     validate_shell_token, ChildGoalAchievement, ChildGoalMeta, Handoff, HandoffCheckpoint,
@@ -193,7 +193,9 @@ fn save_handoff(store: &FilesystemHandoffStore, id: &str, state: HandoffState, c
         handoff_id: id.into(),
         parent_goal_id: Some("parent-goal".into()),
         work_id: None,
+        auto_root_work_id: None,
         close_reason: None,
+        close_state: None,
         achievement: ChildGoalAchievement::Unknown,
     };
     store
@@ -338,6 +340,7 @@ fn resume_orphaned_spawns_new_shell_with_rotated_token() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .execute("resume-shell", &owner())
     .unwrap();
@@ -362,6 +365,7 @@ fn resume_rotates_token_and_rejects_old_generation() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .execute("rotate", &owner())
     .unwrap();
@@ -381,6 +385,7 @@ fn second_resume_rejected_while_lease_active() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .execute("exclusive", &owner())
     .unwrap_err();
@@ -419,7 +424,7 @@ fn resume_returned_restarts_parent_without_shell() {
         now: 20,
         owner_alive: true,
     };
-    let context = ResumeReturnedParent::new(&fixture.store, &runtime)
+    let context = ResumeReturnedParent::new(&fixture.store, &Observer, &runtime)
         .prepare("returned", &owner())
         .unwrap();
     assert_eq!(context.parent_conversation_id, "parent-conversation");
@@ -431,6 +436,7 @@ fn resumed_parent_run_carries_pending_shell_exec_context() {
     let fixture = Fixture::new("semantic", HandoffState::Returned);
     let context = ResumeReturnedParent::new(
         &fixture.store,
+        &Observer,
         &Runtime {
             now: 20,
             owner_alive: true,
@@ -448,6 +454,7 @@ fn recovery_does_not_auto_rerun_unknown_tools() {
     let fixture = Fixture::new("unknown", HandoffState::Returned);
     let context = ResumeReturnedParent::new(
         &fixture.store,
+        &Observer,
         &Runtime {
             now: 20,
             owner_alive: true,
@@ -491,6 +498,7 @@ fn resume_preserves_pending_human_request_state() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .execute("waiting", &owner())
     .unwrap();
@@ -541,7 +549,7 @@ fn parent_resume_failure_returns_to_returned_state() {
         now: 20,
         owner_alive: true,
     };
-    let service = ResumeReturnedParent::new(&fixture.store, &runtime);
+    let service = ResumeReturnedParent::new(&fixture.store, &Observer, &runtime);
     service.prepare("parent-fail", &owner()).unwrap();
     service
         .finish("parent-fail", Err("aibe unavailable".into()))
@@ -580,6 +588,7 @@ fn ctrl_d_during_side_run_returns_to_parent() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .execute(
         "ctrl-d",
@@ -656,7 +665,7 @@ fn parent_resume_tool_lifecycle_syncs_completed_tools() {
         now: 2,
         owner_alive: true,
     };
-    ResumeReturnedParent::new(&fixture.store, &runtime)
+    ResumeReturnedParent::new(&fixture.store, &Observer, &runtime)
         .prepare("resume-tools", &owner())
         .unwrap();
     record_handoff_tool_running(
@@ -668,7 +677,11 @@ fn parent_resume_tool_lifecycle_syncs_completed_tools() {
     .unwrap();
     finalize_parent_resume_tool_tracking(
         &fixture.store,
-        "resume-tools",
+        &ResumedHandoffSync {
+            handoff_id: "resume-tools".into(),
+            sync_start_tool_call_id: Some("parent-tool-1".into()),
+            sync_end_before_tool_call_id: None,
+        },
         true,
         Some(&[aibe_protocol::ExecutedToolCall::ok(
             "parent-tool-1".to_string(),
@@ -685,7 +698,7 @@ fn parent_resume_tool_lifecycle_syncs_completed_tools() {
         .find(|tool| tool.tool_call_id == "parent-tool-1")
         .expect("parent resume tool");
     assert_eq!(tool.status, RecoverableToolStatus::Completed);
-    ResumeReturnedParent::new(&fixture.store, &runtime)
+    ResumeReturnedParent::new(&fixture.store, &Observer, &runtime)
         .finish("resume-tools", Ok(()))
         .unwrap();
 }

@@ -2,16 +2,17 @@
 
 use std::path::PathBuf;
 
+use super::{close_child_goal_durable, compensate_child_goal_durable};
 use crate::domain::{
-    close_child_goal_on_control_returned, mark_running_tools_unknown, try_transition,
-    CollaborativeAuditKind, Handoff, HandoffCheckpoint, HandoffEvent, HandoffState,
-    RecoverableToolStatus, RequestedShellExec,
+    mark_running_tools_unknown, try_transition, ChildGoalCloseReason, CollaborativeAuditKind,
+    Handoff, HandoffCheckpoint, HandoffEvent, HandoffState, RecoverableToolStatus,
+    RequestedShellExec,
 };
 use crate::ports::outbound::{
-    CheckpointRepository, HandoffAuditRepository, HandoffRepository, HandoffRuntime,
-    HandoffShellSessionStore, HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest,
-    HumanShellLauncher, HumanShellReturn, LeaseAcquireRequest, LeaseRepository,
-    ShellSessionIssueRequest,
+    CheckpointRepository, CollaborativeChildGoalService, EnvironmentObserver,
+    HandoffAuditRepository, HandoffRepository, HandoffRuntime, HandoffShellSessionStore,
+    HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
+    HumanShellReturn, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
 };
 
 const LEASE_TIMEOUT_MS: u64 = 120_000;
@@ -81,6 +82,7 @@ pub struct ParentResumeContext {
     pub conversation_summary: String,
     pub cwd: PathBuf,
     pub uncertain_tool_executions: Vec<String>,
+    pub resume_observation: Option<String>,
 }
 
 impl ParentResumeContext {
@@ -95,6 +97,7 @@ impl ParentResumeContext {
             "conversation_summary": self.conversation_summary,
             "cwd": self.cwd,
             "uncertain_tool_executions": self.uncertain_tool_executions,
+            "resume_observation": self.resume_observation,
             "instructions": [
                 "Control returned from the human shell.",
                 "Do not infer that the requested command ran or succeeded.",
@@ -210,11 +213,20 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> MarkOrphaned<'a, S, R> {
 pub struct CancelHandoff<'a, S, R> {
     store: &'a S,
     runtime: &'a R,
+    child_goal: &'a dyn CollaborativeChildGoalService,
 }
 
 impl<'a, S: RecoveryStore, R: HandoffRuntime> CancelHandoff<'a, S, R> {
-    pub fn new(store: &'a S, runtime: &'a R) -> Self {
-        Self { store, runtime }
+    pub fn new(
+        store: &'a S,
+        runtime: &'a R,
+        child_goal: &'a dyn CollaborativeChildGoalService,
+    ) -> Self {
+        Self {
+            store,
+            runtime,
+            child_goal,
+        }
     }
 
     pub fn execute(
@@ -230,6 +242,7 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> CancelHandoff<'a, S, R> {
         checkpoint.control_state = HandoffState::Cancelled;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        let _ = compensate_child_goal_durable(self.store, self.child_goal, handoff_id);
         self.store.release_lease(handoff_id)?;
         Ok(())
     }
@@ -238,11 +251,20 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> CancelHandoff<'a, S, R> {
 pub struct ReturnControlFromShell<'a, S, R> {
     store: &'a S,
     runtime: &'a R,
+    child_goal: &'a dyn CollaborativeChildGoalService,
 }
 
 impl<'a, S: RecoveryStore, R: HandoffRuntime> ReturnControlFromShell<'a, S, R> {
-    pub fn new(store: &'a S, runtime: &'a R) -> Self {
-        Self { store, runtime }
+    pub fn new(
+        store: &'a S,
+        runtime: &'a R,
+        child_goal: &'a dyn CollaborativeChildGoalService,
+    ) -> Self {
+        Self {
+            store,
+            runtime,
+            child_goal,
+        }
     }
 
     pub fn execute(
@@ -253,7 +275,6 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReturnControlFromShell<'a, S, R> {
         let mut handoff = self.store.load_handoff(handoff_id)?;
         let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
         mark_running_tools_unknown(&mut checkpoint);
-        close_child_goal_on_control_returned(&mut checkpoint.child_goal);
         handoff.state = transition(handoff.state, HandoffEvent::HumanReturned)?;
         handoff.return_reason = Some("control_returned".into());
         handoff.human_shell_exit_code = returned.exit_code;
@@ -265,6 +286,17 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReturnControlFromShell<'a, S, R> {
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
         self.store.release_lease(handoff_id)?;
+        if let Err(error) = close_child_goal_durable(
+            self.store,
+            self.child_goal,
+            handoff_id,
+            ChildGoalCloseReason::ControlReturned,
+        ) {
+            let mut handoff = self.store.load_handoff(handoff_id)?;
+            handoff.resume_error = Some(format!("child_goal_close: {error}"));
+            handoff.updated_at_ms = self.runtime.now_ms();
+            self.store.save_handoff(&handoff)?;
+        }
         Ok(())
     }
 }
@@ -273,16 +305,23 @@ pub struct ResumeOrphanedHandoff<'a, S, L, R> {
     store: &'a S,
     launcher: &'a L,
     runtime: &'a R,
+    child_goal: &'a dyn CollaborativeChildGoalService,
 }
 
 impl<'a, S: RecoveryStore, L: HumanShellLauncher, R: HandoffRuntime>
     ResumeOrphanedHandoff<'a, S, L, R>
 {
-    pub fn new(store: &'a S, launcher: &'a L, runtime: &'a R) -> Self {
+    pub fn new(
+        store: &'a S,
+        launcher: &'a L,
+        runtime: &'a R,
+        child_goal: &'a dyn CollaborativeChildGoalService,
+    ) -> Self {
         Self {
             store,
             launcher,
             runtime,
+            child_goal,
         }
     }
 
@@ -341,7 +380,7 @@ impl<'a, S: RecoveryStore, L: HumanShellLauncher, R: HandoffRuntime>
         };
         match self.launcher.launch_and_wait(&request) {
             Ok(returned) => {
-                ReturnControlFromShell::new(self.store, self.runtime)
+                ReturnControlFromShell::new(self.store, self.runtime, self.child_goal)
                     .execute(handoff_id, &returned)?;
                 Ok(returned)
             }
@@ -391,14 +430,21 @@ fn merge_shell_replay_metadata(current: &str, returned: &HumanShellReturn) -> St
     value.to_string()
 }
 
-pub struct ResumeReturnedParent<'a, S, R> {
+pub struct ResumeReturnedParent<'a, S, O, R> {
     store: &'a S,
+    observer: &'a O,
     runtime: &'a R,
 }
 
-impl<'a, S: RecoveryStore, R: HandoffRuntime> ResumeReturnedParent<'a, S, R> {
-    pub fn new(store: &'a S, runtime: &'a R) -> Self {
-        Self { store, runtime }
+impl<'a, S: RecoveryStore, O: EnvironmentObserver, R: HandoffRuntime>
+    ResumeReturnedParent<'a, S, O, R>
+{
+    pub fn new(store: &'a S, observer: &'a O, runtime: &'a R) -> Self {
+        Self {
+            store,
+            observer,
+            runtime,
+        }
     }
 
     pub fn prepare(
@@ -412,10 +458,31 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ResumeReturnedParent<'a, S, R> {
         }
         acquire_recovery_lease(self.store, self.runtime, handoff_id, owner)?;
         handoff.state = transition(handoff.state, HandoffEvent::StartParentResume)?;
-        handoff.resume_error = None;
+        if !handoff
+            .resume_error
+            .as_ref()
+            .is_some_and(|message| message.starts_with("child_goal_close:"))
+        {
+            handoff.resume_error = None;
+        }
         handoff.updated_at_ms = self.runtime.now_ms();
         let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
         let uncertain_tool_executions = mark_running_tools_unknown(&mut checkpoint);
+        let shell_log_start = handoff.shell_log_end.unwrap_or(handoff.shell_log_start);
+        let cwd = PathBuf::from(&checkpoint.cwd);
+        let observation = self.observer.observe(&cwd, shell_log_start);
+        let resume_observation =
+            serde_json::to_string(&observation).unwrap_or_else(|_| "{}".into());
+        let mut metadata =
+            serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+                .unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert(
+                "resume_observation".into(),
+                resume_observation.clone().into(),
+            );
+        }
+        checkpoint.environment_metadata = metadata.to_string();
         checkpoint.control_state = HandoffState::ResumingParent;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
@@ -433,6 +500,7 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ResumeReturnedParent<'a, S, R> {
             &handoff,
             &checkpoint,
             uncertain_tool_executions,
+            Some(resume_observation),
         ))
     }
 
@@ -551,6 +619,7 @@ fn parent_context(
     handoff: &Handoff,
     checkpoint: &HandoffCheckpoint,
     uncertain_tool_executions: Vec<String>,
+    resume_observation: Option<String>,
 ) -> ParentResumeContext {
     ParentResumeContext {
         handoff_id: handoff.id.clone(),
@@ -562,6 +631,7 @@ fn parent_context(
         conversation_summary: checkpoint.conversation_summary.clone(),
         cwd: PathBuf::from(&checkpoint.cwd),
         uncertain_tool_executions,
+        resume_observation,
     }
 }
 

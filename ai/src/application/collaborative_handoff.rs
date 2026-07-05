@@ -3,13 +3,15 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use super::{
+    child_goal_environment_patch, close_child_goal_durable, compensate_child_goal_durable,
+};
 use crate::domain::{
-    build_candidate_command, close_child_goal_on_control_returned, mark_running_tools_unknown,
-    try_transition, ChildGoalAchievement, ChildGoalCloseReason, ChildGoalMeta,
-    CollaborativeAgentRole, CollaborativeAuditKind, CollaborativePolicy, CommandCandidate,
-    CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent, HandoffState,
-    RequestedShellExec, SuggestedCommandCache, SuggestedCommandCandidate, SuggestedCommandQueue,
-    HANDOFF_SCHEMA_VERSION,
+    build_candidate_command, mark_running_tools_unknown, try_transition, ChildGoalAchievement,
+    ChildGoalMeta, CollaborativeAgentRole, CollaborativeAuditKind, CollaborativePolicy,
+    CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent,
+    HandoffState, RequestedShellExec, SuggestedCommandCache, SuggestedCommandCandidate,
+    SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CollaborativeChildGoalError, CollaborativeChildGoalService,
@@ -195,7 +197,9 @@ where
             handoff_id: handoff_id.clone(),
             parent_goal_id: request.parent_goal_id.clone(),
             work_id: None,
+            auto_root_work_id: None,
             close_reason: None,
+            close_state: None,
             achievement: ChildGoalAchievement::Unknown,
         };
         let candidate = CommandCandidate {
@@ -289,7 +293,7 @@ where
         // Recovery checkpoint is durable before the PTY process is spawned.
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         let mut child_goal_meta = checkpoint.child_goal.clone();
-        if let Err(error) = self.child_goal.create_child_goal(
+        match self.child_goal.create_child_goal(
             &mut child_goal_meta,
             &request.cwd,
             &checkpoint.parent_goal,
@@ -297,19 +301,28 @@ where
             &candidate_text,
             &human_request,
         ) {
-            let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
-            let mut metadata =
-                serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
-                    .unwrap_or_else(|_| serde_json::json!({}));
-            if let Some(object) = metadata.as_object_mut() {
-                object.insert("child_goal_create_error".into(), error.to_string().into());
+            Ok(()) => {
+                let mut saved = self.store.load_checkpoint(&handoff_id)?;
+                saved.child_goal = child_goal_meta.clone();
+                let metadata = child_goal_environment_patch(&saved);
+                saved.environment_metadata = metadata.to_string();
+                self.store.save_checkpoint(&handoff_id, &saved)?;
             }
-            checkpoint.environment_metadata = metadata.to_string();
-            self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-        } else if child_goal_meta.work_id.is_some() {
-            let mut saved = self.store.load_checkpoint(&handoff_id)?;
-            saved.child_goal = child_goal_meta;
-            self.store.save_checkpoint(&handoff_id, &saved)?;
+            Err(error) => {
+                let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
+                checkpoint.child_goal = child_goal_meta.clone();
+                let mut metadata =
+                    serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(object) = metadata.as_object_mut() {
+                    object.insert("child_goal_create_error".into(), error.to_string().into());
+                    if let Some(root_id) = child_goal_meta.auto_root_work_id {
+                        object.insert("auto_root_work_id".into(), root_id.into());
+                    }
+                }
+                checkpoint.environment_metadata = metadata.to_string();
+                self.store.save_checkpoint(&handoff_id, &checkpoint)?;
+            }
         }
         let token = self
             .runtime
@@ -388,6 +401,9 @@ where
                         CollaborativeAuditKind::HumanShellOrphaned,
                     );
                 }
+                if matches!(event, HandoffEvent::ShellLaunchFailed) {
+                    let _ = compensate_child_goal_durable(self.store, self.child_goal, &handoff_id);
+                }
                 self.store.release_lease(&handoff_id)?;
                 record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
                 return Err(error.into());
@@ -410,7 +426,6 @@ where
         checkpoint.environment_metadata =
             merge_shell_replay_metadata(&checkpoint.environment_metadata, &returned);
         mark_running_tools_unknown(&mut checkpoint);
-        close_child_goal_on_control_returned(&mut checkpoint.child_goal);
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
@@ -421,11 +436,13 @@ where
         );
         self.store.release_lease(&handoff_id)?;
         record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
-        if let Err(error) = self.child_goal.close_child_goal(
-            &checkpoint.child_goal,
-            &PathBuf::from(&checkpoint.cwd),
-            ChildGoalCloseReason::ControlReturned,
+        if let Err(error) = close_child_goal_durable(
+            self.store,
+            self.child_goal,
+            &handoff_id,
+            crate::domain::ChildGoalCloseReason::ControlReturned,
         ) {
+            handoff = self.store.load_handoff(&handoff_id)?;
             handoff.resume_error = Some(format!("child_goal_close: {error}"));
             handoff.updated_at_ms = self.runtime.now_ms();
             self.store.save_handoff(&handoff)?;

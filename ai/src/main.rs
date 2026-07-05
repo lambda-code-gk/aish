@@ -36,15 +36,16 @@ use ai::application::{
     finalize_handoff_running_tools, finalize_parent_resume_tool_tracking, list_history, memory_cli,
     next_history_id, persist_suggested_commands, plan_ask_launch, plan_interactive_prompt_route,
     query_collaborative_memory_prompt_block, query_work_snapshot, recall_next_command,
-    recall_prev_command, record_handoff_tool_running, record_turn, resolve_recall_gating,
+    recall_prev_command, record_handoff_tool_approved, record_handoff_tool_requested,
+    record_handoff_tool_running, record_turn, resolve_recall_gating,
     suggestion_cache_path_from_checkpoint, sync_handoff_tool_executions,
     CollaborativeExecutionContext, CollaborativeShellEnvironment, CollaborativeShellExecPolicy,
     HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, ParentResumeContext,
     ParentShellExecRequest, PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus,
     RecallGatingInput, RecallTurnContext, ReconcileStaleHandoffs, RecoveryOwner,
-    ResumeOrphanedHandoff, ResumeReturnedParent, ShellLogMode, SideAgentDispatch,
-    SideAgentDispatchOptions, SideAgentInvocation, SideTurn, StartOrResumeSideAgent,
-    TurnCancelGuard, HANDOFF_ENV_KEYS,
+    ResumeOrphanedHandoff, ResumeReturnedParent, ResumedHandoffSync, ShellLogMode,
+    SideAgentDispatch, SideAgentDispatchOptions, SideAgentInvocation, SideTurn,
+    StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -227,6 +228,7 @@ fn resolve_side_memory_prompt_block(
     handoff_id: &str,
     socket_path: &Path,
     memory_enabled: bool,
+    side_user_note: Option<&str>,
 ) -> Option<String> {
     if !memory_enabled {
         return None;
@@ -239,13 +241,17 @@ fn resolve_side_memory_prompt_block(
             .ok()
             .map(|resolved| resolved.memory_space_id)
     });
+    let user_query = match side_user_note.filter(|note| !note.trim().is_empty()) {
+        Some(note) => format!("{}\n{}", handoff.parent_request_summary, note),
+        None => handoff.parent_request_summary.clone(),
+    };
     let client = AibeUnixClient::new(socket_path.to_path_buf());
     query_collaborative_memory_prompt_block(
         &client,
         session_id,
         memory_space_id.as_deref(),
         &checkpoint.cwd,
-        Some(handoff.parent_request_summary.as_str()),
+        Some(user_query.as_str()),
     )
 }
 
@@ -270,12 +276,6 @@ fn resolve_side_dispatch(
     let observer = ProcessEnvironmentObserver;
     let runtime = SystemHandoffRuntime;
     let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
-    let memory_block = resolve_side_memory_prompt_block(
-        &store,
-        &env.handoff_id,
-        &cfg.socket_path,
-        cfg.memory_enabled,
-    );
     let invocation = SideAgentInvocation {
         standalone: false,
         collaborative_requested: collaborative,
@@ -286,6 +286,19 @@ fn resolve_side_dispatch(
         tty: std::env::var("TTY").ok(),
         cwd: std::env::current_dir()?,
     };
+    if let Some(early) = service.validate_shell_participation(&env, &invocation)? {
+        return Ok(match early {
+            SideAgentDispatch::PromptForInput { .. } => Some(SideLaunch::PromptThenStart(env)),
+            other => panic!("unexpected early dispatch before memory query: {other:?}"),
+        });
+    }
+    let memory_block = resolve_side_memory_prompt_block(
+        &store,
+        &env.handoff_id,
+        &cfg.socket_path,
+        cfg.memory_enabled,
+        invocation.user_note.as_deref(),
+    );
     match service.dispatch(
         Some(env.clone()),
         &invocation,
@@ -401,12 +414,6 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             let observer = ProcessEnvironmentObserver;
             let runtime = SystemHandoffRuntime;
             let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
-            let memory_block = resolve_side_memory_prompt_block(
-                &store,
-                &env.handoff_id,
-                &cfg.socket_path,
-                cfg.memory_enabled,
-            );
             let invocation = SideAgentInvocation {
                 standalone: false,
                 collaborative_requested: false,
@@ -417,6 +424,14 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
                 tty: std::env::var("TTY").ok(),
                 cwd: std::env::current_dir()?,
             };
+            service.validate_shell_participation(&env, &invocation)?;
+            let memory_block = resolve_side_memory_prompt_block(
+                &store,
+                &env.handoff_id,
+                &cfg.socket_path,
+                cfg.memory_enabled,
+                Some(message.content.as_str()),
+            );
             match service.dispatch(
                 Some(env),
                 &invocation,
@@ -1452,7 +1467,7 @@ fn run_agent_turn_core(
     let cancel_requested = Arc::clone(cancel_guard.flag());
     let collaborative_cancel_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let resumed_handoffs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let resumed_handoffs = Arc::new(std::sync::Mutex::new(Vec::<ResumedHandoffSync>::new()));
     let mut cancel_source: Option<TurnCancelSource> = None;
 
     let _use_client_tools = should_use_client_tool_stream(&request);
@@ -1611,8 +1626,11 @@ fn run_agent_turn_core(
                                     process_id: std::process::id(),
                                     tty: std::env::var("TTY").ok(),
                                 };
-                                let parent =
-                                    ResumeReturnedParent::new(&handoff_store, &handoff_runtime);
+                                let parent = ResumeReturnedParent::new(
+                                    &handoff_store,
+                                    &environment_observer,
+                                    &handoff_runtime,
+                                );
                                 if let Err(error) =
                                     parent.prepare(&handoff_result.handoff_id, &owner)
                                 {
@@ -1626,10 +1644,24 @@ fn run_agent_turn_core(
                                         handoff_result: None,
                                     };
                                 }
-                                resumed_handoffs_thread
-                                    .lock()
-                                    .expect("resumed handoffs")
-                                    .push(handoff_result.handoff_id.clone());
+                                let sync_start = handoff_store
+                                    .load_checkpoint(&handoff_result.handoff_id)
+                                    .ok()
+                                    .and_then(|checkpoint| {
+                                        checkpoint.pending_shell_exec.tool_call_id.clone()
+                                    });
+                                {
+                                    let mut resumed =
+                                        resumed_handoffs_thread.lock().expect("resumed handoffs");
+                                    if let Some(previous) = resumed.last_mut() {
+                                        previous.sync_end_before_tool_call_id = sync_start.clone();
+                                    }
+                                    resumed.push(ResumedHandoffSync {
+                                        handoff_id: handoff_result.handoff_id.clone(),
+                                        sync_start_tool_call_id: sync_start,
+                                        sync_end_before_tool_call_id: None,
+                                    });
+                                }
                                 set_handoff_tool_tracking(
                                     &tool_tracking_handoff_id_thread,
                                     handoff_result.handoff_id.clone(),
@@ -1796,15 +1828,17 @@ fn run_agent_turn_core(
                         Ok(())
                     }
                 });
-            let on_tool_running = active_handoff_tool_tracking(&tool_tracking_handoff_id_thread)
-                .map(|handoff_id| {
-                    move |tool_call_id: &str, tool_name: &str| {
-                        let store =
-                            FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
-                        record_handoff_tool_running(&store, &handoff_id, tool_call_id, tool_name)
-                            .map_err(|error| error.to_string())
-                    }
-                });
+            let on_tool_running = {
+                let track_id = Arc::clone(&tool_tracking_handoff_id_thread);
+                Some(move |tool_call_id: &str, tool_name: &str| {
+                    let Some(handoff_id) = active_handoff_tool_tracking(&track_id) else {
+                        return Ok(());
+                    };
+                    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                    record_handoff_tool_running(&store, &handoff_id, tool_call_id, tool_name)
+                        .map_err(|error| error.to_string())
+                })
+            };
             let client_tool_callback = side_agent_client_tool_callback(
                 replay_client_tool_callback(replay_events),
                 Arc::clone(&captured_request_human_action_thread),
@@ -1816,22 +1850,43 @@ fn run_agent_turn_core(
                 AgentTurnCallbacks::new(
                     shell_exec_handler,
                     move |prompt: ToolApprovalPrompt| -> ToolApprovalDecision {
+                        let tool_call_id = prompt.tool_call_id.clone();
+                        let tool_name = prompt.tool_name.clone();
                         if let Some(handoff_id) = active_handoff_tool_tracking(&track_id) {
                             let store =
                                 FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
-                            if let Err(error) = record_handoff_tool_running(
+                            if let Err(error) = record_handoff_tool_requested(
                                 &store,
                                 &handoff_id,
-                                &prompt.tool_call_id,
-                                &prompt.tool_name,
+                                &tool_call_id,
+                                &tool_name,
                             ) {
-                                eprintln!("ai: failed to record running tool: {error}");
+                                eprintln!("ai: failed to record requested tool: {error}");
                                 return ToolApprovalDecision::Denied(
                                     aibe_protocol::ToolApprovalOrigin::UiNo,
                                 );
                             }
                         }
-                        prompt_file_write_approval(prompt)
+                        let decision = prompt_file_write_approval(prompt);
+                        if let ToolApprovalDecision::Approved(_) = decision {
+                            if let Some(handoff_id) = active_handoff_tool_tracking(&track_id) {
+                                let store = FilesystemHandoffStore::new(
+                                    FilesystemHandoffStore::default_root(),
+                                );
+                                if let Err(error) = record_handoff_tool_approved(
+                                    &store,
+                                    &handoff_id,
+                                    &tool_call_id,
+                                    &tool_name,
+                                ) {
+                                    eprintln!("ai: failed to record approved tool: {error}");
+                                    return ToolApprovalDecision::Denied(
+                                        aibe_protocol::ToolApprovalOrigin::UiNo,
+                                    );
+                                }
+                            }
+                        }
+                        decision
                     },
                 )
             };
@@ -1914,15 +1969,15 @@ fn run_agent_turn_core(
                 };
                 let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
                 let runtime = SystemHandoffRuntime;
-                for handoff_id in resumed_handoffs.lock().expect("resumed handoffs").drain(..) {
+                for sync in resumed_handoffs.lock().expect("resumed handoffs").drain(..) {
                     finalize_parent_resume_tool_tracking(
                         &store,
-                        &handoff_id,
+                        &sync,
                         parent_succeeded,
                         tool_calls,
                     )?;
-                    ResumeReturnedParent::new(&store, &runtime)
-                        .finish(&handoff_id, parent_result.clone())?;
+                    ResumeReturnedParent::new(&store, &ProcessEnvironmentObserver, &runtime)
+                        .finish(&sync.handoff_id, parent_result.clone())?;
                 }
                 let captured = captured_request_human_action
                     .lock()
@@ -3409,6 +3464,24 @@ fn read_collaborative_status() -> anyhow::Result<Vec<ai::domain::CollaborativeHa
         .map_err(Into::into)
 }
 
+fn build_collaborative_child_goal_service_for_handoff(
+    store: &FilesystemHandoffStore,
+    handoff_id: &str,
+) -> anyhow::Result<Box<dyn CollaborativeChildGoalService>> {
+    let cfg = AiConfig::load();
+    let checkpoint = store.load_checkpoint(handoff_id)?;
+    if !cfg.memory_enabled && !ai::application::handoff_requires_child_goal_service(&checkpoint) {
+        return Ok(Box::new(NoopCollaborativeChildGoalService));
+    }
+    let (session_id, memory_space_id) =
+        ai::application::resolve_handoff_child_goal_context(&checkpoint);
+    Ok(Box::new(AibeCollaborativeChildGoalService::new(
+        AibeUnixClient::new(cfg.socket_path.clone()),
+        session_id,
+        memory_space_id,
+    )))
+}
+
 fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
     let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
     let runtime = SystemHandoffRuntime;
@@ -3431,13 +3504,17 @@ fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
             Err(error) => return Err(error.into()),
         };
     let owner = RecoveryOwner::from_runtime(&runtime);
+    let observer = ProcessEnvironmentObserver;
+    let child_goal_service =
+        build_collaborative_child_goal_service_for_handoff(&store, &handoff_id)?;
     let mut handoff = store.load_handoff(&handoff_id)?;
     if handoff.state == ai::domain::HandoffState::Orphaned {
         eprintln!(
             "ai: recovering with a new shell; jobs, exports, aliases, SSH and TUI state are not restored"
         );
         let launcher = AishHumanShellLauncher::default();
-        ResumeOrphanedHandoff::new(&store, &launcher, &runtime).execute(&handoff_id, &owner)?;
+        ResumeOrphanedHandoff::new(&store, &launcher, &runtime, child_goal_service.as_ref())
+            .execute(&handoff_id, &owner)?;
         handoff = store.load_handoff(&handoff_id)?;
     }
     if handoff.state != ai::domain::HandoffState::Returned {
@@ -3450,7 +3527,7 @@ fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
         );
     }
 
-    let parent = ResumeReturnedParent::new(&store, &runtime);
+    let parent = ResumeReturnedParent::new(&store, &observer, &runtime);
     let context = parent.prepare(&handoff_id, &owner)?;
     let previous_dir = std::env::current_dir()?;
     let previous_session = std::env::var_os("AI_SESSION_ID");

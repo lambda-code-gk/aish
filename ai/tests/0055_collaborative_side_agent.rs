@@ -52,6 +52,9 @@ impl HandoffRuntime for Runtime {
     fn effective_uid(&self) -> u32 {
         self.uid
     }
+    fn process_is_alive(&self, process_id: u32) -> bool {
+        process_id == alive_test_process_id() || process_id == 123
+    }
 }
 
 struct Observer;
@@ -133,7 +136,9 @@ fn persist_fixture(
         handoff_id: "handoff-test".into(),
         parent_goal_id: Some("goal-parent".into()),
         work_id: None,
+        auto_root_work_id: None,
         close_reason: None,
+        close_state: None,
         achievement: ChildGoalAchievement::Unknown,
     };
     store
@@ -1020,7 +1025,7 @@ fn side_agent_client_tool_request_human_action_is_structured() {
 }
 
 #[test]
-fn reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active() {
+fn start_side_run_atomically_clears_stale_lock_for_human_active() {
     let fixture = Fixture::new(HandoffState::HumanActive);
     run_turn(&fixture, None);
     fixture

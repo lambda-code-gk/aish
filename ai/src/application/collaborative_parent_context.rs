@@ -151,3 +151,90 @@ pub fn checkpoint_memory_space_id(checkpoint: &crate::domain::HandoffCheckpoint)
         })
         .filter(|id| !id.is_empty())
 }
+
+/// handoff checkpoint に保存済みの memory space を優先し、無ければ session から解決する。
+pub fn resolve_handoff_memory_space_id(
+    parent_task_id: &str,
+    checkpoint: &crate::domain::HandoffCheckpoint,
+) -> String {
+    use aibe_protocol::legacy_session_memory_space_id;
+
+    use super::memory_space::resolve_memory_space_id;
+
+    checkpoint_memory_space_id(checkpoint).unwrap_or_else(|| {
+        resolve_memory_space_id(parent_task_id, None, None, None)
+            .map(|resolved| resolved.memory_space_id)
+            .unwrap_or_else(|_| legacy_session_memory_space_id(parent_task_id))
+    })
+}
+
+/// resume / recovery 用 child goal の session ID と memory space ID。
+pub fn resolve_handoff_child_goal_context(
+    checkpoint: &crate::domain::HandoffCheckpoint,
+) -> (String, String) {
+    let session_id = checkpoint.parent_task_id.clone();
+    let memory_space_id = resolve_handoff_memory_space_id(&session_id, checkpoint);
+    (session_id, memory_space_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{
+        ChildGoalAchievement, ChildGoalMeta, HandoffCheckpoint, HandoffState, RequestedShellExec,
+    };
+
+    fn minimal_checkpoint(environment_metadata: &str) -> HandoffCheckpoint {
+        HandoffCheckpoint {
+            parent_task_id: "parent-session".into(),
+            parent_conversation_id: "conv".into(),
+            parent_run_id: "run".into(),
+            pending_shell_exec: RequestedShellExec {
+                command: "echo".into(),
+                args: vec![],
+                cwd: Some("/tmp".into()),
+                tool_call_id: Some("tool".into()),
+            },
+            parent_goal: "goal".into(),
+            child_goal: ChildGoalMeta {
+                id: "child".into(),
+                handoff_id: "handoff".into(),
+                parent_goal_id: None,
+                work_id: None,
+                auto_root_work_id: None,
+                close_reason: None,
+                close_state: None,
+                achievement: ChildGoalAchievement::Unknown,
+            },
+            conversation_snapshot: String::new(),
+            conversation_summary: String::new(),
+            cwd: "/tmp".into(),
+            environment_metadata: environment_metadata.into(),
+            handoff_id: "handoff".into(),
+            side_conversation_id: None,
+            command_candidates: vec![],
+            shell_log_start: 0,
+            control_state: HandoffState::HumanActive,
+            provider_metadata: None,
+            tool_executions: vec![],
+        }
+    }
+
+    #[test]
+    fn resolve_handoff_memory_space_id_prefers_checkpoint() {
+        let checkpoint = minimal_checkpoint(r#"{"memory_space_id":"project_parent"}"#);
+        assert_eq!(
+            resolve_handoff_memory_space_id("other-session", &checkpoint),
+            "project_parent"
+        );
+    }
+
+    #[test]
+    fn resolve_handoff_child_goal_context_uses_checkpoint_session() {
+        let mut checkpoint = minimal_checkpoint(r#"{"memory_space_id":"project_parent"}"#);
+        checkpoint.parent_task_id = "checkpoint-session".into();
+        let (session_id, memory_space_id) = resolve_handoff_child_goal_context(&checkpoint);
+        assert_eq!(session_id, "checkpoint-session");
+        assert_eq!(memory_space_id, "project_parent");
+    }
+}

@@ -3099,15 +3099,6 @@ pending = false
 [[cases]]
 spec = "0055"
 phase = 5
-id = "reconcile_orphan_side_run_lock"
-description = "HUMAN_ACTIVE 時に stale side-run lock を除去"
-test = "reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active"
-file_glob = "ai/tests/0055_collaborative_side_agent.rs"
-pending = false
-
-[[cases]]
-spec = "0055"
-phase = 5
 id = "durable_tool_lifecycle"
 description = "checkpoint へ RUNNING/完了 tool lifecycle を記録"
 test = "tool_lifecycle_records_running_and_syncs_completed"
@@ -3134,9 +3125,63 @@ pending = false
 
 [[cases]]
 spec = "0055"
-phase = 3
+phase = 5
 id = "side_contextual_memory_block"
 description = "side agent system context に contextual memory block を含める"
 test = "side_agent_includes_contextual_memory_block"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_without_active_work"
+description = "active Work なしでも child Work を Start→Push→Pop する"
+test = "handoff_creates_child_work_without_active_work_and_pops_on_return"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_launch_failure_compensation"
+description = "shell 起動失敗時に child Work を補償 Pop する"
+test = "handoff_shell_launch_failure_compensates_child_work"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "orphaned_shell_preserves_child_work"
+description = "ORPHANED 遷移時は child Work を維持する"
+test = "handoff_orphaned_shell_exit_preserves_child_work"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "resume_memory_space_from_checkpoint"
+description = "resume 時 child goal が checkpoint の session / memory space を使う"
+test = "resolve_handoff_child_goal_context_uses_checkpoint_session"
+file_glob = "ai/src/application/collaborative_parent_context.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "resume_requires_work_service_when_child_open"
+description = "未完了 child Work がある handoff 復旧では Noop を選ばない"
+test = "handoff_requires_child_goal_service_when_work_open"
+file_glob = "ai/src/application/collaborative_child_goal_lifecycle.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "side_run_atomic_start"
+description = "side agent 開始を store lock 内で atomic 化する"
+test = "start_side_run_atomically_clears_stale_lock_for_human_active"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
 pending = false

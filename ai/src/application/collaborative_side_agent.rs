@@ -177,19 +177,12 @@ where
         }
     }
 
-    /// spec §13.5 の判定順（standalone → env → token/identity → state）を保つ。
-    pub fn dispatch(
+    /// token / identity / state を検証する。Memory query より先に呼ぶ。
+    pub fn validate_shell_participation(
         &self,
-        env: Option<CollaborativeShellEnvironment>,
+        env: &CollaborativeShellEnvironment,
         invocation: &SideAgentInvocation,
-        options: SideAgentDispatchOptions<'_>,
-    ) -> Result<SideAgentDispatch, SideAgentError> {
-        if invocation.standalone {
-            return Ok(SideAgentDispatch::Standalone);
-        }
-        let Some(env) = env else {
-            return Ok(SideAgentDispatch::Normal);
-        };
+    ) -> Result<Option<SideAgentDispatch>, SideAgentError> {
         let mut handoff = self.store.load_handoff(&env.handoff_id)?;
         let sessions = self.store.list_shell_sessions(&env.handoff_id)?;
         if !crate::domain::validate_shell_token(&sessions, &env.token, env.generation)
@@ -214,9 +207,9 @@ where
 
         match handoff.state {
             HandoffState::HumanActive if invocation.bare => {
-                return Ok(SideAgentDispatch::PromptForInput {
+                return Ok(Some(SideAgentDispatch::PromptForInput {
                     handoff_id: handoff.id,
-                });
+                }));
             }
             HandoffState::SideAgentRunning => {
                 if !try_recover_stale_side_agent(
@@ -251,65 +244,107 @@ where
                 return Err(SideAgentError::Inactive);
             }
         }
+        Ok(None)
+    }
 
-        reconcile_orphan_side_run_lock(self.store, &env.handoff_id, &handoff)?;
-
-        self.store.try_acquire_side_run_lock(
-            &env.handoff_id,
-            &LeaseAcquireRequest {
-                owner_client_id: invocation.client_id.clone(),
-                owner_process_id: invocation.process_id,
-                owner_tty: invocation.tty.clone(),
-                owner_host: self.runtime.host_id(),
-                owner_uid: self.runtime.effective_uid(),
-                now_ms: self.runtime.now_ms(),
-                lease_timeout_ms: 120_000,
-            },
-        )?;
-
-        let conversation_id = match handoff.side_conversation_id.clone() {
-            Some(id) => id,
-            None => {
-                let id = self.runtime.unique_id("side-conversation");
-                handoff.side_conversation_id = Some(id.clone());
-                checkpoint.side_conversation_id = Some(id.clone());
-                record_audit(
-                    self.store,
-                    &env.handoff_id,
-                    CollaborativeAuditKind::SideConversationCreated,
-                );
-                id
-            }
+    /// spec §13.5 の判定順（standalone → env → token/identity → state）を保つ。
+    pub fn dispatch(
+        &self,
+        env: Option<CollaborativeShellEnvironment>,
+        invocation: &SideAgentInvocation,
+        options: SideAgentDispatchOptions<'_>,
+    ) -> Result<SideAgentDispatch, SideAgentError> {
+        if invocation.standalone {
+            return Ok(SideAgentDispatch::Standalone);
+        }
+        let Some(env) = env else {
+            return Ok(SideAgentDispatch::Normal);
         };
-        let was_waiting = handoff.state == HandoffState::SideAgentWaitingForHuman;
-        handoff.state = transition(
-            handoff.state,
-            if was_waiting {
-                HandoffEvent::SideAgentResumed
-            } else {
-                HandoffEvent::StartSideAgent
-            },
-        )?;
-        handoff.conversation_summary = update_summary(
-            &handoff.conversation_summary,
-            if was_waiting {
-                "human control returned; side run resumed"
-            } else {
-                "side run started"
-            },
-        );
-        handoff.updated_at_ms = self.runtime.now_ms();
-        checkpoint.control_state = handoff.state;
-        checkpoint.conversation_summary = handoff.conversation_summary.clone();
-        checkpoint.cwd = invocation.cwd.display().to_string();
-        self.store.save_checkpoint(&handoff.id, &checkpoint)?;
-        self.store.save_handoff(&handoff)?;
+        if let Some(early) = self.validate_shell_participation(&env, invocation)? {
+            return Ok(early);
+        }
+
+        let lease_request = LeaseAcquireRequest {
+            owner_client_id: invocation.client_id.clone(),
+            owner_process_id: invocation.process_id,
+            owner_tty: invocation.tty.clone(),
+            owner_host: self.runtime.host_id(),
+            owner_uid: self.runtime.effective_uid(),
+            now_ms: self.runtime.now_ms(),
+            lease_timeout_ms: 120_000,
+        };
+        let mut created_conversation = false;
+        let mut was_waiting = false;
+        let mut conversation_id = String::new();
+        self.store
+            .start_side_run_atomically(
+                &env.handoff_id,
+                &lease_request,
+                &|pid| self.runtime.process_is_alive(pid),
+                &mut |handoff, checkpoint| {
+                    match handoff.state {
+                        HandoffState::HumanActive | HandoffState::SideAgentWaitingForHuman => {}
+                        HandoffState::SideAgentRunning => {
+                            return Err(HandoffStoreError::LeaseConflict);
+                        }
+                        _ => {
+                            return Err(HandoffStoreError::Write(
+                                "handoff inactive for side run".into(),
+                            ));
+                        }
+                    }
+                    was_waiting = handoff.state == HandoffState::SideAgentWaitingForHuman;
+                    conversation_id = match handoff.side_conversation_id.clone() {
+                        Some(id) => id,
+                        None => {
+                            created_conversation = true;
+                            let id = self.runtime.unique_id("side-conversation");
+                            handoff.side_conversation_id = Some(id.clone());
+                            checkpoint.side_conversation_id = Some(id.clone());
+                            id
+                        }
+                    };
+                    handoff.state = transition(
+                        handoff.state,
+                        if was_waiting {
+                            HandoffEvent::SideAgentResumed
+                        } else {
+                            HandoffEvent::StartSideAgent
+                        },
+                    )
+                    .map_err(|error| HandoffStoreError::Write(error.to_string()))?;
+                    handoff.conversation_summary = update_summary(
+                        &handoff.conversation_summary,
+                        if was_waiting {
+                            "human control returned; side run resumed"
+                        } else {
+                            "side run started"
+                        },
+                    );
+                    checkpoint.control_state = handoff.state;
+                    checkpoint.conversation_summary = handoff.conversation_summary.clone();
+                    checkpoint.cwd = invocation.cwd.display().to_string();
+                    Ok(())
+                },
+            )
+            .map_err(|error| match error {
+                HandoffStoreError::LeaseConflict => SideAgentError::AlreadyRunning,
+                other => SideAgentError::Store(other),
+            })?;
+        if created_conversation {
+            record_audit(
+                self.store,
+                &env.handoff_id,
+                CollaborativeAuditKind::SideConversationCreated,
+            );
+        }
         record_audit(
             self.store,
-            &handoff.id,
+            &env.handoff_id,
             CollaborativeAuditKind::SideAgentStarted,
         );
-
+        let handoff = self.store.load_handoff(&env.handoff_id)?;
+        let checkpoint = self.store.load_checkpoint(&env.handoff_id)?;
         let observation_start = handoff.shell_log_end.unwrap_or(handoff.shell_log_start);
         let observation = self.observer.observe(&invocation.cwd, observation_start);
         let control_returned = was_waiting.then(|| HumanControlReturned {
@@ -564,23 +599,6 @@ fn validate_identity(metadata: &str, host: &str, uid: u32) -> Result<(), SideAge
 
 fn transition(state: HandoffState, event: HandoffEvent) -> Result<HandoffState, SideAgentError> {
     try_transition(state, event).map_err(|error| SideAgentError::Transition(error.to_string()))
-}
-
-fn reconcile_orphan_side_run_lock<S: SideRunLockRepository>(
-    store: &S,
-    handoff_id: &str,
-    handoff: &Handoff,
-) -> Result<(), SideAgentError> {
-    if matches!(
-        handoff.state,
-        HandoffState::SideAgentRunning | HandoffState::Creating | HandoffState::ResumingParent
-    ) {
-        return Ok(());
-    }
-    if store.load_side_run_lock(handoff_id)?.is_some() {
-        store.release_side_run_lock(handoff_id)?;
-    }
-    Ok(())
 }
 
 fn update_summary(current: &str, event: &str) -> String {
