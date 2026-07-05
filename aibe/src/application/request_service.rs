@@ -442,7 +442,7 @@ fn validate_client_tools(
         if spec.risk_class != ToolRiskClass::ReadOnly {
             return Err(format!("client tool must be read_only: {}", spec.name));
         }
-        if spec.name != "aish.replay_show" {
+        if spec.name != "aish.replay_show" && spec.name != "aish.request_human_action" {
             return Err(format!("unsupported client tool: {}", spec.name));
         }
         if spec.max_output_bytes == 0 {

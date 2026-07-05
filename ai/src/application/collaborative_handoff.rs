@@ -58,6 +58,7 @@ pub struct ParentShellExecRequest {
     pub parent_request_summary: String,
     pub conversation_snapshot: String,
     pub conversation_summary: String,
+    pub work_stage_and_plan: String,
     pub command: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
@@ -258,6 +259,8 @@ where
             "handoff_host_id": self.runtime.host_id(),
             "handoff_uid": self.runtime.effective_uid(),
             "suggestion_cache_path": suggestion_cache_path,
+            "work_stage_and_plan": request.work_stage_and_plan,
+            "parent_work_id": request.parent_goal_id,
         })
         .to_string();
         let human_request =

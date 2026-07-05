@@ -17,31 +17,32 @@ use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
     acquire_prompt_via_external_editor, create_prompt_temp_file, detect_terminal_size,
     external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
-    load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
-    resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
-    resolve_suggestion_cache_path, smart_preprocessor_trace_enabled,
-    AibeCollaborativeChildGoalService, AibeUnixClient, AishHumanShellLauncher, ChatReadLineResult,
-    FileHandoffCandidatePublisher, FileLogTail, FileSuggestedCommandRecallStore,
-    FilesystemHandoffStore, LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft,
-    ProcessEnvironmentObserver, ShellExecRenderOptions, StdoutPresenter, SystemHandoffRuntime,
-    YesExecCache,
+    load_preprocessor_model, load_replay_events, load_shell_exec_approval,
+    prompt_file_write_approval, read_chat_line, resolve_editor_command_from_env,
+    resolve_session_error_summary, resolve_shell_log_for_ask, resolve_suggestion_cache_path,
+    smart_preprocessor_trace_enabled, AibeCollaborativeChildGoalService, AibeUnixClient,
+    AishHumanShellLauncher, ChatReadLineResult, FileHandoffCandidatePublisher, FileLogTail,
+    FileSuggestedCommandRecallStore, FilesystemHandoffStore, LocalHistoryStore, LocalRouteMetrics,
+    PreprocessorObservationDraft, ProcessEnvironmentObserver, ShellExecRenderOptions,
+    StdoutPresenter, SystemHandoffRuntime, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
-    assistant_content_from_response, build_response_summary, build_summary, classify_from_raw_args,
-    current_time_ms, ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
-    list_history, memory_cli, next_history_id, parse_request_human_action,
-    persist_suggested_commands, plan_ask_launch, plan_interactive_prompt_route,
-    recall_next_command, recall_prev_command, record_turn, resolve_recall_gating,
-    suggestion_cache_path_from_checkpoint, CollaborativeExecutionContext,
-    CollaborativeShellEnvironment, CollaborativeShellExecPolicy, HistoryRecordInput,
-    HistoryReplayInput, InteractivePromptRoute, ParentResumeContext, ParentShellExecRequest,
-    PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus, RecallGatingInput,
-    RecallTurnContext, ReconcileStaleHandoffs, RecoveryOwner, ResumeOrphanedHandoff,
-    ResumeReturnedParent, ShellLogMode, SideAgentDispatch, SideAgentInvocation, SideTurn,
-    StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
+    assistant_content_from_response, build_enriched_parent_handoff_context, build_response_summary,
+    build_summary, classify_from_raw_args, current_time_ms, ensure_aibe_if_needed,
+    evaluate_preprocessor, execute_feature_actions_mvp, finalize_handoff_running_tools,
+    list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
+    plan_interactive_prompt_route, query_work_snapshot, recall_next_command, recall_prev_command,
+    record_handoff_tool_running, record_turn, resolve_recall_gating,
+    suggestion_cache_path_from_checkpoint, sync_handoff_tool_executions,
+    CollaborativeExecutionContext, CollaborativeShellEnvironment, CollaborativeShellExecPolicy,
+    HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, ParentResumeContext,
+    ParentShellExecRequest, PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus,
+    RecallGatingInput, RecallTurnContext, ReconcileStaleHandoffs, RecoveryOwner,
+    ResumeOrphanedHandoff, ResumeReturnedParent, ShellLogMode, SideAgentDispatch,
+    SideAgentInvocation, SideTurn, StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -49,6 +50,9 @@ use ai::clap_cli::{
     WorkCliOptions, WorkCommand,
 };
 use ai::domain::client_tools::replay_show::replay_client_tool_callback;
+use ai::domain::client_tools::request_human_action::{
+    side_agent_client_tool_callback, side_agent_request_human_action_client_tool,
+};
 use ai::domain::smart_preprocessor::{
     build_local_route_context_summary, local_output_style_system_hint, LocalRouteDecision,
     LocalToolHint, PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
@@ -56,10 +60,11 @@ use ai::domain::smart_preprocessor::{
 use ai::domain::{
     resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
     resolve_progress, resolve_tools, validate_ask_arg_order, AskArgOrderError, AskInput,
-    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter,
-    HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError,
-    OutputFormat, OutputFormatError, PromptAcquisitionResult, RequestContextInput,
-    ShellExecSessionState, ShellExecTier, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
+    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, HandoffState,
+    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
+    LogTailResolveError, OutputFormat, OutputFormatError, PromptAcquisitionResult,
+    RecoverableToolStatus, RequestContextInput, ShellExecSessionState, ShellExecTier,
+    ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
 use ai::ports::outbound::Presenter;
@@ -70,8 +75,8 @@ use ai::ports::outbound::{
 };
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{
-    ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalDecision,
-    ShellExecApprovalPrompt,
+    ensure_running, ping_detailed, AgentTurnCallbacks, AgentTurnProgressEvent,
+    ShellExecApprovalDecision, ShellExecApprovalPrompt, ToolApprovalDecision, ToolApprovalPrompt,
 };
 use aibe_protocol::{
     ClientRequest, ClientResponse, ProtocolMessage, RouteKind, RoutePlan, RouteTurnCliOverrides,
@@ -292,6 +297,7 @@ struct TurnExecutionOutcome {
     response: ClientResponse,
     cancel_source: Option<TurnCancelSource>,
     streamed: bool,
+    captured_request_human_action: Option<ai::application::RequestHumanAction>,
 }
 
 fn auto_approve_shell_exec_decision(
@@ -437,6 +443,13 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
                 let observer = ProcessEnvironmentObserver;
                 let runtime = SystemHandoffRuntime;
                 let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+                finalize_handoff_running_tools(
+                    &store,
+                    &side.handoff_id,
+                    RecoverableToolStatus::Failed,
+                    None,
+                )
+                .map_err(anyhow::Error::msg)?;
                 service.finish_side_turn(&side.handoff_id, &format!("side run failed: {error}"))?;
             }
             return Err(error);
@@ -447,6 +460,26 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         let observer = ProcessEnvironmentObserver;
         let runtime = SystemHandoffRuntime;
         let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+        let handoff = store.load_handoff(&side.handoff_id)?;
+        if handoff.state == HandoffState::SideAgentWaitingForHuman {
+            if let Some(request) = response.captured_request_human_action {
+                let checkpoint = store.load_checkpoint(&side.handoff_id)?;
+                let cache_path =
+                    suggestion_cache_path_from_checkpoint(&checkpoint).unwrap_or_else(|| {
+                        SystemHandoffRuntime.handoff_suggestion_cache_path(&side.handoff_id)
+                    });
+                FileHandoffCandidatePublisher::new(
+                    FileSuggestedCommandRecallStore::new(cache_path),
+                    side.handoff_id.clone(),
+                )
+                .publish(&side.handoff_id, &request.command_candidates)
+                .map_err(anyhow::Error::msg)?;
+            }
+            return Ok(exit_code_for_response(
+                &response.response,
+                response.cancel_source,
+            ));
+        }
         let summary = match &response.response {
             ClientResponse::AgentTurnResult {
                 assistant_message, ..
@@ -454,7 +487,27 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             ClientResponse::Error { message, .. } => message.as_str(),
             _ => "side turn finished",
         };
-        if let Some(request) = parse_request_human_action(summary) {
+        if let ClientResponse::AgentTurnResult { tool_calls, .. } = &response.response {
+            sync_handoff_tool_executions(&store, &side.handoff_id, tool_calls)
+                .map_err(anyhow::Error::msg)?;
+        } else if let ClientResponse::Cancelled { .. } | ClientResponse::Error { .. } =
+            &response.response
+        {
+            finalize_handoff_running_tools(
+                &store,
+                &side.handoff_id,
+                RecoverableToolStatus::Cancelled,
+                None,
+            )
+            .map_err(anyhow::Error::msg)?;
+            service.finish_side_turn(&side.handoff_id, summary)?;
+            return Ok(exit_code_for_response(
+                &response.response,
+                response.cancel_source,
+            ));
+        }
+        let request = response.captured_request_human_action;
+        if let Some(request) = request {
             let checkpoint = store.load_checkpoint(&side.handoff_id)?;
             let cache_path =
                 suggestion_cache_path_from_checkpoint(&checkpoint).unwrap_or_else(|| {
@@ -466,7 +519,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             )
             .publish(&side.handoff_id, &request.command_candidates)
             .map_err(anyhow::Error::msg)?;
-            service.request_human_action(&side.handoff_id, request)?;
+            service.request_human_action(&side.handoff_id, request, None)?;
         } else {
             service.finish_side_turn(&side.handoff_id, summary)?;
         }
@@ -895,7 +948,12 @@ fn execute_turn(
     let shell_log_tail_text = replay_ctx.shell_log_tail;
     let replay_events = replay_ctx.replay_events;
     let replay_manifest_block = replay_ctx.replay_manifest_block;
-    let client_tools = replay_ctx.client_tools;
+    let mut client_tools = replay_ctx.client_tools;
+    if side_turn.is_some() {
+        client_tools.push(side_agent_request_human_action_client_tool());
+    }
+    let captured_request_human_action = Arc::new(std::sync::Mutex::new(None));
+    let tool_tracking_handoff_id = side_turn.as_ref().map(|side| side.handoff_id.clone());
 
     if let ShellLogChoice::Path(ref path) = shell_log_choice {
         if !settings.quiet {
@@ -1002,6 +1060,8 @@ fn execute_turn(
             settings.silent_exec || settings.quiet,
             Arc::clone(&shell_exec_state),
             collaborative,
+            tool_tracking_handoff_id,
+            Arc::clone(&captured_request_human_action),
         )?
     } else {
         run_agent_turn_sync(
@@ -1016,6 +1076,8 @@ fn execute_turn(
             settings.silent_exec || settings.quiet,
             shell_exec_state,
             collaborative,
+            tool_tracking_handoff_id,
+            Arc::clone(&captured_request_human_action),
         )?
     };
 
@@ -1023,6 +1085,7 @@ fn execute_turn(
         response,
         cancel_source,
         streamed,
+        captured_request_human_action,
     } = response;
     let agent_turn_latency_ms = agent_turn_started.elapsed().as_millis() as u64;
     if let Some(draft) = observation_draft {
@@ -1127,6 +1190,7 @@ fn execute_turn(
         response,
         cancel_source,
         streamed,
+        captured_request_human_action,
     })
 }
 
@@ -1212,6 +1276,10 @@ fn run_agent_turn_sync(
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
+    tool_tracking_handoff_id: Option<String>,
+    captured_request_human_action: Arc<
+        std::sync::Mutex<Option<ai::application::RequestHumanAction>>,
+    >,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
@@ -1226,6 +1294,8 @@ fn run_agent_turn_sync(
         silent_shell_exec,
         shell_exec_state,
         collaborative,
+        tool_tracking_handoff_id,
+        captured_request_human_action,
     )
 }
 
@@ -1243,6 +1313,10 @@ fn run_agent_turn_async(
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
+    tool_tracking_handoff_id: Option<String>,
+    captured_request_human_action: Arc<
+        std::sync::Mutex<Option<ai::application::RequestHumanAction>>,
+    >,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
@@ -1257,6 +1331,8 @@ fn run_agent_turn_async(
         silent_shell_exec,
         shell_exec_state,
         collaborative,
+        tool_tracking_handoff_id,
+        captured_request_human_action,
     )
 }
 
@@ -1281,6 +1357,10 @@ fn run_agent_turn_core(
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
+    tool_tracking_handoff_id: Option<String>,
+    captured_request_human_action: Arc<
+        std::sync::Mutex<Option<ai::application::RequestHumanAction>>,
+    >,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let turn_id = request_turn_id(&request)?;
     let collaborative_meta = match &request {
@@ -1290,6 +1370,8 @@ fn run_agent_turn_core(
             context.cwd.clone().map(PathBuf::from),
             context.ai_session_id.clone(),
             context.conversation_id.clone(),
+            context.memory_space_id.clone(),
+            messages.clone(),
             messages
                 .iter()
                 .find(|m| m.role == "user")
@@ -1306,7 +1388,7 @@ fn run_agent_turn_core(
     let resumed_handoffs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let mut cancel_source: Option<TurnCancelSource> = None;
 
-    let use_client_tools = should_use_client_tool_stream(&request);
+    let _use_client_tools = should_use_client_tool_stream(&request);
     let (tx, rx) = mpsc::channel();
     let presenter_thread = Arc::clone(&presenter);
     let history_dir_thread = history_dir.clone();
@@ -1317,6 +1399,8 @@ fn run_agent_turn_core(
     let cancel_requested_thread = Arc::clone(&cancel_requested);
     let collaborative_cancel_requested_thread = Arc::clone(&collaborative_cancel_requested);
     let resumed_handoffs_thread = Arc::clone(&resumed_handoffs);
+    let tool_tracking_handoff_id_thread = tool_tracking_handoff_id.clone();
+    let captured_request_human_action_thread = Arc::clone(&captured_request_human_action);
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
         aibe_shell_exec.auto_approve_patterns.read_only,
@@ -1382,9 +1466,54 @@ fn run_agent_turn_core(
         let response = {
             let shell_exec_handler =
                 |prompt: ShellExecApprovalPrompt| -> ShellExecApprovalDecision {
+                    if !collaborative {
+                        if let Some(handoff_id) = tool_tracking_handoff_id_thread.as_ref() {
+                            if let Err(error) = record_handoff_tool_running(
+                                &handoff_store,
+                                handoff_id,
+                                &prompt.tool_call_id,
+                                "shell_exec",
+                            ) {
+                                eprintln!("ai: failed to record running shell_exec: {error}");
+                                return ShellExecApprovalDecision {
+                                    approved: false,
+                                    approval_origin: aibe_protocol::ShellExecApprovalOrigin::UiNo,
+                                    handoff_result: None,
+                                };
+                            }
+                        }
+                    }
                     if collaborative {
-                        let (cwd, ai_session_id, conversation_id, parent_summary) =
-                            collaborative_meta.clone().unwrap_or_default();
+                        let (
+                            cwd,
+                            ai_session_id,
+                            conversation_id,
+                            memory_space_id,
+                            messages,
+                            first_user_message,
+                        ) = collaborative_meta.clone().unwrap_or((
+                            None,
+                            None,
+                            None,
+                            None,
+                            Vec::new(),
+                            None,
+                        ));
+                        let work_snapshot = if cfg.memory_enabled {
+                            query_work_snapshot(
+                                &AibeUnixClient::new(socket_path.clone()),
+                                ai_session_id.as_deref().unwrap_or("default"),
+                                memory_space_id.as_deref(),
+                                cwd.as_deref().and_then(|path| path.to_str()),
+                            )
+                        } else {
+                            None
+                        };
+                        let enriched = build_enriched_parent_handoff_context(
+                            &messages,
+                            first_user_message,
+                            work_snapshot.as_ref(),
+                        );
                         let request = ParentShellExecRequest {
                             parent_task_id: ai_session_id
                                 .clone()
@@ -1392,15 +1521,12 @@ fn run_agent_turn_core(
                             parent_conversation_id: conversation_id
                                 .unwrap_or_else(|| turn_id_thread.clone()),
                             parent_run_id: turn_id_thread.clone(),
-                            parent_goal_id: None,
-                            parent_goal: parent_summary
-                                .clone()
-                                .unwrap_or_else(|| "Complete the parent task".into()),
-                            parent_request_summary: parent_summary
-                                .clone()
-                                .unwrap_or_else(|| "Parent requested shell work".into()),
-                            conversation_snapshot: parent_summary.clone().unwrap_or_default(),
-                            conversation_summary: parent_summary.unwrap_or_default(),
+                            parent_goal_id: enriched.parent_goal_id,
+                            parent_goal: enriched.parent_goal,
+                            parent_request_summary: enriched.parent_request_summary,
+                            conversation_snapshot: enriched.conversation_snapshot,
+                            conversation_summary: enriched.conversation_summary,
+                            work_stage_and_plan: enriched.work_stage_and_plan,
                             command: prompt.command.clone(),
                             args: prompt.args.clone(),
                             cwd: cwd.unwrap_or_else(|| PathBuf::from(".")),
@@ -1580,46 +1706,76 @@ fn run_agent_turn_core(
                         handoff_result: None,
                     }
                 };
-            let result = if use_client_tools {
-                worker_client.agent_turn_request_stream_with_client_tools(
-                    request,
-                    |event: AgentTurnProgressEvent| {
-                        if progress {
-                            let phase = progress_phase_name(event.phase);
-                            presenter_thread.show_progress(&phase, event.message.as_deref());
-                        }
-                    },
-                    |chunk| {
-                        if !chunk.is_empty() {
-                            if presenter_thread.assistant_stream_stdout_enabled() {
-                                streamed_thread.store(true, Ordering::SeqCst);
-                            }
-                            presenter_thread.show_stream_chunk(&chunk);
-                        }
-                    },
-                    replay_client_tool_callback(replay_events),
+            let on_persist = tool_tracking_handoff_id_thread.clone().map(|handoff_id| {
+                let cancel = Arc::clone(&cancel_requested_thread);
+                move |tool_call_id: &str, request: ai::domain::RequestHumanAction| {
+                    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                    let observer = ProcessEnvironmentObserver;
+                    let runtime = SystemHandoffRuntime;
+                    let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+                    service
+                        .request_human_action(&handoff_id, request, Some(tool_call_id))
+                        .map_err(|error| error.to_string())?;
+                    cancel.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            });
+            let on_tool_running = tool_tracking_handoff_id_thread.clone().map(|handoff_id| {
+                move |tool_call_id: &str, tool_name: &str| {
+                    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                    record_handoff_tool_running(&store, &handoff_id, tool_call_id, tool_name)
+                        .map_err(|error| error.to_string())
+                }
+            });
+            let client_tool_callback = side_agent_client_tool_callback(
+                replay_client_tool_callback(replay_events),
+                Arc::clone(&captured_request_human_action_thread),
+                on_persist,
+                on_tool_running,
+            );
+            let tool_callbacks = {
+                let track_id = tool_tracking_handoff_id_thread.clone();
+                AgentTurnCallbacks::new(
                     shell_exec_handler,
-                )
-            } else {
-                worker_client.agent_turn_request_stream(
-                    request,
-                    |event: AgentTurnProgressEvent| {
-                        if progress {
-                            let phase = progress_phase_name(event.phase);
-                            presenter_thread.show_progress(&phase, event.message.as_deref());
-                        }
-                    },
-                    |chunk| {
-                        if !chunk.is_empty() {
-                            if presenter_thread.assistant_stream_stdout_enabled() {
-                                streamed_thread.store(true, Ordering::SeqCst);
+                    move |prompt: ToolApprovalPrompt| -> ToolApprovalDecision {
+                        if let Some(handoff_id) = track_id.as_ref() {
+                            let store =
+                                FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                            if let Err(error) = record_handoff_tool_running(
+                                &store,
+                                handoff_id,
+                                &prompt.tool_call_id,
+                                &prompt.tool_name,
+                            ) {
+                                eprintln!("ai: failed to record running tool: {error}");
+                                return ToolApprovalDecision::Denied(
+                                    aibe_protocol::ToolApprovalOrigin::UiNo,
+                                );
                             }
-                            presenter_thread.show_stream_chunk(&chunk);
                         }
+                        prompt_file_write_approval(prompt)
                     },
-                    shell_exec_handler,
                 )
             };
+            let result = worker_client.agent_turn_request_stream_with_callbacks(
+                request,
+                |event: AgentTurnProgressEvent| {
+                    if progress {
+                        let phase = progress_phase_name(event.phase);
+                        presenter_thread.show_progress(&phase, event.message.as_deref());
+                    }
+                },
+                |chunk| {
+                    if !chunk.is_empty() {
+                        if presenter_thread.assistant_stream_stdout_enabled() {
+                            streamed_thread.store(true, Ordering::SeqCst);
+                        }
+                        presenter_thread.show_stream_chunk(&chunk);
+                    }
+                },
+                client_tool_callback,
+                tool_callbacks,
+            );
             match result {
                 Ok(resp) => resp,
                 Err(e) => ClientResponse::Error {
@@ -1677,10 +1833,15 @@ fn run_agent_turn_core(
                     ResumeReturnedParent::new(&store, &runtime)
                         .finish(&handoff_id, parent_result.clone())?;
                 }
+                let captured = captured_request_human_action
+                    .lock()
+                    .expect("request_human_action capture")
+                    .take();
                 return Ok(TurnExecutionOutcome {
                     response: resp,
                     cancel_source,
                     streamed: streamed.load(Ordering::SeqCst),
+                    captured_request_human_action: captured,
                 });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,

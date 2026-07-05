@@ -4,7 +4,10 @@ use serde_json::json;
 
 use aibe_protocol::ClientProvidedToolSpec;
 
-use crate::domain::{provider_tool_name, AISH_REPLAY_SHOW_LOGICAL, AISH_REPLAY_SHOW_PROVIDER};
+use crate::domain::{
+    provider_tool_name, AISH_REPLAY_SHOW_LOGICAL, AISH_REPLAY_SHOW_PROVIDER,
+    AISH_REQUEST_HUMAN_ACTION_LOGICAL, AISH_REQUEST_HUMAN_ACTION_PROVIDER,
+};
 use crate::ports::outbound::ToolDefinition;
 
 pub fn client_tool_definitions(client_tools: &[ClientProvidedToolSpec]) -> Vec<ToolDefinition> {
@@ -17,6 +20,8 @@ pub fn client_tool_definitions(client_tools: &[ClientProvidedToolSpec]) -> Vec<T
 pub fn canonical_client_tool_definition(logical_name: &str) -> Option<ToolDefinition> {
     if logical_name == AISH_REPLAY_SHOW_LOGICAL {
         Some(canonical_aish_replay_show_tool_definition())
+    } else if logical_name == AISH_REQUEST_HUMAN_ACTION_LOGICAL {
+        Some(canonical_aish_request_human_action_tool_definition())
     } else {
         None
     }
@@ -49,6 +54,30 @@ pub fn canonical_aish_replay_show_tool_definition() -> ToolDefinition {
                 }
             },
             "required": ["index"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+pub fn canonical_aish_request_human_action_tool_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: provider_tool_name(AISH_REQUEST_HUMAN_ACTION_LOGICAL)
+            .unwrap_or(AISH_REQUEST_HUMAN_ACTION_PROVIDER)
+            .to_string(),
+        description:
+            "Request human action in the human shell. Use when the user must run, edit, or confirm commands.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "instruction": { "type": "string" },
+                "reason": { "type": "string" },
+                "command_candidates": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "expected_completion": { "type": "string" }
+            },
+            "required": ["instruction", "reason", "expected_completion"],
             "additionalProperties": false
         }),
     }

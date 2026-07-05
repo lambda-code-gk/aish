@@ -119,6 +119,28 @@ impl AibeUnixClient {
         .map_err(map_client_error)
     }
 
+    pub fn agent_turn_request_stream_with_callbacks(
+        &self,
+        request: ClientRequest,
+        on_progress: impl FnMut(AgentTurnProgressEvent),
+        on_stream: impl FnMut(String),
+        on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<aibe_protocol::ClientToolResult>,
+        callbacks: AgentTurnCallbacks<
+            impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+            impl FnMut(aibe_client::ToolApprovalPrompt) -> ToolApprovalDecision,
+        >,
+    ) -> Result<ClientResponse, AgentError> {
+        agent_turn_with_client_tools(
+            self.socket_path(),
+            request,
+            on_progress,
+            on_stream,
+            on_client_tool,
+            callbacks,
+        )
+        .map_err(map_client_error)
+    }
+
     pub fn route_turn(&self, request: ClientRequest) -> Result<ClientResponse, AgentError> {
         transport_route_turn(self.socket_path(), request).map_err(map_client_error)
     }

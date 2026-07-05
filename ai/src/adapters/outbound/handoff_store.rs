@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
 
 use crate::domain::{
-    hash_handoff_token, validate_handoff_id, CollaborativeAuditKind, CommandCandidate, Handoff,
-    HandoffCheckpoint, HandoffLease, HandoffShellSession, HandoffState,
+    finalize_running_tools, hash_handoff_token, mark_tool_completed, validate_handoff_id,
+    CollaborativeAuditKind, CommandCandidate, Handoff, HandoffCheckpoint, HandoffLease,
+    HandoffShellSession, HandoffState, RecoverableToolStatus,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
@@ -454,6 +455,92 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
             self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
             self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
             Ok(true)
+        })
+    }
+
+    fn finish_side_run_atomically(
+        &self,
+        handoff_id: &str,
+        now_ms: u64,
+        candidates: &[CommandCandidate],
+        resume_tool_call_id: Option<&str>,
+        update: &mut dyn FnMut(
+            &mut Handoff,
+            &mut HandoffCheckpoint,
+        ) -> Result<(), HandoffStoreError>,
+    ) -> Result<(), HandoffStoreError> {
+        fn apply_tool_finalization(checkpoint: &mut HandoffCheckpoint, tool_call_id: Option<&str>) {
+            if let Some(call_id) = tool_call_id {
+                mark_tool_completed(checkpoint, call_id, "aish.request_human_action");
+                finalize_running_tools(checkpoint, RecoverableToolStatus::Cancelled, Some(call_id));
+            }
+        }
+
+        self.with_handoff_lock(handoff_id, || {
+            let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
+            let mut checkpoint: HandoffCheckpoint =
+                self.read_json(&self.checkpoint_path(handoff_id)?)?;
+            let side_path = self.side_run_lock_path(handoff_id)?;
+            let lock_exists = side_path.exists();
+
+            if handoff.state == HandoffState::SideAgentRunning {
+                update(&mut handoff, &mut checkpoint)?;
+                apply_tool_finalization(&mut checkpoint, resume_tool_call_id);
+                handoff.updated_at_ms = now_ms;
+                self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
+                self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
+            } else if lock_exists && checkpoint.control_state != handoff.state {
+                if checkpoint.control_state == HandoffState::SideAgentRunning
+                    && matches!(
+                        handoff.state,
+                        HandoffState::SideAgentWaitingForHuman | HandoffState::HumanActive
+                    )
+                {
+                    checkpoint.control_state = handoff.state;
+                    checkpoint.conversation_summary = handoff.conversation_summary.clone();
+                    apply_tool_finalization(&mut checkpoint, resume_tool_call_id);
+                    for candidate in candidates {
+                        if candidate.target_handoff_id != handoff_id {
+                            return Err(HandoffStoreError::InvalidHandoffId);
+                        }
+                        if checkpoint
+                            .command_candidates
+                            .iter()
+                            .any(|existing| existing.id == candidate.id)
+                        {
+                            continue;
+                        }
+                        checkpoint.command_candidates.push(candidate.clone());
+                    }
+                    self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
+                } else {
+                    return Err(HandoffStoreError::Write(
+                        "handoff/checkpoint state mismatch during side-run finish resume".into(),
+                    ));
+                }
+            }
+
+            if !candidates.is_empty() {
+                let candidates_path = self.candidates_path(handoff_id)?;
+                let mut existing_ids: std::collections::HashSet<String> = self
+                    .read_jsonl(&candidates_path)?
+                    .into_iter()
+                    .map(|candidate: CommandCandidate| candidate.id)
+                    .collect();
+                for candidate in candidates {
+                    if candidate.target_handoff_id != handoff_id {
+                        return Err(HandoffStoreError::InvalidHandoffId);
+                    }
+                    if !existing_ids.insert(candidate.id.clone()) {
+                        continue;
+                    }
+                    self.append_jsonl(&candidates_path, candidate)?;
+                }
+            }
+            if lock_exists {
+                fs::remove_file(&side_path).map_err(write_err)?;
+            }
+            Ok(())
         })
     }
 }

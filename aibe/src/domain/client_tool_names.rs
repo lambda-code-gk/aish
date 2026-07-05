@@ -2,11 +2,14 @@
 
 pub const AISH_REPLAY_SHOW_LOGICAL: &str = "aish.replay_show";
 pub const AISH_REPLAY_SHOW_PROVIDER: &str = "aish_replay_show";
+pub const AISH_REQUEST_HUMAN_ACTION_LOGICAL: &str = "aish.request_human_action";
+pub const AISH_REQUEST_HUMAN_ACTION_PROVIDER: &str = "aish_request_human_action";
 
 /// wire / audit / client gate 向け logical name から provider API 向け name へ。
 pub fn provider_tool_name(logical: &str) -> Option<&'static str> {
     match logical {
         AISH_REPLAY_SHOW_LOGICAL => Some(AISH_REPLAY_SHOW_PROVIDER),
+        AISH_REQUEST_HUMAN_ACTION_LOGICAL => Some(AISH_REQUEST_HUMAN_ACTION_PROVIDER),
         _ => None,
     }
 }
@@ -15,6 +18,9 @@ pub fn provider_tool_name(logical: &str) -> Option<&'static str> {
 pub fn logical_tool_name(provider: &str) -> Option<&'static str> {
     match provider {
         AISH_REPLAY_SHOW_PROVIDER | AISH_REPLAY_SHOW_LOGICAL => Some(AISH_REPLAY_SHOW_LOGICAL),
+        AISH_REQUEST_HUMAN_ACTION_PROVIDER | AISH_REQUEST_HUMAN_ACTION_LOGICAL => {
+            Some(AISH_REQUEST_HUMAN_ACTION_LOGICAL)
+        }
         _ => None,
     }
 }

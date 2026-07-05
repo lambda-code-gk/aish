@@ -32,7 +32,8 @@ pub use capability::{
 pub use client_cwd::{ClientCwd, ClientCwdError};
 pub use client_tool_names::{
     logical_tool_name, provider_tool_name, tool_name_for_provider, AISH_REPLAY_SHOW_LOGICAL,
-    AISH_REPLAY_SHOW_PROVIDER,
+    AISH_REPLAY_SHOW_PROVIDER, AISH_REQUEST_HUMAN_ACTION_LOGICAL,
+    AISH_REQUEST_HUMAN_ACTION_PROVIDER,
 };
 pub use contextual_memory::{
     format_memory_block, is_standard_kind, query_matches_idea_on_demand,

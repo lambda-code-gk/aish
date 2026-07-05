@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::{
-    try_transition, CollaborativeAuditKind, CollaborativeHandoffReport, CommandCandidate,
-    CommandCandidateSource, Handoff, HandoffEvent, HandoffState,
+    deterministic_candidate_id, try_transition, CollaborativeAuditKind, CollaborativeHandoffReport,
+    CommandCandidate, CommandCandidateSource, Handoff, HandoffEvent, HandoffState,
+    RequestHumanAction,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository,
@@ -89,14 +90,6 @@ pub enum SideAgentDispatch {
     Normal,
     PromptForInput { handoff_id: String },
     Run(SideTurn),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct RequestHumanAction {
-    pub instruction: String,
-    pub reason: String,
-    pub command_candidates: Vec<String>,
-    pub expected_completion: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -253,6 +246,8 @@ where
             }
         }
 
+        reconcile_orphan_side_run_lock(self.store, &env.handoff_id, &handoff)?;
+
         self.store.try_acquire_side_run_lock(
             &env.handoff_id,
             &LeaseAcquireRequest {
@@ -340,68 +335,98 @@ where
         &self,
         handoff_id: &str,
         request: RequestHumanAction,
+        tool_call_id: Option<&str>,
     ) -> Result<(), SideAgentError> {
-        let mut handoff = self.store.load_handoff(handoff_id)?;
-        handoff.state = transition(handoff.state, HandoffEvent::SideAgentWaiting)?;
-        handoff.pending_human_request = Some(format!(
-            "{}\nReason: {}\nExpected completion: {}",
-            request.instruction, request.reason, request.expected_completion
-        ));
-        handoff.conversation_summary = update_summary(
-            &handoff.conversation_summary,
-            "side agent requested human action",
-        );
-        handoff.updated_at_ms = self.runtime.now_ms();
         let mut added_candidates = Vec::new();
-        for command in request.command_candidates {
+        let mut seen_commands = std::collections::HashSet::new();
+        for command in &request.command_candidates {
+            if !seen_commands.insert(command.clone()) {
+                continue;
+            }
             let candidate = CommandCandidate {
-                id: self.runtime.unique_id("candidate"),
-                command,
+                id: deterministic_candidate_id(handoff_id, command),
+                command: command.clone(),
                 description: Some(request.instruction.clone()),
                 source: CommandCandidateSource::SideAgent,
-                source_run_id: handoff.side_conversation_id.clone(),
+                source_run_id: None,
                 target_handoff_id: handoff_id.into(),
                 created_at_ms: self.runtime.now_ms(),
             };
-            self.store.append_candidate(handoff_id, &candidate)?;
             added_candidates.push(candidate);
         }
-        let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
+        let handoff = self.store.load_handoff(handoff_id)?;
+        let side_conversation_id = handoff.side_conversation_id.clone();
+        for candidate in &mut added_candidates {
+            candidate.source_run_id = side_conversation_id.clone();
+        }
         let observation_start = handoff.shell_log_end.unwrap_or(handoff.shell_log_start);
+        let checkpoint = self.store.load_checkpoint(handoff_id)?;
         let observation = self
             .observer
             .observe(Path::new(&checkpoint.cwd), observation_start);
-        handoff.shell_log_end = observation.shell_log_end;
-        checkpoint.control_state = handoff.state;
-        checkpoint.conversation_summary = handoff.conversation_summary.clone();
-        checkpoint.command_candidates.extend(added_candidates);
-        self.store.save_checkpoint(handoff_id, &checkpoint)?;
-        self.store.save_handoff(&handoff)?;
+        let pending_human_request = format!(
+            "{}\nReason: {}\nExpected completion: {}",
+            request.instruction, request.reason, request.expected_completion
+        );
+        let now = self.runtime.now_ms();
+        let summary_event = "side agent requested human action";
+        self.store.finish_side_run_atomically(
+            handoff_id,
+            now,
+            &added_candidates,
+            tool_call_id,
+            &mut |handoff, checkpoint| {
+                handoff.state = transition(handoff.state, HandoffEvent::SideAgentWaiting)
+                    .map_err(|error| HandoffStoreError::Write(error.to_string()))?;
+                handoff.pending_human_request = Some(pending_human_request.clone());
+                handoff.conversation_summary =
+                    update_summary(&handoff.conversation_summary, summary_event);
+                handoff.shell_log_end = observation.shell_log_end;
+                checkpoint.control_state = handoff.state;
+                checkpoint.conversation_summary = handoff.conversation_summary.clone();
+                for candidate in &added_candidates {
+                    if checkpoint
+                        .command_candidates
+                        .iter()
+                        .any(|existing| existing.id == candidate.id)
+                    {
+                        continue;
+                    }
+                    checkpoint.command_candidates.push(candidate.clone());
+                }
+                Ok(())
+            },
+        )?;
         record_audit(
             self.store,
             handoff_id,
             CollaborativeAuditKind::SideAgentWaitingForHuman,
         );
-        self.store.release_side_run_lock(handoff_id)?;
         Ok(())
     }
 
     pub fn finish_side_turn(&self, handoff_id: &str, summary: &str) -> Result<(), SideAgentError> {
-        let mut handoff = self.store.load_handoff(handoff_id)?;
-        handoff.state = transition(handoff.state, HandoffEvent::SideAgentReturned)?;
-        handoff.conversation_summary = update_summary(&handoff.conversation_summary, summary);
-        handoff.updated_at_ms = self.runtime.now_ms();
-        let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
-        checkpoint.control_state = handoff.state;
-        checkpoint.conversation_summary = handoff.conversation_summary.clone();
-        self.store.save_checkpoint(handoff_id, &checkpoint)?;
-        self.store.save_handoff(&handoff)?;
+        let now = self.runtime.now_ms();
+        self.store.finish_side_run_atomically(
+            handoff_id,
+            now,
+            &[],
+            None,
+            &mut |handoff, checkpoint| {
+                handoff.state = transition(handoff.state, HandoffEvent::SideAgentReturned)
+                    .map_err(|error| HandoffStoreError::Write(error.to_string()))?;
+                handoff.conversation_summary =
+                    update_summary(&handoff.conversation_summary, summary);
+                checkpoint.control_state = handoff.state;
+                checkpoint.conversation_summary = handoff.conversation_summary.clone();
+                Ok(())
+            },
+        )?;
         record_audit(
             self.store,
             handoff_id,
             CollaborativeAuditKind::SideAgentReturned,
         );
-        self.store.release_side_run_lock(handoff_id)?;
         Ok(())
     }
 }
@@ -534,6 +559,23 @@ fn transition(state: HandoffState, event: HandoffEvent) -> Result<HandoffState, 
     try_transition(state, event).map_err(|error| SideAgentError::Transition(error.to_string()))
 }
 
+fn reconcile_orphan_side_run_lock<S: SideRunLockRepository>(
+    store: &S,
+    handoff_id: &str,
+    handoff: &Handoff,
+) -> Result<(), SideAgentError> {
+    if matches!(
+        handoff.state,
+        HandoffState::SideAgentRunning | HandoffState::Creating | HandoffState::ResumingParent
+    ) {
+        return Ok(());
+    }
+    if store.load_side_run_lock(handoff_id)?.is_some() {
+        store.release_side_run_lock(handoff_id)?;
+    }
+    Ok(())
+}
+
 fn update_summary(current: &str, event: &str) -> String {
     if current.trim().is_empty() {
         event.into()
@@ -550,20 +592,37 @@ impl ParentCollaborationContextBuilder {
         checkpoint: &crate::domain::HandoffCheckpoint,
         observation: &crate::ports::outbound::EnvironmentObservation,
     ) -> String {
+        let metadata = serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let work_stage_and_plan = metadata
+            .get("work_stage_and_plan")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(handoff.parent_request_summary.as_str());
+        let parent_work_id = handoff
+            .parent_goal_id
+            .as_deref()
+            .or_else(|| {
+                metadata
+                    .get("parent_work_id")
+                    .and_then(|value| value.as_str())
+            })
+            .unwrap_or("unknown");
         format!(
         "You are the side agent for collaborative human handoff.\n\
 Do not start a collaborative handoff or a nested human shell. shell_exec runs normally for this side agent.\n\
-handoff_id: {}\nparent_task_goal: {}\nwork_stage_and_plan: {}\n\
+When human action is required, call the client tool `aish.request_human_action` with instruction, reason, command_candidates, and expected_completion.\n\
+handoff_id: {}\nparent_work_id: {}\nparent_task_goal: {}\nwork_stage_and_plan: {}\n\
 parent_request: {}\nrequested_operation: {:?}\ncompletion_condition: {}\n\
 parent_conversation_summary: {}\nrecent_parent_context: {}\ncontextual_memory_child_goal: {}\n\
-cwd: {}\nshell_log_start: {}\nreplay_reference: {}\n\
-        When human action is required, respond with a single JSON object only (no markdown fences): {{\"request_human_action\":{{\"instruction\":\"...\",\"reason\":\"...\",\"command_candidates\":[],\"expected_completion\":\"...\"}}}}. The user sees a formatted summary, not the raw JSON.",
+cwd: {}\nshell_log_start: {}\nreplay_reference: {}\n",
         handoff.id,
+        parent_work_id,
         checkpoint.parent_goal,
+        work_stage_and_plan,
         handoff.parent_request_summary,
-        handoff.pending_human_request.as_deref().unwrap_or_default(),
         checkpoint.pending_shell_exec,
-        handoff.pending_human_request.as_deref().unwrap_or_default(),
+        handoff.pending_human_request.as_deref().unwrap_or(&handoff.parent_request_summary),
         handoff.conversation_summary,
         checkpoint.conversation_snapshot,
         checkpoint.child_goal.id,

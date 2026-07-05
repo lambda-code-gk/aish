@@ -5,17 +5,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ai::adapters::outbound::{strip_handoff_environment, FilesystemHandoffStore};
 use ai::application::{
-    CollaborativeShellEnvironment, RequestHumanAction, SideAgentDispatch, SideAgentError,
-    SideAgentInvocation, StartOrResumeSideAgent, HANDOFF_ENV_KEYS,
+    record_handoff_tool_running, CollaborativeShellEnvironment, RequestHumanAction,
+    SideAgentDispatch, SideAgentError, SideAgentInvocation, StartOrResumeSideAgent,
+    HANDOFF_ENV_KEYS,
 };
 use ai::domain::{
     ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole, CollaborativePolicy, Handoff,
     HandoffCheckpoint, HandoffState, RequestedShellExec, HANDOFF_SCHEMA_VERSION,
 };
 use ai::ports::outbound::{
-    CheckpointRepository, EnvironmentObservation, EnvironmentObserver, HandoffRepository,
-    HandoffRuntime, HandoffShellSessionStore, LeaseAcquireRequest, LeaseRepository,
-    ShellSessionIssueRequest, SideRunLockRepository,
+    CheckpointRepository, CommandCandidateStore, EnvironmentObservation, EnvironmentObserver,
+    HandoffRepository, HandoffRuntime, HandoffShellSessionStore, LeaseAcquireRequest,
+    LeaseRepository, ShellSessionIssueRequest, SideRunLockRepository,
 };
 use tempfile::TempDir;
 
@@ -182,6 +183,7 @@ fn persist_fixture(
                 environment_metadata: serde_json::json!({
                     "handoff_host_id": host,
                     "handoff_uid": uid,
+                    "work_stage_and_plan": "Active work #1: Ship Phase 3\nFocus: fix acceptance test",
                 })
                 .to_string(),
                 handoff_id: "handoff-test".into(),
@@ -473,6 +475,8 @@ fn side_agent_receives_parent_task_context() {
         "goal-child",
         "/workspace",
         "handoff-test",
+        "goal-parent",
+        "Active work #1",
     ] {
         assert!(context.contains(expected), "missing {expected}: {context}");
     }
@@ -595,6 +599,7 @@ fn side_agent_waiting_does_not_spawn_new_shell() {
                 command_candidates: vec!["cargo test".into()],
                 expected_completion: "test passes".into(),
             },
+            None,
         )
         .unwrap();
     let handoff = fixture.store.load_handoff("handoff-test").unwrap();
@@ -669,4 +674,331 @@ fn tampered_handoff_id_is_rejected() {
             .dispatch(Some(env), &fixture.invocation(false, None)),
         Err(SideAgentError::Store(_))
     ));
+}
+
+#[test]
+fn finish_side_turn_releases_side_run_lock_atomically() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    fixture
+        .service()
+        .finish_side_turn("handoff-test", "done")
+        .unwrap();
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_none());
+    let handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    assert_eq!(handoff.state, HandoffState::HumanActive);
+}
+
+#[test]
+fn request_human_action_releases_side_run_lock_atomically() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    fixture
+        .service()
+        .request_human_action(
+            "handoff-test",
+            RequestHumanAction {
+                instruction: "Run cargo test".into(),
+                reason: "Need TTY".into(),
+                command_candidates: vec!["cargo test".into()],
+                expected_completion: "tests pass".into(),
+            },
+            Some("call-human"),
+        )
+        .unwrap();
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_none());
+    let handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    assert_eq!(handoff.state, HandoffState::SideAgentWaitingForHuman);
+    let checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    let tool = checkpoint
+        .tool_executions
+        .iter()
+        .find(|tool| tool.tool_call_id == "call-human")
+        .expect("tool execution");
+    assert_eq!(tool.status, ai::domain::RecoverableToolStatus::Completed);
+}
+
+#[test]
+fn request_human_action_marks_tool_completed_when_call_id_provided() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    let store = &fixture.store;
+    record_handoff_tool_running(
+        store,
+        "handoff-test",
+        "call-human",
+        "aish.request_human_action",
+    )
+    .unwrap();
+    fixture
+        .service()
+        .request_human_action(
+            "handoff-test",
+            RequestHumanAction {
+                instruction: "Run cargo test".into(),
+                reason: "Need TTY".into(),
+                command_candidates: vec!["cargo test".into()],
+                expected_completion: "tests pass".into(),
+            },
+            Some("call-human"),
+        )
+        .unwrap();
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_none());
+    let handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    assert_eq!(handoff.state, HandoffState::SideAgentWaitingForHuman);
+    let checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    let tool = checkpoint
+        .tool_executions
+        .iter()
+        .find(|tool| tool.tool_call_id == "call-human")
+        .expect("tool execution");
+    assert_eq!(tool.status, ai::domain::RecoverableToolStatus::Completed);
+}
+
+#[test]
+fn finish_side_run_resume_after_partial_persist() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_some());
+
+    let mut handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    handoff.state = HandoffState::SideAgentWaitingForHuman;
+    handoff.pending_human_request = Some("Run cargo test".into());
+    HandoffRepository::save_handoff(&fixture.store, &handoff).unwrap();
+    let mut checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    checkpoint.control_state = HandoffState::SideAgentWaitingForHuman;
+    CheckpointRepository::save_checkpoint(&fixture.store, "handoff-test", &checkpoint).unwrap();
+
+    fixture
+        .service()
+        .request_human_action(
+            "handoff-test",
+            RequestHumanAction {
+                instruction: "Run cargo test".into(),
+                reason: "Need TTY".into(),
+                command_candidates: vec!["cargo test".into()],
+                expected_completion: "tests pass".into(),
+            },
+            Some("call-resume"),
+        )
+        .unwrap();
+
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_none());
+    let candidates =
+        CommandCandidateStore::list_candidates(&fixture.store, "handoff-test").unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].command, "cargo test");
+}
+
+#[test]
+fn finish_side_run_resume_after_handoff_only_persist() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_some());
+
+    let mut handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    handoff.state = HandoffState::SideAgentWaitingForHuman;
+    handoff.pending_human_request = Some("Run cargo test".into());
+    handoff.conversation_summary = "side agent requested human action".into();
+    HandoffRepository::save_handoff(&fixture.store, &handoff).unwrap();
+    let checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    assert_eq!(checkpoint.control_state, HandoffState::SideAgentRunning);
+
+    fixture
+        .service()
+        .request_human_action(
+            "handoff-test",
+            RequestHumanAction {
+                instruction: "Run cargo test".into(),
+                reason: "Need TTY".into(),
+                command_candidates: vec!["cargo test".into()],
+                expected_completion: "tests pass".into(),
+            },
+            Some("call-resume"),
+        )
+        .unwrap();
+
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_none());
+    let checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    assert_eq!(
+        checkpoint.control_state,
+        HandoffState::SideAgentWaitingForHuman
+    );
+    let candidates =
+        CommandCandidateStore::list_candidates(&fixture.store, "handoff-test").unwrap();
+    assert_eq!(candidates.len(), 1);
+    let tool = checkpoint
+        .tool_executions
+        .iter()
+        .find(|tool| tool.tool_call_id == "call-resume")
+        .expect("tool execution");
+    assert_eq!(tool.status, ai::domain::RecoverableToolStatus::Completed);
+}
+
+#[test]
+fn finish_side_run_resume_after_checkpoint_only_persist() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    record_handoff_tool_running(
+        &fixture.store,
+        "handoff-test",
+        "call-resume",
+        "aish.request_human_action",
+    )
+    .unwrap();
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_some());
+
+    let handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    assert_eq!(handoff.state, HandoffState::SideAgentRunning);
+    let mut checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    checkpoint.control_state = HandoffState::SideAgentWaitingForHuman;
+    checkpoint.conversation_summary = "side agent requested human action".into();
+    CheckpointRepository::save_checkpoint(&fixture.store, "handoff-test", &checkpoint).unwrap();
+
+    fixture
+        .service()
+        .request_human_action(
+            "handoff-test",
+            RequestHumanAction {
+                instruction: "Run cargo test".into(),
+                reason: "Need TTY".into(),
+                command_candidates: vec!["cargo test".into()],
+                expected_completion: "tests pass".into(),
+            },
+            Some("call-resume"),
+        )
+        .unwrap();
+
+    let checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
+    assert_eq!(checkpoint.command_candidates.len(), 1);
+    assert_eq!(
+        checkpoint.control_state,
+        HandoffState::SideAgentWaitingForHuman
+    );
+    let tool = checkpoint
+        .tool_executions
+        .iter()
+        .find(|tool| tool.tool_call_id == "call-resume")
+        .expect("tool execution");
+    assert_eq!(tool.status, ai::domain::RecoverableToolStatus::Completed);
+}
+
+#[test]
+fn side_agent_client_tool_request_human_action_is_structured() {
+    use ai::domain::client_tools::request_human_action::{
+        execute_request_human_action, side_agent_request_human_action_client_tool,
+    };
+    use aibe_client::ClientToolCallRequest;
+    use std::sync::{Arc, Mutex};
+
+    assert_eq!(
+        side_agent_request_human_action_client_tool().name,
+        "aish.request_human_action"
+    );
+    let capture = Arc::new(Mutex::new(None));
+    let persisted = Arc::new(Mutex::new(false));
+    let persisted_flag = Arc::clone(&persisted);
+    let mut on_persist = Some(move |_call_id: &str, _request: RequestHumanAction| {
+        *persisted_flag.lock().expect("flag") = true;
+        Ok(())
+    });
+    let result = execute_request_human_action(
+        &ClientToolCallRequest {
+            id: "id".into(),
+            turn_id: "turn".into(),
+            call_id: "call".into(),
+            name: "aish.request_human_action".into(),
+            arguments: serde_json::json!({
+                "instruction": "Run tests",
+                "reason": "Need TTY",
+                "command_candidates": ["cargo test"],
+                "expected_completion": "tests pass"
+            }),
+        },
+        &capture,
+        &mut on_persist,
+        &mut None::<fn(&str, &str) -> Result<(), String>>,
+    )
+    .expect("tool ok");
+    assert!(result.content.contains("recorded durably"));
+    let captured = capture.lock().unwrap().clone().expect("captured");
+    assert_eq!(captured.instruction, "Run tests");
+    assert_eq!(captured.command_candidates, vec!["cargo test".to_string()]);
+    assert!(*persisted.lock().expect("flag"));
+}
+
+#[test]
+fn reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    run_turn(&fixture, None);
+    fixture
+        .service()
+        .finish_side_turn("handoff-test", "done")
+        .unwrap();
+    assert!(fixture
+        .store
+        .load_side_run_lock("handoff-test")
+        .unwrap()
+        .is_none());
+    fixture
+        .store
+        .try_acquire_side_run_lock(
+            "handoff-test",
+            &LeaseAcquireRequest {
+                owner_client_id: "stale".into(),
+                owner_process_id: 999_999,
+                owner_tty: None,
+                owner_host: "test-host".into(),
+                owner_uid: 1000,
+                now_ms: 20_000,
+                lease_timeout_ms: 120_000,
+            },
+        )
+        .unwrap();
+    let mut handoff = fixture.store.load_handoff("handoff-test").unwrap();
+    handoff.state = HandoffState::HumanActive;
+    fixture.store.save_handoff(&handoff).unwrap();
+    let mut next = fixture.invocation(false, None);
+    next.client_id = "client-2".into();
+    next.process_id = 456;
+    match fixture
+        .service()
+        .dispatch(Some(fixture.env.clone()), &next)
+        .unwrap()
+    {
+        SideAgentDispatch::Run(_) => {}
+        other => panic!("expected side run after stale lock reconcile, got {other:?}"),
+    }
 }

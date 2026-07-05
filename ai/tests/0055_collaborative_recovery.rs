@@ -169,6 +169,7 @@ fn parent_request(cwd: &str) -> ParentShellExecRequest {
         parent_request_summary: "recover safely".into(),
         conversation_snapshot: "full durable parent history".into(),
         conversation_summary: "parent was validating Phase 4".into(),
+        work_stage_and_plan: "Phase 4 recovery".into(),
         command: "cargo".into(),
         args: vec!["test".into()],
         cwd: cwd.into(),

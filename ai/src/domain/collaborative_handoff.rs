@@ -265,6 +265,98 @@ pub enum RecoverableToolStatus {
     Unknown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RequestHumanAction {
+    pub instruction: String,
+    pub reason: String,
+    pub command_candidates: Vec<String>,
+    pub expected_completion: String,
+}
+
+/// checkpoint 内の tool execution を upsert する。
+pub fn upsert_tool_execution(checkpoint: &mut HandoffCheckpoint, tool: RecoverableToolExecution) {
+    if let Some(existing) = checkpoint
+        .tool_executions
+        .iter_mut()
+        .find(|entry| entry.tool_call_id == tool.tool_call_id)
+    {
+        *existing = tool;
+        return;
+    }
+    checkpoint.tool_executions.push(tool);
+}
+
+/// tool 実行開始を RUNNING として記録する。
+pub fn record_tool_running(
+    checkpoint: &mut HandoffCheckpoint,
+    tool_call_id: &str,
+    tool_name: &str,
+) {
+    upsert_tool_execution(
+        checkpoint,
+        RecoverableToolExecution {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            status: RecoverableToolStatus::Running,
+        },
+    );
+}
+
+/// `ExecutedToolCall` 一覧を checkpoint へ同期する（RUNNING は完了/失敗で上書き）。
+pub fn sync_tool_executions_from_executed(
+    checkpoint: &mut HandoffCheckpoint,
+    executed: &[aibe_protocol::ExecutedToolCall],
+) {
+    for tool in executed {
+        let status = match tool.status {
+            aibe_protocol::ExecutedToolStatus::Ok => RecoverableToolStatus::Completed,
+            aibe_protocol::ExecutedToolStatus::Error => RecoverableToolStatus::Failed,
+        };
+        upsert_tool_execution(
+            checkpoint,
+            RecoverableToolExecution {
+                tool_call_id: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                status,
+            },
+        );
+    }
+}
+
+/// 指定 tool call を COMPLETED として確定する。
+pub fn mark_tool_completed(
+    checkpoint: &mut HandoffCheckpoint,
+    tool_call_id: &str,
+    tool_name: &str,
+) {
+    upsert_tool_execution(
+        checkpoint,
+        RecoverableToolExecution {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            status: RecoverableToolStatus::Completed,
+        },
+    );
+}
+
+/// 残存 RUNNING を終端状態へ確定する。`completed_call_id` は COMPLETED に残す。
+pub fn finalize_running_tools(
+    checkpoint: &mut HandoffCheckpoint,
+    terminal: RecoverableToolStatus,
+    completed_call_id: Option<&str>,
+) {
+    for tool in &mut checkpoint.tool_executions {
+        if tool.status != RecoverableToolStatus::Running {
+            continue;
+        }
+        tool.status = if completed_call_id == Some(tool.tool_call_id.as_str()) {
+            RecoverableToolStatus::Completed
+        } else {
+            terminal
+        };
+    }
+}
+
 /// process 消失後は RUNNING の成否を推測せず UNKNOWN に確定する。
 pub fn mark_running_tools_unknown(checkpoint: &mut HandoffCheckpoint) -> Vec<String> {
     checkpoint
@@ -397,6 +489,11 @@ pub fn hash_handoff_token(token: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(token.as_bytes());
     hex_encode(&digest)
+}
+
+/// handoff + command から決定的な candidate ID を生成する（side-run 再試行の冪等化用）。
+pub fn deterministic_candidate_id(handoff_id: &str, command: &str) -> String {
+    hash_handoff_token(&format!("{handoff_id}:{command}"))
 }
 
 pub fn verify_handoff_token(token: &str, token_hash: &str) -> bool {
@@ -536,5 +633,118 @@ mod unit_tests {
         assert!(!is_valid_handoff_id("../escape"));
         assert!(!is_valid_handoff_id("foo/bar"));
         assert!(!is_valid_handoff_id(""));
+    }
+
+    #[test]
+    fn tool_lifecycle_records_running_and_syncs_completed() {
+        let mut checkpoint = HandoffCheckpoint {
+            parent_task_id: "task".into(),
+            parent_conversation_id: "conv".into(),
+            parent_run_id: "run".into(),
+            pending_shell_exec: RequestedShellExec {
+                command: "cargo".into(),
+                args: vec!["test".into()],
+                cwd: None,
+                tool_call_id: Some("shell".into()),
+            },
+            parent_goal: "goal".into(),
+            child_goal: ChildGoalMeta {
+                id: "child".into(),
+                handoff_id: "handoff".into(),
+                parent_goal_id: None,
+                work_id: None,
+                close_reason: None,
+                achievement: ChildGoalAchievement::Unknown,
+            },
+            conversation_snapshot: "snap".into(),
+            conversation_summary: "summary".into(),
+            cwd: "/tmp".into(),
+            environment_metadata: "{}".into(),
+            handoff_id: "handoff".into(),
+            side_conversation_id: None,
+            command_candidates: vec![],
+            shell_log_start: 0,
+            control_state: HandoffState::SideAgentRunning,
+            provider_metadata: None,
+            tool_executions: vec![],
+        };
+        record_tool_running(&mut checkpoint, "tool-1", "shell_exec");
+        assert_eq!(checkpoint.tool_executions.len(), 1);
+        assert_eq!(
+            checkpoint.tool_executions[0].status,
+            RecoverableToolStatus::Running
+        );
+        sync_tool_executions_from_executed(
+            &mut checkpoint,
+            &[aibe_protocol::ExecutedToolCall::ok(
+                "tool-1".to_string(),
+                "shell_exec",
+                serde_json::json!({"command":"cargo","args":["test"]}),
+                "ok".to_string(),
+            )],
+        );
+        assert_eq!(
+            checkpoint.tool_executions[0].status,
+            RecoverableToolStatus::Completed
+        );
+    }
+
+    #[test]
+    fn finalize_running_tools_marks_completed_call_and_cancels_others() {
+        let mut checkpoint = HandoffCheckpoint {
+            parent_task_id: "task".into(),
+            parent_conversation_id: "conv".into(),
+            parent_run_id: "run".into(),
+            pending_shell_exec: RequestedShellExec {
+                command: "cargo".into(),
+                args: vec!["test".into()],
+                cwd: None,
+                tool_call_id: Some("shell".into()),
+            },
+            parent_goal: "goal".into(),
+            child_goal: ChildGoalMeta {
+                id: "child".into(),
+                handoff_id: "handoff".into(),
+                parent_goal_id: None,
+                work_id: None,
+                close_reason: None,
+                achievement: ChildGoalAchievement::Unknown,
+            },
+            conversation_snapshot: "snap".into(),
+            conversation_summary: "summary".into(),
+            cwd: "/tmp".into(),
+            environment_metadata: "{}".into(),
+            handoff_id: "handoff".into(),
+            side_conversation_id: None,
+            command_candidates: vec![],
+            shell_log_start: 0,
+            control_state: HandoffState::SideAgentRunning,
+            provider_metadata: None,
+            tool_executions: vec![
+                RecoverableToolExecution {
+                    tool_call_id: "human".into(),
+                    tool_name: "aish.request_human_action".into(),
+                    status: RecoverableToolStatus::Running,
+                },
+                RecoverableToolExecution {
+                    tool_call_id: "other".into(),
+                    tool_name: "shell_exec".into(),
+                    status: RecoverableToolStatus::Running,
+                },
+            ],
+        };
+        finalize_running_tools(
+            &mut checkpoint,
+            RecoverableToolStatus::Cancelled,
+            Some("human"),
+        );
+        assert_eq!(
+            checkpoint.tool_executions[0].status,
+            RecoverableToolStatus::Completed
+        );
+        assert_eq!(
+            checkpoint.tool_executions[1].status,
+            RecoverableToolStatus::Cancelled
+        );
     }
 }

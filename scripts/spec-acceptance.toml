@@ -3023,3 +3023,93 @@ description = "manual 手順あり"
 test = "manual_collaborative_handoff_checklist_exists"
 file_glob = "ai/tests/0055_collaborative_regression.rs"
 pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "side_run_finish_atomic"
+description = "side turn 終了と side-run lock 削除が atomic"
+test = "finish_side_turn_releases_side_run_lock_atomically"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "side_human_wait_atomic"
+description = "request_human_action と side-run lock 削除が atomic"
+test = "request_human_action_releases_side_run_lock_atomically"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "request_human_action_tool_completed"
+description = "request_human_action が tool_call_id を COMPLETED に確定する"
+test = "request_human_action_marks_tool_completed_when_call_id_provided"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "finish_side_run_resume"
+description = "side-run 部分 durable 化後も lock 削除と candidate 追記を再開できる"
+test = "finish_side_run_resume_after_partial_persist"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "finish_side_run_handoff_only_resume"
+description = "handoff のみ先行 durable 化後も checkpoint 修復と lock 削除を再開できる"
+test = "finish_side_run_resume_after_handoff_only_persist"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "finish_side_run_checkpoint_only_resume"
+description = "checkpoint のみ先行 durable 化後も candidate 重複なく再開できる"
+test = "finish_side_run_resume_after_checkpoint_only_persist"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "request_human_action_client_tool"
+description = "request_human_action を client tool として構造化"
+test = "side_agent_client_tool_request_human_action_is_structured"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "request_human_action_client_tool_persist"
+description = "request_human_action client tool が durable callback を呼ぶ"
+test = "request_human_action_client_tool_persists_via_callback"
+file_glob = "ai/src/domain/client_tools/request_human_action.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "reconcile_orphan_side_run_lock"
+description = "HUMAN_ACTIVE 時に stale side-run lock を除去"
+test = "reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "durable_tool_lifecycle"
+description = "checkpoint へ RUNNING/完了 tool lifecycle を記録"
+test = "tool_lifecycle_records_running_and_syncs_completed"
+file_glob = "ai/src/domain/collaborative_handoff.rs"
+pending = false

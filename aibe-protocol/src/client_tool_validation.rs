@@ -14,6 +14,7 @@ pub fn validate_client_tool_arguments(
 pub fn validate_client_tool_call(tool_name: &str, arguments: &Value) -> Result<(), String> {
     match tool_name {
         "aish.replay_show" => validate_replay_show_arguments(arguments),
+        "aish.request_human_action" => validate_request_human_action_arguments(arguments),
         other => Err(format!("unsupported client tool: {other}")),
     }
 }
@@ -50,6 +51,41 @@ fn validate_replay_show_arguments(arguments: &Value) -> Result<(), String> {
 
     for key in obj.keys() {
         if !matches!(key.as_str(), "index" | "stream" | "tail_bytes") {
+            return Err(format!("unknown property: {key}"));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_request_human_action_arguments(arguments: &Value) -> Result<(), String> {
+    let obj = arguments
+        .as_object()
+        .ok_or_else(|| "arguments must be an object".to_string())?;
+
+    for key in ["instruction", "reason", "expected_completion"] {
+        let value = obj.get(key).ok_or_else(|| format!("missing {key}"))?;
+        if !value.is_string() || value.as_str().is_some_and(str::is_empty) {
+            return Err(format!("{key} must be a non-empty string"));
+        }
+    }
+
+    if let Some(candidates) = obj.get("command_candidates") {
+        let array = candidates
+            .as_array()
+            .ok_or_else(|| "command_candidates must be an array".to_string())?;
+        for candidate in array {
+            if !candidate.is_string() {
+                return Err("command_candidates items must be strings".into());
+            }
+        }
+    }
+
+    for key in obj.keys() {
+        if !matches!(
+            key.as_str(),
+            "instruction" | "reason" | "command_candidates" | "expected_completion"
+        ) {
             return Err(format!("unknown property: {key}"));
         }
     }

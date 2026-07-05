@@ -100,6 +100,20 @@ pub trait SideRunLockRepository {
             &mut HandoffCheckpoint,
         ) -> Result<(), HandoffStoreError>,
     ) -> Result<bool, HandoffStoreError>;
+
+    /// handoff / checkpoint 更新と side-run lock 削除を同一 store lock 内で行う。
+    /// `resume_tool_call_id` は `request_human_action` 再開時の tool lifecycle 確定用。
+    fn finish_side_run_atomically(
+        &self,
+        handoff_id: &str,
+        now_ms: u64,
+        candidates: &[CommandCandidate],
+        resume_tool_call_id: Option<&str>,
+        update: &mut dyn FnMut(
+            &mut Handoff,
+            &mut HandoffCheckpoint,
+        ) -> Result<(), HandoffStoreError>,
+    ) -> Result<(), HandoffStoreError>;
 }
 
 pub trait CheckpointRepository {
