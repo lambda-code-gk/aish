@@ -2504,6 +2504,15 @@ pending = false
 
 [[cases]]
 spec = "0055"
+phase = 4
+id = "real_pty_parent_resume_e2e"
+description = "実 aish human-shell PTY → Ctrl+D → 親 lease 再取得 → COMPLETED"
+test = "collaborative_handoff_real_pty_ctrl_d_parent_resume_flow"
+file_glob = "ai/tests/0055_collaborative_handoff_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
 phase = 3
 id = "side_conversation_continues"
 description = "side agent conversation 継続"
@@ -2878,6 +2887,24 @@ id = "lease_lost_no_auto_rerun"
 description = "lease 失効だけでは自動再開しない"
 test = "lease_expiry_alone_does_not_auto_resume_parent"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "human_shell_return_releases_lease"
+description = "human shell 正常返却後に lease を解放し親が再取得できる"
+test = "human_shell_return_releases_lease_for_parent_resume"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 4
+id = "child_goal_work_push_pop"
+description = "child goal は Work Push/Pop を使う"
+test = "child_goal_uses_work_push_and_pop_with_cwd"
+file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
 pending = false
 
 [[cases]]

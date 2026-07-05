@@ -1,7 +1,9 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use ai::adapters::outbound::{
     FileSuggestedCommandRecallStore, FilesystemHandoffStore, SystemHandoffRuntime,
@@ -9,12 +11,14 @@ use ai::adapters::outbound::{
 use ai::application::{
     persist_handoff_candidates_for_recall, recall_next_command, recall_prev_command,
     CollaborativeExecutionContext, CollaborativeShellExecPolicy, ParentShellExecRequest,
+    RecoveryOwner, ResumeReturnedParent,
 };
-use ai::domain::{CollaborativeAgentRole, CollaborativePolicy, HandoffState};
+use ai::domain::{CollaborativeAgentRole, CollaborativePolicy, HandoffLease, HandoffState};
 use ai::ports::outbound::{
-    EnvironmentObservation, EnvironmentObserver, HandoffRepository, HumanShellLaunchError,
-    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
-    NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
+    EnvironmentObservation, EnvironmentObserver, HandoffRepository, HandoffRuntime,
+    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+    LeaseRepository, NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher,
+    NoopParentToolBarrier,
 };
 use aibe_protocol::{HandoffExecutionOutcome, RequestedCommandCompletion};
 
@@ -265,4 +269,267 @@ fn second_shell_exec_waits_for_first_handoff() {
     t1.join().unwrap();
     t2.join().unwrap();
     assert_eq!(max.load(Ordering::SeqCst), 1);
+}
+
+fn resolve_aish_bin() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_aish") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(deps_dir) = exe.parent() {
+            let sibling = deps_dir.join("aish");
+            if sibling.is_file() {
+                return sibling;
+            }
+            if let Some(debug_dir) = deps_dir.parent() {
+                let debug_bin = debug_dir.join("aish");
+                if debug_bin.is_file() {
+                    return debug_bin;
+                }
+            }
+        }
+    }
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let workspace = PathBuf::from(manifest).join("..");
+        for profile in ["debug", "release"] {
+            let candidate = workspace.join("target").join(profile).join("aish");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from("aish")
+}
+
+/// 実 `aish human-shell` PTY を起動し、Ctrl+D 返却から親 resume までを通す launcher。
+struct RealHumanShellLauncher {
+    aish_bin: PathBuf,
+    store_root: PathBuf,
+    parent_lease_seen: Arc<Mutex<bool>>,
+    human_shell_lease_seen: Arc<Mutex<bool>>,
+}
+
+impl RealHumanShellLauncher {
+    fn new(store_root: PathBuf) -> Self {
+        Self {
+            aish_bin: resolve_aish_bin(),
+            store_root,
+            parent_lease_seen: Arc::new(Mutex::new(false)),
+            human_shell_lease_seen: Arc::new(Mutex::new(false)),
+        }
+    }
+
+    fn lease_path(&self, handoff_id: &str) -> PathBuf {
+        self.store_root.join(handoff_id).join("lease.json")
+    }
+
+    fn read_lease(&self, handoff_id: &str) -> Option<HandoffLease> {
+        let path = self.lease_path(handoff_id);
+        if !path.is_file() {
+            return None;
+        }
+        let raw = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(raw.trim()).ok()
+    }
+
+    fn wait_for_lease<F>(
+        &self,
+        handoff_id: &str,
+        timeout: Duration,
+        predicate: F,
+    ) -> Result<HandoffLease, String>
+    where
+        F: Fn(&HandoffLease) -> bool,
+    {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(lease) = self.read_lease(handoff_id) {
+                if predicate(&lease) {
+                    return Ok(lease);
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "timed out waiting for lease on {}",
+                    self.lease_path(handoff_id).display()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+impl HumanShellLauncher for RealHumanShellLauncher {
+    fn launch_and_wait(
+        &self,
+        request: &HumanShellLaunchRequest,
+    ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+        if !Path::new("/bin/bash").is_file() {
+            return Err(HumanShellLaunchError::Failed(
+                "real human-shell E2E requires /bin/bash".into(),
+            ));
+        }
+        let parent_lease = self
+            .wait_for_lease(&request.handoff_id, Duration::from_secs(3), |lease| {
+                lease.owner_client_id.starts_with("ai-parent-")
+            })
+            .map_err(|error| HumanShellLaunchError::Failed(error))?;
+        *self.parent_lease_seen.lock().unwrap() = true;
+        assert_eq!(parent_lease.handoff_id, request.handoff_id);
+
+        let result_file = tempfile::Builder::new()
+            .prefix("aish-handoff-e2e-result-")
+            .tempfile()
+            .map_err(|error| HumanShellLaunchError::Failed(error.to_string()))?;
+        let result_path = result_file.path().to_path_buf();
+        drop(result_file);
+
+        let home = tempfile::tempdir()
+            .map_err(|error| HumanShellLaunchError::Failed(error.to_string()))?;
+        let mut child = Command::new(&self.aish_bin)
+            .args(["human-shell", "--result-file"])
+            .arg(&result_path)
+            .current_dir(&request.cwd)
+            .env("HOME", home.path())
+            .env("SHELL", "/bin/bash")
+            .env("AISH_CONTROL_MODE", "human-shell")
+            .env("AISH_HANDOFF_ID", &request.handoff_id)
+            .env("AISH_HANDOFF_TOKEN", &request.token)
+            .env(
+                "AISH_HANDOFF_CONTEXT_VERSION",
+                request.context_version.to_string(),
+            )
+            .env("AISH_HANDOFF_STORE_ROOT", &self.store_root)
+            .env("AISH_HANDOFF_HEARTBEAT_INTERVAL_MS", "200")
+            .env("AISH_HANDOFF_LEASE_TIMEOUT_MS", "120000")
+            .env("AI_SUGGESTION_CACHE", &request.suggestion_cache_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| HumanShellLaunchError::Failed(error.to_string()))?;
+        let human_shell_pid = child.id();
+
+        let transferred = self
+            .wait_for_lease(&request.handoff_id, Duration::from_secs(5), |lease| {
+                lease.owner_client_id.starts_with("aish-human-shell-")
+                    && lease.owner_process_id == human_shell_pid
+            })
+            .map_err(|error| HumanShellLaunchError::Failed(error))?;
+        *self.human_shell_lease_seen.lock().unwrap() = true;
+        assert!(transferred.lease_expires_at_ms > transferred.last_heartbeat_at_ms);
+
+        std::thread::sleep(Duration::from_millis(250));
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| HumanShellLaunchError::Failed("human shell stdin unavailable".into()))?
+            .write_all(b"\x04")
+            .map_err(|error| HumanShellLaunchError::Failed(error.to_string()))?;
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(child.wait_with_output());
+        });
+        let output = rx
+            .recv_timeout(Duration::from_secs(15))
+            .map_err(|_| HumanShellLaunchError::Failed("human shell hung after Ctrl+D".into()))?
+            .map_err(|error| HumanShellLaunchError::Failed(error.to_string()))?;
+        if !output.status.success() {
+            return Err(HumanShellLaunchError::Failed(format!(
+                "human shell failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        let raw = std::fs::read_to_string(&result_path)
+            .map_err(|_| HumanShellLaunchError::MissingReturnMarker)?;
+        let mut returned: HumanShellReturn = serde_json::from_str(raw.trim())
+            .map_err(|error| HumanShellLaunchError::Failed(error.to_string()))?;
+        if !returned.normal_return {
+            return Err(HumanShellLaunchError::MissingReturnMarker);
+        }
+        if returned.exit_code.is_none() {
+            returned.exit_code = output.status.code();
+        }
+        Ok(returned)
+    }
+}
+
+#[test]
+fn collaborative_handoff_real_pty_ctrl_d_parent_resume_flow() {
+    if !Path::new("/bin/bash").is_file() {
+        return;
+    }
+    let aish_bin = resolve_aish_bin();
+    assert!(
+        aish_bin.is_file(),
+        "aish binary not found at {}",
+        aish_bin.display()
+    );
+
+    let store_root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(store_root.path().to_path_buf());
+    let launcher = RealHumanShellLauncher::new(store_root.path().to_path_buf());
+    let runtime = SystemHandoffRuntime;
+    let suggestion_cache = cwd.path().join(".ai-suggestions.json");
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &Observer,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
+        &runtime,
+    );
+
+    let mut request = request(cwd.path().to_path_buf(), "real-pty");
+    request.suggestion_cache_path = suggestion_cache;
+
+    let result = policy.intercept(request).expect("handoff intercept");
+    assert_eq!(
+        result.execution_outcome,
+        HandoffExecutionOutcome::HumanControlReturned
+    );
+    assert!(*launcher.parent_lease_seen.lock().unwrap());
+    assert!(*launcher.human_shell_lease_seen.lock().unwrap());
+
+    let handoff = store.load_handoff(&result.handoff_id).unwrap();
+    assert_eq!(handoff.state, HandoffState::Returned);
+    assert!(
+        store.load_lease(&result.handoff_id).unwrap().is_none(),
+        "human shell return must release lease before parent resume"
+    );
+
+    let owner = RecoveryOwner {
+        client_id: format!("ai-parent-{}", runtime.process_id()),
+        process_id: runtime.process_id(),
+        tty: None,
+    };
+    let resume = ResumeReturnedParent::new(&store, &runtime);
+    resume
+        .prepare(&result.handoff_id, &owner)
+        .expect("parent must re-acquire lease after real human shell return");
+    assert_eq!(
+        store.load_handoff(&result.handoff_id).unwrap().state,
+        HandoffState::ResumingParent
+    );
+    assert!(store.load_lease(&result.handoff_id).unwrap().is_some());
+
+    resume
+        .finish(&result.handoff_id, Ok(()))
+        .expect("parent resume finish");
+    assert_eq!(
+        store.load_handoff(&result.handoff_id).unwrap().state,
+        HandoffState::Completed
+    );
+    assert!(
+        store.load_lease(&result.handoff_id).unwrap().is_none(),
+        "completed handoff must not retain lease"
+    );
 }

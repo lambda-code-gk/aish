@@ -189,7 +189,7 @@ fn save_handoff(store: &FilesystemHandoffStore, id: &str, state: HandoffState, c
         id: format!("child-{id}"),
         handoff_id: id.into(),
         parent_goal_id: Some("parent-goal".into()),
-        memory_entry_id: None,
+        work_id: None,
         close_reason: None,
         achievement: ChildGoalAchievement::Unknown,
     };
@@ -594,6 +594,10 @@ fn ctrl_d_during_side_run_returns_to_parent() {
     assert_eq!(
         fixture.store.load_handoff("ctrl-d").unwrap().state,
         HandoffState::Returned
+    );
+    assert!(
+        fixture.store.load_lease("ctrl-d").unwrap().is_none(),
+        "ReturnControlFromShell must release human-shell lease"
     );
     assert!(has_unknown_tools(
         &fixture.store.load_checkpoint("ctrl-d").unwrap()

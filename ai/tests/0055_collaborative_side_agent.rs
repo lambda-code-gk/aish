@@ -79,7 +79,7 @@ impl Fixture {
         let tmp = tempfile::tempdir().unwrap();
         let store = FilesystemHandoffStore::new(tmp.path().join("store"));
         let runtime = Runtime::valid();
-        persist_fixture(&store, state, "test-host", 1000);
+        persist_fixture(&store, state, "test-host", 1000, alive_test_process_id());
         Self {
             _tmp: tmp,
             store,
@@ -114,7 +114,13 @@ fn alive_test_process_id() -> u32 {
     std::process::id()
 }
 
-fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &str, uid: u32) {
+fn persist_fixture(
+    store: &FilesystemHandoffStore,
+    state: HandoffState,
+    host: &str,
+    uid: u32,
+    lease_owner_process_id: u32,
+) {
     let requested = RequestedShellExec {
         command: "cargo".into(),
         args: vec!["test".into()],
@@ -125,7 +131,7 @@ fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &s
         id: "goal-child".into(),
         handoff_id: "handoff-test".into(),
         parent_goal_id: Some("goal-parent".into()),
-        memory_entry_id: None,
+        work_id: None,
         close_reason: None,
         achievement: ChildGoalAchievement::Unknown,
     };
@@ -208,8 +214,8 @@ fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &s
             .try_acquire_lease(
                 "handoff-test",
                 &LeaseAcquireRequest {
-                    owner_client_id: format!("ai-parent-{}", alive_test_process_id()),
-                    owner_process_id: alive_test_process_id(),
+                    owner_client_id: format!("ai-parent-{lease_owner_process_id}"),
+                    owner_process_id: lease_owner_process_id,
                     owner_tty: None,
                     owner_host: host.into(),
                     owner_uid: uid,
@@ -236,7 +242,7 @@ fn status_home(state: HandoffState) -> (TempDir, PathBuf) {
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join(".local/share/aibe/handoffs");
     let store = FilesystemHandoffStore::new(root);
-    persist_fixture(&store, state, "test-host", 1000);
+    persist_fixture(&store, state, "test-host", 1000, 1);
     let socket = home.path().join("missing.sock");
     (home, socket)
 }

@@ -264,6 +264,7 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReturnControlFromShell<'a, S, R> {
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
+        self.store.release_lease(handoff_id)?;
         Ok(())
     }
 }

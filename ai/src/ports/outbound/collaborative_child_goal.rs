@@ -1,4 +1,6 @@
-//! Contextual Memory 連携用 child goal port（0055）。
+//! Work stack 連携用 child goal port（0055）。
+
+use std::path::Path;
 
 use crate::domain::{ChildGoalCloseReason, ChildGoalMeta};
 
@@ -14,6 +16,7 @@ pub trait CollaborativeChildGoalService: Send + Sync {
     fn create_child_goal(
         &self,
         meta: &mut ChildGoalMeta,
+        cwd: &Path,
         parent_goal: &str,
         handoff_reason: &str,
         requested_command: &str,
@@ -23,6 +26,7 @@ pub trait CollaborativeChildGoalService: Send + Sync {
     fn close_child_goal(
         &self,
         meta: &ChildGoalMeta,
+        cwd: &Path,
         reason: ChildGoalCloseReason,
     ) -> Result<(), CollaborativeChildGoalError>;
 }
@@ -34,6 +38,7 @@ impl CollaborativeChildGoalService for NoopCollaborativeChildGoalService {
     fn create_child_goal(
         &self,
         _meta: &mut ChildGoalMeta,
+        _cwd: &Path,
         _parent_goal: &str,
         _handoff_reason: &str,
         _requested_command: &str,
@@ -45,6 +50,7 @@ impl CollaborativeChildGoalService for NoopCollaborativeChildGoalService {
     fn close_child_goal(
         &self,
         _meta: &ChildGoalMeta,
+        _cwd: &Path,
         _reason: ChildGoalCloseReason,
     ) -> Result<(), CollaborativeChildGoalError> {
         Ok(())

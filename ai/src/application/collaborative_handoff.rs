@@ -192,7 +192,7 @@ where
             id: child_goal_id.clone(),
             handoff_id: handoff_id.clone(),
             parent_goal_id: request.parent_goal_id.clone(),
-            memory_entry_id: None,
+            work_id: None,
             close_reason: None,
             achievement: ChildGoalAchievement::Unknown,
         };
@@ -286,6 +286,7 @@ where
         let mut child_goal_meta = checkpoint.child_goal.clone();
         if let Err(error) = self.child_goal.create_child_goal(
             &mut child_goal_meta,
+            &request.cwd,
             &checkpoint.parent_goal,
             &request.parent_request_summary,
             &candidate_text,
@@ -300,7 +301,7 @@ where
             }
             checkpoint.environment_metadata = metadata.to_string();
             self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-        } else if child_goal_meta.memory_entry_id.is_some() {
+        } else if child_goal_meta.work_id.is_some() {
             let mut saved = self.store.load_checkpoint(&handoff_id)?;
             saved.child_goal = child_goal_meta;
             self.store.save_checkpoint(&handoff_id, &saved)?;
@@ -413,8 +414,11 @@ where
             &handoff_id,
             CollaborativeAuditKind::HumanShellReturned,
         );
+        self.store.release_lease(&handoff_id)?;
+        record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
         if let Err(error) = self.child_goal.close_child_goal(
             &checkpoint.child_goal,
+            &PathBuf::from(&checkpoint.cwd),
             ChildGoalCloseReason::ControlReturned,
         ) {
             handoff.resume_error = Some(format!("child_goal_close: {error}"));

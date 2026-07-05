@@ -15,13 +15,15 @@ use ai::domain::{
 };
 use ai::domain::{CollaborativeAgentRole, CollaborativePolicy};
 use ai::ports::outbound::{
-    CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffShellSessionStore,
-    HandoffStoreError, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
+    CheckpointRepository, CommandCandidateStore, HandoffRepository, HandoffRuntime,
+    HandoffShellSessionStore, HandoffStoreError, LeaseAcquireRequest, LeaseRepository,
+    ShellSessionIssueRequest,
 };
 use ai::ports::outbound::{
     EnvironmentObservation, EnvironmentObserver, HandoffCandidatePublisher, HumanShellLaunchError,
     HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
-    NoopCollaborativeChildGoalService, ParentToolBarrier,
+    NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
+    ParentToolBarrier,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -169,7 +171,7 @@ fn sample_checkpoint(handoff_id: &str) -> HandoffCheckpoint {
             id: "goal-child".to_string(),
             handoff_id: handoff_id.to_string(),
             parent_goal_id: Some("goal-parent".to_string()),
-            memory_entry_id: None,
+            work_id: None,
             close_reason: None,
             achievement: ChildGoalAchievement::Unknown,
         },
@@ -216,7 +218,7 @@ fn child_goal_records_control_returned_not_achievement() {
         id: "g1".to_string(),
         handoff_id: "ho-1".to_string(),
         parent_goal_id: None,
-        memory_entry_id: None,
+        work_id: None,
         close_reason: None,
         achievement: ChildGoalAchievement::Unknown,
     };
@@ -487,6 +489,8 @@ fn collaborative_flag_enables_parent_policy() {
 
 #[test]
 fn handoff_completes_normal_parent_resume_flow() {
+    use ai::application::{RecoveryOwner, ResumeReturnedParent};
+
     let dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let trace = Arc::new(Phase2Trace::default());
@@ -497,6 +501,7 @@ fn handoff_completes_normal_parent_resume_flow() {
     };
     let barrier = TestBarrier(trace.clone());
     let publisher = TestPublisher(trace);
+    let runtime = SystemHandoffRuntime;
     let policy = CollaborativeShellExecPolicy::new(
         CollaborativeExecutionContext::parent_enabled(),
         &store,
@@ -505,7 +510,7 @@ fn handoff_completes_normal_parent_resume_flow() {
         &barrier,
         &publisher,
         &NoopCollaborativeChildGoalService,
-        &SystemHandoffRuntime,
+        &runtime,
     );
     let result = policy
         .intercept(phase2_request(work.path().into()))
@@ -514,7 +519,26 @@ fn handoff_completes_normal_parent_resume_flow() {
         store.load_handoff(&result.handoff_id).unwrap().state,
         HandoffState::Returned
     );
-    assert!(store.load_lease(&result.handoff_id).unwrap().is_some());
+    assert!(
+        store.load_lease(&result.handoff_id).unwrap().is_none(),
+        "lease must be released after human shell returns"
+    );
+    let resume = ResumeReturnedParent::new(&store, &runtime);
+    resume
+        .prepare(
+            &result.handoff_id,
+            &RecoveryOwner {
+                client_id: format!("ai-parent-{}", runtime.process_id()),
+                process_id: runtime.process_id(),
+                tty: None,
+            },
+        )
+        .unwrap();
+    resume.finish(&result.handoff_id, Ok(())).unwrap();
+    assert_eq!(
+        store.load_handoff(&result.handoff_id).unwrap().state,
+        HandoffState::Completed
+    );
 }
 
 #[test]
@@ -689,6 +713,7 @@ fn collaborative_audit_events_are_emitted() {
         CollaborativeAuditKind::LeaseAcquired,
         CollaborativeAuditKind::HumanShellStarted,
         CollaborativeAuditKind::HumanShellReturned,
+        CollaborativeAuditKind::LeaseLost,
     ] {
         let needle = serde_json::to_string(&kind)
             .unwrap()
@@ -737,4 +762,133 @@ fn handoff_token_redacted_from_shell_log() {
     );
     assert!(!redacted.contains(token));
     assert!(redacted.contains("[REDACTED]"));
+}
+
+struct LeaseTransferLauncher {
+    root: PathBuf,
+    human_shell_pid: u32,
+}
+
+impl HumanShellLauncher for LeaseTransferLauncher {
+    fn launch_and_wait(
+        &self,
+        request: &HumanShellLaunchRequest,
+    ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+        let lease_path = self.root.join(&request.handoff_id).join("lease.json");
+        let mut lease: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&lease_path).unwrap()).unwrap();
+        let object = lease.as_object_mut().unwrap();
+        object.insert(
+            "owner_client_id".into(),
+            format!("aish-human-shell-{}", self.human_shell_pid).into(),
+        );
+        object.insert("owner_process_id".into(), self.human_shell_pid.into());
+        object.insert(
+            "lease_expires_at_ms".into(),
+            (1_000_000u64 + 120_000).into(),
+        );
+        std::fs::write(&lease_path, serde_json::to_vec_pretty(&lease).unwrap()).unwrap();
+        Ok(HumanShellReturn {
+            normal_return: true,
+            exit_code: Some(0),
+            final_cwd: request.cwd.clone(),
+            shell_session_id: "test-session".into(),
+            shell_session_dir: request.cwd.clone(),
+            shell_log_start: 0,
+            shell_log_end: 1,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ResumeRuntime {
+    now: u64,
+    process_id: u32,
+}
+
+impl ai::ports::outbound::HandoffRuntime for ResumeRuntime {
+    fn now_ms(&self) -> u64 {
+        self.now
+    }
+
+    fn unique_id(&self, prefix: &str) -> String {
+        format!("{prefix}-resume")
+    }
+
+    fn secure_token(&self) -> Result<String, String> {
+        Ok("resume-token".into())
+    }
+
+    fn host_id(&self) -> String {
+        SystemHandoffRuntime.host_id()
+    }
+
+    fn effective_uid(&self) -> u32 {
+        SystemHandoffRuntime.effective_uid()
+    }
+
+    fn process_id(&self) -> u32 {
+        self.process_id
+    }
+}
+
+#[test]
+fn human_shell_return_releases_lease_for_parent_resume() {
+    use ai::application::{RecoveryOwner, ResumeReturnedParent};
+
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(root.path().join("handoffs"));
+    let human_shell_pid = 424_242u32;
+    let launcher = LeaseTransferLauncher {
+        root: root.path().join("handoffs"),
+        human_shell_pid,
+    };
+    let runtime = ResumeRuntime {
+        now: 1_000,
+        process_id: 9001,
+    };
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
+        &runtime,
+    );
+    let result = policy
+        .intercept(phase2_request(cwd.path().to_path_buf()))
+        .unwrap();
+    assert_eq!(
+        result.execution_outcome,
+        aibe_protocol::HandoffExecutionOutcome::HumanControlReturned
+    );
+    assert!(
+        store.load_lease(&result.handoff_id).unwrap().is_none(),
+        "human shell lease must be released on normal return"
+    );
+
+    let resume = ResumeReturnedParent::new(&store, &runtime);
+    resume
+        .prepare(
+            &result.handoff_id,
+            &RecoveryOwner {
+                client_id: format!("ai-parent-{}", runtime.process_id),
+                process_id: runtime.process_id,
+                tty: None,
+            },
+        )
+        .expect("parent must re-acquire lease after human shell return");
+    assert!(store.load_lease(&result.handoff_id).unwrap().is_some());
+    resume.finish(&result.handoff_id, Ok(())).unwrap();
+    assert!(
+        store.load_lease(&result.handoff_id).unwrap().is_none(),
+        "parent resume must release lease when completed"
+    );
+    assert_eq!(
+        store.load_handoff(&result.handoff_id).unwrap().state,
+        HandoffState::Completed
+    );
 }
