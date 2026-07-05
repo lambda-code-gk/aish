@@ -19,9 +19,10 @@ pub use collaborative_handoff::{
     NoopHandoffCandidatePublisher, NoopParentToolBarrier, ParentToolBarrier,
 };
 pub use handoff_repository::{
-    CheckpointRepository, CommandCandidateStore, HandoffAuditRepository, HandoffRepository,
-    HandoffShellSessionStore, HandoffStoreError, LeaseAcquireRequest, LeaseHeartbeatRequest,
-    LeaseRepository, ShellSessionIssueRequest, SideRunLockRepository,
+    CheckpointRepository, CollaborativeWorkflowRepository, CommandCandidateStore,
+    HandoffAuditRepository, HandoffRepository, HandoffShellSessionStore, HandoffStoreError,
+    LeaseAcquireRequest, LeaseHeartbeatRequest, LeaseRepository, ShellSessionIssueRequest,
+    SideRunLockRepository,
 };
 pub use history_store::{HistoryStore, HistoryStoreError};
 pub use memory_client::MemoryClient;

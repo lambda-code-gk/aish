@@ -3464,10 +3464,16 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
 
 fn read_collaborative_status() -> anyhow::Result<Vec<ai::domain::CollaborativeHandoffReport>> {
     let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
-    ReconcileStaleHandoffs::new(&store, &SystemHandoffRuntime).execute(|handoff_id| {
-        build_collaborative_child_goal_service_for_handoff(&store, handoff_id)
-            .unwrap_or_else(|_| Box::new(NoopCollaborativeChildGoalService))
-    })?;
+    let candidate_publisher = FileHandoffCandidatePublisher::new(
+        FileSuggestedCommandRecallStore::new(PathBuf::from("/dev/null")),
+        String::new(),
+    );
+    ReconcileStaleHandoffs::new(&store, &SystemHandoffRuntime, &candidate_publisher).execute(
+        |handoff_id| {
+            build_collaborative_child_goal_service_for_handoff(&store, handoff_id)
+                .unwrap_or_else(|_| Box::new(NoopCollaborativeChildGoalService))
+        },
+    )?;
     ReadCollaborativeStatus::new(&store)
         .read()
         .map_err(Into::into)
@@ -3494,7 +3500,11 @@ fn build_collaborative_child_goal_service_for_handoff(
 fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
     let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
     let runtime = SystemHandoffRuntime;
-    ReconcileStaleHandoffs::new(&store, &runtime).execute(|handoff_id| {
+    let candidate_publisher = FileHandoffCandidatePublisher::new(
+        FileSuggestedCommandRecallStore::new(PathBuf::from("/dev/null")),
+        String::new(),
+    );
+    ReconcileStaleHandoffs::new(&store, &runtime, &candidate_publisher).execute(|handoff_id| {
         build_collaborative_child_goal_service_for_handoff(&store, handoff_id)
             .unwrap_or_else(|_| Box::new(NoopCollaborativeChildGoalService))
     })?;

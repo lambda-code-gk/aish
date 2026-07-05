@@ -8,6 +8,9 @@ mod collaborative_parent_context;
 mod collaborative_recovery;
 mod collaborative_side_agent;
 mod collaborative_tool_tracking;
+mod collaborative_workflow;
+mod collaborative_workflow_effects;
+mod collaborative_workflow_reconciler;
 mod feature_executor;
 mod history;
 pub mod memory_cli;
@@ -61,6 +64,11 @@ pub use collaborative_tool_tracking::{
     finalize_handoff_running_tools, finalize_parent_resume_tool_tracking,
     record_handoff_tool_approved, record_handoff_tool_requested, record_handoff_tool_running,
     sync_handoff_tool_executions, ResumedHandoffSync,
+};
+pub use collaborative_workflow_effects::reconcile_pending_workflow_effects;
+pub use collaborative_workflow_reconciler::{
+    CollaborativeWorkflowClock, CollaborativeWorkflowEffectExecutor,
+    CollaborativeWorkflowReconciler, ReconcileReport, WorkflowEffectError,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

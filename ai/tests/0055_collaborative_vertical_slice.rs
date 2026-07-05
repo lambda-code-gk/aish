@@ -24,10 +24,11 @@ use ai::domain::{
     HandoffLease, HandoffState, RequestedShellExec, HANDOFF_SCHEMA_VERSION,
 };
 use ai::ports::outbound::{
-    CheckpointRepository, CollaborativeChildGoalService, EnvironmentObservation,
-    EnvironmentObserver, HandoffRepository, HandoffRuntime, HandoffShellSessionStore,
-    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
-    LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest, SideRunLockRepository,
+    CheckpointRepository, CollaborativeChildGoalService, CommandCandidateStore,
+    EnvironmentObservation, EnvironmentObserver, HandoffRepository, HandoffRuntime,
+    HandoffShellSessionStore, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
+    HumanShellReturn, LeaseAcquireRequest, LeaseRepository, ShellSessionIssueRequest,
+    SideRunLockRepository,
 };
 
 struct Observer;
@@ -746,12 +747,10 @@ fn checkpoint_memory_space_id(checkpoint: &HandoffCheckpoint) -> Option<String> 
 }
 
 #[test]
-#[ignore = "nightly: structured human action requires mock aibe + human shell ai subprocess"]
 fn slice_structured_human_action_real_shell_ai() {
-    // RED: WAITING 状態の handoff store → human shell 内 bare `ai` → side 再開 → stderr 整形。
-    // 実装後 run-collaborative-nightly.sh で実行し pending=false に昇格する。
-    let tmp = tempfile::tempdir().unwrap();
-    let store = FilesystemHandoffStore::new(tmp.path().join("store"));
+    let home = tempfile::tempdir().unwrap();
+    let store_root = home.path().join(".local/share/aibe/handoffs");
+    let store = FilesystemHandoffStore::new(store_root);
     let handoff = Handoff {
         id: "human-action-slice".into(),
         schema_version: HANDOFF_SCHEMA_VERSION,
@@ -808,7 +807,11 @@ fn slice_structured_human_action_real_shell_ai() {
         conversation_snapshot: "snap".into(),
         conversation_summary: "summary".into(),
         cwd: "/tmp".into(),
-        environment_metadata: r#"{"host_id":"slice-host","effective_uid":1000}"#.into(),
+        environment_metadata: serde_json::json!({
+            "handoff_host_id": SystemHandoffRuntime.host_id(),
+            "handoff_uid": SystemHandoffRuntime.effective_uid(),
+        })
+        .to_string(),
         handoff_id: handoff.id.clone(),
         side_conversation_id: handoff.side_conversation_id.clone(),
         command_candidates: vec![],
@@ -829,22 +832,95 @@ fn slice_structured_human_action_real_shell_ai() {
         )
         .unwrap();
 
-    let mut env_pairs = Vec::new();
-    for key in HANDOFF_ENV_KEYS {
-        env_pairs.push((key, "placeholder"));
-    }
-    assert_eq!(
-        store.load_handoff(&handoff.id).unwrap().state,
-        HandoffState::SideAgentWaitingForHuman
+    let ai_bin = env!("CARGO_BIN_EXE_ai");
+    let socket = home.path().join("missing-aibe.sock");
+    let output = Command::new("/bin/bash")
+        .args([
+            "-c",
+            "\"$AI_BIN\" status --format json --quiet --socket \"$AIBE_TEST_SOCKET\"",
+        ])
+        .env("AI_BIN", ai_bin)
+        .env("AIBE_TEST_SOCKET", &socket)
+        .env("HOME", home.path())
+        .env("AISH_CONTROL_MODE", "human-shell")
+        .env("AISH_HANDOFF_ID", &handoff.id)
+        .env("AISH_HANDOFF_TOKEN", "secret-token")
+        .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(handoff.pending_human_request.is_some());
-    let _ = env_pairs;
-    panic!("nightly slice not implemented: spawn human shell + bare ai with mock aibe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("human-action-slice"), "stdout={stdout}");
+    assert!(
+        stdout.contains("SIDE_AGENT_WAITING_FOR_HUMAN"),
+        "stdout={stdout}"
+    );
+    assert!(!stdout.contains("secret-token"));
+    assert_eq!(HANDOFF_ENV_KEYS.len(), 4);
 }
 
 #[test]
-#[ignore = "nightly: full collaborative vertical chain"]
 fn slice_full_collaborative_pty_nightly() {
-    // RED: lease → work → candidate → side-run → human action → parent resume の最小連結。
-    panic!("nightly full slice not implemented");
+    let Some(_aish) = require_bash_and_aish() else {
+        return;
+    };
+    let store_root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(store_root.path().to_path_buf());
+    let work_client = TrackingDomainMockWorkClient::with_active(Some(1));
+    let ops = work_client.ops.clone();
+    let child_goal = TrackingChildGoalService {
+        inner: ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
+            work_client,
+            "full-slice-session".into(),
+            "project_full_slice".into(),
+        ),
+        close_calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let launcher = RealHumanShellLauncher::new(store_root.path().to_path_buf());
+    let runtime = SystemHandoffRuntime;
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &Observer,
+        &ai::ports::outbound::NoopParentToolBarrier,
+        &ai::ports::outbound::NoopHandoffCandidatePublisher,
+        &child_goal,
+        &runtime,
+    );
+    let mut request = slice_request(
+        cwd.path().to_path_buf(),
+        "full-slice",
+        "cargo",
+        &["test", "-p", "ai"],
+    );
+    request.suggestion_cache_path = cwd.path().join(".ai-suggestions.json");
+    let result = policy.intercept(request).expect("full handoff chain");
+    assert!(*launcher.parent_lease_seen.lock().unwrap());
+    assert!(*launcher.human_shell_lease_seen.lock().unwrap());
+    assert_eq!(store.list_candidates(&result.handoff_id).unwrap().len(), 1);
+    assert!(ops.lock().unwrap().contains(&"Push".to_string()));
+    assert!(ops.lock().unwrap().contains(&"Pop".to_string()));
+
+    let resume = ResumeReturnedParent::new(&store, &Observer, &runtime, &child_goal);
+    resume
+        .prepare(
+            &result.handoff_id,
+            &RecoveryOwner {
+                client_id: format!("ai-parent-{}", runtime.process_id()),
+                process_id: runtime.process_id(),
+                tty: None,
+            },
+        )
+        .unwrap();
+    resume.finish(&result.handoff_id, Ok(())).unwrap();
+    assert_eq!(
+        store.load_handoff(&result.handoff_id).unwrap().state,
+        HandoffState::Completed
+    );
 }

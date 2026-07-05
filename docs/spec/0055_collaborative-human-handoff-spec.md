@@ -1,9 +1,9 @@
 # 0055 — AISH Human-in-the-loop 協調作業（Collaborative Handoff）設計書
 
 > **種別**: 設計書（`docs/spec/`）  
-> **状態**: 設計確定  
+> **状態**: 設計確定（実装済み）  
 > **起票**: 2026-07-04  
-> **実装**: [マスター指示書](../tasks/0055_collaborative-human-handoff-implementation-spec.md)（Phase 1–5 に分割）  
+> **実装**: [マスター指示書](../done/0055_collaborative-human-handoff-implementation-spec.md)（Phase 1–6 完了）  
 > **関連**: [0030_ai-smart-entry-spec.md](0030_ai-smart-entry-spec.md)、[0034_aibe-contextual-memory-spec.md](0034_aibe-contextual-memory-spec.md)、[0036_shell-exec-approval-ux-spec.md](0036_shell-exec-approval-ux-spec.md)、[0049_aish-command-output-replay-spec.md](0049_aish-command-output-replay-spec.md)、[0050_client-provided-replay-tool-spec.md](0050_client-provided-replay-tool-spec.md)、[0052_ai_work.md](0052_ai_work.md)、[0053_ai-suggested-command-recall-spec.md](0053_ai-suggested-command-recall-spec.md)、[0045_pack-composition-spec.md](0045_pack-composition-spec.md)、[architecture.md](../architecture.md)、[security.md](../security.md)、[testing.md](../testing.md)
 
 ## 0. 目的
@@ -281,7 +281,7 @@ summary_token_limit = 4096
 | 4 | heartbeat、ORPHANED、`ai resume`、token rotation、fault injection | 同上 |
 | 5 | prompt 表示、signal、log redaction、docs / manual | 同上 |
 
-各 Phase の実装指示書: `docs/tasks/0055_collaborative-human-handoff-phaseN-implementation-spec.md`
+各 Phase の実装指示書: `docs/done/0055_collaborative-human-handoff-phaseN-implementation-spec.md`（完了後）
 
 ## 17. 受け入れ条件（初版完了）
 
@@ -557,39 +557,45 @@ Inspect the current environment and verify the completion condition.
 | 24 | memory / replay / candidate 再利用 | `side_inherits_parent_context`, `candidate_in_recall_queue` |
 | 25 | domain 境界 | アーキテクチャ検査 + hexagonal（Phase 1 domain 単体） |
 
-## 33. Durable workflow 硬化（child close 冪等・初期化補償・UNKNOWN 通知）
+## 33. Durable Workflow Fault Model
 
-### 33.1 child Work close の冪等性
+### 33.1 単一 aggregate と正本
 
-`close_state = Closing` の再試行では Work 操作の **事前条件** だけでなく **事後条件（postcondition）** も確認する。
+handoff の durable state は `CollaborativeWorkflow` 1個を正本とする。aggregate は `handoff`、必須 `checkpoint`、`pending_effects`、単調増加する `revision` を含み、`workflow.json` へ temp file + fsync + atomic rename で保存する。`handoff.json` / `checkpoint.json` の個別書き込みは禁止し、旧形式は初回読み取り時の移行入力に限定する。
 
-| `work_mode` | 未 close（操作実行） | 既に close 済み（操作スキップ） |
-|-------------|---------------------|--------------------------------|
+すべての mutation は revision compare-and-swap と domain invariant 検証を通る。ID（workflow / handoff / checkpoint / child goal）、`handoff.state == checkpoint.control_state`、effect ID 一意性が崩れる mutation は保存前に拒否する。
+
+### 33.2 Domain reducer
+
+状態変更は `CollaborativeWorkflowEvent` を reducer へ適用する。reducer は pure function とし、副作用を直接実行しない。状態遷移に外部操作が必要なら、同じ atomic mutation で `PendingWorkflowEffect` を追加する。application 層が `Handoff` と `HandoffCheckpoint` を別々に保存することは禁止する。
+
+effect key は workflow 内で決定的かつ一意とし、同一イベントの再適用で二重 effect を作らない。終端済み effect の再実行も行わない。
+
+### 33.3 Pending effect protocol
+
+effect 状態は `PENDING → IN_FLIGHT → COMPLETED`、失敗時は `PENDING`（再試行可能）または `FAILED`（手動介入）とする。claim、完了、再試行記録はいずれも aggregate revision と同時に保存する。process 消失で残った `IN_FLIGHT` は claim timeout 後に `PENDING` へ戻す。
+
+最低限の effect: child Work create/close、candidate publish/remove、lease release、shell session invalidate、parent resume。外部 API の冪等キーには effect ID を使う。Work のように完全な冪等 API がない場合は、既存の事前条件・事後条件照合で適用済みを判定する。
+
+token plaintext は process-local launch input にだけ存在できる。aggregate、pending effect、error、audit、checkpoint metadata へ保存してはならず、永続化できるのは hash のみとする。
+
+### 33.4 Unified reconciler
+
+起動時、`ai status` / `ai resume` 前、handoff操作前に `CollaborativeWorkflowReconciler` を同じ入口として呼ぶ。reconciler は stale claim を回収し、pending effect を順序通りに実行し、postcondition を照合して aggregate を収束させる。初期化補償、stale `CREATING`、child close、side-run消失、parent resume失敗を個別reconcilerへ分岐させない。
+
+reconciler 自身の crash は未完了 effect を残すだけであり、次回実行で再開可能でなければならない。`RUNNING` / `APPROVED` tool は成否を推測せず `UNKNOWN` とし、親へ詳細を渡す。自動再実行は禁止する。
+
+### 33.5 child Work と応答喪失
+
+child close 再試行では次の postcondition を確認する。
+
+| `work_mode` | 未 close（操作実行） | 適用済み（操作スキップ） |
+|-------------|---------------------|---------------------------|
 | `Pushed` | `active == child` かつ stack 先端 == parent → `Pop` | `active == parent` かつ child `Done` かつ child が stack に無い |
 | `StartedRoot` | `active == child` かつ stack 空 → `Finish` | `active == None` かつ child `Done` |
 
-上記以外（別 Work が active 等）は勝手に `Pop` / `Finish` せず `Conflict` または `Failed` を永続化する。
+Push / Start の応答喪失時は Work snapshot の `Handoff ID: <id>` から一意に再探索する。複数件・判定不能は effect を `FAILED` とし、別 Work を推測して操作しない。
 
-### 33.2 初期化全体の補償モデル
+### 33.6 Phase 6 pending
 
-`CollaborativeShellExecPolicy::intercept` の初期化は `HandoffInitializationContext` で段階を追跡し、**handoff 保存以降の任意失敗**で補償する。
-
-補償対象: child Work `Pop`/`Finish`、lease 解放、suggestion cache 削除、shell session 無効化マーク、handoff `CANCELLED`、checkpoint 上の `initialization_failure` メタデータ。
-
-補償失敗時は `primary_error` と `compensation_errors` の両方を `resume_error` / checkpoint `environment_metadata` に残す。
-
-### 33.3 checkpoint なし `CREATING` の reconciliation
-
-`handoff.json` のみ存在し `checkpoint.json` が無い stale `CREATING` は、`reconcile_incomplete_creating_handoff` で lease / cache を清掃し `CANCELLED` へ遷移する（checkpoint 読み込み失敗で reconciliation 自体は失敗しない）。
-
-### 33.4 Work 作成応答喪失の再探索
-
-`Push` / `Start` が AIBE 側で適用された後に応答だけ失われた場合、Work snapshot から goal 内の `Handoff ID: <id>` を検索し一意に特定できれば `work_mode` を復元する。複数件・判定不能は `initialization conflict` として手動 reconciliation を要求する。
-
-### 33.5 UNKNOWN tool の親への明示
-
-`collect_unknown_tool_ids` / `collect_unknown_tools` で checkpoint 上の **最終的に UNKNOWN の全 tool** を収集し、`HumanHandoffResult.uncertain_tool_executions` と `ParentResumeContext`（semantic prompt 内 `uncertain_tools`）へ渡す。自動再実行は禁止。
-
-### 33.6 Phase 6 pending（変更なし）
-
-`slice_structured_human_action_real_shell_ai` と `slice_full_collaborative_pty_nightly` は引き続き `pending = true`（nightly full PTY E2E）。
+`slice_structured_human_action_real_shell_ai` と `slice_full_collaborative_pty_nightly` は nightly full PTY E2E として実装し、成功後に `pending = false` とする。

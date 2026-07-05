@@ -50,6 +50,12 @@ else
   fail "missing or non-executable scripts/check-hexagonal.sh"
 fi
 
+if [[ -x "$ROOT/scripts/check-collaborative-workflow.sh" ]]; then
+  "$ROOT/scripts/check-collaborative-workflow.sh"
+else
+  fail "missing or non-executable scripts/check-collaborative-workflow.sh"
+fi
+
 note "checking Cargo.toml boundaries..."
 
 # aish → aibe 禁止

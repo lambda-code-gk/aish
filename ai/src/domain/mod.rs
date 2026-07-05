@@ -3,6 +3,7 @@ mod ask_arg_order;
 mod ask_invocation;
 pub mod client_tools;
 pub mod collaborative_handoff;
+pub mod collaborative_workflow;
 mod console_context;
 mod console_hint;
 mod history;
@@ -47,6 +48,11 @@ pub use collaborative_handoff::{
     HandoffTransitionError, InvalidHandoffIdError, RecoverableToolExecution, RecoverableToolStatus,
     RequestHumanAction, RequestedShellExec, CHECKPOINT_REQUIRED_FIELD_NAMES,
     HANDOFF_SCHEMA_VERSION,
+};
+pub use collaborative_workflow::{
+    sanitize_workflow_effect_error, CollaborativeWorkflow, CollaborativeWorkflowError,
+    CollaborativeWorkflowEvent, PendingWorkflowEffect, WorkflowEffectKind, WorkflowEffectState,
+    COLLABORATIVE_WORKFLOW_SCHEMA_VERSION,
 };
 pub use console_hint::{
     resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,

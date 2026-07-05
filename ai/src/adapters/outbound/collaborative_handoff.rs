@@ -177,6 +177,14 @@ impl HandoffCandidatePublisher for FileHandoffCandidatePublisher {
         });
         store.save(&cache).map_err(|e| e.to_string())
     }
+
+    fn remove(&self, handoff_id: &str) -> Result<(), String> {
+        let path = SystemHandoffRuntime.handoff_suggestion_cache_path(handoff_id);
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]

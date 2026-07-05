@@ -28,7 +28,7 @@ use ai::ports::outbound::{
     NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
     ParentToolBarrier,
 };
-use common::domain_work_client::{DomainMockWorkClient, MockWorkState};
+use common::domain_work_client::DomainMockWorkClient;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -86,7 +86,7 @@ impl HumanShellLauncher for TestLauncher {
         assert!(self
             .root
             .join(&request.handoff_id)
-            .join("checkpoint.json")
+            .join("workflow.json")
             .is_file());
         assert_eq!(request.context_version, 1);
         assert!(!request.token.is_empty());
@@ -960,7 +960,7 @@ impl HumanShellLauncher for FailingLauncher {
         assert!(self
             .root
             .join(&request.handoff_id)
-            .join("checkpoint.json")
+            .join("workflow.json")
             .is_file());
         Err(HumanShellLaunchError::Failed("spawn failed".into()))
     }
@@ -978,7 +978,7 @@ impl HumanShellLauncher for OrphanedLauncher {
         assert!(self
             .root
             .join(&request.handoff_id)
-            .join("checkpoint.json")
+            .join("workflow.json")
             .is_file());
         Err(HumanShellLaunchError::MissingReturnMarker)
     }

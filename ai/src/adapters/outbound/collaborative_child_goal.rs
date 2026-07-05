@@ -417,6 +417,10 @@ mod tests {
     impl DomainMockWorkClient {
         fn snapshot(&self) -> WorkSnapshotDto {
             let state = self.state.lock().unwrap();
+            Self::snapshot_locked(&state)
+        }
+
+        fn snapshot_locked(state: &MockWorkState) -> WorkSnapshotDto {
             WorkSnapshotDto {
                 revision: 1,
                 active_work_id: state.active_work_id,
@@ -455,8 +459,8 @@ mod tests {
                             "work stack is not empty".into(),
                         ));
                     }
-                    let work_id = state.next_work_id;
-                    state.next_work_id += 1;
+                    let work_id = state.next_work_id.max(1);
+                    state.next_work_id = work_id.saturating_add(1);
                     state.active_work_id = Some(work_id);
                     WorkMutationOutcomeDto {
                         kind: WorkMutationKindDto::Start,
@@ -468,8 +472,8 @@ mod tests {
                     let parent = state.active_work_id.ok_or_else(|| {
                         crate::ports::outbound::AgentError::Request("no active work".into())
                     })?;
-                    let work_id = state.next_work_id;
-                    state.next_work_id += 1;
+                    let work_id = state.next_work_id.max(1);
+                    state.next_work_id = work_id.saturating_add(1);
                     state.stack.push(parent);
                     state.active_work_id = Some(work_id);
                     WorkMutationOutcomeDto {
@@ -516,7 +520,7 @@ mod tests {
             };
             Ok(ClientResponse::WorkApplyResult(WorkApplyResponseBody {
                 id: "test".into(),
-                snapshot: self.snapshot(),
+                snapshot: Self::snapshot_locked(&state),
                 outcome,
             }))
         }

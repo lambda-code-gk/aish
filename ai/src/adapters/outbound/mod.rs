@@ -4,6 +4,7 @@ mod aibe_external_commands;
 mod chat_line_editor;
 mod collaborative_child_goal;
 mod collaborative_handoff;
+mod collaborative_workflow_store;
 mod dynamic_completion;
 mod external_editor;
 mod file_log;

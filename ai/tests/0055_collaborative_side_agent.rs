@@ -893,7 +893,11 @@ fn finish_side_run_resume_after_handoff_only_persist() {
     handoff.conversation_summary = "side agent requested human action".into();
     HandoffRepository::save_handoff(&fixture.store, &handoff).unwrap();
     let checkpoint = fixture.store.load_checkpoint("handoff-test").unwrap();
-    assert_eq!(checkpoint.control_state, HandoffState::SideAgentRunning);
+    assert_eq!(
+        checkpoint.control_state,
+        HandoffState::SideAgentWaitingForHuman,
+        "workflow aggregate must not expose a handoff-only partial write"
+    );
 
     fixture
         .service()
@@ -953,6 +957,11 @@ fn finish_side_run_resume_after_checkpoint_only_persist() {
     checkpoint.control_state = HandoffState::SideAgentWaitingForHuman;
     checkpoint.conversation_summary = "side agent requested human action".into();
     CheckpointRepository::save_checkpoint(&fixture.store, "handoff-test", &checkpoint).unwrap();
+    assert_eq!(
+        fixture.store.load_handoff("handoff-test").unwrap().state,
+        HandoffState::SideAgentWaitingForHuman,
+        "workflow aggregate must not expose a checkpoint-only partial write"
+    );
 
     fixture
         .service()

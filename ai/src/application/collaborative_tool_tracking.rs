@@ -6,7 +6,11 @@ use crate::domain::{
     finalize_running_tools, record_tool_running, sync_tool_executions_from_executed,
     RecoverableToolStatus,
 };
-use crate::ports::outbound::{CheckpointRepository, HandoffStoreError};
+use crate::ports::outbound::{
+    CheckpointRepository, CollaborativeWorkflowRepository, HandoffStoreError,
+};
+
+use super::collaborative_workflow::update_checkpoint;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumedHandoffSync {
@@ -15,54 +19,57 @@ pub struct ResumedHandoffSync {
     pub sync_end_before_tool_call_id: Option<String>,
 }
 
-pub fn record_handoff_tool_running<S: CheckpointRepository>(
+pub fn record_handoff_tool_running<S: CheckpointRepository + CollaborativeWorkflowRepository>(
     store: &S,
     handoff_id: &str,
     tool_call_id: &str,
     tool_name: &str,
 ) -> Result<(), HandoffStoreError> {
-    let mut checkpoint = store.load_checkpoint(handoff_id)?;
-    record_tool_running(&mut checkpoint, tool_call_id, tool_name);
-    store.save_checkpoint(handoff_id, &checkpoint)
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        record_tool_running(checkpoint, tool_call_id, tool_name);
+        Ok(())
+    })
 }
 
-pub fn record_handoff_tool_requested<S: CheckpointRepository>(
+pub fn record_handoff_tool_requested<S: CheckpointRepository + CollaborativeWorkflowRepository>(
     store: &S,
     handoff_id: &str,
     tool_call_id: &str,
     tool_name: &str,
 ) -> Result<(), HandoffStoreError> {
-    let mut checkpoint = store.load_checkpoint(handoff_id)?;
-    crate::domain::upsert_tool_execution(
-        &mut checkpoint,
-        crate::domain::RecoverableToolExecution {
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            status: RecoverableToolStatus::Requested,
-        },
-    );
-    store.save_checkpoint(handoff_id, &checkpoint)
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        crate::domain::upsert_tool_execution(
+            checkpoint,
+            crate::domain::RecoverableToolExecution {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                status: RecoverableToolStatus::Requested,
+            },
+        );
+        Ok(())
+    })
 }
 
-pub fn record_handoff_tool_approved<S: CheckpointRepository>(
+pub fn record_handoff_tool_approved<S: CheckpointRepository + CollaborativeWorkflowRepository>(
     store: &S,
     handoff_id: &str,
     tool_call_id: &str,
     tool_name: &str,
 ) -> Result<(), HandoffStoreError> {
-    let mut checkpoint = store.load_checkpoint(handoff_id)?;
-    crate::domain::upsert_tool_execution(
-        &mut checkpoint,
-        crate::domain::RecoverableToolExecution {
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            status: RecoverableToolStatus::Approved,
-        },
-    );
-    store.save_checkpoint(handoff_id, &checkpoint)
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        crate::domain::upsert_tool_execution(
+            checkpoint,
+            crate::domain::RecoverableToolExecution {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                status: RecoverableToolStatus::Approved,
+            },
+        );
+        Ok(())
+    })
 }
 
-pub fn sync_handoff_tool_executions<S: CheckpointRepository>(
+pub fn sync_handoff_tool_executions<S: CheckpointRepository + CollaborativeWorkflowRepository>(
     store: &S,
     handoff_id: &str,
     executed: &[ExecutedToolCall],
@@ -70,20 +77,23 @@ pub fn sync_handoff_tool_executions<S: CheckpointRepository>(
     if executed.is_empty() {
         return Ok(());
     }
-    let mut checkpoint = store.load_checkpoint(handoff_id)?;
-    sync_tool_executions_from_executed(&mut checkpoint, executed);
-    store.save_checkpoint(handoff_id, &checkpoint)
+    let executed = executed.to_vec();
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        sync_tool_executions_from_executed(checkpoint, &executed);
+        Ok(())
+    })
 }
 
-pub fn finalize_handoff_running_tools<S: CheckpointRepository>(
+pub fn finalize_handoff_running_tools<S: CheckpointRepository + CollaborativeWorkflowRepository>(
     store: &S,
     handoff_id: &str,
     terminal: RecoverableToolStatus,
     completed_call_id: Option<&str>,
 ) -> Result<(), HandoffStoreError> {
-    let mut checkpoint = store.load_checkpoint(handoff_id)?;
-    finalize_running_tools(&mut checkpoint, terminal, completed_call_id);
-    store.save_checkpoint(handoff_id, &checkpoint)
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        finalize_running_tools(checkpoint, terminal, completed_call_id);
+        Ok(())
+    })
 }
 
 fn filter_tool_calls_for_handoff(
@@ -112,7 +122,9 @@ fn filter_tool_calls_for_handoff(
 }
 
 /// 親 RESUMING_PARENT turn 終了時に checkpoint へ tool lifecycle を確定する。
-pub fn finalize_parent_resume_tool_tracking<S: CheckpointRepository>(
+pub fn finalize_parent_resume_tool_tracking<
+    S: CheckpointRepository + CollaborativeWorkflowRepository,
+>(
     store: &S,
     sync: &ResumedHandoffSync,
     parent_succeeded: bool,

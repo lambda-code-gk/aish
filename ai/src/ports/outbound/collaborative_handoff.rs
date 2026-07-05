@@ -64,6 +64,10 @@ pub trait ParentToolBarrier: Send + Sync {
 
 pub trait HandoffCandidatePublisher: Send + Sync {
     fn publish(&self, handoff_id: &str, commands: &[String]) -> Result<(), String>;
+
+    fn remove(&self, _handoff_id: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub trait HandoffRuntime: Send + Sync {

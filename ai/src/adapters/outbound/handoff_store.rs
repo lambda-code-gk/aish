@@ -74,7 +74,7 @@ impl FilesystemHandoffStore {
         Ok(self.root.join(handoff_id))
     }
 
-    fn handoff_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
+    pub(crate) fn handoff_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
         Ok(self.handoff_dir(handoff_id)?.join("handoff.json"))
     }
 
@@ -86,8 +86,81 @@ impl FilesystemHandoffStore {
         Ok(self.handoff_dir(handoff_id)?.join("side-run-lock.json"))
     }
 
-    fn checkpoint_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
+    pub(crate) fn checkpoint_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
         Ok(self.handoff_dir(handoff_id)?.join("checkpoint.json"))
+    }
+
+    pub(crate) fn workflow_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
+        Ok(self.handoff_dir(handoff_id)?.join("workflow.json"))
+    }
+
+    pub(crate) fn read_workflow_locked(
+        &self,
+        handoff_id: &str,
+    ) -> Result<crate::domain::CollaborativeWorkflow, HandoffStoreError> {
+        let path = self.workflow_path(handoff_id)?;
+        if path.is_file() {
+            let workflow: crate::domain::CollaborativeWorkflow = self.read_json(&path)?;
+            workflow.validate()?;
+            return Ok(workflow);
+        }
+        let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
+        let checkpoint_path = self.checkpoint_path(handoff_id)?;
+        let checkpoint = if checkpoint_path.is_file() {
+            self.read_json(&checkpoint_path)?
+        } else if handoff.state == HandoffState::Creating {
+            // 旧 split store の crash 残骸だけを fail-closed で取り込む。
+            // 正常な新規 workflow が checkpoint なしになることはない。
+            handoff.state = HandoffState::Cancelled;
+            handoff.return_reason = Some("legacy_incomplete_workflow".into());
+            handoff.resume_error = Some("initialization: checkpoint missing".into());
+            let pending_shell_exec = handoff.requested_shell_execs.first().cloned().unwrap_or(
+                crate::domain::RequestedShellExec {
+                    command: "unknown".into(),
+                    args: Vec::new(),
+                    cwd: Some(handoff.initial_cwd.clone()),
+                    tool_call_id: None,
+                },
+            );
+            HandoffCheckpoint {
+                parent_task_id: handoff.parent_task_id.clone(),
+                parent_conversation_id: handoff.parent_conversation_id.clone(),
+                parent_run_id: handoff.parent_run_id.clone(),
+                pending_shell_exec,
+                parent_goal: handoff.parent_request_summary.clone(),
+                child_goal: crate::domain::ChildGoalMeta {
+                    id: handoff.child_goal_id.clone(),
+                    handoff_id: handoff.id.clone(),
+                    ..Default::default()
+                },
+                conversation_snapshot: handoff.conversation_snapshot_ref.clone(),
+                conversation_summary: handoff.conversation_summary.clone(),
+                cwd: handoff.initial_cwd.clone(),
+                environment_metadata: r#"{"legacy_incomplete":true}"#.into(),
+                handoff_id: handoff.id.clone(),
+                side_conversation_id: handoff.side_conversation_id.clone(),
+                command_candidates: Vec::new(),
+                shell_log_start: handoff.shell_log_start,
+                control_state: HandoffState::Cancelled,
+                provider_metadata: None,
+                tool_executions: Vec::new(),
+            }
+        } else {
+            return Err(HandoffStoreError::NotFound(
+                checkpoint_path.display().to_string(),
+            ));
+        };
+        let workflow = crate::domain::CollaborativeWorkflow::new(handoff, checkpoint)?;
+        self.write_json_atomic(&path, &workflow)?;
+        Ok(workflow)
+    }
+
+    pub(crate) fn write_workflow_locked(
+        &self,
+        workflow: &crate::domain::CollaborativeWorkflow,
+    ) -> Result<(), HandoffStoreError> {
+        workflow.validate()?;
+        self.write_json_atomic(&self.workflow_path(workflow.id())?, workflow)
     }
 
     fn shell_sessions_path(&self, handoff_id: &str) -> Result<PathBuf, HandoffStoreError> {
@@ -108,7 +181,7 @@ impl FilesystemHandoffStore {
         Ok(())
     }
 
-    fn with_handoff_lock<T>(
+    pub(crate) fn with_handoff_lock<T>(
         &self,
         handoff_id: &str,
         f: impl FnOnce() -> Result<T, HandoffStoreError>,
@@ -129,7 +202,7 @@ impl FilesystemHandoffStore {
         result
     }
 
-    fn with_index_lock<T>(
+    pub(crate) fn with_index_lock<T>(
         &self,
         f: impl FnOnce() -> Result<T, HandoffStoreError>,
     ) -> Result<T, HandoffStoreError> {
@@ -149,7 +222,7 @@ impl FilesystemHandoffStore {
         result
     }
 
-    fn write_json_atomic<T: serde::Serialize>(
+    pub(crate) fn write_json_atomic<T: serde::Serialize>(
         &self,
         path: &Path,
         value: &T,
@@ -172,10 +245,17 @@ impl FilesystemHandoffStore {
         set_permissions_0600(&temp).map_err(write_err)?;
         fs::rename(&temp, path).map_err(write_err)?;
         set_permissions_0600(path).map_err(write_err)?;
+        if let Some(parent) = path.parent() {
+            let dir = OpenOptions::new()
+                .read(true)
+                .open(parent)
+                .map_err(write_err)?;
+            dir.sync_all().map_err(write_err)?;
+        }
         Ok(())
     }
 
-    fn read_json<T: serde::de::DeserializeOwned>(
+    pub(crate) fn read_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &Path,
     ) -> Result<T, HandoffStoreError> {
@@ -260,7 +340,7 @@ impl FilesystemHandoffStore {
         self.append_audit_event(handoff_id, kind)
     }
 
-    fn update_index(&self, handoff: &Handoff) -> Result<(), HandoffStoreError> {
+    pub(crate) fn update_index(&self, handoff: &Handoff) -> Result<(), HandoffStoreError> {
         #[derive(serde::Serialize)]
         struct IndexEntry<'a> {
             handoff_id: &'a str,
@@ -282,6 +362,15 @@ impl HandoffRepository for FilesystemHandoffStore {
     fn save_handoff(&self, handoff: &Handoff) -> Result<(), HandoffStoreError> {
         validate_handoff_id(&handoff.id).map_err(|_| HandoffStoreError::InvalidHandoffId)?;
         self.with_handoff_lock(&handoff.id, || {
+            let workflow_path = self.workflow_path(&handoff.id)?;
+            if workflow_path.is_file() {
+                let mut workflow: crate::domain::CollaborativeWorkflow =
+                    self.read_json(&workflow_path)?;
+                workflow.handoff = handoff.clone();
+                workflow.checkpoint.control_state = handoff.state;
+                workflow.revision = workflow.revision.saturating_add(1);
+                return self.write_workflow_locked(&workflow);
+            }
             self.write_json_atomic(&self.handoff_path(&handoff.id)?, handoff)
         })?;
         self.with_index_lock(|| self.update_index(handoff))
@@ -289,6 +378,13 @@ impl HandoffRepository for FilesystemHandoffStore {
 
     fn load_handoff(&self, handoff_id: &str) -> Result<Handoff, HandoffStoreError> {
         self.with_handoff_lock(handoff_id, || {
+            let workflow_path = self.workflow_path(handoff_id)?;
+            if workflow_path.is_file() {
+                let workflow: crate::domain::CollaborativeWorkflow =
+                    self.read_json(&workflow_path)?;
+                workflow.validate()?;
+                return Ok(workflow.handoff);
+            }
             self.read_json(&self.handoff_path(handoff_id)?)
         })
     }
@@ -436,7 +532,8 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
         ) -> Result<(), HandoffStoreError>,
     ) -> Result<bool, HandoffStoreError> {
         self.with_handoff_lock(handoff_id, || {
-            let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
+            let mut workflow = self.read_workflow_locked(handoff_id)?;
+            let handoff = &mut workflow.handoff;
             if handoff.state != HandoffState::SideAgentRunning {
                 return Ok(false);
             }
@@ -448,12 +545,10 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
                 }
                 fs::remove_file(&side_path).map_err(write_err)?;
             }
-            let mut checkpoint: HandoffCheckpoint =
-                self.read_json(&self.checkpoint_path(handoff_id)?)?;
-            update(&mut handoff, &mut checkpoint)?;
+            update(handoff, &mut workflow.checkpoint)?;
             handoff.updated_at_ms = now_ms;
-            self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
-            self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
+            workflow.revision = workflow.revision.saturating_add(1);
+            self.write_workflow_locked(&workflow)?;
             Ok(true)
         })
     }
@@ -477,28 +572,31 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
         }
 
         self.with_handoff_lock(handoff_id, || {
-            let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
-            let mut checkpoint: HandoffCheckpoint =
-                self.read_json(&self.checkpoint_path(handoff_id)?)?;
+            let mut workflow = self.read_workflow_locked(handoff_id)?;
+            let handoff = &mut workflow.handoff;
+            let checkpoint = &mut workflow.checkpoint;
             let side_path = self.side_run_lock_path(handoff_id)?;
             let lock_exists = side_path.exists();
 
             if handoff.state == HandoffState::SideAgentRunning {
-                update(&mut handoff, &mut checkpoint)?;
-                apply_tool_finalization(&mut checkpoint, resume_tool_call_id);
+                update(handoff, checkpoint)?;
+                apply_tool_finalization(checkpoint, resume_tool_call_id);
                 handoff.updated_at_ms = now_ms;
-                self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
-                self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
-            } else if lock_exists && checkpoint.control_state != handoff.state {
-                if checkpoint.control_state == HandoffState::SideAgentRunning
-                    && matches!(
-                        handoff.state,
-                        HandoffState::SideAgentWaitingForHuman | HandoffState::HumanActive
-                    )
-                {
+                workflow.revision = workflow.revision.saturating_add(1);
+                self.write_workflow_locked(&workflow)?;
+            } else if lock_exists {
+                if matches!(
+                    handoff.state,
+                    HandoffState::SideAgentWaitingForHuman | HandoffState::HumanActive
+                ) && matches!(
+                    checkpoint.control_state,
+                    HandoffState::SideAgentRunning
+                        | HandoffState::SideAgentWaitingForHuman
+                        | HandoffState::HumanActive
+                ) {
                     checkpoint.control_state = handoff.state;
                     checkpoint.conversation_summary = handoff.conversation_summary.clone();
-                    apply_tool_finalization(&mut checkpoint, resume_tool_call_id);
+                    apply_tool_finalization(checkpoint, resume_tool_call_id);
                     for candidate in candidates {
                         if candidate.target_handoff_id != handoff_id {
                             return Err(HandoffStoreError::InvalidHandoffId);
@@ -512,7 +610,8 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
                         }
                         checkpoint.command_candidates.push(candidate.clone());
                     }
-                    self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
+                    workflow.revision = workflow.revision.saturating_add(1);
+                    self.write_workflow_locked(&workflow)?;
                 } else {
                     return Err(HandoffStoreError::Write(
                         "handoff/checkpoint state mismatch during side-run finish resume".into(),
@@ -555,9 +654,7 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
         ) -> Result<(), HandoffStoreError>,
     ) -> Result<(), HandoffStoreError> {
         self.with_handoff_lock(handoff_id, || {
-            let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
-            let mut checkpoint: HandoffCheckpoint =
-                self.read_json(&self.checkpoint_path(handoff_id)?)?;
+            let mut workflow = self.read_workflow_locked(handoff_id)?;
             let side_path = self.side_run_lock_path(handoff_id)?;
             if side_path.is_file() {
                 let existing: HandoffLease = self.read_json(&side_path)?;
@@ -568,7 +665,7 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
                 }
                 fs::remove_file(&side_path).map_err(write_err)?;
             }
-            update(&mut handoff, &mut checkpoint)?;
+            update(&mut workflow.handoff, &mut workflow.checkpoint)?;
             let lock = HandoffLease {
                 handoff_id: handoff_id.to_string(),
                 owner_client_id: request.owner_client_id.clone(),
@@ -581,9 +678,9 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
                 last_heartbeat_at_ms: request.now_ms,
             };
             self.write_json_atomic(&side_path, &lock)?;
-            handoff.updated_at_ms = request.now_ms;
-            self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
-            self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
+            workflow.handoff.updated_at_ms = request.now_ms;
+            workflow.revision = workflow.revision.saturating_add(1);
+            self.write_workflow_locked(&workflow)?;
             Ok(())
         })
     }
@@ -600,12 +697,28 @@ impl CheckpointRepository for FilesystemHandoffStore {
             {
                 return Err(HandoffStoreError::InvalidHandoffId);
             }
+            let workflow_path = self.workflow_path(handoff_id)?;
+            if workflow_path.is_file() {
+                let mut workflow: crate::domain::CollaborativeWorkflow =
+                    self.read_json(&workflow_path)?;
+                workflow.checkpoint = checkpoint.clone();
+                workflow.handoff.state = checkpoint.control_state;
+                workflow.revision = workflow.revision.saturating_add(1);
+                return self.write_workflow_locked(&workflow);
+            }
             self.write_json_atomic(&self.checkpoint_path(handoff_id)?, checkpoint)
         })
     }
 
     fn load_checkpoint(&self, handoff_id: &str) -> Result<HandoffCheckpoint, HandoffStoreError> {
         self.with_handoff_lock(handoff_id, || {
+            let workflow_path = self.workflow_path(handoff_id)?;
+            if workflow_path.is_file() {
+                let workflow: crate::domain::CollaborativeWorkflow =
+                    self.read_json(&workflow_path)?;
+                workflow.validate()?;
+                return Ok(workflow.checkpoint);
+            }
             self.read_json(&self.checkpoint_path(handoff_id)?)
         })
     }

@@ -3283,7 +3283,7 @@ id = "slice_structured_human_action_real_shell_ai"
 description = "WAITING → human shell 内 ai → side 再開（nightly）"
 test = "slice_structured_human_action_real_shell_ai"
 file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -3292,7 +3292,7 @@ id = "slice_full_collaborative_pty_nightly"
 description = "縦切り最小連結 full PTY 通し（nightly）"
 test = "slice_full_collaborative_pty_nightly"
 file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0055"
@@ -3373,4 +3373,40 @@ id = "stale_creating_no_checkpoint"
 description = "checkpoint なし stale CREATING を reconcile"
 test = "stale_creating_without_checkpoint_is_reconciled"
 file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "workflow_atomic_aggregate_round_trip"
+description = "handoff/checkpoint/effect を単一 revision で原子的に保存"
+test = "workflow_atomic_aggregate_round_trip"
+file_glob = "ai/tests/0055_collaborative_workflow.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "workflow_reducer_rejects_invariant_violation"
+description = "workflow reducer が aggregate invariant 違反を拒否"
+test = "workflow_reducer_rejects_invariant_violation"
+file_glob = "ai/tests/0055_collaborative_workflow.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "workflow_reconciler_retries_pending_effect_once"
+description = "stale claim を unified reconciler が一度だけ再実行"
+test = "workflow_reconciler_retries_pending_effect_once"
+file_glob = "ai/tests/0055_collaborative_workflow.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "workflow_never_persists_plaintext_token"
+description = "workflow と pending effect に token plaintext を保存しない"
+test = "workflow_never_persists_plaintext_token"
+file_glob = "ai/tests/0055_collaborative_workflow.rs"
 pending = false

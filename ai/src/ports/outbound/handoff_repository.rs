@@ -1,7 +1,8 @@
 //! handoff / lease / checkpoint 永続化 outbound port（0055）。
 
 use crate::domain::{
-    CommandCandidate, Handoff, HandoffCheckpoint, HandoffLease, HandoffShellSession,
+    CollaborativeWorkflow, CollaborativeWorkflowError, CommandCandidate, Handoff,
+    HandoffCheckpoint, HandoffLease, HandoffShellSession,
 };
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,56 @@ pub enum HandoffStoreError {
     InvalidHandoffId,
     #[error("invalid shell session generation")]
     InvalidShellGeneration,
+    #[error("workflow revision conflict: expected {expected}, actual {actual}")]
+    RevisionConflict { expected: u64, actual: u64 },
+    #[error("invalid collaborative workflow: {0}")]
+    InvalidWorkflow(#[from] CollaborativeWorkflowError),
+}
+
+/// Collaborative workflow aggregate の唯一の書き込み port。
+pub trait CollaborativeWorkflowRepository {
+    fn create_workflow(&self, workflow: &CollaborativeWorkflow) -> Result<(), HandoffStoreError>;
+
+    fn load_workflow(&self, handoff_id: &str) -> Result<CollaborativeWorkflow, HandoffStoreError>;
+
+    fn list_workflows(&self) -> Result<Vec<CollaborativeWorkflow>, HandoffStoreError>;
+
+    fn compare_and_swap_workflow(
+        &self,
+        expected_revision: u64,
+        workflow: &CollaborativeWorkflow,
+    ) -> Result<(), HandoffStoreError>;
+
+    fn mutate_workflow(
+        &self,
+        handoff_id: &str,
+        mutation: &mut dyn FnMut(&mut CollaborativeWorkflow) -> Result<(), HandoffStoreError>,
+    ) -> Result<CollaborativeWorkflow, HandoffStoreError> {
+        const MAX_RETRIES: usize = 16;
+        for _ in 0..MAX_RETRIES {
+            let mut workflow = self.load_workflow(handoff_id)?;
+            let expected = workflow.revision;
+            mutation(&mut workflow)?;
+            workflow.validate()?;
+            if workflow.revision == expected {
+                workflow.revision = expected
+                    .checked_add(1)
+                    .ok_or(CollaborativeWorkflowError::RevisionOverflow)?;
+            } else if workflow.revision != expected.saturating_add(1) {
+                return Err(HandoffStoreError::InvalidWorkflow(
+                    CollaborativeWorkflowError::RevisionOverflow,
+                ));
+            }
+            match self.compare_and_swap_workflow(expected, &workflow) {
+                Ok(()) => return Ok(workflow),
+                Err(HandoffStoreError::RevisionConflict { .. }) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(HandoffStoreError::Write(
+            "workflow mutation exceeded revision retry limit".into(),
+        ))
+    }
 }
 
 pub trait HandoffRepository {

@@ -3,24 +3,29 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use super::collaborative_workflow::{
+    claim_effect, complete_effect, create_workflow, retry_effect, update_checkpoint,
+    update_handoff, update_workflow,
+};
 use super::{
     child_goal_environment_patch, close_child_goal_durable, compensate_child_goal_durable,
 };
+use crate::domain::CollaborativeWorkflowEvent;
 use crate::domain::{
     build_candidate_command, collect_unknown_tools, mark_uncertain_tools_on_disconnect,
     try_transition, ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole,
     CollaborativeAuditKind, CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff,
     HandoffCheckpoint, HandoffEvent, HandoffInitializationFailure, HandoffState,
-    RequestedShellExec, SuggestedCommandCache, SuggestedCommandCandidate, SuggestedCommandQueue,
-    HANDOFF_SCHEMA_VERSION,
+    PendingWorkflowEffect, RequestedShellExec, SuggestedCommandCache, SuggestedCommandCandidate,
+    SuggestedCommandQueue, WorkflowEffectKind, HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CollaborativeChildGoalError, CollaborativeChildGoalService,
-    CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository, HandoffCandidatePublisher,
-    HandoffRepository, HandoffRuntime, HandoffShellSessionStore, HandoffStoreError,
-    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
-    LeaseAcquireRequest, LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest,
-    SuggestedCommandRecallStore, SuggestedCommandRecallStoreError,
+    CollaborativeWorkflowRepository, CommandCandidateStore, EnvironmentObserver,
+    HandoffAuditRepository, HandoffCandidatePublisher, HandoffRepository, HandoffRuntime,
+    HandoffShellSessionStore, HandoffStoreError, HumanShellLaunchError, HumanShellLaunchRequest,
+    HumanShellLauncher, HumanShellReturn, LeaseAcquireRequest, LeaseRepository, ParentToolBarrier,
+    ShellSessionIssueRequest, SuggestedCommandRecallStore, SuggestedCommandRecallStoreError,
 };
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
@@ -101,6 +106,7 @@ pub trait CollaborativeHandoffStore:
     + HandoffShellSessionStore
     + LeaseRepository
     + HandoffAuditRepository
+    + CollaborativeWorkflowRepository
 {
 }
 impl<T> CollaborativeHandoffStore for T where
@@ -110,6 +116,7 @@ impl<T> CollaborativeHandoffStore for T where
         + HandoffShellSessionStore
         + LeaseRepository
         + HandoffAuditRepository
+        + CollaborativeWorkflowRepository
 {
 }
 
@@ -217,7 +224,7 @@ where
         };
         let before = self.observer.observe(&request.cwd, request.shell_log_start);
         let before_ref = serde_json::to_string(&before).unwrap_or_else(|_| "{}".into());
-        let mut handoff = Handoff {
+        let handoff = Handoff {
             id: handoff_id.clone(),
             schema_version: HANDOFF_SCHEMA_VERSION,
             parent_task_id: request.parent_task_id.clone(),
@@ -234,9 +241,9 @@ where
             pending_human_request: Some(format!(
                 "次のコマンドを確認し、必要なら実行してください: {candidate_text}"
             )),
-            conversation_snapshot_ref: "checkpoint.json#conversation_snapshot".into(),
+            conversation_snapshot_ref: "workflow.json#checkpoint.conversation_snapshot".into(),
             conversation_summary: request.conversation_summary.clone(),
-            checkpoint_ref: "checkpoint.json".into(),
+            checkpoint_ref: "workflow.json#checkpoint".into(),
             before_observation_ref: before_ref.clone(),
             after_observation_ref: None,
             shell_log_start: request.shell_log_start,
@@ -248,14 +255,67 @@ where
             created_at_ms: now,
             updated_at_ms: now,
         };
-        self.store.save_handoff(&handoff)?;
+        let environment_metadata = serde_json::json!({
+            "observation": before,
+            "handoff_host_id": self.runtime.host_id(),
+            "handoff_uid": self.runtime.effective_uid(),
+            "suggestion_cache_path": suggestion_cache_path,
+            "work_stage_and_plan": request.work_stage_and_plan,
+            "parent_work_id": request.parent_goal_id,
+            "memory_space_id": request.memory_space_id,
+        })
+        .to_string();
+        let human_request =
+            format!("次のコマンドを確認し、必要なら実行してください: {candidate_text}");
+        let checkpoint = HandoffCheckpoint {
+            parent_task_id: request.parent_task_id.clone(),
+            parent_conversation_id: request.parent_conversation_id.clone(),
+            parent_run_id: request.parent_run_id.clone(),
+            pending_shell_exec: requested.clone(),
+            parent_goal: request.parent_goal.clone(),
+            child_goal,
+            conversation_snapshot: request.conversation_snapshot.clone(),
+            conversation_summary: request.conversation_summary.clone(),
+            cwd: request.cwd.display().to_string(),
+            environment_metadata,
+            handoff_id: handoff_id.clone(),
+            side_conversation_id: None,
+            command_candidates: vec![candidate.clone()],
+            shell_log_start: request.shell_log_start,
+            control_state: HandoffState::Creating,
+            provider_metadata: None,
+            tool_executions: vec![],
+        };
+        let create_child_effect_id = format!("{handoff_id}:create-child-work");
+        let publish_candidate_effect_id = format!("{handoff_id}:publish-candidate");
+        create_workflow(
+            self.store,
+            handoff.clone(),
+            checkpoint.clone(),
+            vec![
+                PendingWorkflowEffect::pending(
+                    &create_child_effect_id,
+                    WorkflowEffectKind::CreateChildWork,
+                    now,
+                ),
+                PendingWorkflowEffect::pending(
+                    &publish_candidate_effect_id,
+                    WorkflowEffectKind::PublishCandidate {
+                        candidate_id: candidate.id.clone(),
+                    },
+                    now,
+                ),
+            ],
+        )?;
         let mut init = HandoffInitializationContext::new(
             self.store,
             self.child_goal,
+            self.candidate_publisher,
             self.runtime,
             handoff_id.clone(),
         );
         init.state.handoff_created = true;
+        init.state.checkpoint_created = true;
         record_audit(
             self.store,
             &handoff_id,
@@ -272,50 +332,42 @@ where
             &handoff_id,
             CollaborativeAuditKind::CandidateRegistered,
         );
+        claim_effect(
+            self.store,
+            &handoff_id,
+            &publish_candidate_effect_id,
+            self.runtime.now_ms(),
+        )?;
         if let Err(error) = self
             .candidate_publisher
             .publish(&handoff_id, std::slice::from_ref(&candidate_text))
         {
+            let _ = retry_effect(
+                self.store,
+                &handoff_id,
+                &publish_candidate_effect_id,
+                &error,
+                self.runtime.now_ms(),
+            );
             let primary = format!("candidate publish: {error}");
             init.fail(&primary)?;
             return Err(CollaborativeHandoffError::Candidate(error));
         }
+        complete_effect(
+            self.store,
+            &handoff_id,
+            &publish_candidate_effect_id,
+            self.runtime.now_ms(),
+        )?;
         init.state.candidate_published = true;
-        let environment_metadata = serde_json::json!({
-            "observation": before,
-            "handoff_host_id": self.runtime.host_id(),
-            "handoff_uid": self.runtime.effective_uid(),
-            "suggestion_cache_path": suggestion_cache_path,
-            "work_stage_and_plan": request.work_stage_and_plan,
-            "parent_work_id": request.parent_goal_id,
-            "memory_space_id": request.memory_space_id,
-        })
-        .to_string();
-        let human_request =
-            format!("次のコマンドを確認し、必要なら実行してください: {candidate_text}");
-        let checkpoint = HandoffCheckpoint {
-            parent_task_id: request.parent_task_id,
-            parent_conversation_id: request.parent_conversation_id,
-            parent_run_id: request.parent_run_id,
-            pending_shell_exec: requested,
-            parent_goal: request.parent_goal,
-            child_goal,
-            conversation_snapshot: request.conversation_snapshot,
-            conversation_summary: request.conversation_summary,
-            cwd: request.cwd.display().to_string(),
-            environment_metadata,
-            handoff_id: handoff_id.clone(),
-            side_conversation_id: None,
-            command_candidates: vec![candidate],
-            shell_log_start: request.shell_log_start,
-            control_state: HandoffState::Creating,
-            provider_metadata: None,
-            tool_executions: vec![],
-        };
-        // Recovery checkpoint is durable before the PTY process is spawned.
-        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-        init.state.checkpoint_created = true;
+        // workflow aggregate is durable before child Work / PTY side effects.
         let mut child_goal_meta = checkpoint.child_goal.clone();
+        claim_effect(
+            self.store,
+            &handoff_id,
+            &create_child_effect_id,
+            self.runtime.now_ms(),
+        )?;
         match self.child_goal.create_child_goal(
             &mut child_goal_meta,
             &request.cwd,
@@ -325,19 +377,32 @@ where
             &human_request,
         ) {
             Ok(()) => {
+                let child_meta = child_goal_meta.clone();
+                let now_ms = self.runtime.now_ms();
+                let effect_id = create_child_effect_id.clone();
+                update_workflow(self.store, &handoff_id, |workflow| {
+                    workflow.checkpoint.child_goal = child_meta.clone();
+                    let metadata = child_goal_environment_patch(&workflow.checkpoint);
+                    workflow.checkpoint.environment_metadata = metadata.to_string();
+                    workflow
+                        .apply(CollaborativeWorkflowEvent::CompleteEffect {
+                            effect_id: effect_id.clone(),
+                            now_ms,
+                        })
+                        .map_err(HandoffStoreError::from)?;
+                    Ok(())
+                })?;
                 init.state.child_work_opened = true;
-                let mut saved = self.store.load_checkpoint(&handoff_id)?;
-                saved.child_goal = child_goal_meta.clone();
-                let metadata = child_goal_environment_patch(&saved);
-                saved.environment_metadata = metadata.to_string();
-                if let Err(error) = self.store.save_checkpoint(&handoff_id, &saved) {
-                    let primary = format!("child goal metadata save: {error}");
-                    init.fail(&primary)?;
-                    return Err(CollaborativeHandoffError::Store(error));
-                }
             }
             Err(error) => {
                 let create_message = error.to_string();
+                let _ = retry_effect(
+                    self.store,
+                    &handoff_id,
+                    &create_child_effect_id,
+                    &create_message,
+                    self.runtime.now_ms(),
+                );
                 init.persist_create_error(&child_goal_meta, &create_message)?;
                 if child_goal_meta.work_mode.is_some() {
                     init.state.child_work_opened = true;
@@ -398,10 +463,12 @@ where
             &handoff_id,
             CollaborativeAuditKind::LeaseAcquired,
         );
-        handoff = self.store.load_handoff(&handoff_id)?;
-        handoff.state = transition(handoff.state, HandoffEvent::ShellReady)?;
-        handoff.updated_at_ms = self.runtime.now_ms();
-        self.store.save_handoff(&handoff)?;
+        update_handoff(self.store, &handoff_id, |handoff| {
+            handoff.state = transition_for_store(handoff.state, HandoffEvent::ShellReady)?;
+            handoff.updated_at_ms = self.runtime.now_ms();
+            Ok(())
+        })?;
+        let handoff = self.store.load_handoff(&handoff_id)?;
         init.state.shell_ready = true;
         record_audit(
             self.store,
@@ -421,26 +488,24 @@ where
             Err(error) => {
                 // spawn 前の失敗は durable checkpoint を CANCELLED にする。spawn 後に
                 // normal-return marker が無い場合は成果を推測せず ORPHANED。
-                handoff = self.store.load_handoff(&handoff_id)?;
                 let event = match error {
                     HumanShellLaunchError::MissingReturnMarker => HandoffEvent::Orphaned,
                     HumanShellLaunchError::MissingCwd(_) | HumanShellLaunchError::Failed(_) => {
                         HandoffEvent::ShellLaunchFailed
                     }
                 };
-                handoff.state = transition(handoff.state, event)?;
-                handoff.return_reason = Some(
-                    match event {
-                        HandoffEvent::Orphaned => "abnormal_shell_exit",
-                        _ => "shell_launch_failed",
-                    }
-                    .into(),
-                );
-                handoff.updated_at_ms = self.runtime.now_ms();
-                let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
-                checkpoint.control_state = handoff.state;
-                self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-                self.store.save_handoff(&handoff)?;
+                let return_reason = match event {
+                    HandoffEvent::Orphaned => "abnormal_shell_exit",
+                    _ => "shell_launch_failed",
+                }
+                .to_string();
+                update_workflow(self.store, &handoff_id, |workflow| {
+                    workflow.handoff.state = transition_for_store(workflow.handoff.state, event)?;
+                    workflow.handoff.return_reason = Some(return_reason.clone());
+                    workflow.handoff.updated_at_ms = self.runtime.now_ms();
+                    workflow.checkpoint.control_state = workflow.handoff.state;
+                    Ok(())
+                })?;
                 if matches!(event, HandoffEvent::Orphaned) {
                     record_audit(
                         self.store,
@@ -456,27 +521,31 @@ where
                 return Err(error.into());
             }
         };
-        // side agent が shell lifetime 中に状態を更新し得るため、保存済み状態を再読込する。
-        handoff = self.store.load_handoff(&handoff_id)?;
-        handoff.state = transition(handoff.state, HandoffEvent::HumanReturned)?;
-        handoff.return_reason = Some("control_returned".into());
-        handoff.human_shell_exit_code = returned.exit_code;
-        handoff.final_shell_cwd = Some(returned.final_cwd.display().to_string());
         let after = self
             .observer
             .observe(&returned.final_cwd, returned.shell_log_start);
         let after_ref = serde_json::to_string(&after).unwrap_or_else(|_| "{}".into());
-        handoff.after_observation_ref = Some(after_ref.clone());
-        handoff.shell_log_end = Some(returned.shell_log_end);
-        handoff.updated_at_ms = self.runtime.now_ms();
-        let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
-        checkpoint.environment_metadata =
-            merge_shell_replay_metadata(&checkpoint.environment_metadata, &returned);
-        mark_uncertain_tools_on_disconnect(&mut checkpoint);
-        let uncertain_tool_executions = uncertain_tools_for_result(&checkpoint);
-        checkpoint.control_state = HandoffState::Returned;
-        self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-        self.store.save_handoff(&handoff)?;
+        let exit_code = returned.exit_code;
+        let final_cwd = returned.final_cwd.display().to_string();
+        let shell_log_end = returned.shell_log_end;
+        let checkpoint_before = self.store.load_checkpoint(&handoff_id)?;
+        let replay_metadata =
+            merge_shell_replay_metadata(&checkpoint_before.environment_metadata, &returned);
+        let uncertain_tool_executions = uncertain_tools_for_result(&checkpoint_before);
+        update_workflow(self.store, &handoff_id, |workflow| {
+            mark_uncertain_tools_on_disconnect(&mut workflow.checkpoint);
+            workflow.handoff.state =
+                transition_for_store(workflow.handoff.state, HandoffEvent::HumanReturned)?;
+            workflow.handoff.return_reason = Some("control_returned".into());
+            workflow.handoff.human_shell_exit_code = exit_code;
+            workflow.handoff.final_shell_cwd = Some(final_cwd.clone());
+            workflow.handoff.after_observation_ref = Some(after_ref.clone());
+            workflow.handoff.shell_log_end = Some(shell_log_end);
+            workflow.handoff.updated_at_ms = self.runtime.now_ms();
+            workflow.checkpoint.environment_metadata = replay_metadata.clone();
+            workflow.checkpoint.control_state = HandoffState::Returned;
+            Ok(())
+        })?;
         record_audit(
             self.store,
             &handoff_id,
@@ -490,11 +559,13 @@ where
             &handoff_id,
             crate::domain::ChildGoalCloseReason::ControlReturned,
         ) {
-            handoff = self.store.load_handoff(&handoff_id)?;
-            handoff.resume_error = Some(format!("child_goal_close: {error}"));
-            handoff.updated_at_ms = self.runtime.now_ms();
-            self.store.save_handoff(&handoff)?;
+            update_handoff(self.store, &handoff_id, |handoff| {
+                handoff.resume_error = Some(format!("child_goal_close: {error}"));
+                handoff.updated_at_ms = self.runtime.now_ms();
+                Ok(())
+            })?;
         }
+        let handoff = self.store.load_handoff(&handoff_id)?;
         Ok(HumanHandoffResult {
             handoff_id,
             execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
@@ -540,6 +611,7 @@ struct CompensationOutcome {
 struct HandoffInitializationContext<'a, S, R> {
     store: &'a S,
     child_goal: &'a dyn CollaborativeChildGoalService,
+    candidate_publisher: &'a dyn HandoffCandidatePublisher,
     runtime: &'a R,
     handoff_id: String,
     state: HandoffInitializationState,
@@ -553,12 +625,14 @@ where
     fn new(
         store: &'a S,
         child_goal: &'a dyn CollaborativeChildGoalService,
+        candidate_publisher: &'a dyn HandoffCandidatePublisher,
         runtime: &'a R,
         handoff_id: String,
     ) -> Self {
         Self {
             store,
             child_goal,
+            candidate_publisher,
             runtime,
             handoff_id,
             state: HandoffInitializationState::default(),
@@ -615,7 +689,7 @@ where
             }
         }
         if self.state.candidate_published {
-            if let Err(error) = clear_handoff_suggestion_cache(self.runtime, &self.handoff_id) {
+            if let Err(error) = self.candidate_publisher.remove(&self.handoff_id) {
                 succeeded = false;
                 errors.push(error);
                 remaining.push("candidate_cache".into());
@@ -638,20 +712,17 @@ where
         if !self.state.checkpoint_created {
             return Ok(());
         }
-        let mut checkpoint = self
-            .store
-            .load_checkpoint(&self.handoff_id)
-            .map_err(|e| e.to_string())?;
-        let mut metadata =
-            serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
-                .unwrap_or_else(|_| serde_json::json!({}));
-        if let Some(object) = metadata.as_object_mut() {
-            object.insert("shell_sessions_invalidated".into(), true.into());
-        }
-        checkpoint.environment_metadata = metadata.to_string();
-        self.store
-            .save_checkpoint(&self.handoff_id, &checkpoint)
-            .map_err(|e| e.to_string())
+        update_checkpoint(self.store, &self.handoff_id, |checkpoint| {
+            let mut metadata =
+                serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(object) = metadata.as_object_mut() {
+                object.insert("shell_sessions_invalidated".into(), true.into());
+            }
+            checkpoint.environment_metadata = metadata.to_string();
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
     }
 
     fn persist_initialization_failure(
@@ -659,34 +730,38 @@ where
         failure: &HandoffInitializationFailure,
     ) -> Result<(), CollaborativeHandoffError> {
         let message = failure.combined_error_message();
+        let failure_value = serde_json::to_value(failure).unwrap_or_else(|_| serde_json::json!({}));
         if self.state.checkpoint_created {
-            let mut checkpoint = self.store.load_checkpoint(&self.handoff_id)?;
-            let mut metadata =
-                serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
-                    .unwrap_or_else(|_| serde_json::json!({}));
-            if let Some(object) = metadata.as_object_mut() {
-                object.insert(
-                    "initialization_failure".into(),
-                    serde_json::to_value(failure).unwrap_or_else(|_| serde_json::json!({})),
-                );
-                object.insert("initialization_error".into(), message.clone().into());
-            }
-            checkpoint.environment_metadata = metadata.to_string();
-            if self.state.child_work_opened
-                && (checkpoint.child_goal.close_state.is_none()
-                    || checkpoint.child_goal.close_state
-                        == Some(crate::domain::ChildGoalCloseState::Open))
-            {
-                checkpoint.child_goal.close_state =
-                    Some(crate::domain::ChildGoalCloseState::Failed);
-                checkpoint.child_goal.close_error_message = Some(message.clone());
-            }
-            self.store.save_checkpoint(&self.handoff_id, &checkpoint)?;
+            update_workflow(self.store, &self.handoff_id, |workflow| {
+                let mut metadata = serde_json::from_str::<serde_json::Value>(
+                    &workflow.checkpoint.environment_metadata,
+                )
+                .unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(object) = metadata.as_object_mut() {
+                    object.insert("initialization_failure".into(), failure_value.clone());
+                    object.insert("initialization_error".into(), message.clone().into());
+                }
+                workflow.checkpoint.environment_metadata = metadata.to_string();
+                if self.state.child_work_opened
+                    && (workflow.checkpoint.child_goal.close_state.is_none()
+                        || workflow.checkpoint.child_goal.close_state
+                            == Some(crate::domain::ChildGoalCloseState::Open))
+                {
+                    workflow.checkpoint.child_goal.close_state =
+                        Some(crate::domain::ChildGoalCloseState::Failed);
+                    workflow.checkpoint.child_goal.close_error_message = Some(message.clone());
+                }
+                workflow.handoff.resume_error = Some(format!("initialization: {message}"));
+                workflow.handoff.updated_at_ms = self.runtime.now_ms();
+                Ok(())
+            })?;
+        } else {
+            update_handoff(self.store, &self.handoff_id, |handoff| {
+                handoff.resume_error = Some(format!("initialization: {message}"));
+                handoff.updated_at_ms = self.runtime.now_ms();
+                Ok(())
+            })?;
         }
-        let mut handoff = self.store.load_handoff(&self.handoff_id)?;
-        handoff.resume_error = Some(format!("initialization: {message}"));
-        handoff.updated_at_ms = self.runtime.now_ms();
-        self.store.save_handoff(&handoff)?;
         Ok(())
     }
 
@@ -698,47 +773,71 @@ where
         if !self.state.checkpoint_created {
             return Ok(());
         }
-        let mut checkpoint = self.store.load_checkpoint(&self.handoff_id)?;
-        checkpoint.child_goal = child_goal_meta.clone();
-        let mut metadata =
-            serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
-                .unwrap_or_else(|_| serde_json::json!({}));
-        if let Some(object) = metadata.as_object_mut() {
-            object.insert("child_goal_create_error".into(), message.into());
-            object.insert("initialization_error".into(), message.into());
-        }
-        checkpoint.environment_metadata = metadata.to_string();
-        self.store.save_checkpoint(&self.handoff_id, &checkpoint)?;
-        let mut handoff = self.store.load_handoff(&self.handoff_id)?;
-        handoff.resume_error = Some(format!("initialization: {message}"));
-        handoff.updated_at_ms = self.runtime.now_ms();
-        self.store.save_handoff(&handoff)?;
+        let child_meta = child_goal_meta.clone();
+        let message = message.to_string();
+        update_workflow(self.store, &self.handoff_id, |workflow| {
+            workflow.checkpoint.child_goal = child_meta.clone();
+            let mut metadata = serde_json::from_str::<serde_json::Value>(
+                &workflow.checkpoint.environment_metadata,
+            )
+            .unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(object) = metadata.as_object_mut() {
+                object.insert("child_goal_create_error".into(), message.clone().into());
+                object.insert("initialization_error".into(), message.clone().into());
+            }
+            workflow.checkpoint.environment_metadata = metadata.to_string();
+            workflow.handoff.resume_error = Some(format!("initialization: {message}"));
+            workflow.handoff.updated_at_ms = self.runtime.now_ms();
+            Ok(())
+        })?;
         Ok(())
     }
 
     fn cancel_handoff(&self, message: &str) -> Result<(), HandoffStoreError> {
-        let mut handoff = self.store.load_handoff(&self.handoff_id)?;
-        if handoff.state == HandoffState::Creating {
-            handoff.state = try_transition(handoff.state, HandoffEvent::Cancel)
-                .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
-        } else if handoff.state == HandoffState::HumanActive && !self.state.shell_ready {
-            handoff.state = try_transition(handoff.state, HandoffEvent::ShellLaunchFailed)
-                .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
-        }
-        handoff.return_reason = Some("initialization_failed".into());
-        handoff.resume_error = Some(message.to_string());
-        handoff.updated_at_ms = self.runtime.now_ms();
+        let message = message.to_string();
+        let now = self.runtime.now_ms();
         if self.state.checkpoint_created {
-            let mut checkpoint = self.store.load_checkpoint(&self.handoff_id)?;
-            checkpoint.control_state = handoff.state;
-            self.store.save_checkpoint(&self.handoff_id, &checkpoint)?;
+            update_workflow(self.store, &self.handoff_id, |workflow| {
+                if workflow.handoff.state == HandoffState::Creating {
+                    workflow.handoff.state =
+                        try_transition(workflow.handoff.state, HandoffEvent::Cancel)
+                            .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
+                } else if workflow.handoff.state == HandoffState::HumanActive
+                    && !self.state.shell_ready
+                {
+                    workflow.handoff.state =
+                        try_transition(workflow.handoff.state, HandoffEvent::ShellLaunchFailed)
+                            .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
+                }
+                workflow.handoff.return_reason = Some("initialization_failed".into());
+                workflow.handoff.resume_error = Some(message.clone());
+                workflow.handoff.updated_at_ms = now;
+                workflow.checkpoint.control_state = workflow.handoff.state;
+                Ok(())
+            })?;
+            Ok(())
+        } else {
+            update_handoff(self.store, &self.handoff_id, |handoff| {
+                if handoff.state == HandoffState::Creating {
+                    handoff.state = try_transition(handoff.state, HandoffEvent::Cancel)
+                        .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
+                } else if handoff.state == HandoffState::HumanActive && !self.state.shell_ready {
+                    handoff.state = try_transition(handoff.state, HandoffEvent::ShellLaunchFailed)
+                        .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
+                }
+                handoff.return_reason = Some("initialization_failed".into());
+                handoff.resume_error = Some(message.clone());
+                handoff.updated_at_ms = now;
+                Ok(())
+            })
         }
-        self.store.save_handoff(&handoff)
     }
 }
 
 fn uncertain_tools_for_result(checkpoint: &HandoffCheckpoint) -> Vec<UncertainToolExecution> {
-    collect_unknown_tools(checkpoint)
+    let mut marked = checkpoint.clone();
+    mark_uncertain_tools_on_disconnect(&mut marked);
+    collect_unknown_tools(&marked)
         .into_iter()
         .map(|tool| UncertainToolExecution {
             tool_call_id: tool.tool_call_id,
@@ -746,17 +845,6 @@ fn uncertain_tools_for_result(checkpoint: &HandoffCheckpoint) -> Vec<UncertainTo
             status: "unknown".into(),
         })
         .collect()
-}
-
-fn clear_handoff_suggestion_cache<R: HandoffRuntime>(
-    runtime: &R,
-    handoff_id: &str,
-) -> Result<(), String> {
-    let path = runtime.handoff_suggestion_cache_path(handoff_id);
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 pub fn reconcile_incomplete_creating_handoff<S, C, R>(
@@ -767,29 +855,29 @@ pub fn reconcile_incomplete_creating_handoff<S, C, R>(
     reason: &str,
 ) -> Result<(), HandoffStoreError>
 where
-    S: HandoffRepository + CheckpointRepository + LeaseRepository,
+    S: HandoffRepository + CheckpointRepository + LeaseRepository + CollaborativeWorkflowRepository,
     C: CollaborativeChildGoalService + ?Sized,
     R: HandoffRuntime,
 {
-    let mut handoff = store.load_handoff(handoff_id)?;
-    if handoff.state != HandoffState::Creating {
+    if store.load_handoff(handoff_id)?.state != HandoffState::Creating {
         return Ok(());
     }
-    handoff.state = try_transition(handoff.state, HandoffEvent::Cancel)
-        .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
-    handoff.return_reason = Some(reason.into());
-    handoff.resume_error = Some(format!("initialization: {reason}"));
-    handoff.updated_at_ms = runtime.now_ms();
-    store.save_handoff(&handoff)?;
+    update_workflow(store, handoff_id, |workflow| {
+        if workflow.handoff.state == HandoffState::Creating {
+            workflow.handoff.state = try_transition(workflow.handoff.state, HandoffEvent::Cancel)
+                .map_err(|e| HandoffStoreError::Write(e.to_string()))?;
+            workflow.checkpoint.control_state = HandoffState::Cancelled;
+        }
+        workflow.handoff.return_reason = Some(reason.into());
+        workflow.handoff.resume_error = Some(format!("initialization: {reason}"));
+        workflow.handoff.updated_at_ms = runtime.now_ms();
+        Ok(())
+    })?;
     let _ = store.release_lease(handoff_id);
-    let _ = clear_handoff_suggestion_cache(runtime, handoff_id);
     if let Ok(checkpoint) = store.load_checkpoint(handoff_id) {
         if checkpoint.child_goal.work_mode.is_some() {
             let _ = compensate_child_goal_durable(store, child_goal, handoff_id);
         }
-        let mut updated = store.load_checkpoint(handoff_id)?;
-        updated.control_state = HandoffState::Cancelled;
-        store.save_checkpoint(handoff_id, &updated)?;
     }
     Ok(())
 }
@@ -850,9 +938,9 @@ pub fn persist_handoff_candidates_for_recall<S: SuggestedCommandRecallStore>(
     store.save(&cache)
 }
 
-fn transition(
+fn transition_for_store(
     state: HandoffState,
     event: HandoffEvent,
-) -> Result<HandoffState, CollaborativeHandoffError> {
-    try_transition(state, event).map_err(|e| CollaborativeHandoffError::Transition(e.to_string()))
+) -> Result<HandoffState, HandoffStoreError> {
+    try_transition(state, event).map_err(|e| HandoffStoreError::Write(e.to_string()))
 }

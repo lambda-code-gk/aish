@@ -49,7 +49,7 @@
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
 | 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装済み） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
-| 0055 | [0055_collaborative-human-handoff-spec.md](spec/0055_collaborative-human-handoff-spec.md) | 設計確定（実装中 Phase 6） | Human-in-the-loop 協調作業（`ai --collaborative`、human shell handoff、side agent、復旧） |
+| 0055 | [0055_collaborative-human-handoff-spec.md](spec/0055_collaborative-human-handoff-spec.md) | 設計確定（実装済み） | Human-in-the-loop 協調作業（`ai --collaborative`、human shell handoff、side agent、復旧、durable workflow） |
 
 ### 状態ラベルの意味
 
@@ -62,9 +62,7 @@
 
 ## 実装指示書（docs/tasks/ — 進行中）
 
-| 番号 | ファイル | 状態 | 概要 |
-|------|----------|------|------|
-| 0055 | [0055_collaborative-human-handoff-phase6-implementation-spec.md](tasks/0055_collaborative-human-handoff-phase6-implementation-spec.md) | 進行中（Phase 6） | 縦切り統合テスト（実 store / shell / process 最小接続） |
+（現在進行中の指示書はありません）
 
 ## 実装済み指示書（docs/done/）
 
@@ -147,10 +145,11 @@
 | 0049 | [0049_aish-command-output-replay-implementation-spec.md](done/0049_aish-command-output-replay-implementation-spec.md) | 実装済み | `aish` command output replay（設計: [0049](spec/0049_aish-command-output-replay-spec.md)） |
 | 0050 | [0050_client-provided-replay-tool-implementation-spec.md](done/0050_client-provided-replay-tool-implementation-spec.md) | 実装済み | Client-Provided Replay Tool（設計: [0050](spec/0050_client-provided-replay-tool-spec.md)） |
 | 0051 | [0051_smart-observation-report-implementation-spec.md](done/0051_smart-observation-report-implementation-spec.md) | 実装済み | Smart Preprocessor Observation Report（設計: [0051](spec/0051_smart-observation-report-spec.md)） |
-| 0055 | [0055_collaborative-human-handoff-implementation-spec.md](done/0055_collaborative-human-handoff-implementation-spec.md) | Phase 1–5 完了（Phase 6 進行中） | Collaborative Human Handoff マスター（設計: [0055](spec/0055_collaborative-human-handoff-spec.md)） |
+| 0055 | [0055_collaborative-human-handoff-implementation-spec.md](done/0055_collaborative-human-handoff-implementation-spec.md) | 実装済み（Phase 1–6） | Collaborative Human Handoff マスター（設計: [0055](spec/0055_collaborative-human-handoff-spec.md)） |
 | 0055 | [0055_collaborative-human-handoff-phase1-implementation-spec.md](done/0055_collaborative-human-handoff-phase1-implementation-spec.md) | 実装済み（Phase 1） | Domain / 永続化 |
 | 0055 | [0055_collaborative-human-handoff-phase2-implementation-spec.md](done/0055_collaborative-human-handoff-phase2-implementation-spec.md) | 実装済み（Phase 2） | 親 shell_exec handoff |
 | 0055 | [0055_collaborative-human-handoff-phase3-implementation-spec.md](done/0055_collaborative-human-handoff-phase3-implementation-spec.md) | 実装済み（Phase 3） | Side agent |
 | 0055 | [0055_collaborative-human-handoff-phase4-implementation-spec.md](done/0055_collaborative-human-handoff-phase4-implementation-spec.md) | 実装済み（Phase 4） | 復旧 |
 | 0055 | [0055_collaborative-human-handoff-phase5-implementation-spec.md](done/0055_collaborative-human-handoff-phase5-implementation-spec.md) | 実装済み（Phase 5） | UX / docs / manual |
+| 0055 | [0055_collaborative-human-handoff-phase6-implementation-spec.md](done/0055_collaborative-human-handoff-phase6-implementation-spec.md) | 実装済み（Phase 6） | Durable workflow 再設計 / 縦切り E2E |
 実装順の目安（完了）: **0004** → **0005** → **0006** → **0007** → **0008** / **0009** → **0010** → **0011** → **0012** → **0013** → **0014** → **0015** → **0016**。

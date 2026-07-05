@@ -321,6 +321,7 @@ fn parent_process_loss_marks_handoff_orphaned() {
             now: 20,
             owner_alive: false,
         },
+        &NoopHandoffCandidatePublisher,
     )
     .execute(|_| Box::new(NoopCollaborativeChildGoalService))
     .unwrap();
@@ -640,6 +641,7 @@ fn resuming_parent_owner_loss_returns_to_returned() {
             now: 20,
             owner_alive: false,
         },
+        &NoopHandoffCandidatePublisher,
     )
     .execute(|_| Box::new(NoopCollaborativeChildGoalService))
     .unwrap();
@@ -662,6 +664,7 @@ fn lease_expiry_alone_does_not_auto_resume_parent() {
             now: 20,
             owner_alive: true,
         },
+        &NoopHandoffCandidatePublisher,
     )
     .execute(|_| Box::new(NoopCollaborativeChildGoalService))
     .unwrap();

@@ -50,7 +50,7 @@ impl HumanShellLauncher for Launcher {
         assert!(self
             .root
             .join(&request.handoff_id)
-            .join("checkpoint.json")
+            .join("workflow.json")
             .is_file());
         self.launches.fetch_add(1, Ordering::SeqCst);
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;

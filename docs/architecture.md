@@ -64,6 +64,8 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
 
 ### Collaborative human handoff の side agent
 
+0055 の handoff durable state は `ai` の `CollaborativeWorkflow` aggregate を正本とする。`workflow.json` に handoff、checkpoint、pending effect、revision をまとめ、filesystem adapter が revision CAS と atomic replace を行う。application は `save_handoff` / `save_checkpoint` を呼ばず workflow mutation だけを使う。外部副作用は effect を先に永続化し、`CollaborativeWorkflowReconciler` が stale claim 回収と冪等再試行を担当する。token plaintext は shell launch の process-local input に限定し、aggregate / effect / audit へ保存しない。
+
 human shell 内の `ai` は、`--standalone` を最優先し、それ以外では `AISH_HANDOFF_*` の完全性、token と generation、発行元 host ID / effective UID、handoff 状態の順に検証する。不完全・不正な handoff は通常セッションへフォールバックしない。side conversation ID は handoff store と checkpoint に初回だけ保存し、同一 handoff で再利用する。親と PTY heartbeat は human-shell lifetime lease (`lease.json`) を保持し、side run は独立した atomic side-run lock (`side-run-lock.json`) だけを取得・解放する。side run は親文脈を turn-local `system_instruction` として aibe の既存 agent loop へ渡す。この instruction と LLM 入力には token を含めない。
 
 side turn の `context.collaborative_handoff` は常に `false` で、`shell_exec` は通常経路を使う。side agent が人間操作を必要とする場合は、最終応答の構造化 `request_human_action`（`instruction` / `reason` / `command_candidates` / `expected_completion`）を `ai` が control outcome として保存し、同じ human shell に制御を戻す。待機後の裸 `ai` / `ai <note>` は、shell log delta、cwd、現在観測、任意の user note を含む `HumanControlReturned` を空メッセージの代わりに送る。`--standalone` は handoff 環境変数を現在プロセスと子プロセスから除去する。

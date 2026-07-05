@@ -9,17 +9,20 @@ use crate::domain::{
 };
 use crate::ports::outbound::{
     CheckpointRepository, CollaborativeChildGoalError, CollaborativeChildGoalService,
-    HandoffRepository, HandoffStoreError,
+    CollaborativeWorkflowRepository, HandoffRepository, HandoffStoreError,
 };
 
-pub fn persist_child_goal_checkpoint<S: CheckpointRepository>(
+use super::collaborative_workflow::{update_checkpoint, update_workflow};
+
+pub fn persist_child_goal_checkpoint<S: CheckpointRepository + CollaborativeWorkflowRepository>(
     store: &S,
     handoff_id: &str,
     child_goal: &crate::domain::ChildGoalMeta,
 ) -> Result<(), HandoffStoreError> {
-    let mut checkpoint = store.load_checkpoint(handoff_id)?;
-    checkpoint.child_goal = child_goal.clone();
-    store.save_checkpoint(handoff_id, &checkpoint)
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        checkpoint.child_goal = child_goal.clone();
+        Ok(())
+    })
 }
 
 pub fn close_child_goal_durable<S, C>(
@@ -29,7 +32,7 @@ pub fn close_child_goal_durable<S, C>(
     reason: ChildGoalCloseReason,
 ) -> Result<(), CollaborativeChildGoalError>
 where
-    S: CheckpointRepository + HandoffRepository,
+    S: CheckpointRepository + HandoffRepository + CollaborativeWorkflowRepository,
     C: CollaborativeChildGoalService + ?Sized,
 {
     let mut checkpoint = store
@@ -38,49 +41,48 @@ where
     normalize_child_goal_meta(&mut checkpoint.child_goal);
     if !child_goal_needs_work_close(&checkpoint.child_goal) {
         if checkpoint.child_goal.close_state != Some(ChildGoalCloseState::Completed) {
-            checkpoint.child_goal.close_state = Some(ChildGoalCloseState::Completed);
-            store
-                .save_checkpoint(handoff_id, &checkpoint)
-                .map_err(store_err_create)?;
+            update_checkpoint(store, handoff_id, |checkpoint| {
+                checkpoint.child_goal.close_state = Some(ChildGoalCloseState::Completed);
+                Ok(())
+            })
+            .map_err(store_err_create)?;
         }
         return Ok(());
     }
     if checkpoint.child_goal.close_state == Some(ChildGoalCloseState::Completed) {
         return Ok(());
     }
-    checkpoint.child_goal.close_state = Some(ChildGoalCloseState::Closing);
-    checkpoint.child_goal.close_error_message = None;
-    store
-        .save_checkpoint(handoff_id, &checkpoint)
-        .map_err(store_err_create)?;
+    update_checkpoint(store, handoff_id, |checkpoint| {
+        checkpoint.child_goal.close_state = Some(ChildGoalCloseState::Closing);
+        checkpoint.child_goal.close_error_message = None;
+        Ok(())
+    })
+    .map_err(store_err_create)?;
 
     let cwd = Path::new(&checkpoint.cwd);
     match child_goal_service.close_child_goal(&checkpoint.child_goal, cwd, reason) {
         Ok(()) => {
-            let mut checkpoint = store
-                .load_checkpoint(handoff_id)
-                .map_err(store_err_create)?;
-            mark_child_goal_closed(&mut checkpoint.child_goal, reason);
-            store
-                .save_checkpoint(handoff_id, &checkpoint)
-                .map_err(store_err_create)?;
+            update_checkpoint(store, handoff_id, |checkpoint| {
+                mark_child_goal_closed(&mut checkpoint.child_goal, reason);
+                Ok(())
+            })
+            .map_err(store_err_create)?;
             Ok(())
         }
         Err(error) => {
             let message = error.to_string();
-            let mut checkpoint = store.load_checkpoint(handoff_id).map_err(store_err_close)?;
-            checkpoint.child_goal.close_state = Some(if child_goal_close_is_conflict(&message) {
-                ChildGoalCloseState::Conflict
-            } else {
-                ChildGoalCloseState::Failed
-            });
-            checkpoint.child_goal.close_error_message = Some(message.clone());
-            store
-                .save_checkpoint(handoff_id, &checkpoint)
-                .map_err(store_err_close)?;
-            let mut handoff = store.load_handoff(handoff_id).map_err(store_err_close)?;
-            handoff.resume_error = Some(format!("child_goal_close: {message}"));
-            store.save_handoff(&handoff).map_err(store_err_close)?;
+            update_workflow(store, handoff_id, |workflow| {
+                workflow.checkpoint.child_goal.close_state =
+                    Some(if child_goal_close_is_conflict(&message) {
+                        ChildGoalCloseState::Conflict
+                    } else {
+                        ChildGoalCloseState::Failed
+                    });
+                workflow.checkpoint.child_goal.close_error_message = Some(message.clone());
+                workflow.handoff.resume_error = Some(format!("child_goal_close: {message}"));
+                Ok(())
+            })
+            .map_err(store_err_close)?;
             Err(error)
         }
     }
@@ -92,7 +94,7 @@ pub fn compensate_child_goal_durable<S, C>(
     handoff_id: &str,
 ) -> Result<(), CollaborativeChildGoalError>
 where
-    S: CheckpointRepository + HandoffRepository,
+    S: CheckpointRepository + HandoffRepository + CollaborativeWorkflowRepository,
     C: CollaborativeChildGoalService + ?Sized,
 {
     close_child_goal_durable(
@@ -110,7 +112,7 @@ pub fn reconcile_child_goal_before_parent_resume<S, C>(
     handoff_id: &str,
 ) -> Result<(), CollaborativeChildGoalError>
 where
-    S: CheckpointRepository + HandoffRepository,
+    S: CheckpointRepository + HandoffRepository + CollaborativeWorkflowRepository,
     C: CollaborativeChildGoalService + ?Sized,
 {
     let mut checkpoint = store
@@ -314,6 +316,51 @@ mod tests {
 
         fn list_handoffs(&self) -> Result<Vec<crate::domain::Handoff>, HandoffStoreError> {
             Ok(self.handoffs.lock().unwrap().values().cloned().collect())
+        }
+    }
+
+    impl CollaborativeWorkflowRepository for MemStore {
+        fn create_workflow(
+            &self,
+            workflow: &crate::domain::CollaborativeWorkflow,
+        ) -> Result<(), HandoffStoreError> {
+            workflow.validate()?;
+            self.handoffs
+                .lock()
+                .unwrap()
+                .insert(workflow.handoff.id.clone(), workflow.handoff.clone());
+            self.checkpoints
+                .lock()
+                .unwrap()
+                .insert(workflow.handoff.id.clone(), workflow.checkpoint.clone());
+            Ok(())
+        }
+
+        fn load_workflow(
+            &self,
+            handoff_id: &str,
+        ) -> Result<crate::domain::CollaborativeWorkflow, HandoffStoreError> {
+            let handoff = self.load_handoff(handoff_id)?;
+            let checkpoint = self.load_checkpoint(handoff_id)?;
+            crate::domain::CollaborativeWorkflow::new(handoff, checkpoint)
+                .map_err(HandoffStoreError::from)
+        }
+
+        fn list_workflows(
+            &self,
+        ) -> Result<Vec<crate::domain::CollaborativeWorkflow>, HandoffStoreError> {
+            self.list_handoffs()?
+                .into_iter()
+                .map(|handoff| self.load_workflow(&handoff.id))
+                .collect()
+        }
+
+        fn compare_and_swap_workflow(
+            &self,
+            _expected_revision: u64,
+            workflow: &crate::domain::CollaborativeWorkflow,
+        ) -> Result<(), HandoffStoreError> {
+            self.create_workflow(workflow)
         }
     }
 
