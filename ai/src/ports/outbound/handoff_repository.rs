@@ -83,6 +83,23 @@ pub trait SideRunLockRepository {
     ) -> Result<HandoffLease, HandoffStoreError>;
 
     fn release_side_run_lock(&self, handoff_id: &str) -> Result<(), HandoffStoreError>;
+
+    fn load_side_run_lock(
+        &self,
+        handoff_id: &str,
+    ) -> Result<Option<HandoffLease>, HandoffStoreError>;
+
+    /// handoff 単位ロック下で stale side-run lock を解放し、呼び出し側が state を更新する。
+    fn recover_stale_side_agent_run(
+        &self,
+        handoff_id: &str,
+        owner_is_alive: &dyn Fn(u32) -> bool,
+        now_ms: u64,
+        update: &mut dyn FnMut(
+            &mut Handoff,
+            &mut HandoffCheckpoint,
+        ) -> Result<(), HandoffStoreError>,
+    ) -> Result<bool, HandoffStoreError>;
 }
 
 pub trait CheckpointRepository {

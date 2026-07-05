@@ -1,6 +1,9 @@
 //! human shell 起動時の協調 handoff briefing（0055）。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
+
+use crate::human_shell::validate_handoff_id;
 
 /// human shell 起動直後に stderr へ出す briefing。human-shell 以外では `None`。
 pub fn render_handoff_briefing_for_terminal() -> Option<String> {
@@ -11,8 +14,9 @@ pub fn render_handoff_briefing_for_terminal() -> Option<String> {
     if handoff_id.is_empty() {
         return None;
     }
+    validate_handoff_id(&handoff_id).ok()?;
     let root = std::env::var_os("AISH_HANDOFF_STORE_ROOT")?;
-    let handoff = read_handoff_json(&PathBuf::from(root).join(&handoff_id).join("handoff.json"))?;
+    let handoff = read_handoff_json(&PathBuf::from(root).join(&handoff_id))?;
     Some(format_handoff_briefing(&handoff_id, &handoff))
 }
 
@@ -32,10 +36,11 @@ struct HandoffBriefingSource {
     candidates: Vec<String>,
 }
 
-fn read_handoff_json(path: &std::path::Path) -> Option<HandoffBriefingSource> {
+fn read_handoff_json(handoff_dir: &std::path::Path) -> Option<HandoffBriefingSource> {
+    let path = handoff_dir.join("handoff.json");
     let raw = std::fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
-    let mut source = HandoffBriefingSource {
+    let source = HandoffBriefingSource {
         state: value
             .get("state")
             .and_then(|state| state.as_str())
@@ -51,28 +56,8 @@ fn read_handoff_json(path: &std::path::Path) -> Option<HandoffBriefingSource> {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
-        candidates: Vec::new(),
+        candidates: read_candidate_commands(&handoff_dir.join("candidates.jsonl")),
     };
-    if let Some(execs) = value
-        .get("requested_shell_execs")
-        .and_then(|v| v.as_array())
-    {
-        for exec in execs {
-            if let Some(command) = exec.get("command").and_then(|v| v.as_str()) {
-                let args: Vec<&str> = exec
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .map(|items| items.iter().filter_map(|arg| arg.as_str()).collect())
-                    .unwrap_or_default();
-                source.candidates.push(format_shell_command(command, &args));
-            }
-        }
-    }
-    if source.candidates.is_empty() {
-        if let Some(parent) = path.parent() {
-            source.candidates = read_candidate_commands(&parent.join("candidates.jsonl"));
-        }
-    }
     Some(source)
 }
 
@@ -81,23 +66,17 @@ fn read_candidate_commands(path: &std::path::Path) -> Vec<String> {
         Ok(raw) => raw,
         Err(_) => return Vec::new(),
     };
+    let mut seen = HashSet::new();
     raw.lines()
         .filter_map(|line| {
             let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
             value
                 .get("command")
                 .and_then(|command| command.as_str())
+                .filter(|command| seen.insert((*command).to_string()))
                 .map(str::to_string)
         })
         .collect()
-}
-
-fn format_shell_command(command: &str, args: &[&str]) -> String {
-    if args.is_empty() {
-        command.to_string()
-    } else {
-        format!("{command} {}", args.join(" "))
-    }
 }
 
 fn format_handoff_briefing(handoff_id: &str, source: &HandoffBriefingSource) -> String {
@@ -135,6 +114,17 @@ fn format_handoff_briefing(handoff_id: &str, source: &HandoffBriefingSource) -> 
 mod tests {
     use super::*;
 
+    fn write_candidates(path: &std::path::Path, commands: &[&str]) {
+        let mut lines = String::new();
+        for (index, command) in commands.iter().enumerate() {
+            lines.push_str(&format!(
+                r#"{{"id":"c{index}","command":"{command}","source":"PARENT_AGENT","target_handoff_id":"ho-test","created_at_ms":1}}"#
+            ));
+            lines.push('\n');
+        }
+        std::fs::write(path, lines).unwrap();
+    }
+
     #[test]
     fn human_active_briefing_includes_goal_and_candidate() {
         let tmp = tempfile::tempdir().unwrap();
@@ -150,6 +140,7 @@ mod tests {
             }"#,
         )
         .unwrap();
+        write_candidates(&handoff_dir.join("candidates.jsonl"), &["cargo test"]);
         unsafe {
             std::env::set_var("AISH_CONTROL_MODE", "human-shell");
             std::env::set_var("AISH_HANDOFF_ID", "ho-test");
@@ -168,9 +159,96 @@ mod tests {
     }
 
     #[test]
-    fn waiting_state_briefing_mentions_side_agent_resume() {
+    fn briefing_merges_side_agent_candidates_without_duplicates() {
         let tmp = tempfile::tempdir().unwrap();
         let handoff_dir = tmp.path().join("ho-test");
+        std::fs::create_dir_all(&handoff_dir).unwrap();
+        std::fs::write(
+            handoff_dir.join("handoff.json"),
+            r#"{
+                "state":"SIDE_AGENT_WAITING_FOR_HUMAN",
+                "pending_human_request":"Run integration tests",
+                "requested_shell_execs":[{"command":"cargo","args":["test"]}]
+            }"#,
+        )
+        .unwrap();
+        write_candidates(
+            &handoff_dir.join("candidates.jsonl"),
+            &["cargo test", "cargo test -p ai", "cargo test"],
+        );
+        unsafe {
+            std::env::set_var("AISH_CONTROL_MODE", "human-shell");
+            std::env::set_var("AISH_HANDOFF_ID", "ho-test");
+            std::env::set_var("AISH_HANDOFF_STORE_ROOT", tmp.path());
+        }
+        let briefing = render_handoff_briefing_for_terminal().expect("briefing");
+        unsafe {
+            std::env::remove_var("AISH_CONTROL_MODE");
+            std::env::remove_var("AISH_HANDOFF_ID");
+            std::env::remove_var("AISH_HANDOFF_STORE_ROOT");
+        }
+        assert!(briefing.contains("cargo test -p ai"));
+        let candidate_lines: Vec<_> = briefing
+            .split("候補 (Alt+. / Alt+,):")
+            .nth(1)
+            .unwrap_or("")
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("cargo"))
+            .collect();
+        assert_eq!(candidate_lines, vec!["cargo test", "cargo test -p ai"]);
+    }
+
+    #[test]
+    fn briefing_uses_properly_quoted_candidate_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handoff_dir = tmp.path().join("ho-quote");
+        std::fs::create_dir_all(&handoff_dir).unwrap();
+        std::fs::write(
+            handoff_dir.join("handoff.json"),
+            r#"{"state":"HUMAN_ACTIVE"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            handoff_dir.join("candidates.jsonl"),
+            r#"{"id":"c1","command":"printf 'hello world' '$HOME'","source":"PARENT_AGENT","target_handoff_id":"ho-quote","created_at_ms":1}
+"#,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("AISH_CONTROL_MODE", "human-shell");
+            std::env::set_var("AISH_HANDOFF_ID", "ho-quote");
+            std::env::set_var("AISH_HANDOFF_STORE_ROOT", tmp.path());
+        }
+        let briefing = render_handoff_briefing_for_terminal().expect("briefing");
+        unsafe {
+            std::env::remove_var("AISH_CONTROL_MODE");
+            std::env::remove_var("AISH_HANDOFF_ID");
+            std::env::remove_var("AISH_HANDOFF_STORE_ROOT");
+        }
+        assert!(briefing.contains("printf 'hello world' '$HOME'"));
+        assert!(!briefing.contains("printf hello world"));
+    }
+
+    #[test]
+    fn invalid_handoff_id_skips_briefing() {
+        unsafe {
+            std::env::set_var("AISH_CONTROL_MODE", "human-shell");
+            std::env::set_var("AISH_HANDOFF_ID", "../escape");
+            std::env::set_var("AISH_HANDOFF_STORE_ROOT", "/tmp/aish-briefing-invalid");
+        }
+        assert!(render_handoff_briefing_for_terminal().is_none());
+        unsafe {
+            std::env::remove_var("AISH_CONTROL_MODE");
+            std::env::remove_var("AISH_HANDOFF_ID");
+            std::env::remove_var("AISH_HANDOFF_STORE_ROOT");
+        }
+    }
+
+    #[test]
+    fn waiting_state_briefing_mentions_side_agent_resume() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handoff_dir = tmp.path().join("ho-waiting");
         std::fs::create_dir_all(&handoff_dir).unwrap();
         std::fs::write(
             handoff_dir.join("handoff.json"),
@@ -179,7 +257,7 @@ mod tests {
         .unwrap();
         unsafe {
             std::env::set_var("AISH_CONTROL_MODE", "human-shell");
-            std::env::set_var("AISH_HANDOFF_ID", "ho-test");
+            std::env::set_var("AISH_HANDOFF_ID", "ho-waiting");
             std::env::set_var("AISH_HANDOFF_STORE_ROOT", tmp.path());
         }
         let briefing = render_handoff_briefing_for_terminal().expect("briefing");

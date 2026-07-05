@@ -410,6 +410,52 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
             Ok(())
         })
     }
+
+    fn load_side_run_lock(
+        &self,
+        handoff_id: &str,
+    ) -> Result<Option<HandoffLease>, HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let path = self.side_run_lock_path(handoff_id)?;
+            if !path.is_file() {
+                return Ok(None);
+            }
+            Ok(Some(self.read_json(&path)?))
+        })
+    }
+
+    fn recover_stale_side_agent_run(
+        &self,
+        handoff_id: &str,
+        owner_is_alive: &dyn Fn(u32) -> bool,
+        now_ms: u64,
+        update: &mut dyn FnMut(
+            &mut Handoff,
+            &mut HandoffCheckpoint,
+        ) -> Result<(), HandoffStoreError>,
+    ) -> Result<bool, HandoffStoreError> {
+        self.with_handoff_lock(handoff_id, || {
+            let mut handoff: Handoff = self.read_json(&self.handoff_path(handoff_id)?)?;
+            if handoff.state != HandoffState::SideAgentRunning {
+                return Ok(false);
+            }
+            let side_path = self.side_run_lock_path(handoff_id)?;
+            if side_path.is_file() {
+                let lock: HandoffLease = self.read_json(&side_path)?;
+                if owner_is_alive(lock.owner_process_id) {
+                    return Ok(false);
+                }
+                fs::remove_file(&side_path).map_err(write_err)?;
+            }
+            let mut checkpoint: HandoffCheckpoint =
+                self.read_json(&self.checkpoint_path(handoff_id)?)?;
+            update(&mut handoff, &mut checkpoint)?;
+            handoff.updated_at_ms = now_ms;
+            self.write_json_atomic(&self.checkpoint_path(handoff_id)?, &checkpoint)?;
+            self.write_json_atomic(&self.handoff_path(handoff_id)?, &handoff)?;
+            Ok(true)
+        })
+    }
 }
 
 impl CheckpointRepository for FilesystemHandoffStore {

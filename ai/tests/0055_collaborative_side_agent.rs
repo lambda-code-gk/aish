@@ -15,7 +15,7 @@ use ai::domain::{
 use ai::ports::outbound::{
     CheckpointRepository, EnvironmentObservation, EnvironmentObserver, HandoffRepository,
     HandoffRuntime, HandoffShellSessionStore, LeaseAcquireRequest, LeaseRepository,
-    ShellSessionIssueRequest,
+    ShellSessionIssueRequest, SideRunLockRepository,
 };
 use tempfile::TempDir;
 
@@ -110,6 +110,10 @@ impl Fixture {
     }
 }
 
+fn alive_test_process_id() -> u32 {
+    std::process::id()
+}
+
 fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &str, uid: u32) {
     let requested = RequestedShellExec {
         command: "cargo".into(),
@@ -121,6 +125,7 @@ fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &s
         id: "goal-child".into(),
         handoff_id: "handoff-test".into(),
         parent_goal_id: Some("goal-parent".into()),
+        memory_entry_id: None,
         close_reason: None,
         achievement: ChildGoalAchievement::Unknown,
     };
@@ -203,8 +208,8 @@ fn persist_fixture(store: &FilesystemHandoffStore, state: HandoffState, host: &s
             .try_acquire_lease(
                 "handoff-test",
                 &LeaseAcquireRequest {
-                    owner_client_id: "ai-parent-42".into(),
-                    owner_process_id: 42,
+                    owner_client_id: format!("ai-parent-{}", alive_test_process_id()),
+                    owner_process_id: alive_test_process_id(),
                     owner_tty: None,
                     owner_host: host.into(),
                     owner_uid: uid,
@@ -500,18 +505,63 @@ fn side_run_does_not_replace_or_release_parent_lifetime_lease() {
         .unwrap();
 
     let lease = fixture.store.load_lease("handoff-test").unwrap().unwrap();
-    assert_eq!(lease.owner_client_id, "ai-parent-42");
+    assert!(lease.owner_client_id.starts_with("ai-parent-"));
 }
 
 #[test]
-fn side_agent_running_rejects_new_run() {
+fn side_agent_running_rejects_new_run_when_side_lock_alive() {
     let fixture = Fixture::new(HandoffState::SideAgentRunning);
+    fixture
+        .store
+        .try_acquire_side_run_lock(
+            "handoff-test",
+            &LeaseAcquireRequest {
+                owner_client_id: "side-agent-live".into(),
+                owner_process_id: 123,
+                owner_tty: None,
+                owner_host: "test-host".into(),
+                owner_uid: 1000,
+                now_ms: 1,
+                lease_timeout_ms: 120_000,
+            },
+        )
+        .unwrap();
     assert!(matches!(
         fixture
             .service()
             .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
         Err(SideAgentError::AlreadyRunning)
     ));
+}
+
+#[test]
+fn side_agent_crash_recovers_to_human_active() {
+    let fixture = Fixture::new(HandoffState::SideAgentRunning);
+    fixture
+        .store
+        .try_acquire_side_run_lock(
+            "handoff-test",
+            &LeaseAcquireRequest {
+                owner_client_id: "side-agent-dead".into(),
+                owner_process_id: 0,
+                owner_tty: None,
+                owner_host: "test-host".into(),
+                owner_uid: 1000,
+                now_ms: 1,
+                lease_timeout_ms: 120_000,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .service()
+            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        Ok(SideAgentDispatch::Run(_))
+    ));
+    assert_eq!(
+        fixture.store.load_handoff("handoff-test").unwrap().state,
+        HandoffState::SideAgentRunning
+    );
 }
 
 #[test]

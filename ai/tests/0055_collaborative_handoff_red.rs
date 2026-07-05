@@ -169,6 +169,7 @@ fn sample_checkpoint(handoff_id: &str) -> HandoffCheckpoint {
             id: "goal-child".to_string(),
             handoff_id: handoff_id.to_string(),
             parent_goal_id: Some("goal-parent".to_string()),
+            memory_entry_id: None,
             close_reason: None,
             achievement: ChildGoalAchievement::Unknown,
         },
@@ -215,6 +216,7 @@ fn child_goal_records_control_returned_not_achievement() {
         id: "g1".to_string(),
         handoff_id: "ho-1".to_string(),
         parent_goal_id: None,
+        memory_entry_id: None,
         close_reason: None,
         achievement: ChildGoalAchievement::Unknown,
     };

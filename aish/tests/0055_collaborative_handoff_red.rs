@@ -247,6 +247,12 @@ fn human_shell_startup_prints_handoff_briefing() {
         }"#,
     )
     .unwrap();
+    std::fs::write(
+        handoff_dir.join("candidates.jsonl"),
+        r#"{"id":"c1","command":"cargo test","source":"PARENT_AGENT","target_handoff_id":"ho-test","created_at_ms":1}
+"#,
+    )
+    .unwrap();
     let result_file = home.path().join("result.json");
     let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
         .args(["human-shell", "--result-file"])
@@ -346,9 +352,16 @@ fn heartbeat_maintains_lease_during_long_command() {
         .unwrap()
         .as_millis() as u64
         + 120_000;
+    let token = "opaque-test-token";
+    let hash = aish::collaborative_handoff_token::hash_handoff_token(token);
+    std::fs::write(
+        handoff_dir.join("shell_sessions.jsonl"),
+        format!(r#"{{"generation":1,"token_hash":"{hash}","created_at_ms":1}}"#),
+    )
+    .unwrap();
     let lease = serde_json::json!({
         "handoff_id": "handoff-test",
-        "owner_client_id": "owner",
+        "owner_client_id": "ai-parent-1",
         "owner_process_id": 1,
         "owner_tty": null,
         "owner_host": "host",
@@ -367,7 +380,7 @@ fn heartbeat_maintains_lease_during_long_command() {
         .env("SHELL", "/bin/bash")
         .env("AISH_CONTROL_MODE", "human-shell")
         .env("AISH_HANDOFF_ID", "handoff-test")
-        .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
+        .env("AISH_HANDOFF_TOKEN", token)
         .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
         .env("AISH_HANDOFF_STORE_ROOT", &store_root)
         .env("AISH_HANDOFF_HEARTBEAT_INTERVAL_MS", "200")

@@ -154,6 +154,9 @@ pub struct ChildGoalMeta {
     pub handoff_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_goal_id: Option<String>,
+    /// Contextual Memory の goal entry ID（作成時に設定）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_entry_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_reason: Option<ChildGoalCloseReason>,
     pub achievement: ChildGoalAchievement,
@@ -457,6 +460,7 @@ pub fn checkpoint_serialized_field_names() -> HashSet<String> {
             id: String::new(),
             handoff_id: String::new(),
             parent_goal_id: None,
+            memory_entry_id: None,
             close_reason: None,
             achievement: ChildGoalAchievement::Unknown,
         },

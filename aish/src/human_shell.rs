@@ -68,6 +68,8 @@ pub fn validate_handoff_environment() -> anyhow::Result<()> {
     if std::env::var("AISH_CONTROL_MODE").as_deref() != Ok("human-shell") {
         anyhow::bail!("AISH_CONTROL_MODE must be human-shell");
     }
+    let handoff_id = std::env::var("AISH_HANDOFF_ID")?;
+    validate_handoff_id(&handoff_id)?;
     Ok(())
 }
 
@@ -199,12 +201,27 @@ fn heartbeat_lease_file(path: &Path, timeout_ms: u64) -> anyhow::Result<()> {
         if lease.handoff_id != expected_handoff_id {
             anyhow::bail!("lease handoff ID does not match its directory");
         }
+        let handoff_dir = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("lease path has no parent"))?;
+        crate::collaborative_handoff_token::validate_handoff_shell_credentials(handoff_dir)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
         if lease.lease_expires_at_ms <= now_ms {
             anyhow::bail!("handoff lease already expired");
+        }
+        let current_pid = std::process::id();
+        if lease.owner_process_id != current_pid {
+            if !crate::collaborative_handoff_token::may_transfer_lease_to_human_shell(
+                &lease.owner_client_id,
+                lease.owner_process_id,
+            ) {
+                anyhow::bail!("handoff lease is held by another live owner");
+            }
+            lease.owner_process_id = current_pid;
+            lease.owner_client_id = format!("aish-human-shell-{current_pid}");
         }
         lease.last_heartbeat_at_ms = now_ms;
         lease.lease_expires_at_ms = now_ms.saturating_add(timeout_ms);
@@ -226,7 +243,7 @@ fn heartbeat_lease_file(path: &Path, timeout_ms: u64) -> anyhow::Result<()> {
     result
 }
 
-fn validate_handoff_id(id: &str) -> anyhow::Result<()> {
+pub fn validate_handoff_id(id: &str) -> anyhow::Result<()> {
     if id.is_empty()
         || id.len() > 128
         || id.contains('/')
@@ -267,6 +284,9 @@ fn write_result(path: &Path, result: &HumanShellResult) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn lease(expires_at: u64) -> LeaseFile {
         LeaseFile {
@@ -282,32 +302,93 @@ mod tests {
         }
     }
 
+    fn write_shell_session_credentials(handoff_dir: &std::path::Path) {
+        let token = "test-token";
+        let hash = crate::collaborative_handoff_token::hash_handoff_token(token);
+        std::fs::write(
+            handoff_dir.join("shell_sessions.jsonl"),
+            format!(r#"{{"generation":1,"token_hash":"{hash}","created_at_ms":1}}"#),
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("AISH_HANDOFF_TOKEN", token);
+            std::env::set_var("AISH_HANDOFF_CONTEXT_VERSION", "1");
+        }
+    }
+
     #[test]
-    fn supervisor_heartbeat_extends_existing_lease_without_changing_owner() {
+    fn supervisor_heartbeat_transfers_lease_ownership_to_human_shell() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let handoff_dir = temp.path().join("handoff-test");
         std::fs::create_dir(&handoff_dir).unwrap();
+        write_shell_session_credentials(&handoff_dir);
         let path = handoff_dir.join("lease.json");
         let future = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64
             + 60_000;
-        std::fs::write(&path, serde_json::to_vec(&lease(future)).unwrap()).unwrap();
+        let mut lease = lease(future);
+        lease.owner_client_id = "ai-parent-999".into();
+        lease.owner_process_id = 1;
+        std::fs::write(&path, serde_json::to_vec(&lease).unwrap()).unwrap();
         heartbeat_lease_file(&path, 120_000).unwrap();
         let updated: LeaseFile = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(updated.owner_client_id, "owner");
+        let current_pid = std::process::id();
+        assert_eq!(updated.owner_process_id, current_pid);
+        assert_eq!(
+            updated.owner_client_id,
+            format!("aish-human-shell-{current_pid}")
+        );
         assert!(updated.last_heartbeat_at_ms > 1);
         assert!(updated.lease_expires_at_ms > future);
+        unsafe {
+            std::env::remove_var("AISH_HANDOFF_TOKEN");
+            std::env::remove_var("AISH_HANDOFF_CONTEXT_VERSION");
+        }
+    }
+
+    #[test]
+    fn supervisor_rejects_lease_takeover_without_valid_token() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let handoff_dir = temp.path().join("handoff-test");
+        std::fs::create_dir(&handoff_dir).unwrap();
+        write_shell_session_credentials(&handoff_dir);
+        unsafe {
+            std::env::set_var("AISH_HANDOFF_TOKEN", "wrong-token");
+        }
+        let path = handoff_dir.join("lease.json");
+        let future = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 60_000;
+        let mut lease = lease(future);
+        lease.owner_client_id = "ai-parent-999".into();
+        lease.owner_process_id = 1;
+        std::fs::write(&path, serde_json::to_vec(&lease).unwrap()).unwrap();
+        assert!(heartbeat_lease_file(&path, 120_000).is_err());
+        unsafe {
+            std::env::remove_var("AISH_HANDOFF_TOKEN");
+            std::env::remove_var("AISH_HANDOFF_CONTEXT_VERSION");
+        }
     }
 
     #[test]
     fn supervisor_does_not_revive_expired_lease() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let handoff_dir = temp.path().join("handoff-test");
         std::fs::create_dir(&handoff_dir).unwrap();
+        write_shell_session_credentials(&handoff_dir);
         let path = handoff_dir.join("lease.json");
         std::fs::write(&path, serde_json::to_vec(&lease(1)).unwrap()).unwrap();
         assert!(heartbeat_lease_file(&path, 120_000).is_err());
+        unsafe {
+            std::env::remove_var("AISH_HANDOFF_TOKEN");
+            std::env::remove_var("AISH_HANDOFF_CONTEXT_VERSION");
+        }
     }
 }

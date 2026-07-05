@@ -219,7 +219,17 @@ where
                     handoff_id: handoff.id,
                 });
             }
-            HandoffState::SideAgentRunning => return Err(SideAgentError::AlreadyRunning),
+            HandoffState::SideAgentRunning => {
+                if !try_recover_stale_side_agent(
+                    self.store,
+                    self.runtime,
+                    &env.handoff_id,
+                    &mut handoff,
+                    &mut checkpoint,
+                )? {
+                    return Err(SideAgentError::AlreadyRunning);
+                }
+            }
             HandoffState::Orphaned => return Err(SideAgentError::Orphaned),
             HandoffState::Returned | HandoffState::Completed | HandoffState::Cancelled => {
                 return Err(SideAgentError::Inactive);
@@ -455,6 +465,47 @@ fn handoff_state_label(state: HandoffState) -> &'static str {
         HandoffState::Completed => "COMPLETED",
         HandoffState::Cancelled => "CANCELLED",
     }
+}
+
+fn try_recover_stale_side_agent<S, R>(
+    store: &S,
+    runtime: &R,
+    handoff_id: &str,
+    handoff: &mut Handoff,
+    checkpoint: &mut crate::domain::HandoffCheckpoint,
+) -> Result<bool, SideAgentError>
+where
+    S: SideRunLockRepository + CheckpointRepository + HandoffRepository,
+    R: HandoffRuntime,
+{
+    if handoff.state != HandoffState::SideAgentRunning {
+        return Ok(false);
+    }
+    let mut update = |handoff: &mut Handoff, checkpoint: &mut crate::domain::HandoffCheckpoint| {
+        handoff.state =
+            crate::domain::try_transition(handoff.state, HandoffEvent::SideAgentReturned)
+                .map_err(|error| HandoffStoreError::Write(error.to_string()))?;
+        handoff.conversation_summary = update_summary(
+            &handoff.conversation_summary,
+            "side agent process lost; recovered to human control",
+        );
+        checkpoint.control_state = handoff.state;
+        checkpoint.conversation_summary = handoff.conversation_summary.clone();
+        Ok(())
+    };
+    let recovered = store
+        .recover_stale_side_agent_run(
+            handoff_id,
+            &|pid| runtime.process_is_alive(pid),
+            runtime.now_ms(),
+            &mut update,
+        )
+        .map_err(SideAgentError::Store)?;
+    if recovered {
+        *handoff = store.load_handoff(handoff_id)?;
+        *checkpoint = store.load_checkpoint(handoff_id)?;
+    }
+    Ok(recovered)
 }
 
 fn validate_identity(metadata: &str, host: &str, uid: u32) -> Result<(), SideAgentError> {

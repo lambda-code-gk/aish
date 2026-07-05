@@ -1,8 +1,8 @@
 //! Contextual Memory へ child goal を書き込む adapter。
 
 use aibe_protocol::{
-    ClientResponse, MemoryContext, MemoryOperationAdd, MemoryOperationDto, MemoryScopeDto,
-    MemoryStatusDto,
+    ClientResponse, MemoryContext, MemoryOperationAdd, MemoryOperationArchive, MemoryOperationDto,
+    MemoryScopeDto, MemoryStatusDto,
 };
 
 use crate::domain::{ChildGoalCloseReason, ChildGoalMeta};
@@ -36,15 +36,20 @@ impl<C: MemoryClient> AibeCollaborativeChildGoalService<C> {
 impl<C: MemoryClient> CollaborativeChildGoalService for AibeCollaborativeChildGoalService<C> {
     fn create_child_goal(
         &self,
-        meta: &ChildGoalMeta,
+        meta: &mut ChildGoalMeta,
         parent_goal: &str,
         handoff_reason: &str,
         requested_command: &str,
         human_request: &str,
     ) -> Result<(), CollaborativeChildGoalError> {
+        let parent_goal_ref = meta
+            .parent_goal_id
+            .as_deref()
+            .map(|id| format!("parent goal entry: {id}"))
+            .unwrap_or_else(|| format!("parent goal: {parent_goal}"));
         let text = format!(
             "[collaborative child goal {id}]\n\
-Parent goal: {parent_goal}\n\
+{parent_goal_ref}\n\
 Handoff reason: {handoff_reason}\n\
 Pending command: {requested_command}\n\
 Human request: {human_request}\n\
@@ -58,8 +63,8 @@ Handoff ID: {handoff_id}",
                 &self.session_id,
                 &self.memory_context(),
                 MemoryOperationDto::Add(MemoryOperationAdd {
-                    kind: "now".into(),
-                    scope: Some(MemoryScopeDto::Session),
+                    kind: "goal".into(),
+                    scope: Some(MemoryScopeDto::Project),
                     inject: None,
                     status: Some(MemoryStatusDto::Active),
                     text,
@@ -68,7 +73,10 @@ Handoff ID: {handoff_id}",
             )
             .map_err(|e| CollaborativeChildGoalError::Create(e.to_string()))?;
         match response {
-            ClientResponse::MemoryApplyResult { .. } => Ok(()),
+            ClientResponse::MemoryApplyResult { entries, .. } => {
+                meta.memory_entry_id = entries.first().map(|entry| entry.id.clone());
+                Ok(())
+            }
             ClientResponse::Error { message, .. } => {
                 Err(CollaborativeChildGoalError::Create(message))
             }
@@ -83,31 +91,25 @@ Handoff ID: {handoff_id}",
         meta: &ChildGoalMeta,
         reason: ChildGoalCloseReason,
     ) -> Result<(), CollaborativeChildGoalError> {
-        let text = format!(
-            "[collaborative child goal {id} closed: {reason:?}]\nHandoff ID: {handoff_id}",
-            id = meta.id,
-            handoff_id = meta.handoff_id,
-        );
+        let Some(entry_id) = meta.memory_entry_id.as_deref() else {
+            return Ok(());
+        };
         let response = self
             .client
             .memory_apply(
                 &self.session_id,
                 &self.memory_context(),
-                MemoryOperationDto::Add(MemoryOperationAdd {
-                    kind: "decision".into(),
-                    scope: Some(MemoryScopeDto::Project),
-                    inject: None,
-                    status: Some(MemoryStatusDto::Active),
-                    text,
-                    make_active: None,
+                MemoryOperationDto::Archive(MemoryOperationArchive {
+                    id: entry_id.to_string(),
+                    expected_version: None,
                 }),
             )
             .map_err(|e| CollaborativeChildGoalError::Close(e.to_string()))?;
         match response {
             ClientResponse::MemoryApplyResult { .. } => Ok(()),
-            ClientResponse::Error { message, .. } => {
-                Err(CollaborativeChildGoalError::Close(message))
-            }
+            ClientResponse::Error { message, .. } => Err(CollaborativeChildGoalError::Close(
+                format!("{message} (reason: {reason:?})"),
+            )),
             _ => Err(CollaborativeChildGoalError::Close(
                 "unexpected memory response".into(),
             )),

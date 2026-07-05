@@ -2597,7 +2597,7 @@ spec = "0055"
 phase = 3
 id = "side_agent_running_blocks_new_run"
 description = "RUNNING 中は新 run 拒否"
-test = "side_agent_running_rejects_new_run"
+test = "side_agent_running_rejects_new_run_when_side_lock_alive"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
 pending = false
 

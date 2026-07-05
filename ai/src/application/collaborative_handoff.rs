@@ -8,16 +8,16 @@ use crate::domain::{
     try_transition, ChildGoalAchievement, ChildGoalCloseReason, ChildGoalMeta,
     CollaborativeAgentRole, CollaborativeAuditKind, CollaborativePolicy, CommandCandidate,
     CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent, HandoffState,
-    RecoverableToolExecution, RecoverableToolStatus, RequestedShellExec, SuggestedCommandCache,
-    SuggestedCommandCandidate, SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
+    RequestedShellExec, SuggestedCommandCache, SuggestedCommandCandidate, SuggestedCommandQueue,
+    HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
-    CheckpointRepository, CollaborativeChildGoalService, CommandCandidateStore,
-    EnvironmentObserver, HandoffAuditRepository, HandoffCandidatePublisher, HandoffRepository,
-    HandoffRuntime, HandoffShellSessionStore, HandoffStoreError, HumanShellLaunchError,
-    HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn, LeaseAcquireRequest,
-    LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest, SuggestedCommandRecallStore,
-    SuggestedCommandRecallStoreError,
+    CheckpointRepository, CollaborativeChildGoalError, CollaborativeChildGoalService,
+    CommandCandidateStore, EnvironmentObserver, HandoffAuditRepository, HandoffCandidatePublisher,
+    HandoffRepository, HandoffRuntime, HandoffShellSessionStore, HandoffStoreError,
+    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+    LeaseAcquireRequest, LeaseRepository, ParentToolBarrier, ShellSessionIssueRequest,
+    SuggestedCommandRecallStore, SuggestedCommandRecallStoreError,
 };
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
@@ -84,6 +84,8 @@ pub enum CollaborativeHandoffError {
     Transition(String),
     #[error("failed to generate secure handoff token: {0}")]
     Token(String),
+    #[error(transparent)]
+    ChildGoal(#[from] CollaborativeChildGoalError),
 }
 
 pub trait CollaborativeHandoffStore:
@@ -190,6 +192,7 @@ where
             id: child_goal_id.clone(),
             handoff_id: handoff_id.clone(),
             parent_goal_id: request.parent_goal_id.clone(),
+            memory_entry_id: None,
             close_reason: None,
             achievement: ChildGoalAchievement::Unknown,
         };
@@ -276,21 +279,32 @@ where
             shell_log_start: request.shell_log_start,
             control_state: HandoffState::Creating,
             provider_metadata: None,
-            tool_executions: vec![RecoverableToolExecution {
-                tool_call_id: request.tool_call_id,
-                tool_name: "shell_exec".into(),
-                status: RecoverableToolStatus::Running,
-            }],
+            tool_executions: vec![],
         };
         // Recovery checkpoint is durable before the PTY process is spawned.
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-        let _ = self.child_goal.create_child_goal(
-            &checkpoint.child_goal,
+        let mut child_goal_meta = checkpoint.child_goal.clone();
+        if let Err(error) = self.child_goal.create_child_goal(
+            &mut child_goal_meta,
             &checkpoint.parent_goal,
             &request.parent_request_summary,
             &candidate_text,
             &human_request,
-        );
+        ) {
+            let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
+            let mut metadata =
+                serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(object) = metadata.as_object_mut() {
+                object.insert("child_goal_create_error".into(), error.to_string().into());
+            }
+            checkpoint.environment_metadata = metadata.to_string();
+            self.store.save_checkpoint(&handoff_id, &checkpoint)?;
+        } else if child_goal_meta.memory_entry_id.is_some() {
+            let mut saved = self.store.load_checkpoint(&handoff_id)?;
+            saved.child_goal = child_goal_meta;
+            self.store.save_checkpoint(&handoff_id, &saved)?;
+        }
         let token = self
             .runtime
             .secure_token()
@@ -381,20 +395,16 @@ where
         handoff.final_shell_cwd = Some(returned.final_cwd.display().to_string());
         let after = self
             .observer
-            .observe(&returned.final_cwd, request.shell_log_start);
+            .observe(&returned.final_cwd, returned.shell_log_start);
         let after_ref = serde_json::to_string(&after).unwrap_or_else(|_| "{}".into());
         handoff.after_observation_ref = Some(after_ref.clone());
-        handoff.shell_log_end = after.shell_log_end;
+        handoff.shell_log_end = Some(returned.shell_log_end);
         handoff.updated_at_ms = self.runtime.now_ms();
         let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
         checkpoint.environment_metadata =
             merge_shell_replay_metadata(&checkpoint.environment_metadata, &returned);
         mark_running_tools_unknown(&mut checkpoint);
         close_child_goal_on_control_returned(&mut checkpoint.child_goal);
-        let _ = self.child_goal.close_child_goal(
-            &checkpoint.child_goal,
-            ChildGoalCloseReason::ControlReturned,
-        );
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
@@ -403,6 +413,14 @@ where
             &handoff_id,
             CollaborativeAuditKind::HumanShellReturned,
         );
+        if let Err(error) = self.child_goal.close_child_goal(
+            &checkpoint.child_goal,
+            ChildGoalCloseReason::ControlReturned,
+        ) {
+            handoff.resume_error = Some(format!("child_goal_close: {error}"));
+            handoff.updated_at_ms = self.runtime.now_ms();
+            self.store.save_handoff(&handoff)?;
+        }
         Ok(HumanHandoffResult {
             handoff_id,
             execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
@@ -412,8 +430,8 @@ where
             requested_command_completion: RequestedCommandCompletion::Unknown,
             final_shell_cwd: handoff.final_shell_cwd,
             shell_log_range: Some(ShellLogRange {
-                start: request.shell_log_start,
-                end: handoff.shell_log_end,
+                start: returned.shell_log_start,
+                end: Some(returned.shell_log_end),
             }),
             child_goal_summary: Some(
                 "Human control returned; child-goal achievement remains unknown.".into(),

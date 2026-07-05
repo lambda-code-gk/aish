@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::human_shell::validate_handoff_id;
+
 const DEFAULT_TEMPLATE: &str = "[collab:{state}] ";
 const WAITING_TEMPLATE: &str = "[collab:waiting — run 'ai' to resume] ";
 
@@ -11,7 +13,7 @@ pub fn render_collaborative_prompt_prefix() -> String {
         return String::new();
     }
     let handoff_id = std::env::var("AISH_HANDOFF_ID").unwrap_or_default();
-    if handoff_id.is_empty() {
+    if handoff_id.is_empty() || validate_handoff_id(&handoff_id).is_err() {
         return String::new();
     }
     let state = read_handoff_state(&handoff_id).unwrap_or_else(|| "human-active".into());

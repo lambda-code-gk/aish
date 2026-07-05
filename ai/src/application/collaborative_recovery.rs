@@ -487,6 +487,7 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReconcileStaleHandoffs<'a, S, R> {
                     | HandoffState::HumanActive
                     | HandoffState::SideAgentRunning
                     | HandoffState::SideAgentWaitingForHuman
+                    | HandoffState::ResumingParent
             ) {
                 continue;
             }
@@ -494,6 +495,19 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReconcileStaleHandoffs<'a, S, R> {
                 continue;
             };
             if self.runtime.process_is_alive(lease.owner_process_id) {
+                continue;
+            }
+            if handoff.state == HandoffState::ResumingParent {
+                let mut current = self.store.load_handoff(&handoff.id)?;
+                current.state = transition(current.state, HandoffEvent::ParentResumeFailed)?;
+                current.resume_error = Some("lease_owner_process_lost".into());
+                current.updated_at_ms = self.runtime.now_ms();
+                let mut checkpoint = self.store.load_checkpoint(&handoff.id)?;
+                checkpoint.control_state = HandoffState::Returned;
+                self.store.save_checkpoint(&handoff.id, &checkpoint)?;
+                self.store.save_handoff(&current)?;
+                self.store.release_lease(&handoff.id)?;
+                reconciled.push(handoff.id);
                 continue;
             }
             MarkOrphaned::new(self.store, self.runtime)

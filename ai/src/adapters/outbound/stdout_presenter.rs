@@ -252,7 +252,8 @@ impl Presenter for StdoutPresenter {
             )
         };
         let mut display_streamed = streamed;
-        if self.side_agent_display && out.human_action_formatted {
+        if self.side_agent_display {
+            // side agent 表示では chunk を buffer へ溜めるため、最終応答を必ず描画する。
             display_streamed = false;
         }
         if let Some(s) = out.stdout.as_deref() {
@@ -315,13 +316,11 @@ fn effective_shell_exec_render(
     }
 }
 
-fn merge_assistant_content(message: &str, side_agent_buffer: &str) -> String {
-    if side_agent_buffer.is_empty() {
+fn resolve_assistant_content(message: &str, side_agent_buffer: &str) -> String {
+    if !message.is_empty() {
         message.to_string()
-    } else if message.is_empty() {
-        side_agent_buffer.to_string()
     } else {
-        format!("{side_agent_buffer}{message}")
+        side_agent_buffer.to_string()
     }
 }
 
@@ -378,7 +377,7 @@ pub fn render_response(
                     }
                 }
             }
-            let combined = merge_assistant_content(&assistant_message.content, side_agent_buffer);
+            let combined = resolve_assistant_content(&assistant_message.content, side_agent_buffer);
             let mut output = presenter_output_from_assistant_content(&combined, stderr);
             if output.human_action_formatted {
                 return output;
@@ -462,7 +461,7 @@ pub fn render_response_structured(
         assistant_message, ..
     } = response
     {
-        let combined = merge_assistant_content(&assistant_message.content, side_agent_buffer);
+        let combined = resolve_assistant_content(&assistant_message.content, side_agent_buffer);
         if let Some((formatted, _)) =
             crate::application::presenter_output_for_assistant_content(&combined)
         {
@@ -1203,6 +1202,88 @@ mod tests {
         assert!(line.starts_with("ai: tool read_file ok"));
         assert!(line.contains("[truncated]"));
         assert!(line.len() < huge_len);
+    }
+
+    #[test]
+    fn side_agent_streaming_shows_normal_answer_once() {
+        let presenter = StdoutPresenter::new(None).with_side_agent_display(true);
+        presenter.show_stream_chunk("partial should not appear");
+        let response = ClientResponse::AgentTurnResult {
+            id: "id".into(),
+            status: AgentTurnStatus::Ok,
+            assistant_message: ProtocolMessageOut {
+                role: "assistant".into(),
+                content: "The error is caused by a missing dependency.".into(),
+            },
+            tool_calls: vec![],
+        };
+        let out = render_response(
+            &response,
+            false,
+            ShellExecRenderOptions::default(),
+            "partial should not appear",
+        );
+        assert!(!out.human_action_formatted);
+        assert_eq!(
+            out.stdout.as_deref(),
+            Some("The error is caused by a missing dependency.")
+        );
+        // final message が空でないとき buffer は使わない
+        let out_with_dup = render_response(
+            &response,
+            false,
+            ShellExecRenderOptions::default(),
+            "partial should not appear",
+        );
+        assert_eq!(out_with_dup.stdout, out.stdout);
+    }
+
+    #[test]
+    fn side_agent_streaming_uses_final_message_over_buffer_for_human_action() {
+        let json = r#"{"request_human_action":{"instruction":"Run tests","reason":"Need TTY","command_candidates":["cargo test"],"expected_completion":"tests pass"}}"#;
+        let presenter = StdoutPresenter::new(None).with_side_agent_display(true);
+        for chunk in ["{", r#""request_human_action""#, ":{", "}", "}"] {
+            presenter.show_stream_chunk(chunk);
+        }
+        let response = ClientResponse::AgentTurnResult {
+            id: "id".into(),
+            status: AgentTurnStatus::Ok,
+            assistant_message: ProtocolMessageOut {
+                role: "assistant".into(),
+                content: json.into(),
+            },
+            tool_calls: vec![],
+        };
+        let out = render_response(&response, false, ShellExecRenderOptions::default(), json);
+        assert!(out.human_action_formatted);
+        assert!(out.stdout.is_none());
+        assert_eq!(out.stderr.len(), 1);
+        let formatted = &out.stderr[0];
+        assert!(formatted.contains("side agent があなたの操作を待っています"));
+        assert!(formatted.contains("cargo test"));
+        assert!(!formatted.contains("request_human_action"));
+        // 二重 JSON 連結が起きていないこと
+        assert!(!formatted.contains("}{"));
+    }
+
+    #[test]
+    fn side_agent_buffer_used_when_final_message_empty() {
+        let buffered = "streaming-only answer";
+        let out = render_response(
+            &ClientResponse::AgentTurnResult {
+                id: "id".into(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: String::new(),
+                },
+                tool_calls: vec![],
+            },
+            false,
+            ShellExecRenderOptions::default(),
+            buffered,
+        );
+        assert_eq!(out.stdout.as_deref(), Some(buffered));
     }
 
     #[test]

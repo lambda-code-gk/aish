@@ -13,7 +13,7 @@ pub enum CollaborativeChildGoalError {
 pub trait CollaborativeChildGoalService: Send + Sync {
     fn create_child_goal(
         &self,
-        meta: &ChildGoalMeta,
+        meta: &mut ChildGoalMeta,
         parent_goal: &str,
         handoff_reason: &str,
         requested_command: &str,
@@ -33,7 +33,7 @@ pub struct NoopCollaborativeChildGoalService;
 impl CollaborativeChildGoalService for NoopCollaborativeChildGoalService {
     fn create_child_goal(
         &self,
-        _meta: &ChildGoalMeta,
+        _meta: &mut ChildGoalMeta,
         _parent_goal: &str,
         _handoff_reason: &str,
         _requested_command: &str,

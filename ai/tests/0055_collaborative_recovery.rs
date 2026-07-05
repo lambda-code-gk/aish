@@ -189,6 +189,7 @@ fn save_handoff(store: &FilesystemHandoffStore, id: &str, state: HandoffState, c
         id: format!("child-{id}"),
         handoff_id: id.into(),
         parent_goal_id: Some("parent-goal".into()),
+        memory_entry_id: None,
         close_reason: None,
         achievement: ChildGoalAchievement::Unknown,
     };
@@ -597,6 +598,28 @@ fn ctrl_d_during_side_run_returns_to_parent() {
     assert!(has_unknown_tools(
         &fixture.store.load_checkpoint("ctrl-d").unwrap()
     ));
+}
+
+#[test]
+fn resuming_parent_owner_loss_returns_to_returned() {
+    let fixture = Fixture::new("resume-crash", HandoffState::ResumingParent);
+    fixture.lease("resume-crash", 1, 120_000);
+    let reconciled = ReconcileStaleHandoffs::new(
+        &fixture.store,
+        &Runtime {
+            now: 20,
+            owner_alive: false,
+        },
+    )
+    .execute()
+    .unwrap();
+    assert_eq!(reconciled, vec!["resume-crash"]);
+    let handoff = fixture.store.load_handoff("resume-crash").unwrap();
+    assert_eq!(handoff.state, HandoffState::Returned);
+    assert_eq!(
+        handoff.resume_error.as_deref(),
+        Some("lease_owner_process_lost")
+    );
 }
 
 #[test]
