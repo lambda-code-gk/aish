@@ -322,6 +322,19 @@ where
                 }
                 checkpoint.environment_metadata = metadata.to_string();
                 self.store.save_checkpoint(&handoff_id, &checkpoint)?;
+                if child_goal_meta.auto_root_work_id.is_some() {
+                    if let Err(compensate_error) =
+                        compensate_child_goal_durable(self.store, self.child_goal, &handoff_id)
+                    {
+                        let mut handoff = self.store.load_handoff(&handoff_id)?;
+                        let create_message = error.to_string();
+                        handoff.resume_error = Some(format!(
+                            "child_goal_create: {create_message}; compensate: {compensate_error}"
+                        ));
+                        handoff.updated_at_ms = self.runtime.now_ms();
+                        self.store.save_handoff(&handoff)?;
+                    }
+                }
             }
         }
         let token = self
@@ -353,6 +366,7 @@ where
             &handoff_id,
             CollaborativeAuditKind::LeaseAcquired,
         );
+        handoff = self.store.load_handoff(&handoff_id)?;
         handoff.state = transition(handoff.state, HandoffEvent::ShellReady)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;

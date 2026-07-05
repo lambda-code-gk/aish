@@ -94,6 +94,54 @@ impl<C: WorkClient> AibeCollaborativeChildGoalService<C> {
     fn active_work_id(&self, cwd: &Path) -> Result<Option<u64>, CollaborativeChildGoalError> {
         Ok(self.query_snapshot(cwd)?.active_work_id)
     }
+
+    fn pop_active_work(
+        &self,
+        cwd: &Path,
+        expected_work_id: u64,
+        reason: ChildGoalCloseReason,
+    ) -> Result<(), CollaborativeChildGoalError> {
+        let active_work_id = self.active_work_id(cwd)?;
+        match active_work_id {
+            Some(active) if active == expected_work_id => {}
+            Some(active) => {
+                return Err(CollaborativeChildGoalError::Close(format!(
+                    "active work mismatch: active={active} expected={expected_work_id}"
+                )));
+            }
+            None => {
+                return Err(CollaborativeChildGoalError::Close(
+                    "no active work during child goal close".into(),
+                ));
+            }
+        }
+        let operation = match reason {
+            ChildGoalCloseReason::ControlReturned | ChildGoalCloseReason::Compensated => {
+                WorkOperationDto::Pop
+            }
+        };
+        let response = self
+            .client
+            .work_apply(&self.session_id, &self.memory_context(cwd), operation)
+            .map_err(|e| CollaborativeChildGoalError::Close(e.to_string()))?;
+        match response {
+            ClientResponse::WorkApplyResult(WorkApplyResponseBody { outcome, .. }) => {
+                if outcome.kind != WorkMutationKindDto::Pop {
+                    return Err(CollaborativeChildGoalError::Close(format!(
+                        "unexpected work mutation: {:?} (reason: {reason:?})",
+                        outcome.kind
+                    )));
+                }
+                Ok(())
+            }
+            ClientResponse::Error { message, .. } => Err(CollaborativeChildGoalError::Close(
+                format!("{message} (reason: {reason:?})"),
+            )),
+            _ => Err(CollaborativeChildGoalError::Close(
+                "unexpected work response".into(),
+            )),
+        }
+    }
 }
 
 impl<C: WorkClient> CollaborativeChildGoalService for AibeCollaborativeChildGoalService<C> {
@@ -156,55 +204,20 @@ Handoff ID: {handoff_id}",
         cwd: &Path,
         reason: ChildGoalCloseReason,
     ) -> Result<(), CollaborativeChildGoalError> {
-        let Some(expected_work_id) = meta.work_id else {
-            return Ok(());
-        };
-        let active_work_id = self.active_work_id(cwd)?;
-        match active_work_id {
-            Some(active) if active == expected_work_id => {}
-            Some(active) => {
-                return Err(CollaborativeChildGoalError::Close(format!(
-                    "active work mismatch: active={active} expected={expected_work_id}"
-                )));
-            }
-            None => {
-                return Err(CollaborativeChildGoalError::Close(
-                    "no active work during child goal close".into(),
-                ));
-            }
+        if let Some(expected_work_id) = meta.work_id {
+            return self.pop_active_work(cwd, expected_work_id, reason);
         }
-        let operation = match reason {
-            ChildGoalCloseReason::ControlReturned | ChildGoalCloseReason::Compensated => {
-                WorkOperationDto::Pop
-            }
-        };
-        let response = self
-            .client
-            .work_apply(&self.session_id, &self.memory_context(cwd), operation)
-            .map_err(|e| CollaborativeChildGoalError::Close(e.to_string()))?;
-        match response {
-            ClientResponse::WorkApplyResult(WorkApplyResponseBody { outcome, .. }) => {
-                if outcome.kind != WorkMutationKindDto::Pop {
-                    return Err(CollaborativeChildGoalError::Close(format!(
-                        "unexpected work mutation: {:?} (reason: {reason:?})",
-                        outcome.kind
-                    )));
-                }
-                Ok(())
-            }
-            ClientResponse::Error { message, .. } => Err(CollaborativeChildGoalError::Close(
-                format!("{message} (reason: {reason:?})"),
-            )),
-            _ => Err(CollaborativeChildGoalError::Close(
-                "unexpected work response".into(),
-            )),
+        if let Some(root_id) = meta.auto_root_work_id {
+            return self.pop_active_work(cwd, root_id, reason);
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ChildGoalAchievement;
     use aibe_protocol::{WorkApplyResponseBody, WorkMutationOutcomeDto};
     use std::sync::{Arc, Mutex};
 
@@ -259,11 +272,13 @@ mod tests {
                     }
                 }
                 WorkOperationDto::Pop => {
-                    *self.active_work_id.lock().unwrap() = Some(1);
+                    let current = *self.active_work_id.lock().unwrap();
+                    *self.active_work_id.lock().unwrap() =
+                        if current == Some(2) { Some(1) } else { None };
                     WorkMutationOutcomeDto {
                         kind: WorkMutationKindDto::Pop,
-                        work_id: Some(1),
-                        previous_work_id: Some(2),
+                        work_id: current,
+                        previous_work_id: None,
                     }
                 }
                 _ => panic!("unexpected operation: {operation:?}"),
@@ -364,6 +379,74 @@ mod tests {
         let ops = operations.lock().unwrap();
         assert!(matches!(ops[0], WorkOperationDto::Push { .. }));
         assert!(matches!(ops[1], WorkOperationDto::Pop));
+    }
+
+    #[test]
+    fn child_goal_close_pops_auto_root_on_control_returned_when_push_never_succeeded() {
+        let operations = Arc::new(Mutex::new(Vec::new()));
+        let active = Arc::new(Mutex::new(Some(1)));
+        let service = AibeCollaborativeChildGoalService::new(
+            MockWorkClient {
+                operations: operations.clone(),
+                active_work_id: active.clone(),
+            },
+            "session".into(),
+            "project_test".into(),
+        );
+        let meta = ChildGoalMeta {
+            id: "child-1".into(),
+            handoff_id: "ho-1".into(),
+            parent_goal_id: None,
+            work_id: None,
+            auto_root_work_id: Some(1),
+            close_reason: None,
+            close_state: None,
+            achievement: ChildGoalAchievement::Unknown,
+        };
+        service
+            .close_child_goal(
+                &meta,
+                Path::new("/tmp/work"),
+                ChildGoalCloseReason::ControlReturned,
+            )
+            .unwrap();
+        assert_eq!(*active.lock().unwrap(), None);
+        let ops = operations.lock().unwrap();
+        assert!(matches!(ops[0], WorkOperationDto::Pop));
+    }
+
+    #[test]
+    fn child_goal_close_compensates_auto_root_when_push_never_succeeded() {
+        let operations = Arc::new(Mutex::new(Vec::new()));
+        let active = Arc::new(Mutex::new(Some(1)));
+        let service = AibeCollaborativeChildGoalService::new(
+            MockWorkClient {
+                operations: operations.clone(),
+                active_work_id: active.clone(),
+            },
+            "session".into(),
+            "project_test".into(),
+        );
+        let meta = ChildGoalMeta {
+            id: "child-1".into(),
+            handoff_id: "ho-1".into(),
+            parent_goal_id: None,
+            work_id: None,
+            auto_root_work_id: Some(1),
+            close_reason: None,
+            close_state: None,
+            achievement: ChildGoalAchievement::Unknown,
+        };
+        service
+            .close_child_goal(
+                &meta,
+                Path::new("/tmp/work"),
+                ChildGoalCloseReason::Compensated,
+            )
+            .unwrap();
+        assert_eq!(*active.lock().unwrap(), None);
+        let ops = operations.lock().unwrap();
+        assert!(matches!(ops[0], WorkOperationDto::Pop));
     }
 
     #[test]

@@ -21,6 +21,14 @@ pub fn persist_child_goal_checkpoint<S: CheckpointRepository>(
     store.save_checkpoint(handoff_id, &checkpoint)
 }
 
+pub fn child_goal_needs_work_close(child_goal: &crate::domain::ChildGoalMeta) -> bool {
+    if child_goal.close_state == Some(ChildGoalCloseState::Completed) {
+        return false;
+    }
+    child_goal.work_id.is_some()
+        || (child_goal.auto_root_work_id.is_some() && child_goal.work_id.is_none())
+}
+
 pub fn close_child_goal_durable<S, C>(
     store: &S,
     child_goal_service: &C,
@@ -34,7 +42,8 @@ where
     let mut checkpoint = store
         .load_checkpoint(handoff_id)
         .map_err(store_err_create)?;
-    if checkpoint.child_goal.work_id.is_none() {
+    let needs_work_close = child_goal_needs_work_close(&checkpoint.child_goal);
+    if !needs_work_close {
         if checkpoint.child_goal.close_state != Some(ChildGoalCloseState::Completed) {
             checkpoint.child_goal.close_state = Some(ChildGoalCloseState::Completed);
             store
@@ -101,8 +110,7 @@ where
 
 /// checkpoint 上で未完了の child Work がある場合、Noop ではなく実 service が必要。
 pub fn handoff_requires_child_goal_service(checkpoint: &HandoffCheckpoint) -> bool {
-    checkpoint.child_goal.work_id.is_some()
-        && checkpoint.child_goal.close_state != Some(ChildGoalCloseState::Completed)
+    child_goal_needs_work_close(&checkpoint.child_goal)
 }
 
 pub fn child_goal_environment_patch(checkpoint: &HandoffCheckpoint) -> serde_json::Value {
@@ -135,7 +143,7 @@ mod tests {
     };
     use crate::ports::outbound::{HandoffRepository, HandoffStoreError};
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     struct MemStore {
         checkpoints: Mutex<HashMap<String, HandoffCheckpoint>>,
@@ -507,5 +515,194 @@ mod tests {
         let (store, handoff_id) = MemStore::with_checkpoint(child_goal);
         let checkpoint = store.load_checkpoint(&handoff_id).unwrap();
         assert!(!handoff_requires_child_goal_service(&checkpoint));
+    }
+
+    #[test]
+    fn close_durable_retries_auto_root_on_control_returned_after_compensate_failed() {
+        use crate::ports::outbound::WorkClient;
+        use aibe_protocol::{
+            ClientResponse, MemoryContext, WorkApplyResponseBody, WorkMutationKindDto,
+            WorkMutationOutcomeDto, WorkOperationDto, WorkQueryResponseBody, WorkSnapshotDto,
+        };
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct FailFirstPopClient {
+            active: Arc<Mutex<Option<u64>>>,
+            pop_attempts: Arc<AtomicU32>,
+        }
+
+        impl WorkClient for FailFirstPopClient {
+            fn work_query(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                Ok(ClientResponse::WorkQueryResult(WorkQueryResponseBody {
+                    id: "q".into(),
+                    snapshot: WorkSnapshotDto {
+                        revision: 1,
+                        active_work_id: *self.active.lock().unwrap(),
+                        stack: vec![],
+                        works: vec![],
+                        entries: vec![],
+                    },
+                }))
+            }
+
+            fn work_apply(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+                operation: WorkOperationDto,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                if matches!(operation, WorkOperationDto::Pop) {
+                    let attempt = self.pop_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                    if attempt == 1 {
+                        return Err(crate::ports::outbound::AgentError::Request(
+                            "active work mismatch: active=99 expected=1".into(),
+                        ));
+                    }
+                    *self.active.lock().unwrap() = None;
+                    return Ok(ClientResponse::WorkApplyResult(WorkApplyResponseBody {
+                        id: "a".into(),
+                        snapshot: WorkSnapshotDto {
+                            revision: 2,
+                            active_work_id: None,
+                            stack: vec![],
+                            works: vec![],
+                            entries: vec![],
+                        },
+                        outcome: WorkMutationOutcomeDto {
+                            kind: WorkMutationKindDto::Pop,
+                            work_id: Some(1),
+                            previous_work_id: None,
+                        },
+                    }));
+                }
+                Err(crate::ports::outbound::AgentError::Request(
+                    "unexpected operation".into(),
+                ))
+            }
+        }
+
+        struct PopClosingService {
+            client: FailFirstPopClient,
+        }
+
+        impl CollaborativeChildGoalService for PopClosingService {
+            fn create_child_goal(
+                &self,
+                _meta: &mut ChildGoalMeta,
+                _cwd: &Path,
+                _parent_goal: &str,
+                _handoff_reason: &str,
+                _requested_command: &str,
+                _human_request: &str,
+            ) -> Result<(), CollaborativeChildGoalError> {
+                Ok(())
+            }
+
+            fn close_child_goal(
+                &self,
+                meta: &ChildGoalMeta,
+                cwd: &Path,
+                reason: ChildGoalCloseReason,
+            ) -> Result<(), CollaborativeChildGoalError> {
+                let expected = meta
+                    .work_id
+                    .or(meta.auto_root_work_id)
+                    .ok_or_else(|| CollaborativeChildGoalError::Close("no work".into()))?;
+                let context = MemoryContext {
+                    cwd: Some(cwd.display().to_string()),
+                    memory_space_id: None,
+                };
+                let active = match self
+                    .client
+                    .work_query("session", &context)
+                    .map_err(|e| CollaborativeChildGoalError::Close(e.to_string()))?
+                {
+                    ClientResponse::WorkQueryResult(body) => body.snapshot.active_work_id,
+                    ClientResponse::Error { message, .. } => {
+                        return Err(CollaborativeChildGoalError::Close(message));
+                    }
+                    _ => {
+                        return Err(CollaborativeChildGoalError::Close(
+                            "unexpected work query response".into(),
+                        ));
+                    }
+                };
+                if active != Some(expected) {
+                    return Err(CollaborativeChildGoalError::Close(format!(
+                        "active work mismatch: active={active:?} expected={expected}"
+                    )));
+                }
+                match self
+                    .client
+                    .work_apply("session", &context, WorkOperationDto::Pop)
+                    .map_err(|e| CollaborativeChildGoalError::Close(e.to_string()))?
+                {
+                    ClientResponse::WorkApplyResult(body)
+                        if body.outcome.kind == WorkMutationKindDto::Pop =>
+                    {
+                        let _ = reason;
+                        Ok(())
+                    }
+                    ClientResponse::Error { message, .. } => {
+                        Err(CollaborativeChildGoalError::Close(message))
+                    }
+                    _ => Err(CollaborativeChildGoalError::Close(
+                        "unexpected work response".into(),
+                    )),
+                }
+            }
+        }
+
+        let child_goal = ChildGoalMeta {
+            id: "child".into(),
+            handoff_id: "ho-test".into(),
+            parent_goal_id: None,
+            work_id: None,
+            auto_root_work_id: Some(1),
+            close_reason: None,
+            close_state: None,
+            achievement: ChildGoalAchievement::Unknown,
+        };
+        let (store, handoff_id) = MemStore::with_checkpoint(child_goal);
+        let active = Arc::new(Mutex::new(Some(1)));
+        let pop_attempts = Arc::new(AtomicU32::new(0));
+        let service = PopClosingService {
+            client: FailFirstPopClient {
+                active: active.clone(),
+                pop_attempts: pop_attempts.clone(),
+            },
+        };
+        let error = close_child_goal_durable(
+            &store,
+            &service,
+            &handoff_id,
+            ChildGoalCloseReason::Compensated,
+        )
+        .expect_err("first compensate fails");
+        assert!(error.to_string().contains("active work mismatch"));
+        let checkpoint = store.load_checkpoint(&handoff_id).unwrap();
+        assert_eq!(
+            checkpoint.child_goal.close_state,
+            Some(ChildGoalCloseState::Conflict)
+        );
+
+        close_child_goal_durable(
+            &store,
+            &service,
+            &handoff_id,
+            ChildGoalCloseReason::ControlReturned,
+        )
+        .unwrap();
+        assert_eq!(pop_attempts.load(Ordering::SeqCst), 2);
+        let checkpoint = store.load_checkpoint(&handoff_id).unwrap();
+        assert_eq!(
+            checkpoint.child_goal.close_state,
+            Some(ChildGoalCloseState::Completed)
+        );
+        assert!(active.lock().unwrap().is_none());
     }
 }

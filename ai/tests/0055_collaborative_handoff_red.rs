@@ -1023,11 +1023,12 @@ impl ai::ports::outbound::WorkClient for MockWorkClientForHandoff {
                 }
             }
             aibe_protocol::WorkOperationDto::Pop => {
-                *self.active.lock().unwrap() = Some(1);
+                let current = *self.active.lock().unwrap();
+                *self.active.lock().unwrap() = if current == Some(2) { Some(1) } else { None };
                 WorkMutationOutcomeDto {
                     kind: WorkMutationKindDto::Pop,
-                    work_id: Some(1),
-                    previous_work_id: Some(2),
+                    work_id: current,
+                    previous_work_id: None,
                 }
             }
             _ => panic!("unexpected work op"),
@@ -1224,4 +1225,264 @@ fn handoff_orphaned_shell_exit_preserves_child_work() {
     assert_eq!(checkpoint.child_goal.work_id, Some(2));
     assert!(checkpoint.child_goal.close_state.is_none());
     assert!(close_calls.lock().unwrap().is_empty());
+}
+
+struct MockWorkClientPushFails {
+    active: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
+}
+
+impl ai::ports::outbound::WorkClient for MockWorkClientPushFails {
+    fn work_query(
+        &self,
+        _session_id: &str,
+        _context: &aibe_protocol::MemoryContext,
+    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
+        Ok(aibe_protocol::ClientResponse::WorkQueryResult(
+            aibe_protocol::WorkQueryResponseBody {
+                id: "q".into(),
+                snapshot: aibe_protocol::WorkSnapshotDto {
+                    revision: 1,
+                    active_work_id: *self.active.lock().unwrap(),
+                    stack: vec![],
+                    works: vec![],
+                    entries: vec![],
+                },
+            },
+        ))
+    }
+
+    fn work_apply(
+        &self,
+        _session_id: &str,
+        _context: &aibe_protocol::MemoryContext,
+        operation: aibe_protocol::WorkOperationDto,
+    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
+        use aibe_protocol::{
+            WorkApplyResponseBody, WorkMutationKindDto, WorkMutationOutcomeDto, WorkSnapshotDto,
+        };
+        match operation {
+            aibe_protocol::WorkOperationDto::Start { .. } => {
+                *self.active.lock().unwrap() = Some(1);
+                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
+                    WorkApplyResponseBody {
+                        id: "a".into(),
+                        snapshot: WorkSnapshotDto {
+                            revision: 1,
+                            active_work_id: Some(1),
+                            stack: vec![],
+                            works: vec![],
+                            entries: vec![],
+                        },
+                        outcome: WorkMutationOutcomeDto {
+                            kind: WorkMutationKindDto::Start,
+                            work_id: Some(1),
+                            previous_work_id: None,
+                        },
+                    },
+                ))
+            }
+            aibe_protocol::WorkOperationDto::Push { .. } => Err(
+                ai::ports::outbound::AgentError::Request("push rejected".into()),
+            ),
+            aibe_protocol::WorkOperationDto::Pop => {
+                let current = *self.active.lock().unwrap();
+                *self.active.lock().unwrap() = None;
+                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
+                    WorkApplyResponseBody {
+                        id: "a".into(),
+                        snapshot: WorkSnapshotDto {
+                            revision: 1,
+                            active_work_id: None,
+                            stack: vec![],
+                            works: vec![],
+                            entries: vec![],
+                        },
+                        outcome: WorkMutationOutcomeDto {
+                            kind: WorkMutationKindDto::Pop,
+                            work_id: current,
+                            previous_work_id: None,
+                        },
+                    },
+                ))
+            }
+            _ => panic!("unexpected work op"),
+        }
+    }
+}
+
+#[test]
+fn handoff_create_failure_compensates_auto_root_work() {
+    use ai::domain::ChildGoalCloseState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(dir.path().join("store"));
+    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let child_goal = ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
+        MockWorkClientPushFails {
+            active: active.clone(),
+        },
+        "session".into(),
+        "space".into(),
+    );
+    let launcher = TestLauncher {
+        root: dir.path().join("store"),
+        trace: Arc::new(Phase2Trace(Mutex::new(Vec::new()))),
+    };
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &child_goal,
+        &SystemHandoffRuntime,
+    );
+    let result = policy
+        .intercept(phase2_request(work.path().to_path_buf()))
+        .expect("handoff continues without child work");
+    let checkpoint = store.load_checkpoint(&result.handoff_id).unwrap();
+    assert!(checkpoint.child_goal.work_id.is_none());
+    assert_eq!(checkpoint.child_goal.auto_root_work_id, Some(1));
+    assert_eq!(
+        checkpoint.child_goal.close_state,
+        Some(ChildGoalCloseState::Completed)
+    );
+    assert!(active.lock().unwrap().is_none());
+}
+
+struct MockWorkClientPushFailsFirstPop {
+    active: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
+    pop_attempts: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl ai::ports::outbound::WorkClient for MockWorkClientPushFailsFirstPop {
+    fn work_query(
+        &self,
+        _session_id: &str,
+        _context: &aibe_protocol::MemoryContext,
+    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
+        Ok(aibe_protocol::ClientResponse::WorkQueryResult(
+            aibe_protocol::WorkQueryResponseBody {
+                id: "q".into(),
+                snapshot: aibe_protocol::WorkSnapshotDto {
+                    revision: 1,
+                    active_work_id: *self.active.lock().unwrap(),
+                    stack: vec![],
+                    works: vec![],
+                    entries: vec![],
+                },
+            },
+        ))
+    }
+
+    fn work_apply(
+        &self,
+        _session_id: &str,
+        _context: &aibe_protocol::MemoryContext,
+        operation: aibe_protocol::WorkOperationDto,
+    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
+        use aibe_protocol::{
+            WorkApplyResponseBody, WorkMutationKindDto, WorkMutationOutcomeDto, WorkSnapshotDto,
+        };
+        use std::sync::atomic::Ordering;
+        match operation {
+            aibe_protocol::WorkOperationDto::Start { .. } => {
+                *self.active.lock().unwrap() = Some(1);
+                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
+                    WorkApplyResponseBody {
+                        id: "a".into(),
+                        snapshot: WorkSnapshotDto {
+                            revision: 1,
+                            active_work_id: Some(1),
+                            stack: vec![],
+                            works: vec![],
+                            entries: vec![],
+                        },
+                        outcome: WorkMutationOutcomeDto {
+                            kind: WorkMutationKindDto::Start,
+                            work_id: Some(1),
+                            previous_work_id: None,
+                        },
+                    },
+                ))
+            }
+            aibe_protocol::WorkOperationDto::Push { .. } => Err(
+                ai::ports::outbound::AgentError::Request("push rejected".into()),
+            ),
+            aibe_protocol::WorkOperationDto::Pop => {
+                let attempt = self.pop_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                if attempt == 1 {
+                    return Err(ai::ports::outbound::AgentError::Request(
+                        "active work mismatch: active=99 expected=1".into(),
+                    ));
+                }
+                let current = *self.active.lock().unwrap();
+                *self.active.lock().unwrap() = None;
+                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
+                    WorkApplyResponseBody {
+                        id: "a".into(),
+                        snapshot: WorkSnapshotDto {
+                            revision: 1,
+                            active_work_id: None,
+                            stack: vec![],
+                            works: vec![],
+                            entries: vec![],
+                        },
+                        outcome: WorkMutationOutcomeDto {
+                            kind: WorkMutationKindDto::Pop,
+                            work_id: current,
+                            previous_work_id: None,
+                        },
+                    },
+                ))
+            }
+            _ => panic!("unexpected work op"),
+        }
+    }
+}
+
+#[test]
+fn handoff_create_failure_preserves_resume_error_after_shell_ready() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(dir.path().join("store"));
+    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let pop_attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let child_goal = ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
+        MockWorkClientPushFailsFirstPop {
+            active: active.clone(),
+            pop_attempts: pop_attempts.clone(),
+        },
+        "session".into(),
+        "space".into(),
+    );
+    let launcher = TestLauncher {
+        root: dir.path().join("store"),
+        trace: Arc::new(Phase2Trace(Mutex::new(Vec::new()))),
+    };
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &child_goal,
+        &SystemHandoffRuntime,
+    );
+    let result = policy
+        .intercept(phase2_request(work.path().to_path_buf()))
+        .expect("handoff continues after create/compensate errors");
+    let handoff = store.load_handoff(&result.handoff_id).unwrap();
+    assert!(
+        handoff
+            .resume_error
+            .as_deref()
+            .is_some_and(|message| message.contains("child_goal_create:")),
+        "resume_error must survive ShellReady save, got {:?}",
+        handoff.resume_error
+    );
+    assert_eq!(pop_attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
