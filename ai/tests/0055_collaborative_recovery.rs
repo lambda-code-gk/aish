@@ -193,9 +193,11 @@ fn save_handoff(store: &FilesystemHandoffStore, id: &str, state: HandoffState, c
         handoff_id: id.into(),
         parent_goal_id: Some("parent-goal".into()),
         work_id: None,
+        work_mode: None,
         auto_root_work_id: None,
         close_reason: None,
         close_state: None,
+        close_error_message: None,
         achievement: ChildGoalAchievement::Unknown,
     };
     store
@@ -320,7 +322,7 @@ fn parent_process_loss_marks_handoff_orphaned() {
             owner_alive: false,
         },
     )
-    .execute()
+    .execute(|_| Box::new(NoopCollaborativeChildGoalService))
     .unwrap();
     assert_eq!(reconciled, vec!["parent-loss"]);
     assert_eq!(
@@ -424,9 +426,14 @@ fn resume_returned_restarts_parent_without_shell() {
         now: 20,
         owner_alive: true,
     };
-    let context = ResumeReturnedParent::new(&fixture.store, &Observer, &runtime)
-        .prepare("returned", &owner())
-        .unwrap();
+    let context = ResumeReturnedParent::new(
+        &fixture.store,
+        &Observer,
+        &runtime,
+        &NoopCollaborativeChildGoalService,
+    )
+    .prepare("returned", &owner())
+    .unwrap();
     assert_eq!(context.parent_conversation_id, "parent-conversation");
     assert!(launcher.requests.lock().unwrap().is_empty());
 }
@@ -441,6 +448,7 @@ fn resumed_parent_run_carries_pending_shell_exec_context() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .prepare("semantic", &owner())
     .unwrap();
@@ -459,6 +467,7 @@ fn recovery_does_not_auto_rerun_unknown_tools() {
             now: 20,
             owner_alive: true,
         },
+        &NoopCollaborativeChildGoalService,
     )
     .prepare("unknown", &owner())
     .unwrap();
@@ -549,7 +558,12 @@ fn parent_resume_failure_returns_to_returned_state() {
         now: 20,
         owner_alive: true,
     };
-    let service = ResumeReturnedParent::new(&fixture.store, &Observer, &runtime);
+    let service = ResumeReturnedParent::new(
+        &fixture.store,
+        &Observer,
+        &runtime,
+        &NoopCollaborativeChildGoalService,
+    );
     service.prepare("parent-fail", &owner()).unwrap();
     service
         .finish("parent-fail", Err("aibe unavailable".into()))
@@ -627,7 +641,7 @@ fn resuming_parent_owner_loss_returns_to_returned() {
             owner_alive: false,
         },
     )
-    .execute()
+    .execute(|_| Box::new(NoopCollaborativeChildGoalService))
     .unwrap();
     assert_eq!(reconciled, vec!["resume-crash"]);
     let handoff = fixture.store.load_handoff("resume-crash").unwrap();
@@ -649,7 +663,7 @@ fn lease_expiry_alone_does_not_auto_resume_parent() {
             owner_alive: true,
         },
     )
-    .execute()
+    .execute(|_| Box::new(NoopCollaborativeChildGoalService))
     .unwrap();
     assert!(reconciled.is_empty());
     assert_eq!(
@@ -665,9 +679,14 @@ fn parent_resume_tool_lifecycle_syncs_completed_tools() {
         now: 2,
         owner_alive: true,
     };
-    ResumeReturnedParent::new(&fixture.store, &Observer, &runtime)
-        .prepare("resume-tools", &owner())
-        .unwrap();
+    ResumeReturnedParent::new(
+        &fixture.store,
+        &Observer,
+        &runtime,
+        &NoopCollaborativeChildGoalService,
+    )
+    .prepare("resume-tools", &owner())
+    .unwrap();
     record_handoff_tool_running(
         &fixture.store,
         "resume-tools",
@@ -698,7 +717,12 @@ fn parent_resume_tool_lifecycle_syncs_completed_tools() {
         .find(|tool| tool.tool_call_id == "parent-tool-1")
         .expect("parent resume tool");
     assert_eq!(tool.status, RecoverableToolStatus::Completed);
-    ResumeReturnedParent::new(&fixture.store, &Observer, &runtime)
-        .finish("resume-tools", Ok(()))
-        .unwrap();
+    ResumeReturnedParent::new(
+        &fixture.store,
+        &Observer,
+        &runtime,
+        &NoopCollaborativeChildGoalService,
+    )
+    .finish("resume-tools", Ok(()))
+    .unwrap();
 }

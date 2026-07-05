@@ -369,7 +369,31 @@ handoff 作成時（human shell 開始前）に必ず作成。side conversation 
 - 親 `shell_exec` 要求、人間への依頼操作、想定完了条件
 - `parent_goal_id`, `handoff_id`
 
-終了: human shell 正常返却時のみ。`close_reason = CONTROL_RETURNED`, `achievement = UNKNOWN`。**ORPHANED では閉じない**。
+### 22.1 Child Work ライフサイクル（`ai work` 連携）
+
+active Work の有無で作成・終了方式を分ける。**temporary root（Start→Push のための仮 root）は廃止**。
+
+| active Work | 作成 | 正常終了（Ctrl+D / `exit`） |
+|-------------|------|---------------------------|
+| **あり** | 既存 parent Work 上へ `Push` child Work | `Pop` child Work → parent Work が active に戻る |
+| **なし** | child Work を `Start`（root Work として） | `Finish` child Work → active Work なし |
+
+checkpoint の `child_goal.work_mode` に作成方式を永続化する:
+
+- `pushed { parent_work_id, child_work_id }`
+- `started_root { child_work_id }`
+
+close 状態: `open` → `closing` → `completed` / `conflict` / `failed`。**`closing` を保存してから** Work 操作（Pop/Finish）を行い、成功後に `completed` とする。
+
+### 22.2 終了経路
+
+human shell 正常返却・ORPHANED 復旧後の返却・cancel・初期化失敗補償は、いずれも `close_child_goal_durable`（application service）経由で同じ close 処理を使う。ORPHANED 遷移自体では child Work を閉じない。
+
+### 22.3 親 resume との関係
+
+child Work close が `conflict` / `failed` のときは **親 resume を開始しない**。`resume_error` に再試行可能なエラーを残し、`ai resume` 時に close の再試行または reconciliation を先に行う。
+
+human shell 正常返却時: `close_reason = CONTROL_RETURNED`, `achievement = UNKNOWN`。**ORPHANED では閉じない**。
 
 実装: `Handoff` メタ + Contextual Memory `goal` 子エントリ（`ai work` active work と連携）。
 
@@ -436,7 +460,25 @@ HumanControlReturned {
 
 ### 24.4 Tool execution（handoff 関連）
 
-`REQUESTED` / `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED` / `UNKNOWN`。親 `shell_exec` は AISH 処理完了時点で `COMPLETED` 可だが `execution_outcome = HUMAN_CONTROL_RETURNED`, `requested_command_completion = UNKNOWN`。
+`REQUESTED` / `APPROVED` / `RUNNING` / `COMPLETED` / `FAILED` / `CANCELLED` / `UNKNOWN`。
+
+**復旧ルール（初版）**
+
+- process 消失・通信切断・結果未確認: `RUNNING` と `APPROVED` → `UNKNOWN`（`REQUESTED` は未実行のまま）
+- 明示的 cancel event のみ `CANCELLED`
+- `request_human_action` 自身は `COMPLETED` 可。同一 turn の他 `RUNNING` tool は **一律 CANCELLED にせず** `UNKNOWN`
+- `UNKNOWN` tool の自動再実行は禁止
+
+**executor 境界の追跡（初版の保証範囲）**
+
+| tool 種別 | 実 executor 開始の捕捉 |
+|-----------|------------------------|
+| client tool（`aish.*` 等） | turn 内で `RUNNING` を記録可能 |
+| server write tool 等 | `APPROVED` 後の `RUNNING` イベント未到達のことがある |
+
+捕捉できない `APPROVED` は復旧時 `UNKNOWN` とする。将来 AIBE 実 executor から全状態を通知する AC は **未完了（pending）** とする。
+
+親 `shell_exec` は AISH 処理完了時点で `COMPLETED` 可だが `execution_outcome = HUMAN_CONTROL_RETURNED`, `requested_command_completion = UNKNOWN`。
 
 ## 25. 会話・要約（§22 詳細）
 

@@ -472,7 +472,7 @@ impl crate::ports::outbound::SideRunLockRepository for FilesystemHandoffStore {
         fn apply_tool_finalization(checkpoint: &mut HandoffCheckpoint, tool_call_id: Option<&str>) {
             if let Some(call_id) = tool_call_id {
                 mark_tool_completed(checkpoint, call_id, "aish.request_human_action");
-                finalize_running_tools(checkpoint, RecoverableToolStatus::Cancelled, Some(call_id));
+                finalize_running_tools(checkpoint, RecoverableToolStatus::Unknown, Some(call_id));
             }
         }
 

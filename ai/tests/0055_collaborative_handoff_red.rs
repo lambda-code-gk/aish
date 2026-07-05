@@ -1,6 +1,8 @@
 // 0055 Collaborative Human Handoff acceptance tests.
 // Phase 1 tests are active; later phases remain #[ignore] until implemented.
 
+mod common;
+
 use ai::adapters::outbound::{FilesystemHandoffStore, SystemHandoffRuntime};
 use ai::application::{
     checkpoint_memory_space_id, CollaborativeExecutionContext, CollaborativeShellExecPolicy,
@@ -26,6 +28,7 @@ use ai::ports::outbound::{
     NoopCollaborativeChildGoalService, NoopHandoffCandidatePublisher, NoopParentToolBarrier,
     ParentToolBarrier,
 };
+use common::domain_work_client::{DomainMockWorkClient, MockWorkState};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -175,9 +178,11 @@ fn sample_checkpoint(handoff_id: &str) -> HandoffCheckpoint {
             handoff_id: handoff_id.to_string(),
             parent_goal_id: Some("goal-parent".to_string()),
             work_id: None,
+            work_mode: None,
             auto_root_work_id: None,
             close_reason: None,
             close_state: None,
+            close_error_message: None,
             achievement: ChildGoalAchievement::Unknown,
         },
         conversation_snapshot: "{}".to_string(),
@@ -224,9 +229,11 @@ fn child_goal_records_control_returned_not_achievement() {
         handoff_id: "ho-1".to_string(),
         parent_goal_id: None,
         work_id: None,
+        work_mode: None,
         auto_root_work_id: None,
         close_reason: None,
         close_state: None,
+        close_error_message: None,
         achievement: ChildGoalAchievement::Unknown,
     };
     assert!(!should_close_child_goal(HandoffState::Orphaned));
@@ -559,7 +566,12 @@ fn handoff_completes_normal_parent_resume_flow() {
         store.load_lease(&result.handoff_id).unwrap().is_none(),
         "lease must be released after human shell returns"
     );
-    let resume = ResumeReturnedParent::new(&store, &TestObserver, &runtime);
+    let resume = ResumeReturnedParent::new(
+        &store,
+        &TestObserver,
+        &runtime,
+        &NoopCollaborativeChildGoalService,
+    );
     resume
         .prepare(
             &result.handoff_id,
@@ -908,7 +920,12 @@ fn human_shell_return_releases_lease_for_parent_resume() {
         "human shell lease must be released on normal return"
     );
 
-    let resume = ResumeReturnedParent::new(&store, &TestObserver, &runtime);
+    let resume = ResumeReturnedParent::new(
+        &store,
+        &TestObserver,
+        &runtime,
+        &NoopCollaborativeChildGoalService,
+    );
     resume
         .prepare(
             &result.handoff_id,
@@ -968,85 +985,8 @@ impl HumanShellLauncher for OrphanedLauncher {
 }
 
 struct TrackingChildGoalService {
-    inner: ai::adapters::outbound::AibeCollaborativeChildGoalService<MockWorkClientForHandoff>,
+    inner: ai::adapters::outbound::AibeCollaborativeChildGoalService<DomainMockWorkClient>,
     close_calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-}
-
-struct MockWorkClientForHandoff {
-    active: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
-}
-
-impl ai::ports::outbound::WorkClient for MockWorkClientForHandoff {
-    fn work_query(
-        &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
-    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        Ok(aibe_protocol::ClientResponse::WorkQueryResult(
-            aibe_protocol::WorkQueryResponseBody {
-                id: "q".into(),
-                snapshot: aibe_protocol::WorkSnapshotDto {
-                    revision: 1,
-                    active_work_id: *self.active.lock().unwrap(),
-                    stack: vec![],
-                    works: vec![],
-                    entries: vec![],
-                },
-            },
-        ))
-    }
-
-    fn work_apply(
-        &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
-        operation: aibe_protocol::WorkOperationDto,
-    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        use aibe_protocol::{
-            WorkApplyResponseBody, WorkMutationKindDto, WorkMutationOutcomeDto, WorkSnapshotDto,
-        };
-        let outcome = match operation {
-            aibe_protocol::WorkOperationDto::Start { .. } => {
-                *self.active.lock().unwrap() = Some(1);
-                WorkMutationOutcomeDto {
-                    kind: WorkMutationKindDto::Start,
-                    work_id: Some(1),
-                    previous_work_id: None,
-                }
-            }
-            aibe_protocol::WorkOperationDto::Push { .. } => {
-                *self.active.lock().unwrap() = Some(2);
-                WorkMutationOutcomeDto {
-                    kind: WorkMutationKindDto::Push,
-                    work_id: Some(2),
-                    previous_work_id: Some(1),
-                }
-            }
-            aibe_protocol::WorkOperationDto::Pop => {
-                let current = *self.active.lock().unwrap();
-                *self.active.lock().unwrap() = if current == Some(2) { Some(1) } else { None };
-                WorkMutationOutcomeDto {
-                    kind: WorkMutationKindDto::Pop,
-                    work_id: current,
-                    previous_work_id: None,
-                }
-            }
-            _ => panic!("unexpected work op"),
-        };
-        Ok(aibe_protocol::ClientResponse::WorkApplyResult(
-            WorkApplyResponseBody {
-                id: "a".into(),
-                snapshot: WorkSnapshotDto {
-                    revision: 1,
-                    active_work_id: outcome.work_id,
-                    stack: vec![],
-                    works: vec![],
-                    entries: vec![],
-                },
-                outcome,
-            },
-        ))
-    }
 }
 
 impl ai::ports::outbound::CollaborativeChildGoalService for TrackingChildGoalService {
@@ -1084,19 +1024,17 @@ impl ai::ports::outbound::CollaborativeChildGoalService for TrackingChildGoalSer
 }
 
 #[test]
-fn handoff_creates_child_work_without_active_work_and_pops_on_return() {
-    use ai::domain::ChildGoalCloseState;
+fn handoff_creates_child_work_without_active_work_and_finishes_on_return() {
+    use ai::domain::{ChildGoalCloseState, CollaborativeChildWorkMode};
 
     let dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(dir.path().into());
-    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let work_client = DomainMockWorkClient::with_active(None);
     let close_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let child_goal = TrackingChildGoalService {
         inner: ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
-            MockWorkClientForHandoff {
-                active: active.clone(),
-            },
+            work_client,
             "session".into(),
             "space".into(),
         ),
@@ -1120,8 +1058,12 @@ fn handoff_creates_child_work_without_active_work_and_pops_on_return() {
         .intercept(phase2_request(work.path().into()))
         .unwrap();
     let checkpoint = store.load_checkpoint(&result.handoff_id).unwrap();
-    assert_eq!(checkpoint.child_goal.auto_root_work_id, Some(1));
-    assert_eq!(checkpoint.child_goal.work_id, Some(2));
+    assert_eq!(
+        checkpoint.child_goal.work_mode,
+        Some(CollaborativeChildWorkMode::StartedRoot { child_work_id: 1 })
+    );
+    assert_eq!(checkpoint.child_goal.work_id, Some(1));
+    assert!(checkpoint.child_goal.auto_root_work_id.is_none());
     assert_eq!(
         checkpoint.child_goal.close_state,
         Some(ChildGoalCloseState::Completed)
@@ -1139,13 +1081,11 @@ fn handoff_shell_launch_failure_compensates_child_work() {
     let dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(dir.path().join("store"));
-    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let work_client = DomainMockWorkClient::with_active(None);
     let close_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let child_goal = TrackingChildGoalService {
         inner: ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
-            MockWorkClientForHandoff {
-                active: active.clone(),
-            },
+            work_client,
             "session".into(),
             "space".into(),
         ),
@@ -1177,7 +1117,6 @@ fn handoff_shell_launch_failure_compensates_child_work() {
         "expected compensated close, got {:?}",
         close_calls.lock().unwrap()
     );
-    assert_eq!(*active.lock().unwrap(), Some(1));
 }
 
 #[test]
@@ -1185,13 +1124,11 @@ fn handoff_orphaned_shell_exit_preserves_child_work() {
     let dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(dir.path().into());
-    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let work_client = DomainMockWorkClient::with_active(None);
     let close_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let child_goal = TrackingChildGoalService {
         inner: ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
-            MockWorkClientForHandoff {
-                active: active.clone(),
-            },
+            work_client,
             "session".into(),
             "space".into(),
         ),
@@ -1222,105 +1159,50 @@ fn handoff_orphaned_shell_exit_preserves_child_work() {
     let handoff = store.list_handoffs().unwrap().into_iter().next().unwrap();
     assert_eq!(handoff.state, HandoffState::Orphaned);
     let checkpoint = store.load_checkpoint(&handoff.id).unwrap();
-    assert_eq!(checkpoint.child_goal.work_id, Some(2));
-    assert!(checkpoint.child_goal.close_state.is_none());
+    assert_eq!(checkpoint.child_goal.work_id, Some(1));
+    assert_eq!(
+        checkpoint.child_goal.close_state,
+        Some(ai::domain::ChildGoalCloseState::Open)
+    );
     assert!(close_calls.lock().unwrap().is_empty());
 }
 
 struct MockWorkClientPushFails {
-    active: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
+    client: DomainMockWorkClient,
 }
 
 impl ai::ports::outbound::WorkClient for MockWorkClientPushFails {
     fn work_query(
         &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
+        session_id: &str,
+        context: &aibe_protocol::MemoryContext,
     ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        Ok(aibe_protocol::ClientResponse::WorkQueryResult(
-            aibe_protocol::WorkQueryResponseBody {
-                id: "q".into(),
-                snapshot: aibe_protocol::WorkSnapshotDto {
-                    revision: 1,
-                    active_work_id: *self.active.lock().unwrap(),
-                    stack: vec![],
-                    works: vec![],
-                    entries: vec![],
-                },
-            },
-        ))
+        self.client.work_query(session_id, context)
     }
 
     fn work_apply(
         &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
+        session_id: &str,
+        context: &aibe_protocol::MemoryContext,
         operation: aibe_protocol::WorkOperationDto,
     ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        use aibe_protocol::{
-            WorkApplyResponseBody, WorkMutationKindDto, WorkMutationOutcomeDto, WorkSnapshotDto,
-        };
-        match operation {
-            aibe_protocol::WorkOperationDto::Start { .. } => {
-                *self.active.lock().unwrap() = Some(1);
-                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
-                    WorkApplyResponseBody {
-                        id: "a".into(),
-                        snapshot: WorkSnapshotDto {
-                            revision: 1,
-                            active_work_id: Some(1),
-                            stack: vec![],
-                            works: vec![],
-                            entries: vec![],
-                        },
-                        outcome: WorkMutationOutcomeDto {
-                            kind: WorkMutationKindDto::Start,
-                            work_id: Some(1),
-                            previous_work_id: None,
-                        },
-                    },
-                ))
-            }
-            aibe_protocol::WorkOperationDto::Push { .. } => Err(
-                ai::ports::outbound::AgentError::Request("push rejected".into()),
-            ),
-            aibe_protocol::WorkOperationDto::Pop => {
-                let current = *self.active.lock().unwrap();
-                *self.active.lock().unwrap() = None;
-                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
-                    WorkApplyResponseBody {
-                        id: "a".into(),
-                        snapshot: WorkSnapshotDto {
-                            revision: 1,
-                            active_work_id: None,
-                            stack: vec![],
-                            works: vec![],
-                            entries: vec![],
-                        },
-                        outcome: WorkMutationOutcomeDto {
-                            kind: WorkMutationKindDto::Pop,
-                            work_id: current,
-                            previous_work_id: None,
-                        },
-                    },
-                ))
-            }
-            _ => panic!("unexpected work op"),
+        if matches!(operation, aibe_protocol::WorkOperationDto::Push { .. }) {
+            return Err(ai::ports::outbound::AgentError::Request(
+                "push rejected".into(),
+            ));
         }
+        self.client.work_apply(session_id, context, operation)
     }
 }
 
 #[test]
-fn handoff_create_failure_compensates_auto_root_work() {
-    use ai::domain::ChildGoalCloseState;
-
+fn handoff_create_failure_cancels_when_push_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(dir.path().join("store"));
-    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
     let child_goal = ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
         MockWorkClientPushFails {
-            active: active.clone(),
+            client: DomainMockWorkClient::with_active(Some(1)),
         },
         "session".into(),
         "space".into(),
@@ -1339,108 +1221,18 @@ fn handoff_create_failure_compensates_auto_root_work() {
         &child_goal,
         &SystemHandoffRuntime,
     );
-    let result = policy
+    let error = policy
         .intercept(phase2_request(work.path().to_path_buf()))
-        .expect("handoff continues without child work");
-    let checkpoint = store.load_checkpoint(&result.handoff_id).unwrap();
+        .expect_err("push failure cancels handoff");
+    assert!(matches!(
+        error,
+        ai::application::CollaborativeHandoffError::ChildGoal(_)
+    ));
+    let handoff = store.list_handoffs().unwrap().into_iter().next().unwrap();
+    assert_eq!(handoff.state, HandoffState::Cancelled);
+    let checkpoint = store.load_checkpoint(&handoff.id).unwrap();
     assert!(checkpoint.child_goal.work_id.is_none());
-    assert_eq!(checkpoint.child_goal.auto_root_work_id, Some(1));
-    assert_eq!(
-        checkpoint.child_goal.close_state,
-        Some(ChildGoalCloseState::Completed)
-    );
-    assert!(active.lock().unwrap().is_none());
-}
-
-struct MockWorkClientPushFailsFirstPop {
-    active: std::sync::Arc<std::sync::Mutex<Option<u64>>>,
-    pop_attempts: std::sync::Arc<std::sync::atomic::AtomicU32>,
-}
-
-impl ai::ports::outbound::WorkClient for MockWorkClientPushFailsFirstPop {
-    fn work_query(
-        &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
-    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        Ok(aibe_protocol::ClientResponse::WorkQueryResult(
-            aibe_protocol::WorkQueryResponseBody {
-                id: "q".into(),
-                snapshot: aibe_protocol::WorkSnapshotDto {
-                    revision: 1,
-                    active_work_id: *self.active.lock().unwrap(),
-                    stack: vec![],
-                    works: vec![],
-                    entries: vec![],
-                },
-            },
-        ))
-    }
-
-    fn work_apply(
-        &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
-        operation: aibe_protocol::WorkOperationDto,
-    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        use aibe_protocol::{
-            WorkApplyResponseBody, WorkMutationKindDto, WorkMutationOutcomeDto, WorkSnapshotDto,
-        };
-        use std::sync::atomic::Ordering;
-        match operation {
-            aibe_protocol::WorkOperationDto::Start { .. } => {
-                *self.active.lock().unwrap() = Some(1);
-                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
-                    WorkApplyResponseBody {
-                        id: "a".into(),
-                        snapshot: WorkSnapshotDto {
-                            revision: 1,
-                            active_work_id: Some(1),
-                            stack: vec![],
-                            works: vec![],
-                            entries: vec![],
-                        },
-                        outcome: WorkMutationOutcomeDto {
-                            kind: WorkMutationKindDto::Start,
-                            work_id: Some(1),
-                            previous_work_id: None,
-                        },
-                    },
-                ))
-            }
-            aibe_protocol::WorkOperationDto::Push { .. } => Err(
-                ai::ports::outbound::AgentError::Request("push rejected".into()),
-            ),
-            aibe_protocol::WorkOperationDto::Pop => {
-                let attempt = self.pop_attempts.fetch_add(1, Ordering::SeqCst) + 1;
-                if attempt == 1 {
-                    return Err(ai::ports::outbound::AgentError::Request(
-                        "active work mismatch: active=99 expected=1".into(),
-                    ));
-                }
-                let current = *self.active.lock().unwrap();
-                *self.active.lock().unwrap() = None;
-                Ok(aibe_protocol::ClientResponse::WorkApplyResult(
-                    WorkApplyResponseBody {
-                        id: "a".into(),
-                        snapshot: WorkSnapshotDto {
-                            revision: 1,
-                            active_work_id: None,
-                            stack: vec![],
-                            works: vec![],
-                            entries: vec![],
-                        },
-                        outcome: WorkMutationOutcomeDto {
-                            kind: WorkMutationKindDto::Pop,
-                            work_id: current,
-                            previous_work_id: None,
-                        },
-                    },
-                ))
-            }
-            _ => panic!("unexpected work op"),
-        }
-    }
+    assert!(checkpoint.child_goal.work_mode.is_none());
 }
 
 #[test]
@@ -1448,12 +1240,9 @@ fn handoff_create_failure_preserves_resume_error_after_shell_ready() {
     let dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(dir.path().join("store"));
-    let active = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let pop_attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let child_goal = ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
-        MockWorkClientPushFailsFirstPop {
-            active: active.clone(),
-            pop_attempts: pop_attempts.clone(),
+        MockWorkClientPushFails {
+            client: DomainMockWorkClient::with_active(Some(1)),
         },
         "session".into(),
         "space".into(),
@@ -1472,17 +1261,16 @@ fn handoff_create_failure_preserves_resume_error_after_shell_ready() {
         &child_goal,
         &SystemHandoffRuntime,
     );
-    let result = policy
+    let _error = policy
         .intercept(phase2_request(work.path().to_path_buf()))
-        .expect("handoff continues after create/compensate errors");
-    let handoff = store.load_handoff(&result.handoff_id).unwrap();
+        .expect_err("push failure cancels before shell ready");
+    let handoff = store.list_handoffs().unwrap().into_iter().next().unwrap();
+    assert_eq!(handoff.state, HandoffState::Cancelled);
     assert!(
-        handoff
-            .resume_error
-            .as_deref()
-            .is_some_and(|message| message.contains("child_goal_create:")),
-        "resume_error must survive ShellReady save, got {:?}",
+        handoff.resume_error.as_deref().is_some_and(|message| {
+            message.contains("child_goal_create:") || message.contains("initialization:")
+        }),
+        "resume_error must capture create failure, got {:?}",
         handoff.resume_error
     );
-    assert_eq!(pop_attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
 }

@@ -140,42 +140,63 @@ pub enum ChildGoalCloseReason {
     Compensated,
 }
 
-/// child goal Work Pop の永続化状態。
+/// child Work の作成方式（checkpoint 永続化）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CollaborativeChildWorkMode {
+    Pushed {
+        parent_work_id: u64,
+        child_work_id: u64,
+    },
+    StartedRoot {
+        child_work_id: u64,
+    },
+}
+
+/// child goal Work close の永続化状態。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChildGoalCloseState {
-    Pending,
+    Open,
+    #[serde(alias = "pending")]
+    Closing,
     Completed,
     Conflict,
     Failed,
 }
 
 /// child goal 達成可否。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ChildGoalAchievement {
+    #[default]
     Unknown,
     Achieved,
     NotAchieved,
 }
 
 /// child goal メタ（Work stack 連携用 ID のみ保持）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ChildGoalMeta {
     pub id: String,
     pub handoff_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_goal_id: Option<String>,
-    /// Work stack 上の child work ID（Push 時に設定）。
+    /// Work stack 上の child work ID（`work_mode` と同期）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_id: Option<u64>,
-    /// active Work 不在時に自動作成した一時 root Work ID。
+    /// child Work の作成方式。
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_mode: Option<CollaborativeChildWorkMode>,
+    /// 旧 checkpoint 互換（読み取りのみ。新規書き込みでは使わない）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub auto_root_work_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_reason: Option<ChildGoalCloseReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub close_state: Option<ChildGoalCloseState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_error_message: Option<String>,
     pub achievement: ChildGoalAchievement,
 }
 
@@ -375,13 +396,16 @@ pub fn finalize_running_tools(
     }
 }
 
-/// process 消失後は RUNNING の成否を推測せず UNKNOWN に確定する。
-pub fn mark_running_tools_unknown(checkpoint: &mut HandoffCheckpoint) -> Vec<String> {
+/// process 消失後は RUNNING / APPROVED の成否を推測せず UNKNOWN に確定する。
+pub fn mark_uncertain_tools_on_disconnect(checkpoint: &mut HandoffCheckpoint) -> Vec<String> {
     checkpoint
         .tool_executions
         .iter_mut()
         .filter_map(|tool| {
-            if tool.status == RecoverableToolStatus::Running {
+            if matches!(
+                tool.status,
+                RecoverableToolStatus::Running | RecoverableToolStatus::Approved
+            ) {
                 tool.status = RecoverableToolStatus::Unknown;
                 Some(tool.tool_call_id.clone())
             } else {
@@ -389,6 +413,11 @@ pub fn mark_running_tools_unknown(checkpoint: &mut HandoffCheckpoint) -> Vec<Str
             }
         })
         .collect()
+}
+
+/// 後方互換エイリアス。
+pub fn mark_running_tools_unknown(checkpoint: &mut HandoffCheckpoint) -> Vec<String> {
+    mark_uncertain_tools_on_disconnect(checkpoint)
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -535,11 +564,64 @@ pub fn validate_shell_token(
         .is_some_and(|s| verify_handoff_token(token, &s.token_hash))
 }
 
-/// child goal Pop 成功後に checkpoint メタを終了済みへ更新する。
+/// child goal Pop/Finish 成功後に checkpoint メタを終了済みへ更新する。
 pub fn mark_child_goal_closed(goal: &mut ChildGoalMeta, reason: ChildGoalCloseReason) {
     goal.close_reason = Some(reason);
     goal.close_state = Some(ChildGoalCloseState::Completed);
+    goal.close_error_message = None;
     goal.achievement = ChildGoalAchievement::Unknown;
+}
+
+/// 旧 checkpoint 形式を `work_mode` へ正規化する。
+pub fn normalize_child_goal_meta(meta: &mut ChildGoalMeta) {
+    if meta.work_mode.is_none() {
+        meta.work_mode = match (meta.work_id, meta.auto_root_work_id) {
+            (Some(child), Some(parent)) if child != parent => {
+                Some(CollaborativeChildWorkMode::Pushed {
+                    parent_work_id: parent,
+                    child_work_id: child,
+                })
+            }
+            (Some(child), _) => Some(CollaborativeChildWorkMode::StartedRoot {
+                child_work_id: child,
+            }),
+            (None, Some(root)) => Some(CollaborativeChildWorkMode::StartedRoot {
+                child_work_id: root,
+            }),
+            (None, None) => None,
+        };
+    }
+    if let Some(mode) = meta.work_mode {
+        meta.work_id = Some(mode.child_work_id());
+    }
+}
+
+impl CollaborativeChildWorkMode {
+    pub fn child_work_id(self) -> u64 {
+        match self {
+            Self::Pushed { child_work_id, .. } | Self::StartedRoot { child_work_id } => {
+                child_work_id
+            }
+        }
+    }
+}
+
+/// child Work が未 close か。
+pub fn child_goal_needs_work_close(meta: &ChildGoalMeta) -> bool {
+    if meta.close_state == Some(ChildGoalCloseState::Completed) {
+        return false;
+    }
+    let mut normalized = meta.clone();
+    normalize_child_goal_meta(&mut normalized);
+    normalized.work_mode.is_some()
+}
+
+/// 親 resume を止める close 状態か。
+pub fn child_goal_close_blocks_parent_resume(meta: &ChildGoalMeta) -> bool {
+    matches!(
+        meta.close_state,
+        Some(ChildGoalCloseState::Conflict) | Some(ChildGoalCloseState::Failed)
+    )
 }
 
 /// human shell 正常返却時のみ child goal を閉じる（後方互換）。
@@ -586,9 +668,11 @@ pub fn checkpoint_serialized_field_names() -> HashSet<String> {
             handoff_id: String::new(),
             parent_goal_id: None,
             work_id: None,
+            work_mode: None,
             auto_root_work_id: None,
             close_reason: None,
             close_state: None,
+            close_error_message: None,
             achievement: ChildGoalAchievement::Unknown,
         },
         conversation_snapshot: String::new(),
@@ -683,9 +767,11 @@ mod unit_tests {
                 handoff_id: "handoff".into(),
                 parent_goal_id: None,
                 work_id: None,
+                work_mode: None,
                 auto_root_work_id: None,
                 close_reason: None,
                 close_state: None,
+                close_error_message: None,
                 achievement: ChildGoalAchievement::Unknown,
             },
             conversation_snapshot: "snap".into(),
@@ -739,9 +825,11 @@ mod unit_tests {
                 handoff_id: "handoff".into(),
                 parent_goal_id: None,
                 work_id: None,
+                work_mode: None,
                 auto_root_work_id: None,
                 close_reason: None,
                 close_state: None,
+                close_error_message: None,
                 achievement: ChildGoalAchievement::Unknown,
             },
             conversation_snapshot: "snap".into(),
@@ -769,7 +857,7 @@ mod unit_tests {
         };
         finalize_running_tools(
             &mut checkpoint,
-            RecoverableToolStatus::Cancelled,
+            RecoverableToolStatus::Unknown,
             Some("human"),
         );
         assert_eq!(
@@ -778,7 +866,7 @@ mod unit_tests {
         );
         assert_eq!(
             checkpoint.tool_executions[1].status,
-            RecoverableToolStatus::Cancelled
+            RecoverableToolStatus::Unknown
         );
     }
 }

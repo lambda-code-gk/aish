@@ -1630,6 +1630,7 @@ fn run_agent_turn_core(
                                     &handoff_store,
                                     &environment_observer,
                                     &handoff_runtime,
+                                    child_goal_service.as_ref(),
                                 );
                                 if let Err(error) =
                                     parent.prepare(&handoff_result.handoff_id, &owner)
@@ -1976,8 +1977,13 @@ fn run_agent_turn_core(
                         parent_succeeded,
                         tool_calls,
                     )?;
-                    ResumeReturnedParent::new(&store, &ProcessEnvironmentObserver, &runtime)
-                        .finish(&sync.handoff_id, parent_result.clone())?;
+                    ResumeReturnedParent::new(
+                        &store,
+                        &ProcessEnvironmentObserver,
+                        &runtime,
+                        &NoopCollaborativeChildGoalService,
+                    )
+                    .finish(&sync.handoff_id, parent_result.clone())?;
                 }
                 let captured = captured_request_human_action
                     .lock()
@@ -3458,7 +3464,10 @@ fn run_mem(command: MemCommand) -> anyhow::Result<ExitCode> {
 
 fn read_collaborative_status() -> anyhow::Result<Vec<ai::domain::CollaborativeHandoffReport>> {
     let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
-    ReconcileStaleHandoffs::new(&store, &SystemHandoffRuntime).execute()?;
+    ReconcileStaleHandoffs::new(&store, &SystemHandoffRuntime).execute(|handoff_id| {
+        build_collaborative_child_goal_service_for_handoff(&store, handoff_id)
+            .unwrap_or_else(|_| Box::new(NoopCollaborativeChildGoalService))
+    })?;
     ReadCollaborativeStatus::new(&store)
         .read()
         .map_err(Into::into)
@@ -3485,7 +3494,10 @@ fn build_collaborative_child_goal_service_for_handoff(
 fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
     let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
     let runtime = SystemHandoffRuntime;
-    ReconcileStaleHandoffs::new(&store, &runtime).execute()?;
+    ReconcileStaleHandoffs::new(&store, &runtime).execute(|handoff_id| {
+        build_collaborative_child_goal_service_for_handoff(&store, handoff_id)
+            .unwrap_or_else(|_| Box::new(NoopCollaborativeChildGoalService))
+    })?;
     let handoff_id =
         match ai::application::select_recoverable_handoff(&store, requested_id, runtime.now_ms()) {
             Ok(id) => id,
@@ -3527,7 +3539,8 @@ fn run_resume(requested_id: Option<&str>) -> anyhow::Result<ExitCode> {
         );
     }
 
-    let parent = ResumeReturnedParent::new(&store, &observer, &runtime);
+    let parent =
+        ResumeReturnedParent::new(&store, &observer, &runtime, child_goal_service.as_ref());
     let context = parent.prepare(&handoff_id, &owner)?;
     let previous_dir = std::env::current_dir()?;
     let previous_session = std::env::var_os("AI_SESSION_ID");

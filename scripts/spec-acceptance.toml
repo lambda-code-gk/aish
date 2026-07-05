@@ -3136,8 +3136,8 @@ pending = false
 spec = "0055"
 phase = 5
 id = "child_work_without_active_work"
-description = "active Work なしでも child Work を Start→Push→Pop する"
-test = "handoff_creates_child_work_without_active_work_and_pops_on_return"
+description = "active Work 不在時は Start/Finish で child root Work を終了する"
+test = "handoff_creates_child_work_without_active_work_and_finishes_on_return"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
 pending = false
 
@@ -3145,7 +3145,7 @@ pending = false
 spec = "0055"
 phase = 5
 id = "child_work_launch_failure_compensation"
-description = "shell 起動失敗時に child Work を補償 Pop する"
+description = "shell 起動失敗時に child Work を補償終了する"
 test = "handoff_shell_launch_failure_compensates_child_work"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
 pending = false
@@ -3190,35 +3190,35 @@ pending = false
 spec = "0055"
 phase = 5
 id = "child_work_create_failure_compensation"
-description = "Push 失敗時に自動作成した root Work を補償 Pop する"
-test = "handoff_create_failure_compensates_auto_root_work"
+description = "Push 失敗時に handoff を CANCELLED へ補償する"
+test = "handoff_create_failure_cancels_when_push_rejected"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
 pending = false
 
 [[cases]]
 spec = "0055"
 phase = 5
-id = "child_work_auto_root_close"
-description = "child work 未作成時の auto root を Compensated で Pop する"
-test = "child_goal_close_compensates_auto_root_when_push_never_succeeded"
+id = "child_work_started_root_close"
+description = "StartedRoot child Work を Finish で終了する"
+test = "child_goal_finish_root_on_control_returned"
 file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
 pending = false
 
 [[cases]]
 spec = "0055"
 phase = 5
-id = "child_work_auto_root_retry_on_return"
-description = "補償 Pop 失敗後も ControlReturned で auto root を再試行する"
-test = "close_durable_retries_auto_root_on_control_returned_after_compensate_failed"
-file_glob = "ai/src/application/collaborative_child_goal_lifecycle.rs"
+id = "child_work_started_root_lifecycle"
+description = "active Work 不在時は Start で child root Work を作成する"
+test = "child_goal_starts_root_work_when_no_active_work"
+file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
 pending = false
 
 [[cases]]
 spec = "0055"
 phase = 5
-id = "child_work_auto_root_control_returned"
-description = "Push 未成功の auto root を ControlReturned でも Pop する"
-test = "child_goal_close_pops_auto_root_on_control_returned_when_push_never_succeeded"
+id = "child_work_close_conflict"
+description = "active Work 不一致時は Pop/Finish せず Conflict を記録する"
+test = "child_goal_close_rejects_active_work_mismatch"
 file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
 pending = false
 
@@ -3226,7 +3226,7 @@ pending = false
 spec = "0055"
 phase = 5
 id = "child_work_create_resume_error_preserved"
-description = "create/compensate 失敗の resume_error が ShellReady 保存後も残る"
+description = "create 失敗の resume_error が CANCELLED handoff に残る"
 test = "handoff_create_failure_preserves_resume_error_after_shell_ready"
 file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
 pending = false

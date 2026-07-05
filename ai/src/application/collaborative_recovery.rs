@@ -2,11 +2,14 @@
 
 use std::path::PathBuf;
 
-use super::{close_child_goal_durable, compensate_child_goal_durable};
+use super::{
+    close_child_goal_durable, compensate_child_goal_durable,
+    reconcile_child_goal_before_parent_resume,
+};
 use crate::domain::{
-    mark_running_tools_unknown, try_transition, ChildGoalCloseReason, CollaborativeAuditKind,
-    Handoff, HandoffCheckpoint, HandoffEvent, HandoffState, RecoverableToolStatus,
-    RequestedShellExec,
+    child_goal_close_blocks_parent_resume, mark_uncertain_tools_on_disconnect, try_transition,
+    ChildGoalCloseReason, CollaborativeAuditKind, Handoff, HandoffCheckpoint, HandoffEvent,
+    HandoffState, RecoverableToolStatus, RequestedShellExec,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CollaborativeChildGoalService, EnvironmentObserver,
@@ -201,7 +204,7 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> MarkOrphaned<'a, S, R> {
         handoff.return_reason = Some(reason.to_string());
         handoff.updated_at_ms = self.runtime.now_ms();
         let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
-        mark_running_tools_unknown(&mut checkpoint);
+        mark_uncertain_tools_on_disconnect(&mut checkpoint);
         checkpoint.control_state = HandoffState::Orphaned;
         self.store.save_checkpoint(handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
@@ -274,7 +277,7 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReturnControlFromShell<'a, S, R> {
     ) -> Result<(), CollaborativeRecoveryError> {
         let mut handoff = self.store.load_handoff(handoff_id)?;
         let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
-        mark_running_tools_unknown(&mut checkpoint);
+        mark_uncertain_tools_on_disconnect(&mut checkpoint);
         handoff.state = transition(handoff.state, HandoffEvent::HumanReturned)?;
         handoff.return_reason = Some("control_returned".into());
         handoff.human_shell_exit_code = returned.exit_code;
@@ -434,16 +437,23 @@ pub struct ResumeReturnedParent<'a, S, O, R> {
     store: &'a S,
     observer: &'a O,
     runtime: &'a R,
+    child_goal: &'a dyn CollaborativeChildGoalService,
 }
 
 impl<'a, S: RecoveryStore, O: EnvironmentObserver, R: HandoffRuntime>
     ResumeReturnedParent<'a, S, O, R>
 {
-    pub fn new(store: &'a S, observer: &'a O, runtime: &'a R) -> Self {
+    pub fn new(
+        store: &'a S,
+        observer: &'a O,
+        runtime: &'a R,
+        child_goal: &'a dyn CollaborativeChildGoalService,
+    ) -> Self {
         Self {
             store,
             observer,
             runtime,
+            child_goal,
         }
     }
 
@@ -452,9 +462,24 @@ impl<'a, S: RecoveryStore, O: EnvironmentObserver, R: HandoffRuntime>
         handoff_id: &str,
         owner: &RecoveryOwner,
     ) -> Result<ParentResumeContext, CollaborativeRecoveryError> {
+        reconcile_child_goal_before_parent_resume(self.store, self.child_goal, handoff_id)
+            .map_err(|error| CollaborativeRecoveryError::Transition(error.to_string()))?;
         let mut handoff = self.store.load_handoff(handoff_id)?;
         if handoff.state != HandoffState::Returned {
             return Err(invalid_state(&handoff));
+        }
+        if child_goal_close_blocks_parent_resume(
+            &self.store.load_checkpoint(handoff_id)?.child_goal,
+        ) {
+            let checkpoint = self.store.load_checkpoint(handoff_id)?;
+            let message = checkpoint
+                .child_goal
+                .close_error_message
+                .clone()
+                .unwrap_or_else(|| "child work close failed".into());
+            return Err(CollaborativeRecoveryError::Transition(format!(
+                "child_goal_close_blocked: {message}"
+            )));
         }
         acquire_recovery_lease(self.store, self.runtime, handoff_id, owner)?;
         handoff.state = transition(handoff.state, HandoffEvent::StartParentResume)?;
@@ -467,7 +492,7 @@ impl<'a, S: RecoveryStore, O: EnvironmentObserver, R: HandoffRuntime>
         }
         handoff.updated_at_ms = self.runtime.now_ms();
         let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
-        let uncertain_tool_executions = mark_running_tools_unknown(&mut checkpoint);
+        let uncertain_tool_executions = mark_uncertain_tools_on_disconnect(&mut checkpoint);
         let shell_log_start = handoff.shell_log_end.unwrap_or(handoff.shell_log_start);
         let cwd = PathBuf::from(&checkpoint.cwd);
         let observation = self.observer.observe(&cwd, shell_log_start);
@@ -547,13 +572,41 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReconcileStaleHandoffs<'a, S, R> {
     }
 
     /// lease expiry だけでは状態を変えない。owner process 消失を確認した時だけ ORPHANED。
-    pub fn execute(&self) -> Result<Vec<String>, CollaborativeRecoveryError> {
+    /// 不完全な CREATING（lease なし・一定時間経過）も初期化失敗として CANCELLED へ。
+    pub fn execute<F>(
+        &self,
+        mut child_goal_for: F,
+    ) -> Result<Vec<String>, CollaborativeRecoveryError>
+    where
+        F: FnMut(&str) -> Box<dyn CollaborativeChildGoalService>,
+    {
+        const CREATING_STALE_MS: u64 = 120_000;
         let mut reconciled = Vec::new();
+        let now = self.runtime.now_ms();
         for handoff in self.store.list_handoffs()? {
+            if handoff.state == HandoffState::Creating {
+                let lease = self.store.load_lease(&handoff.id)?;
+                let stale = now.saturating_sub(handoff.created_at_ms) >= CREATING_STALE_MS;
+                let owner_dead = lease
+                    .as_ref()
+                    .is_some_and(|entry| !self.runtime.process_is_alive(entry.owner_process_id));
+                if stale && (lease.is_none() || owner_dead) {
+                    let child_goal = child_goal_for(&handoff.id);
+                    CancelHandoff::new(self.store, self.runtime, child_goal.as_ref()).execute(
+                        &handoff.id,
+                        if lease.is_none() {
+                            "stale_creating_without_lease"
+                        } else {
+                            "stale_creating_owner_lost"
+                        },
+                    )?;
+                    reconciled.push(handoff.id);
+                }
+                continue;
+            }
             if !matches!(
                 handoff.state,
-                HandoffState::Creating
-                    | HandoffState::HumanActive
+                HandoffState::HumanActive
                     | HandoffState::SideAgentRunning
                     | HandoffState::SideAgentWaitingForHuman
                     | HandoffState::ResumingParent

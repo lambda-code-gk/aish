@@ -7,11 +7,11 @@ use super::{
     child_goal_environment_patch, close_child_goal_durable, compensate_child_goal_durable,
 };
 use crate::domain::{
-    build_candidate_command, mark_running_tools_unknown, try_transition, ChildGoalAchievement,
-    ChildGoalMeta, CollaborativeAgentRole, CollaborativeAuditKind, CollaborativePolicy,
-    CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint, HandoffEvent,
-    HandoffState, RequestedShellExec, SuggestedCommandCache, SuggestedCommandCandidate,
-    SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
+    build_candidate_command, mark_uncertain_tools_on_disconnect, try_transition,
+    ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole, CollaborativeAuditKind,
+    CollaborativePolicy, CommandCandidate, CommandCandidateSource, Handoff, HandoffCheckpoint,
+    HandoffEvent, HandoffState, RequestedShellExec, SuggestedCommandCache,
+    SuggestedCommandCandidate, SuggestedCommandQueue, HANDOFF_SCHEMA_VERSION,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CollaborativeChildGoalError, CollaborativeChildGoalService,
@@ -197,9 +197,11 @@ where
             handoff_id: handoff_id.clone(),
             parent_goal_id: request.parent_goal_id.clone(),
             work_id: None,
+            work_mode: None,
             auto_root_work_id: None,
             close_reason: None,
             close_state: None,
+            close_error_message: None,
             achievement: ChildGoalAchievement::Unknown,
         };
         let candidate = CommandCandidate {
@@ -292,6 +294,16 @@ where
         };
         // Recovery checkpoint is durable before the PTY process is spawned.
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
+        let mut init = HandoffInitializationGuard {
+            store: self.store,
+            child_goal: self.child_goal,
+            runtime: self.runtime,
+            handoff_id: handoff_id.clone(),
+            child_work_opened: false,
+            shell_session_issued: false,
+            lease_acquired: false,
+            shell_ready: false,
+        };
         let mut child_goal_meta = checkpoint.child_goal.clone();
         match self.child_goal.create_child_goal(
             &mut child_goal_meta,
@@ -302,6 +314,7 @@ where
             &human_request,
         ) {
             Ok(()) => {
+                init.child_work_opened = true;
                 let mut saved = self.store.load_checkpoint(&handoff_id)?;
                 saved.child_goal = child_goal_meta.clone();
                 let metadata = child_goal_environment_patch(&saved);
@@ -309,58 +322,64 @@ where
                 self.store.save_checkpoint(&handoff_id, &saved)?;
             }
             Err(error) => {
-                let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
-                checkpoint.child_goal = child_goal_meta.clone();
-                let mut metadata =
-                    serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
-                        .unwrap_or_else(|_| serde_json::json!({}));
-                if let Some(object) = metadata.as_object_mut() {
-                    object.insert("child_goal_create_error".into(), error.to_string().into());
-                    if let Some(root_id) = child_goal_meta.auto_root_work_id {
-                        object.insert("auto_root_work_id".into(), root_id.into());
-                    }
+                let create_message = error.to_string();
+                init.persist_create_error(&child_goal_meta, &create_message)?;
+                if child_goal_meta.work_mode.is_some() {
+                    init.child_work_opened = true;
+                    let _ = init.compensate_child_work(&create_message);
                 }
-                checkpoint.environment_metadata = metadata.to_string();
-                self.store.save_checkpoint(&handoff_id, &checkpoint)?;
-                if child_goal_meta.auto_root_work_id.is_some() {
-                    if let Err(compensate_error) =
-                        compensate_child_goal_durable(self.store, self.child_goal, &handoff_id)
-                    {
-                        let mut handoff = self.store.load_handoff(&handoff_id)?;
-                        let create_message = error.to_string();
-                        handoff.resume_error = Some(format!(
-                            "child_goal_create: {create_message}; compensate: {compensate_error}"
-                        ));
-                        handoff.updated_at_ms = self.runtime.now_ms();
-                        self.store.save_handoff(&handoff)?;
-                    }
-                }
+                init.cancel_handoff(&format!("child_goal_create: {create_message}"))?;
+                return Err(CollaborativeHandoffError::ChildGoal(error));
             }
         }
-        let token = self
-            .runtime
-            .secure_token()
-            .map_err(CollaborativeHandoffError::Token)?;
-        self.store.append_shell_session(
-            &handoff_id,
-            &ShellSessionIssueRequest {
-                generation: 1,
-                token_plaintext: token.clone(),
-                now_ms: now,
-            },
-        )?;
-        self.store.try_acquire_lease(
-            &handoff_id,
-            &LeaseAcquireRequest {
-                owner_client_id: format!("ai-parent-{}", self.runtime.process_id()),
-                owner_process_id: self.runtime.process_id(),
-                owner_tty: self.runtime.tty(),
-                owner_host: self.runtime.host_id(),
-                owner_uid: self.runtime.effective_uid(),
-                now_ms: now,
-                lease_timeout_ms: 120_000,
-            },
-        )?;
+        let token = self.runtime.secure_token().map_err(|error| {
+            init.compensate_all(&format!("token: {error}"));
+            CollaborativeHandoffError::Token(error)
+        })?;
+        if self
+            .store
+            .append_shell_session(
+                &handoff_id,
+                &ShellSessionIssueRequest {
+                    generation: 1,
+                    token_plaintext: token.clone(),
+                    now_ms: now,
+                },
+            )
+            .is_err()
+        {
+            let message = "failed to persist shell session".to_string();
+            init.compensate_all(&message);
+            init.cancel_handoff(&message)?;
+            return Err(CollaborativeHandoffError::Store(HandoffStoreError::Write(
+                message,
+            )));
+        }
+        init.shell_session_issued = true;
+        if self
+            .store
+            .try_acquire_lease(
+                &handoff_id,
+                &LeaseAcquireRequest {
+                    owner_client_id: format!("ai-parent-{}", self.runtime.process_id()),
+                    owner_process_id: self.runtime.process_id(),
+                    owner_tty: self.runtime.tty(),
+                    owner_host: self.runtime.host_id(),
+                    owner_uid: self.runtime.effective_uid(),
+                    now_ms: now,
+                    lease_timeout_ms: 120_000,
+                },
+            )
+            .is_err()
+        {
+            let message = "failed to acquire handoff lease".to_string();
+            init.compensate_all(&message);
+            init.cancel_handoff(&message)?;
+            return Err(CollaborativeHandoffError::Store(HandoffStoreError::Write(
+                message,
+            )));
+        }
+        init.lease_acquired = true;
         record_audit(
             self.store,
             &handoff_id,
@@ -370,6 +389,7 @@ where
         handoff.state = transition(handoff.state, HandoffEvent::ShellReady)?;
         handoff.updated_at_ms = self.runtime.now_ms();
         self.store.save_handoff(&handoff)?;
+        init.shell_ready = true;
         record_audit(
             self.store,
             &handoff_id,
@@ -416,7 +436,7 @@ where
                     );
                 }
                 if matches!(event, HandoffEvent::ShellLaunchFailed) {
-                    let _ = compensate_child_goal_durable(self.store, self.child_goal, &handoff_id);
+                    init.compensate_all("shell_launch_failed");
                 }
                 self.store.release_lease(&handoff_id)?;
                 record_audit(self.store, &handoff_id, CollaborativeAuditKind::LeaseLost);
@@ -439,7 +459,7 @@ where
         let mut checkpoint = self.store.load_checkpoint(&handoff_id)?;
         checkpoint.environment_metadata =
             merge_shell_replay_metadata(&checkpoint.environment_metadata, &returned);
-        mark_running_tools_unknown(&mut checkpoint);
+        mark_uncertain_tools_on_disconnect(&mut checkpoint);
         checkpoint.control_state = HandoffState::Returned;
         self.store.save_checkpoint(&handoff_id, &checkpoint)?;
         self.store.save_handoff(&handoff)?;
@@ -481,6 +501,87 @@ where
             after_observation_ref: Some(after_ref),
             uncertain_tool_executions: Vec::new(),
         })
+    }
+}
+
+struct HandoffInitializationGuard<'a, S, R> {
+    store: &'a S,
+    child_goal: &'a dyn CollaborativeChildGoalService,
+    runtime: &'a R,
+    handoff_id: String,
+    child_work_opened: bool,
+    shell_session_issued: bool,
+    lease_acquired: bool,
+    shell_ready: bool,
+}
+
+impl<'a, S, R> HandoffInitializationGuard<'a, S, R>
+where
+    S: CollaborativeHandoffStore,
+    R: HandoffRuntime,
+{
+    fn persist_create_error(
+        &self,
+        child_goal_meta: &ChildGoalMeta,
+        message: &str,
+    ) -> Result<(), CollaborativeHandoffError> {
+        let mut checkpoint = self.store.load_checkpoint(&self.handoff_id)?;
+        checkpoint.child_goal = child_goal_meta.clone();
+        let mut metadata =
+            serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+                .unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(object) = metadata.as_object_mut() {
+            object.insert("child_goal_create_error".into(), message.into());
+            object.insert("initialization_error".into(), message.into());
+        }
+        checkpoint.environment_metadata = metadata.to_string();
+        self.store.save_checkpoint(&self.handoff_id, &checkpoint)?;
+        let mut handoff = self.store.load_handoff(&self.handoff_id)?;
+        handoff.resume_error = Some(format!("initialization: {message}"));
+        handoff.updated_at_ms = self.runtime.now_ms();
+        self.store.save_handoff(&handoff)?;
+        Ok(())
+    }
+
+    fn compensate_child_work(&self, message: &str) -> Result<(), CollaborativeChildGoalError> {
+        compensate_child_goal_durable(self.store, self.child_goal, &self.handoff_id).map_err(
+            |error| {
+                let mut handoff = self.store.load_handoff(&self.handoff_id).ok();
+                if let Some(ref mut handoff) = handoff {
+                    handoff.resume_error = Some(format!("{message}; compensate: {error}"));
+                    handoff.updated_at_ms = self.runtime.now_ms();
+                    let _ = self.store.save_handoff(handoff);
+                }
+                error
+            },
+        )
+    }
+
+    fn cancel_handoff(&self, message: &str) -> Result<(), CollaborativeHandoffError> {
+        let mut handoff = self.store.load_handoff(&self.handoff_id)?;
+        if handoff.state == HandoffState::Creating {
+            handoff.state = transition(handoff.state, HandoffEvent::Cancel)?;
+        } else if handoff.state == HandoffState::HumanActive && !self.shell_ready {
+            handoff.state = transition(handoff.state, HandoffEvent::ShellLaunchFailed)?;
+        }
+        handoff.return_reason = Some("initialization_failed".into());
+        handoff.resume_error = Some(message.to_string());
+        handoff.updated_at_ms = self.runtime.now_ms();
+        let mut checkpoint = self.store.load_checkpoint(&self.handoff_id)?;
+        checkpoint.control_state = handoff.state;
+        self.store.save_checkpoint(&self.handoff_id, &checkpoint)?;
+        self.store.save_handoff(&handoff)?;
+        if self.lease_acquired {
+            let _ = self.store.release_lease(&self.handoff_id);
+        }
+        Ok(())
+    }
+
+    fn compensate_all(&self, message: &str) {
+        if self.child_work_opened {
+            let _ = self.compensate_child_work(message);
+        }
+        let _ = self.cancel_handoff(message);
     }
 }
 

@@ -136,9 +136,11 @@ fn persist_fixture(
         handoff_id: "handoff-test".into(),
         parent_goal_id: Some("goal-parent".into()),
         work_id: None,
+        work_mode: None,
         auto_root_work_id: None,
         close_reason: None,
         close_state: None,
+        close_error_message: None,
         achievement: ChildGoalAchievement::Unknown,
     };
     store

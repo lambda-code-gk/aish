@@ -32,6 +32,7 @@ pub use ask_prompt_input::{
 pub use collaborative_child_goal_lifecycle::{
     child_goal_environment_patch, close_child_goal_durable, compensate_child_goal_durable,
     handoff_requires_child_goal_service, persist_child_goal_checkpoint,
+    reconcile_child_goal_before_parent_resume,
 };
 pub use collaborative_handoff::{
     persist_handoff_candidates_for_recall, suggestion_cache_path_from_checkpoint,

@@ -1,6 +1,10 @@
 //! 0055 Phase 6 — 縦切り統合テスト（実 store + 必要最小限の実 process / shell）。
 #![cfg(unix)]
 
+mod common;
+
+use common::domain_work_client::TrackingDomainMockWorkClient;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -258,89 +262,8 @@ impl HumanShellLauncher for RealHumanShellLauncher {
     }
 }
 
-struct MockWorkClientForHandoff {
-    active: Arc<Mutex<Option<u64>>>,
-    ops: Arc<Mutex<Vec<String>>>,
-}
-
-impl ai::ports::outbound::WorkClient for MockWorkClientForHandoff {
-    fn work_query(
-        &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
-    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        use aibe_protocol::{WorkQueryResponseBody, WorkSnapshotDto};
-        Ok(aibe_protocol::ClientResponse::WorkQueryResult(
-            WorkQueryResponseBody {
-                id: "q".into(),
-                snapshot: WorkSnapshotDto {
-                    revision: 1,
-                    active_work_id: *self.active.lock().unwrap(),
-                    stack: vec![],
-                    works: vec![],
-                    entries: vec![],
-                },
-            },
-        ))
-    }
-
-    fn work_apply(
-        &self,
-        _session_id: &str,
-        _context: &aibe_protocol::MemoryContext,
-        operation: aibe_protocol::WorkOperationDto,
-    ) -> Result<aibe_protocol::ClientResponse, ai::ports::outbound::AgentError> {
-        use aibe_protocol::{
-            WorkApplyResponseBody, WorkMutationKindDto, WorkMutationOutcomeDto, WorkSnapshotDto,
-        };
-        let outcome = match operation {
-            aibe_protocol::WorkOperationDto::Start { .. } => {
-                self.ops.lock().unwrap().push("Start".into());
-                *self.active.lock().unwrap() = Some(1);
-                WorkMutationOutcomeDto {
-                    kind: WorkMutationKindDto::Start,
-                    work_id: Some(1),
-                    previous_work_id: None,
-                }
-            }
-            aibe_protocol::WorkOperationDto::Push { .. } => {
-                self.ops.lock().unwrap().push("Push".into());
-                *self.active.lock().unwrap() = Some(2);
-                WorkMutationOutcomeDto {
-                    kind: WorkMutationKindDto::Push,
-                    work_id: Some(2),
-                    previous_work_id: Some(1),
-                }
-            }
-            aibe_protocol::WorkOperationDto::Pop => {
-                self.ops.lock().unwrap().push("Pop".into());
-                *self.active.lock().unwrap() = Some(1);
-                WorkMutationOutcomeDto {
-                    kind: WorkMutationKindDto::Pop,
-                    work_id: Some(1),
-                    previous_work_id: Some(2),
-                }
-            }
-            _ => panic!("unexpected work op"),
-        };
-        Ok(aibe_protocol::ClientResponse::WorkApplyResult(
-            WorkApplyResponseBody {
-                id: "a".into(),
-                snapshot: WorkSnapshotDto {
-                    revision: 1,
-                    active_work_id: outcome.work_id,
-                    stack: vec![],
-                    works: vec![],
-                    entries: vec![],
-                },
-                outcome,
-            },
-        ))
-    }
-}
-
 struct TrackingChildGoalService {
-    inner: ai::adapters::outbound::AibeCollaborativeChildGoalService<MockWorkClientForHandoff>,
+    inner: ai::adapters::outbound::AibeCollaborativeChildGoalService<TrackingDomainMockWorkClient>,
     close_calls: Arc<Mutex<Vec<String>>>,
 }
 
@@ -425,9 +348,11 @@ fn persist_side_slice_fixture(store: &FilesystemHandoffStore, handoff_id: &str) 
             handoff_id: handoff.id.clone(),
             parent_goal_id: handoff.parent_goal_id.clone(),
             work_id: None,
+            work_mode: None,
             auto_root_work_id: None,
             close_reason: None,
             close_state: None,
+            close_error_message: None,
             achievement: ChildGoalAchievement::Unknown,
         },
         conversation_snapshot: "snap".into(),
@@ -539,7 +464,12 @@ fn slice_lease_transfer_real_shell() {
         "human shell return must release lease"
     );
 
-    let resume = ResumeReturnedParent::new(&store, &Observer, &runtime);
+    let resume = ResumeReturnedParent::new(
+        &store,
+        &Observer,
+        &runtime,
+        &ai::ports::outbound::NoopCollaborativeChildGoalService,
+    );
     let owner = RecoveryOwner {
         client_id: format!("ai-parent-{}", runtime.process_id()),
         process_id: runtime.process_id(),
@@ -567,15 +497,13 @@ fn slice_work_push_pop_real_store_shell() {
     let store_root = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(store_root.path().to_path_buf());
-    let active = Arc::new(Mutex::new(None));
-    let ops = Arc::new(Mutex::new(Vec::new()));
+    let work_client = TrackingDomainMockWorkClient::with_active(Some(1));
+    let work_state = work_client.inner.state.clone();
+    let ops = work_client.ops.clone();
     let close_calls = Arc::new(Mutex::new(Vec::new()));
     let child_goal = TrackingChildGoalService {
         inner: ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
-            MockWorkClientForHandoff {
-                active: active.clone(),
-                ops: ops.clone(),
-            },
+            work_client,
             "slice-session".into(),
             "project_slice".into(),
         ),
@@ -613,7 +541,7 @@ fn slice_work_push_pop_real_store_shell() {
     );
     assert!(ops.lock().unwrap().contains(&"Pop".to_string()));
     assert!(!close_calls.lock().unwrap().is_empty());
-    assert_eq!(*active.lock().unwrap(), Some(1));
+    assert_eq!(work_state.lock().unwrap().active_work_id, Some(1));
 }
 
 #[test]
@@ -753,15 +681,11 @@ fn slice_parent_resume_real_store_work() {
     let store_root = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let store = FilesystemHandoffStore::new(store_root.path().to_path_buf());
-    let active = Arc::new(Mutex::new(None));
-    let ops = Arc::new(Mutex::new(Vec::new()));
+    let work_client = TrackingDomainMockWorkClient::with_active(None);
     let close_calls = Arc::new(Mutex::new(Vec::new()));
     let child_goal = TrackingChildGoalService {
         inner: ai::adapters::outbound::AibeCollaborativeChildGoalService::new(
-            MockWorkClientForHandoff {
-                active: active.clone(),
-                ops: ops.clone(),
-            },
+            work_client,
             "slice-session".into(),
             "project_slice".into(),
         ),
@@ -788,7 +712,7 @@ fn slice_parent_resume_real_store_work() {
     );
 
     let resume_runtime = SystemHandoffRuntime;
-    let resume = ResumeReturnedParent::new(&store, &Observer, &resume_runtime);
+    let resume = ResumeReturnedParent::new(&store, &Observer, &resume_runtime, &child_goal);
     resume
         .prepare(
             &result.handoff_id,
@@ -874,9 +798,11 @@ fn slice_structured_human_action_real_shell_ai() {
             handoff_id: handoff.id.clone(),
             parent_goal_id: None,
             work_id: Some(2),
+            work_mode: None,
             auto_root_work_id: None,
             close_reason: None,
             close_state: None,
+            close_error_message: None,
             achievement: ChildGoalAchievement::Unknown,
         },
         conversation_snapshot: "snap".into(),
