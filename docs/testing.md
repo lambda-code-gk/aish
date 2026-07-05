@@ -248,6 +248,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 | **aibe** | assistant streaming forward | `tests/agent_turn_streaming.rs`、`adapters/outbound/scripted_mock_llm.rs` |
 | **aibe** | contextual memory pack 境界（0038 Phase B） | `application/basic_memory_pack.rs`（unit）、`plugin_memory/`（Phase D、`#[cfg(feature = "memory")]`）、`tests/memory_pack_turn_hook.rs`、`tests/memory_disabled.rs`（basic 拒否回帰）、`tests/contextual_memory.rs` / `tests/memory_subscribe.rs`（contextual 回帰） |
 | **ai** | contextual memory CLI policy pack（0038 Phase C） | `plugin_memory/`（Phase D）、`application/memory_*`（facade）、`tests/phase_a_cli.rs`（`mem add` / `mem kinds` / 専用 CLI 回帰）、`tests/memory_disabled_cli.rs`（disabled gate 回帰） |
+| **ai** / **aish** | 0055 collaborative handoff 縦切り統合（Phase 6） | `ai/tests/0055_collaborative_vertical_slice.rs`（CI: 5 本）。nightly / 手動: `./scripts/run-collaborative-nightly.sh`（`pending=true` + `#[ignore]` 2 本） |
 | **aibe** / **ai** | compile-time packaging（0038 Phase D） | `cargo build --workspace --no-default-features`、`cargo test --workspace --no-default-features`（memory 統合テストは `#[cfg(feature = "memory")]` で default build のみ） |
 | **aibe** | server / agent / tools / 承認 / 外部コマンド（0026 の shell_exec 経路） | `socket_protocol.rs`、`agent_turn_loop.rs`、`shell_exec.rs`、`shell_exec_approval_socket.rs`、`external_commands.rs` |
 

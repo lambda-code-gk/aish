@@ -3185,3 +3185,66 @@ description = "side agent 開始を store lock 内で atomic 化する"
 test = "start_side_run_atomically_clears_stale_lock_for_human_active"
 file_glob = "ai/tests/0055_collaborative_side_agent.rs"
 pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_lease_transfer_real_shell"
+description = "実 aish human-shell で lease 移譲と parent resume"
+test = "slice_lease_transfer_real_shell"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_work_push_pop_real_store_shell"
+description = "実 store + mock work + 実 shell で Work Push/Pop"
+test = "slice_work_push_pop_real_store_shell"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_candidate_cache_store_to_real_shell"
+description = "handoff store → suggestion cache → 実 aish recall"
+test = "slice_candidate_cache_store_to_real_shell"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_side_run_exclusive_real_store"
+description = "実 store 上で side-run lock 排他"
+test = "slice_side_run_exclusive_real_store"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_parent_resume_real_store_work"
+description = "Returned checkpoint から parent resume + child Work 完了"
+test = "slice_parent_resume_real_store_work"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_structured_human_action_real_shell_ai"
+description = "WAITING → human shell 内 ai → side 再開（nightly）"
+test = "slice_structured_human_action_real_shell_ai"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = true
+
+[[cases]]
+spec = "0055"
+phase = 6
+id = "slice_full_collaborative_pty_nightly"
+description = "縦切り最小連結 full PTY 通し（nightly）"
+test = "slice_full_collaborative_pty_nightly"
+file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
+pending = true

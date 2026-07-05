@@ -118,15 +118,20 @@ def check_index_not_claims_done(pending_specs: set[str]) -> list[str]:
                 f"docs/0000_spec-index.md still marks spec {spec} design as 実装済み "
                 f"while acceptance cases are pending"
             )
-        # Done implementation spec row must not claim Phase 1–3 実装済み.
-        if re.search(
-            rf"\| {spec} \|.*implementation-spec\.md\]\(done/.*\| 実装済み",
-            text,
-        ):
+        # Master implementation spec in done/ must not claim full 実装済み while any AC pending.
+        # Phase-specific rows (…-phaseN-implementation-spec.md) may stay 実装済み（Phase N）.
+        for line in text.splitlines():
+            if not line.startswith(f"| {spec} |"):
+                continue
+            if "implementation-spec.md](done/" not in line or "| 実装済み" not in line:
+                continue
+            if re.search(r"-phase[0-9]", line):
+                continue
             errors.append(
                 f"docs/0000_spec-index.md lists spec {spec} implementation as 実装済み in done/ "
                 f"while acceptance cases are pending"
             )
+            break
     return errors
 
 
