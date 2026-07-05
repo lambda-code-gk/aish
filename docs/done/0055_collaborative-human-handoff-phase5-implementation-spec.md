@@ -41,6 +41,9 @@
 | `normal_ai_unchanged_regression` | 非協調 `ai` smoke | `normal_ai_entry_unchanged_regression` | true |
 | `docs_architecture_synced` | architecture.md に協調節 | `docs_architecture_mentions_collaborative_handoff` | true |
 | `manual_checklist_exists` | manual 手順あり | `manual_collaborative_handoff_checklist_exists` | true |
+| `reconcile_orphan_side_run_lock` | HUMAN_ACTIVE 時に stale side-run lock を除去 | `reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active` | false |
+| `durable_tool_lifecycle` | checkpoint へ RUNNING/完了 tool lifecycle を記録 | `tool_lifecycle_records_running_and_syncs_completed` | false |
+| `parent_resume_tool_lifecycle` | 親 RESUMING_PARENT turn の tool lifecycle を checkpoint へ同期 | `parent_resume_tool_lifecycle_syncs_completed_tools` | false |
 
 ## 3. 手動検証（`docs/manual/collaborative-handoff.md`）
 

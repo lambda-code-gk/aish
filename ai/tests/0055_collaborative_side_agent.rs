@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ai::adapters::outbound::{strip_handoff_environment, FilesystemHandoffStore};
 use ai::application::{
     record_handoff_tool_running, CollaborativeShellEnvironment, RequestHumanAction,
-    SideAgentDispatch, SideAgentError, SideAgentInvocation, StartOrResumeSideAgent,
-    HANDOFF_ENV_KEYS,
+    SideAgentDispatch, SideAgentDispatchOptions, SideAgentError, SideAgentInvocation,
+    StartOrResumeSideAgent, HANDOFF_ENV_KEYS,
 };
 use ai::domain::{
     ChildGoalAchievement, ChildGoalMeta, CollaborativeAgentRole, CollaborativePolicy, Handoff,
@@ -232,7 +232,11 @@ fn persist_fixture(
 fn run_turn(fixture: &Fixture, note: Option<&str>) -> ai::application::SideTurn {
     match fixture
         .service()
-        .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, note))
+        .dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, note),
+            SideAgentDispatchOptions::default(),
+        )
         .unwrap()
     {
         SideAgentDispatch::Run(turn) => turn,
@@ -319,7 +323,11 @@ fn bare_ai_in_human_active_opens_input_ui() {
     assert!(matches!(
         fixture
             .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(true, None))
+            .dispatch(
+                Some(fixture.env.clone()),
+                &fixture.invocation(true, None),
+                SideAgentDispatchOptions::default()
+            )
             .unwrap(),
         SideAgentDispatch::PromptForInput { .. }
     ));
@@ -358,9 +366,11 @@ fn handoff_rejected_when_effective_uid_mismatches() {
     let mut fixture = Fixture::new(HandoffState::HumanActive);
     fixture.runtime.uid = 2000;
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::UidMismatch)
     ));
 
@@ -372,9 +382,11 @@ fn handoff_rejected_when_effective_uid_mismatches() {
         .save_checkpoint("handoff-test", &checkpoint)
         .unwrap();
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::InvalidIdentityMetadata)
     ));
 }
@@ -384,9 +396,11 @@ fn handoff_rejected_when_host_id_mismatches() {
     let mut fixture = Fixture::new(HandoffState::HumanActive);
     fixture.runtime.host = "another-host".into();
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::HostMismatch)
     ));
 }
@@ -408,7 +422,11 @@ fn human_control_returned_includes_required_fields() {
     invocation.cwd = PathBuf::from("/workspace/current");
     let event = match fixture
         .service()
-        .dispatch(Some(fixture.env.clone()), &invocation)
+        .dispatch(
+            Some(fixture.env.clone()),
+            &invocation,
+            SideAgentDispatchOptions::default(),
+        )
         .unwrap()
     {
         SideAgentDispatch::Run(turn) => turn.control_returned.unwrap(),
@@ -436,9 +454,11 @@ fn nested_collaborative_flag_is_rejected() {
     let mut invocation = fixture.invocation(false, None);
     invocation.collaborative_requested = true;
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &invocation),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &invocation,
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::NestedCollaborative)
     ));
 }
@@ -447,9 +467,11 @@ fn nested_collaborative_flag_is_rejected() {
 fn orphaned_handoff_direct_ai_shows_resume_hint() {
     let fixture = Fixture::new(HandoffState::Orphaned);
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::Orphaned)
     ));
 }
@@ -483,6 +505,28 @@ fn side_agent_receives_parent_task_context() {
 }
 
 #[test]
+fn side_agent_includes_contextual_memory_block() {
+    let fixture = Fixture::new(HandoffState::HumanActive);
+    let turn = fixture
+        .service()
+        .dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions {
+                memory_prompt_block: Some("Active goal: ship Phase 3\nOpen issue: flaky test"),
+            },
+        )
+        .unwrap();
+    let SideAgentDispatch::Run(turn) = turn else {
+        panic!("expected side run, got {turn:?}");
+    };
+    assert!(turn.system_instruction.contains("contextual_memory:"));
+    assert!(turn
+        .system_instruction
+        .contains("Active goal: ship Phase 3"));
+}
+
+#[test]
 fn side_agent_reuses_conversation_in_handoff() {
     let fixture = Fixture::new(HandoffState::HumanActive);
     let first = run_turn(&fixture, None).conversation_id;
@@ -495,7 +539,11 @@ fn side_agent_reuses_conversation_in_handoff() {
     next_process.process_id = 456;
     let second = match fixture
         .service()
-        .dispatch(Some(fixture.env.clone()), &next_process)
+        .dispatch(
+            Some(fixture.env.clone()),
+            &next_process,
+            SideAgentDispatchOptions::default(),
+        )
         .unwrap()
     {
         SideAgentDispatch::Run(turn) => turn.conversation_id,
@@ -537,9 +585,11 @@ fn side_agent_running_rejects_new_run_when_side_lock_alive() {
         )
         .unwrap();
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::AlreadyRunning)
     ));
 }
@@ -563,9 +613,11 @@ fn side_agent_crash_recovers_to_human_active() {
         )
         .unwrap();
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(fixture.env.clone()), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(fixture.env.clone()),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Ok(SideAgentDispatch::Run(_))
     ));
     assert_eq!(
@@ -629,9 +681,11 @@ fn stale_handoff_token_is_rejected() {
     let mut stale = fixture.env.clone();
     stale.generation = 0;
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(stale), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(stale),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::InvalidToken)
     ));
 }
@@ -657,7 +711,11 @@ fn standalone_mode_ignores_handoff_context() {
     assert_eq!(
         fixture
             .service()
-            .dispatch(Some(invalid), &invocation)
+            .dispatch(
+                Some(invalid),
+                &invocation,
+                SideAgentDispatchOptions::default()
+            )
             .unwrap(),
         SideAgentDispatch::Standalone
     );
@@ -669,9 +727,11 @@ fn tampered_handoff_id_is_rejected() {
     let mut env = fixture.env.clone();
     env.handoff_id = "does-not-exist".into();
     assert!(matches!(
-        fixture
-            .service()
-            .dispatch(Some(env), &fixture.invocation(false, None)),
+        fixture.service().dispatch(
+            Some(env),
+            &fixture.invocation(false, None),
+            SideAgentDispatchOptions::default()
+        ),
         Err(SideAgentError::Store(_))
     ));
 }
@@ -995,7 +1055,11 @@ fn reconcile_orphan_side_run_lock_clears_stale_lock_for_human_active() {
     next.process_id = 456;
     match fixture
         .service()
-        .dispatch(Some(fixture.env.clone()), &next)
+        .dispatch(
+            Some(fixture.env.clone()),
+            &next,
+            SideAgentDispatchOptions::default(),
+        )
         .unwrap()
     {
         SideAgentDispatch::Run(_) => {}

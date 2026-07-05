@@ -42,3 +42,19 @@ pub fn finalize_handoff_running_tools<S: CheckpointRepository>(
     finalize_running_tools(&mut checkpoint, terminal, completed_call_id);
     store.save_checkpoint(handoff_id, &checkpoint)
 }
+
+/// 親 RESUMING_PARENT turn 終了時に checkpoint へ tool lifecycle を確定する。
+pub fn finalize_parent_resume_tool_tracking<S: CheckpointRepository>(
+    store: &S,
+    handoff_id: &str,
+    parent_succeeded: bool,
+    tool_calls: Option<&[ExecutedToolCall]>,
+) -> Result<(), HandoffStoreError> {
+    if let Some(calls) = tool_calls.filter(|calls| !calls.is_empty()) {
+        sync_handoff_tool_executions(store, handoff_id, calls)
+    } else if !parent_succeeded {
+        finalize_handoff_running_tools(store, handoff_id, RecoverableToolStatus::Cancelled, None)
+    } else {
+        Ok(())
+    }
+}

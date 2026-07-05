@@ -80,6 +80,7 @@ fn request(cwd: PathBuf, suffix: &str) -> ParentShellExecRequest {
         conversation_snapshot: "snapshot".into(),
         conversation_summary: "summary".into(),
         work_stage_and_plan: String::new(),
+        memory_space_id: None,
         command: "printf".into(),
         args: vec!["hello world".into()],
         cwd,

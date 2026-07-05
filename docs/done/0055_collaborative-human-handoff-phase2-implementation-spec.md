@@ -54,6 +54,7 @@
 | `parent_tools_barrier_before_handoff` | handoff 前に開始済み親ツールを完了させる | `parent_tools_complete_before_handoff_starts` | false |
 | `cwd_missing_rejects_handoff` | cwd 不存在時は shell 起動せずエラー | `missing_cwd_rejects_human_shell_spawn` | false |
 | `checkpoint_before_shell` | shell 起動前に checkpoint が存在 | `checkpoint_persisted_before_human_shell_spawn` | false |
+| `handoff_checkpoint_stores_memory_space_id` | checkpoint に親 memory_space_id を保存 | `handoff_checkpoint_stores_parent_memory_space_id` | false |
 | `handoff_env_set_on_spawn` | human shell 子プロセスに handoff env が設定される | `human_shell_child_has_handoff_env_vars` | false |
 | `candidate_in_recall_queue` | 候補が recall から取得できる | `handoff_candidate_available_via_recall` | false |
 | `candidate_inserts_command_only` | Alt+. は command 文字列のみ挿入 | `recall_inserts_command_text_only` | false |

@@ -3,10 +3,11 @@ use std::sync::Mutex;
 
 use ai::adapters::outbound::FilesystemHandoffStore;
 use ai::application::{
-    has_unknown_tools, list_recoverable_handoffs, select_recoverable_handoff,
-    CollaborativeExecutionContext, CollaborativeRecoveryError, CollaborativeShellExecPolicy,
-    MarkOrphaned, ParentShellExecRequest, ReconcileStaleHandoffs, RecoveryOwner,
-    ResumeOrphanedHandoff, ResumeReturnedParent, ReturnControlFromShell,
+    finalize_parent_resume_tool_tracking, has_unknown_tools, list_recoverable_handoffs,
+    record_handoff_tool_running, select_recoverable_handoff, CollaborativeExecutionContext,
+    CollaborativeRecoveryError, CollaborativeShellExecPolicy, MarkOrphaned, ParentShellExecRequest,
+    ReconcileStaleHandoffs, RecoveryOwner, ResumeOrphanedHandoff, ResumeReturnedParent,
+    ReturnControlFromShell,
 };
 use ai::domain::{
     validate_shell_token, ChildGoalAchievement, ChildGoalMeta, Handoff, HandoffCheckpoint,
@@ -170,6 +171,7 @@ fn parent_request(cwd: &str) -> ParentShellExecRequest {
         conversation_snapshot: "full durable parent history".into(),
         conversation_summary: "parent was validating Phase 4".into(),
         work_stage_and_plan: "Phase 4 recovery".into(),
+        memory_space_id: None,
         command: "cargo".into(),
         args: vec!["test".into()],
         cwd: cwd.into(),
@@ -645,4 +647,45 @@ fn lease_expiry_alone_does_not_auto_resume_parent() {
         fixture.store.load_handoff("expired").unwrap().state,
         HandoffState::HumanActive
     );
+}
+
+#[test]
+fn parent_resume_tool_lifecycle_syncs_completed_tools() {
+    let fixture = Fixture::new("resume-tools", HandoffState::Returned);
+    let runtime = Runtime {
+        now: 2,
+        owner_alive: true,
+    };
+    ResumeReturnedParent::new(&fixture.store, &runtime)
+        .prepare("resume-tools", &owner())
+        .unwrap();
+    record_handoff_tool_running(
+        &fixture.store,
+        "resume-tools",
+        "parent-tool-1",
+        "file_write",
+    )
+    .unwrap();
+    finalize_parent_resume_tool_tracking(
+        &fixture.store,
+        "resume-tools",
+        true,
+        Some(&[aibe_protocol::ExecutedToolCall::ok(
+            "parent-tool-1".to_string(),
+            "file_write".to_string(),
+            serde_json::json!({"path": "README.md"}),
+            "written".to_string(),
+        )]),
+    )
+    .unwrap();
+    let checkpoint = fixture.store.load_checkpoint("resume-tools").unwrap();
+    let tool = checkpoint
+        .tool_executions
+        .iter()
+        .find(|tool| tool.tool_call_id == "parent-tool-1")
+        .expect("parent resume tool");
+    assert_eq!(tool.status, RecoverableToolStatus::Completed);
+    ResumeReturnedParent::new(&fixture.store, &runtime)
+        .finish("resume-tools", Ok(()))
+        .unwrap();
 }

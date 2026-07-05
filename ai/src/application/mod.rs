@@ -34,8 +34,8 @@ pub use collaborative_handoff::{
     ParentShellExecRequest,
 };
 pub use collaborative_parent_context::{
-    build_conversation_snapshot, build_enriched_parent_handoff_context, query_work_snapshot,
-    EnrichedParentHandoffContext,
+    build_conversation_snapshot, build_enriched_parent_handoff_context, checkpoint_memory_space_id,
+    query_collaborative_memory_prompt_block, query_work_snapshot, EnrichedParentHandoffContext,
 };
 pub use collaborative_recovery::{
     has_unknown_tools, list_recoverable_handoffs, select_recoverable_handoff, CancelHandoff,
@@ -44,13 +44,14 @@ pub use collaborative_recovery::{
     ReturnControlFromShell,
 };
 pub use collaborative_side_agent::{
-    parse_request_human_action, presenter_output_for_assistant_content,
-    CollaborativeShellEnvironment, HumanControlReturned, ParentCollaborationContextBuilder,
-    ReadCollaborativeStatus, SideAgentDispatch, SideAgentError, SideAgentInvocation, SideTurn,
+    presenter_output_for_assistant_content, CollaborativeShellEnvironment, HumanControlReturned,
+    ParentCollaborationContextBuilder, ReadCollaborativeStatus, SideAgentDispatch,
+    SideAgentDispatchOptions, SideAgentError, SideAgentInvocation, SideTurn,
     StartOrResumeSideAgent, HANDOFF_ENV_KEYS,
 };
 pub use collaborative_tool_tracking::{
-    finalize_handoff_running_tools, record_handoff_tool_running, sync_handoff_tool_executions,
+    finalize_handoff_running_tools, finalize_parent_resume_tool_tracking,
+    record_handoff_tool_running, sync_handoff_tool_executions,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

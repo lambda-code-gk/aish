@@ -152,6 +152,11 @@ fn record_audit<S: HandoffAuditRepository>(
     let _ = store.record_audit(handoff_id, kind);
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SideAgentDispatchOptions<'a> {
+    pub memory_prompt_block: Option<&'a str>,
+}
+
 pub struct StartOrResumeSideAgent<'a, S, O, R> {
     store: &'a S,
     observer: &'a O,
@@ -177,6 +182,7 @@ where
         &self,
         env: Option<CollaborativeShellEnvironment>,
         invocation: &SideAgentInvocation,
+        options: SideAgentDispatchOptions<'_>,
     ) -> Result<SideAgentDispatch, SideAgentError> {
         if invocation.standalone {
             return Ok(SideAgentDispatch::Standalone);
@@ -325,6 +331,7 @@ where
                 &handoff,
                 &checkpoint,
                 &observation,
+                options.memory_prompt_block,
             ),
             control_returned,
             collaborative_handoff: false,
@@ -591,6 +598,7 @@ impl ParentCollaborationContextBuilder {
         handoff: &Handoff,
         checkpoint: &crate::domain::HandoffCheckpoint,
         observation: &crate::ports::outbound::EnvironmentObservation,
+        memory_prompt_block: Option<&str>,
     ) -> String {
         let metadata = serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -608,6 +616,9 @@ impl ParentCollaborationContextBuilder {
                     .and_then(|value| value.as_str())
             })
             .unwrap_or("unknown");
+        let contextual_memory = memory_prompt_block
+            .filter(|block| !block.trim().is_empty())
+            .unwrap_or("(not available)");
         format!(
         "You are the side agent for collaborative human handoff.\n\
 Do not start a collaborative handoff or a nested human shell. shell_exec runs normally for this side agent.\n\
@@ -615,7 +626,7 @@ When human action is required, call the client tool `aish.request_human_action` 
 handoff_id: {}\nparent_work_id: {}\nparent_task_goal: {}\nwork_stage_and_plan: {}\n\
 parent_request: {}\nrequested_operation: {:?}\ncompletion_condition: {}\n\
 parent_conversation_summary: {}\nrecent_parent_context: {}\ncontextual_memory_child_goal: {}\n\
-cwd: {}\nshell_log_start: {}\nreplay_reference: {}\n",
+contextual_memory: {}\ncwd: {}\nshell_log_start: {}\nreplay_reference: {}\n",
         handoff.id,
         parent_work_id,
         checkpoint.parent_goal,
@@ -626,6 +637,7 @@ cwd: {}\nshell_log_start: {}\nreplay_reference: {}\n",
         handoff.conversation_summary,
         checkpoint.conversation_snapshot,
         checkpoint.child_goal.id,
+        contextual_memory,
         observation.cwd,
         checkpoint.shell_log_start,
         handoff.conversation_snapshot_ref,
@@ -633,7 +645,9 @@ cwd: {}\nshell_log_start: {}\nreplay_reference: {}\n",
     }
 }
 
-pub fn parse_request_human_action(content: &str) -> Option<RequestHumanAction> {
+/// 表示専用: assistant テキストが legacy JSON envelope の場合にパースする。
+/// 制御経路は client tool `aish.request_human_action` を使用する。
+fn try_parse_request_human_action_json_for_display(content: &str) -> Option<RequestHumanAction> {
     #[derive(serde::Deserialize)]
     struct Envelope {
         request_human_action: RequestHumanAction,
@@ -668,6 +682,6 @@ pub fn format_request_human_action_for_user(request: &RequestHumanAction) -> Str
 }
 
 pub fn presenter_output_for_assistant_content(content: &str) -> Option<(String, bool)> {
-    parse_request_human_action(content)
+    try_parse_request_human_action_json_for_display(content)
         .map(|request| (format_request_human_action_for_user(&request), true))
 }

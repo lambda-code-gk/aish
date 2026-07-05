@@ -51,6 +51,7 @@ human shell 内 `ai` の **検証と side agent 接続**、親文脈継承、会
 | `side_conversation_continues` | 同一 handoff で side conversation 継続 | `side_agent_reuses_conversation_in_handoff` | false |
 | `side_conversation_unique` | handoff あたり side conversation は 1 つ | `side_conversation_unique_per_handoff` | false |
 | `side_inherits_parent_context` | side turn に親要約・文脈が含まれる | `side_agent_receives_parent_task_context` | false |
+| `side_contextual_memory_block` | side system context に contextual memory block を含める | `side_agent_includes_contextual_memory_block` | false |
 | `conversation_summary_on_side_turn` | side 前後で要約が更新される | `conversation_summary_updates_on_side_turn` | false |
 | `side_shell_exec_normal` | side の `shell_exec` は自動実行 | `side_agent_shell_exec_executes_normally` | false |
 | `request_human_action` | 人間待ちで新 shell を作らない | `side_agent_waiting_does_not_spawn_new_shell` | false |

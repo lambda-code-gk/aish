@@ -3,7 +3,8 @@
 
 use ai::adapters::outbound::{FilesystemHandoffStore, SystemHandoffRuntime};
 use ai::application::{
-    CollaborativeExecutionContext, CollaborativeShellExecPolicy, ParentShellExecRequest,
+    checkpoint_memory_space_id, CollaborativeExecutionContext, CollaborativeShellExecPolicy,
+    ParentShellExecRequest,
 };
 use ai::domain::{
     build_candidate_command, checkpoint_has_required_fields, checkpoint_serialized_field_names,
@@ -110,6 +111,7 @@ fn phase2_request(cwd: PathBuf) -> ParentShellExecRequest {
         conversation_snapshot: "snapshot".into(),
         conversation_summary: "summary".into(),
         work_stage_and_plan: "active work context".into(),
+        memory_space_id: None,
         command: "cargo".into(),
         args: vec!["test".into()],
         cwd,
@@ -480,6 +482,35 @@ fn checkpoint_persisted_before_human_shell_spawn() {
 }
 
 #[test]
+fn handoff_checkpoint_stores_parent_memory_space_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(dir.path().to_path_buf());
+    let launcher = TestLauncher {
+        root: dir.path().into(),
+        trace: Arc::new(Phase2Trace::default()),
+    };
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
+        &SystemHandoffRuntime,
+    );
+    let mut request = phase2_request(work.path().to_path_buf());
+    request.memory_space_id = Some("project_parent".into());
+    let result = policy.intercept(request).unwrap();
+    let checkpoint = store.load_checkpoint(&result.handoff_id).unwrap();
+    assert_eq!(
+        checkpoint_memory_space_id(&checkpoint).as_deref(),
+        Some("project_parent")
+    );
+}
+
+#[test]
 fn collaborative_flag_enables_parent_policy() {
     use clap::Parser;
     let cli =
@@ -693,6 +724,7 @@ fn collaborative_audit_events_are_emitted() {
         conversation_snapshot: "{}".into(),
         conversation_summary: "summary".into(),
         work_stage_and_plan: String::new(),
+        memory_space_id: None,
         command: "echo".into(),
         args: vec!["hi".into()],
         cwd: cwd.clone(),

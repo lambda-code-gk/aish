@@ -1,6 +1,10 @@
 //! 親 handoff 作成時の enriched parent context。
 
-use aibe_protocol::{ProtocolMessage, WorkSnapshotDto};
+use aibe_protocol::{
+    ClientResponse, MemoryContext, MemoryQueryDto, ProtocolMessage, WorkSnapshotDto,
+};
+
+use crate::ports::outbound::MemoryClient;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnrichedParentHandoffContext {
@@ -99,7 +103,6 @@ pub fn query_work_snapshot(
     memory_space_id: Option<&str>,
     cwd: Option<&str>,
 ) -> Option<WorkSnapshotDto> {
-    use aibe_protocol::{ClientResponse, MemoryContext};
     let context = MemoryContext {
         cwd: cwd.map(str::to_string),
         memory_space_id: memory_space_id.map(str::to_string),
@@ -108,4 +111,43 @@ pub fn query_work_snapshot(
         Ok(ClientResponse::WorkQueryResult(body)) => Some(body.snapshot),
         _ => None,
     }
+}
+
+/// side agent system context 用に contextual memory の prompt block を取得する。
+pub fn query_collaborative_memory_prompt_block(
+    client: &dyn MemoryClient,
+    session_id: &str,
+    memory_space_id: Option<&str>,
+    cwd: &str,
+    user_query: Option<&str>,
+) -> Option<String> {
+    let context = MemoryContext {
+        cwd: Some(cwd.to_string()),
+        memory_space_id: memory_space_id.map(str::to_string),
+    };
+    let query = MemoryQueryDto {
+        include_prompt_block: true,
+        user_query: user_query.map(str::to_string),
+        ..Default::default()
+    };
+    match client.memory_query(session_id, &context, query) {
+        Ok(ClientResponse::MemoryQueryResult {
+            prompt_block: Some(block),
+            ..
+        }) if !block.trim().is_empty() => Some(block),
+        _ => None,
+    }
+}
+
+/// checkpoint に保存された親 memory space ID を返す（旧 handoff は None）。
+pub fn checkpoint_memory_space_id(checkpoint: &crate::domain::HandoffCheckpoint) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&checkpoint.environment_metadata)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("memory_space_id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
+        })
+        .filter(|id| !id.is_empty())
 }

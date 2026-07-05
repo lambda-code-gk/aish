@@ -3113,3 +3113,30 @@ description = "checkpoint へ RUNNING/完了 tool lifecycle を記録"
 test = "tool_lifecycle_records_running_and_syncs_completed"
 file_glob = "ai/src/domain/collaborative_handoff.rs"
 pending = false
+
+[[cases]]
+spec = "0055"
+phase = 2
+id = "handoff_checkpoint_stores_memory_space_id"
+description = "handoff checkpoint に親 memory_space_id を保存"
+test = "handoff_checkpoint_stores_parent_memory_space_id"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "parent_resume_tool_lifecycle"
+description = "親 RESUMING_PARENT turn の tool lifecycle を checkpoint へ同期"
+test = "parent_resume_tool_lifecycle_syncs_completed_tools"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 3
+id = "side_contextual_memory_block"
+description = "side agent system context に contextual memory block を含める"
+test = "side_agent_includes_contextual_memory_block"
+file_glob = "ai/tests/0055_collaborative_side_agent.rs"
+pending = false

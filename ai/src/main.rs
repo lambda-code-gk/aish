@@ -6,7 +6,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,18 +31,20 @@ use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
 use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
     assistant_content_from_response, build_enriched_parent_handoff_context, build_response_summary,
-    build_summary, classify_from_raw_args, current_time_ms, ensure_aibe_if_needed,
-    evaluate_preprocessor, execute_feature_actions_mvp, finalize_handoff_running_tools,
-    list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
-    plan_interactive_prompt_route, query_work_snapshot, recall_next_command, recall_prev_command,
-    record_handoff_tool_running, record_turn, resolve_recall_gating,
+    build_summary, checkpoint_memory_space_id, classify_from_raw_args, current_time_ms,
+    ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
+    finalize_handoff_running_tools, finalize_parent_resume_tool_tracking, list_history, memory_cli,
+    next_history_id, persist_suggested_commands, plan_ask_launch, plan_interactive_prompt_route,
+    query_collaborative_memory_prompt_block, query_work_snapshot, recall_next_command,
+    recall_prev_command, record_handoff_tool_running, record_turn, resolve_recall_gating,
     suggestion_cache_path_from_checkpoint, sync_handoff_tool_executions,
     CollaborativeExecutionContext, CollaborativeShellEnvironment, CollaborativeShellExecPolicy,
     HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute, ParentResumeContext,
     ParentShellExecRequest, PreprocessorRunInput, PreprocessorRunOutcome, ReadCollaborativeStatus,
     RecallGatingInput, RecallTurnContext, ReconcileStaleHandoffs, RecoveryOwner,
     ResumeOrphanedHandoff, ResumeReturnedParent, ShellLogMode, SideAgentDispatch,
-    SideAgentInvocation, SideTurn, StartOrResumeSideAgent, TurnCancelGuard, HANDOFF_ENV_KEYS,
+    SideAgentDispatchOptions, SideAgentInvocation, SideTurn, StartOrResumeSideAgent,
+    TurnCancelGuard, HANDOFF_ENV_KEYS,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -210,6 +212,43 @@ enum SideLaunch {
     Run(SideTurn),
 }
 
+fn active_handoff_tool_tracking(tracking: &Arc<Mutex<Option<String>>>) -> Option<String> {
+    tracking.lock().ok().and_then(|guard| guard.clone())
+}
+
+fn set_handoff_tool_tracking(tracking: &Arc<Mutex<Option<String>>>, handoff_id: String) {
+    if let Ok(mut guard) = tracking.lock() {
+        *guard = Some(handoff_id);
+    }
+}
+
+fn resolve_side_memory_prompt_block(
+    store: &FilesystemHandoffStore,
+    handoff_id: &str,
+    socket_path: &Path,
+    memory_enabled: bool,
+) -> Option<String> {
+    if !memory_enabled {
+        return None;
+    }
+    let handoff = store.load_handoff(handoff_id).ok()?;
+    let checkpoint = store.load_checkpoint(handoff_id).ok()?;
+    let session_id = handoff.parent_task_id.as_str();
+    let memory_space_id = checkpoint_memory_space_id(&checkpoint).or_else(|| {
+        resolve_memory_space_id(session_id, None, None, None)
+            .ok()
+            .map(|resolved| resolved.memory_space_id)
+    });
+    let client = AibeUnixClient::new(socket_path.to_path_buf());
+    query_collaborative_memory_prompt_block(
+        &client,
+        session_id,
+        memory_space_id.as_deref(),
+        &checkpoint.cwd,
+        Some(handoff.parent_request_summary.as_str()),
+    )
+}
+
 fn resolve_side_dispatch(
     collaborative: bool,
     bare: bool,
@@ -226,10 +265,17 @@ fn resolve_side_dispatch(
     let Some(env) = CollaborativeShellEnvironment::from_map(&values)? else {
         return Ok(None);
     };
+    let cfg = AiConfig::load();
     let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
     let observer = ProcessEnvironmentObserver;
     let runtime = SystemHandoffRuntime;
     let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+    let memory_block = resolve_side_memory_prompt_block(
+        &store,
+        &env.handoff_id,
+        &cfg.socket_path,
+        cfg.memory_enabled,
+    );
     let invocation = SideAgentInvocation {
         standalone: false,
         collaborative_requested: collaborative,
@@ -240,7 +286,13 @@ fn resolve_side_dispatch(
         tty: std::env::var("TTY").ok(),
         cwd: std::env::current_dir()?,
     };
-    match service.dispatch(Some(env.clone()), &invocation)? {
+    match service.dispatch(
+        Some(env.clone()),
+        &invocation,
+        SideAgentDispatchOptions {
+            memory_prompt_block: memory_block.as_deref(),
+        },
+    )? {
         SideAgentDispatch::PromptForInput { .. } => Ok(Some(SideLaunch::PromptThenStart(env))),
         SideAgentDispatch::Run(turn) => Ok(Some(SideLaunch::Run(turn))),
         SideAgentDispatch::Standalone | SideAgentDispatch::Normal => Ok(None),
@@ -344,10 +396,17 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
     let mut side_turn = match args.side {
         Some(SideLaunch::Run(turn)) => Some(turn),
         Some(SideLaunch::PromptThenStart(env)) => {
+            let cfg = AiConfig::load();
             let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
             let observer = ProcessEnvironmentObserver;
             let runtime = SystemHandoffRuntime;
             let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+            let memory_block = resolve_side_memory_prompt_block(
+                &store,
+                &env.handoff_id,
+                &cfg.socket_path,
+                cfg.memory_enabled,
+            );
             let invocation = SideAgentInvocation {
                 standalone: false,
                 collaborative_requested: false,
@@ -358,7 +417,13 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
                 tty: std::env::var("TTY").ok(),
                 cwd: std::env::current_dir()?,
             };
-            match service.dispatch(Some(env), &invocation)? {
+            match service.dispatch(
+                Some(env),
+                &invocation,
+                SideAgentDispatchOptions {
+                    memory_prompt_block: memory_block.as_deref(),
+                },
+            )? {
                 SideAgentDispatch::Run(turn) => Some(turn),
                 _ => {
                     return Err(anyhow::anyhow!(
@@ -953,7 +1018,9 @@ fn execute_turn(
         client_tools.push(side_agent_request_human_action_client_tool());
     }
     let captured_request_human_action = Arc::new(std::sync::Mutex::new(None));
-    let tool_tracking_handoff_id = side_turn.as_ref().map(|side| side.handoff_id.clone());
+    let tool_tracking_handoff_id = Arc::new(Mutex::new(
+        side_turn.as_ref().map(|side| side.handoff_id.clone()),
+    ));
 
     if let ShellLogChoice::Path(ref path) = shell_log_choice {
         if !settings.quiet {
@@ -1276,7 +1343,7 @@ fn run_agent_turn_sync(
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
-    tool_tracking_handoff_id: Option<String>,
+    tool_tracking_handoff_id: Arc<Mutex<Option<String>>>,
     captured_request_human_action: Arc<
         std::sync::Mutex<Option<ai::application::RequestHumanAction>>,
     >,
@@ -1313,7 +1380,7 @@ fn run_agent_turn_async(
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
-    tool_tracking_handoff_id: Option<String>,
+    tool_tracking_handoff_id: Arc<Mutex<Option<String>>>,
     captured_request_human_action: Arc<
         std::sync::Mutex<Option<ai::application::RequestHumanAction>>,
     >,
@@ -1357,7 +1424,7 @@ fn run_agent_turn_core(
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
     collaborative: bool,
-    tool_tracking_handoff_id: Option<String>,
+    tool_tracking_handoff_id: Arc<Mutex<Option<String>>>,
     captured_request_human_action: Arc<
         std::sync::Mutex<Option<ai::application::RequestHumanAction>>,
     >,
@@ -1399,7 +1466,7 @@ fn run_agent_turn_core(
     let cancel_requested_thread = Arc::clone(&cancel_requested);
     let collaborative_cancel_requested_thread = Arc::clone(&collaborative_cancel_requested);
     let resumed_handoffs_thread = Arc::clone(&resumed_handoffs);
-    let tool_tracking_handoff_id_thread = tool_tracking_handoff_id.clone();
+    let tool_tracking_handoff_id_thread = Arc::clone(&tool_tracking_handoff_id);
     let captured_request_human_action_thread = Arc::clone(&captured_request_human_action);
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
@@ -1467,10 +1534,12 @@ fn run_agent_turn_core(
             let shell_exec_handler =
                 |prompt: ShellExecApprovalPrompt| -> ShellExecApprovalDecision {
                     if !collaborative {
-                        if let Some(handoff_id) = tool_tracking_handoff_id_thread.as_ref() {
+                        if let Some(handoff_id) =
+                            active_handoff_tool_tracking(&tool_tracking_handoff_id_thread)
+                        {
                             if let Err(error) = record_handoff_tool_running(
                                 &handoff_store,
-                                handoff_id,
+                                &handoff_id,
                                 &prompt.tool_call_id,
                                 "shell_exec",
                             ) {
@@ -1527,6 +1596,7 @@ fn run_agent_turn_core(
                             conversation_snapshot: enriched.conversation_snapshot,
                             conversation_summary: enriched.conversation_summary,
                             work_stage_and_plan: enriched.work_stage_and_plan,
+                            memory_space_id: memory_space_id.clone(),
                             command: prompt.command.clone(),
                             args: prompt.args.clone(),
                             cwd: cwd.unwrap_or_else(|| PathBuf::from(".")),
@@ -1560,6 +1630,10 @@ fn run_agent_turn_core(
                                     .lock()
                                     .expect("resumed handoffs")
                                     .push(handoff_result.handoff_id.clone());
+                                set_handoff_tool_tracking(
+                                    &tool_tracking_handoff_id_thread,
+                                    handoff_result.handoff_id.clone(),
+                                );
                                 ShellExecApprovalDecision {
                                     approved: true,
                                     approval_origin:
@@ -1706,27 +1780,31 @@ fn run_agent_turn_core(
                         handoff_result: None,
                     }
                 };
-            let on_persist = tool_tracking_handoff_id_thread.clone().map(|handoff_id| {
-                let cancel = Arc::clone(&cancel_requested_thread);
-                move |tool_call_id: &str, request: ai::domain::RequestHumanAction| {
-                    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
-                    let observer = ProcessEnvironmentObserver;
-                    let runtime = SystemHandoffRuntime;
-                    let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
-                    service
-                        .request_human_action(&handoff_id, request, Some(tool_call_id))
-                        .map_err(|error| error.to_string())?;
-                    cancel.store(true, Ordering::SeqCst);
-                    Ok(())
-                }
-            });
-            let on_tool_running = tool_tracking_handoff_id_thread.clone().map(|handoff_id| {
-                move |tool_call_id: &str, tool_name: &str| {
-                    let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
-                    record_handoff_tool_running(&store, &handoff_id, tool_call_id, tool_name)
-                        .map_err(|error| error.to_string())
-                }
-            });
+            let on_persist =
+                active_handoff_tool_tracking(&tool_tracking_handoff_id_thread).map(|handoff_id| {
+                    let cancel = Arc::clone(&cancel_requested_thread);
+                    move |tool_call_id: &str, request: ai::domain::RequestHumanAction| {
+                        let store =
+                            FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                        let observer = ProcessEnvironmentObserver;
+                        let runtime = SystemHandoffRuntime;
+                        let service = StartOrResumeSideAgent::new(&store, &observer, &runtime);
+                        service
+                            .request_human_action(&handoff_id, request, Some(tool_call_id))
+                            .map_err(|error| error.to_string())?;
+                        cancel.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }
+                });
+            let on_tool_running = active_handoff_tool_tracking(&tool_tracking_handoff_id_thread)
+                .map(|handoff_id| {
+                    move |tool_call_id: &str, tool_name: &str| {
+                        let store =
+                            FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
+                        record_handoff_tool_running(&store, &handoff_id, tool_call_id, tool_name)
+                            .map_err(|error| error.to_string())
+                    }
+                });
             let client_tool_callback = side_agent_client_tool_callback(
                 replay_client_tool_callback(replay_events),
                 Arc::clone(&captured_request_human_action_thread),
@@ -1734,16 +1812,16 @@ fn run_agent_turn_core(
                 on_tool_running,
             );
             let tool_callbacks = {
-                let track_id = tool_tracking_handoff_id_thread.clone();
+                let track_id = Arc::clone(&tool_tracking_handoff_id_thread);
                 AgentTurnCallbacks::new(
                     shell_exec_handler,
                     move |prompt: ToolApprovalPrompt| -> ToolApprovalDecision {
-                        if let Some(handoff_id) = track_id.as_ref() {
+                        if let Some(handoff_id) = active_handoff_tool_tracking(&track_id) {
                             let store =
                                 FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
                             if let Err(error) = record_handoff_tool_running(
                                 &store,
-                                handoff_id,
+                                &handoff_id,
                                 &prompt.tool_call_id,
                                 &prompt.tool_name,
                             ) {
@@ -1827,9 +1905,22 @@ fn run_agent_turn_core(
                         _ => "parent run did not complete".into(),
                     })
                 };
+                let parent_succeeded = matches!(resp, ClientResponse::AgentTurnResult { .. });
+                let tool_calls = match &resp {
+                    ClientResponse::AgentTurnResult { tool_calls, .. } => {
+                        Some(tool_calls.as_slice())
+                    }
+                    _ => None,
+                };
                 let store = FilesystemHandoffStore::new(FilesystemHandoffStore::default_root());
                 let runtime = SystemHandoffRuntime;
                 for handoff_id in resumed_handoffs.lock().expect("resumed handoffs").drain(..) {
+                    finalize_parent_resume_tool_tracking(
+                        &store,
+                        &handoff_id,
+                        parent_succeeded,
+                        tool_calls,
+                    )?;
                     ResumeReturnedParent::new(&store, &runtime)
                         .finish(&handoff_id, parent_result.clone())?;
                 }
