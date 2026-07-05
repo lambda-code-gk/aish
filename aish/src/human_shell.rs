@@ -73,6 +73,7 @@ pub fn validate_handoff_environment() -> anyhow::Result<()> {
 
 pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
     validate_handoff_environment()?;
+    crate::collaborative_briefing::print_handoff_briefing_if_needed();
     let heartbeat = LeaseHeartbeatSupervisor::from_environment()?;
     let cfg = AishConfig::load();
     let parent = resolve_sessions_parent(&cfg);

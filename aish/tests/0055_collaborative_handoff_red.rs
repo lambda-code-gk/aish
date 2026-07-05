@@ -1,36 +1,57 @@
 // 0055 Collaborative Human Handoff acceptance tests.
 
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+fn test_path_with_ai() -> String {
+    let bin_dir = Path::new(env!("CARGO_BIN_EXE_aish"))
+        .parent()
+        .expect("aish bin parent");
+    format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
 fn run_human_shell(input: &[u8]) -> (std::process::Output, aish::human_shell::HumanShellResult) {
-    if !std::path::Path::new("/bin/bash").is_file() {
+    run_human_shell_with_cache(input, None)
+}
+
+fn run_human_shell_with_cache(
+    input: &[u8],
+    cache_json: Option<&str>,
+) -> (std::process::Output, aish::human_shell::HumanShellResult) {
+    if !Path::new("/bin/bash").is_file() {
         panic!("Phase 2 human-shell tests require /bin/bash");
     }
     let home = tempfile::tempdir().unwrap();
+    let cache_path = home.path().join("shared-suggestions.json");
+    if let Some(json) = cache_json {
+        std::fs::write(&cache_path, json).unwrap();
+    }
     let result_file = home.path().join("result.json");
     let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
         .args(["human-shell", "--result-file"])
         .arg(&result_file)
         .env("HOME", home.path())
         .env("SHELL", "/bin/bash")
+        .env("PATH", test_path_with_ai())
         .env("AISH_CONTROL_MODE", "human-shell")
         .env("AISH_HANDOFF_ID", "ho-test")
         .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
         .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
-        .env(
-            "AI_SUGGESTION_CACHE",
-            home.path().join("shared-suggestions.json"),
-        )
+        .env("AI_SUGGESTION_CACHE", &cache_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     std::thread::sleep(Duration::from_millis(250));
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    let _ = child.stdin.take().unwrap().write_all(input);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(child.wait_with_output());
@@ -62,6 +83,31 @@ fn human_shell_preserves_shared_suggestion_cache_through_pty_and_rcfile() {
     let (output, _) = run_human_shell(b"printf 'CACHE=%s\n' \"$AI_SUGGESTION_CACHE\"\nexit\n");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("shared-suggestions.json"), "{stdout}");
+}
+
+#[test]
+fn human_shell_recall_reads_handoff_suggestion_cache() {
+    let cache = r#"{
+        "schema_version": 1,
+        "ai_session_id": "handoff:ho-test",
+        "shell": "bash",
+        "updated_at": "1",
+        "active_queue_index": 0,
+        "active_candidate_index": 0,
+        "recall_navigated": false,
+        "queues": [{
+            "turn_id": "handoff:ho-test",
+            "captured_at": "1",
+            "candidates": [{"text": "cargo test", "language": "shell", "bytes": 10}]
+        }]
+    }"#;
+    let (output, _) = run_human_shell_with_cache(b"ai recall next\nexit\n", Some(cache));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("cargo test"),
+        "stdout={stdout} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -183,6 +229,53 @@ fn human_shell_job_control_fg_bg() {
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn human_shell_startup_prints_handoff_briefing() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("handoff-store");
+    let handoff_dir = store.join("ho-test");
+    std::fs::create_dir_all(&handoff_dir).unwrap();
+    std::fs::write(
+        handoff_dir.join("handoff.json"),
+        r#"{
+            "state":"HUMAN_ACTIVE",
+            "parent_request_summary":"cargo test を実行してテスト状況を確認したいです",
+            "pending_human_request":"次のコマンドを確認し、必要なら実行してください: cargo test",
+            "requested_shell_execs":[{"command":"cargo","args":["test"]}]
+        }"#,
+    )
+    .unwrap();
+    let result_file = home.path().join("result.json");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
+        .args(["human-shell", "--result-file"])
+        .arg(&result_file)
+        .env("HOME", home.path())
+        .env("SHELL", "/bin/bash")
+        .env("AISH_CONTROL_MODE", "human-shell")
+        .env("AISH_HANDOFF_ID", "ho-test")
+        .env("AISH_HANDOFF_TOKEN", "opaque-test-token")
+        .env("AISH_HANDOFF_CONTEXT_VERSION", "1")
+        .env("AISH_HANDOFF_STORE_ROOT", &store)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    let _ = child.stdin.take().unwrap().write_all(b"exit\n");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(8))
+        .expect("human shell hung")
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cargo test を実行"), "stderr={stderr}");
+    assert!(stderr.contains("cargo test"), "stderr={stderr}");
 }
 
 #[test]

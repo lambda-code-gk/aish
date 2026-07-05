@@ -37,10 +37,10 @@ pub use collaborative_recovery::{
     ReturnControlFromShell,
 };
 pub use collaborative_side_agent::{
-    parse_request_human_action, CollaborativeShellEnvironment, HumanControlReturned,
-    ParentCollaborationContextBuilder, ReadCollaborativeStatus, RequestHumanAction,
-    SideAgentDispatch, SideAgentError, SideAgentInvocation, SideTurn, StartOrResumeSideAgent,
-    HANDOFF_ENV_KEYS,
+    parse_request_human_action, presenter_output_for_assistant_content,
+    CollaborativeShellEnvironment, HumanControlReturned, ParentCollaborationContextBuilder,
+    ReadCollaborativeStatus, RequestHumanAction, SideAgentDispatch, SideAgentError,
+    SideAgentInvocation, SideTurn, StartOrResumeSideAgent, HANDOFF_ENV_KEYS,
 };
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,

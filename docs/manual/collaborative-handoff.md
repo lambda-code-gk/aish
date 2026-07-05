@@ -24,6 +24,8 @@
 
 human shell プロンプト先頭に `[collab:…]` が常時付く（無効化不可）。`SIDE_AGENT_WAITING_FOR_HUMAN` では `run 'ai' to resume` ヒントが出る。
 
+human shell 起動直後（親 handoff 直後・`ai resume` 復旧時）は、handoff store から **目的・依頼・候補コマンド** を stderr に briefing 表示する（`ai:` プレフィックス付き）。side agent が `request_human_action` を返したときの `ai` 実行結果も同様に stderr 整形表示する（raw JSON は出さない）。
+
 ## ログ redaction
 
 `AISH_HANDOFF_TOKEN` および handoff token 平文は shell log / replay に残らない。`ai status` / LLM 入力にも出さない。

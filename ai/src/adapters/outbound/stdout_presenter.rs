@@ -33,13 +33,14 @@ pub struct ShellExecRenderOptions {
     pub show_always_mode_summary: bool,
 }
 
-#[derive(Default)]
 pub struct StdoutPresenter {
     output_filter: Option<String>,
     output_format: Option<OutputFormat>,
     quiet: bool,
     progress_spinner: bool,
     shell_exec_render: ShellExecRenderOptions,
+    side_agent_display: bool,
+    side_agent_stream_buffer: std::sync::Mutex<String>,
     spinner: StderrSpinner,
 }
 
@@ -48,6 +49,7 @@ pub struct StdoutPresenter {
 pub struct PresenterOutput {
     pub stdout: Option<String>,
     pub stderr: Vec<String>,
+    pub human_action_formatted: bool,
 }
 
 impl StdoutPresenter {
@@ -67,8 +69,27 @@ impl StdoutPresenter {
             quiet,
             progress_spinner,
             shell_exec_render: ShellExecRenderOptions::default(),
+            side_agent_display: false,
+            side_agent_stream_buffer: std::sync::Mutex::new(String::new()),
             spinner: StderrSpinner::default(),
         }
+    }
+
+    pub fn with_side_agent_display(mut self, enabled: bool) -> Self {
+        self.side_agent_display = enabled;
+        self
+    }
+
+    fn take_side_agent_stream_buffer(&self) -> String {
+        if !self.side_agent_display {
+            return String::new();
+        }
+        std::mem::take(
+            &mut *self
+                .side_agent_stream_buffer
+                .lock()
+                .expect("side agent buffer"),
+        )
     }
 
     pub fn with_shell_exec_render(mut self, options: ShellExecRenderOptions) -> Self {
@@ -198,6 +219,13 @@ impl Presenter for StdoutPresenter {
         }
         if !chunk.is_empty() {
             self.stop_spinner_for_output();
+            if self.side_agent_display {
+                self.side_agent_stream_buffer
+                    .lock()
+                    .expect("side agent buffer")
+                    .push_str(chunk);
+                return;
+            }
             print!("{chunk}");
             let _ = std::io::stdout().flush();
         }
@@ -205,6 +233,7 @@ impl Presenter for StdoutPresenter {
 
     fn show_response(&self, response: &ClientResponse, verbose_tools: bool, streamed: bool) {
         self.stop_spinner_for_output();
+        let side_agent_buffer = self.take_side_agent_stream_buffer();
         let out = if let Some(format) = self.output_format {
             render_response_structured(
                 response,
@@ -212,27 +241,43 @@ impl Presenter for StdoutPresenter {
                 format,
                 self.output_filter.as_deref(),
                 effective_shell_exec_render(self.quiet, self.shell_exec_render),
+                side_agent_buffer.as_str(),
             )
         } else {
             render_response(
                 response,
                 verbose_tools,
                 effective_shell_exec_render(self.quiet, self.shell_exec_render),
+                side_agent_buffer.as_str(),
             )
         };
+        let mut display_streamed = streamed;
+        if self.side_agent_display && out.human_action_formatted {
+            display_streamed = false;
+        }
         if let Some(s) = out.stdout.as_deref() {
             if self.output_format.is_some() {
                 println!("{s}");
-            } else if !streamed || self.output_filter.is_some() {
+            } else if !display_streamed || self.output_filter.is_some() {
                 self.emit_assistant_stdout(s);
             }
         }
-        if streamed && self.output_format.is_none() && !self.quiet && self.output_filter.is_none() {
+        if display_streamed
+            && self.output_format.is_none()
+            && !self.quiet
+            && self.output_filter.is_none()
+        {
             ensure_stdout_newline();
         }
         if !self.quiet {
             for line in out.stderr {
-                eprintln!("{line}");
+                if line.contains('\n') {
+                    for subline in line.split('\n') {
+                        eprintln!("{subline}");
+                    }
+                } else {
+                    eprintln!("{line}");
+                }
             }
         }
     }
@@ -270,10 +315,43 @@ fn effective_shell_exec_render(
     }
 }
 
+fn merge_assistant_content(message: &str, side_agent_buffer: &str) -> String {
+    if side_agent_buffer.is_empty() {
+        message.to_string()
+    } else if message.is_empty() {
+        side_agent_buffer.to_string()
+    } else {
+        format!("{side_agent_buffer}{message}")
+    }
+}
+
+fn presenter_output_from_assistant_content(content: &str, stderr: Vec<String>) -> PresenterOutput {
+    if let Some((formatted, _)) =
+        crate::application::presenter_output_for_assistant_content(content)
+    {
+        return PresenterOutput {
+            stdout: None,
+            stderr: vec![formatted],
+            human_action_formatted: true,
+        };
+    }
+    let stdout = if content.is_empty() {
+        None
+    } else {
+        Some(content.to_string())
+    };
+    PresenterOutput {
+        stdout,
+        stderr,
+        human_action_formatted: false,
+    }
+}
+
 pub fn render_response(
     response: &ClientResponse,
     verbose_tools: bool,
     shell_exec_render: ShellExecRenderOptions,
+    side_agent_buffer: &str,
 ) -> PresenterOutput {
     match response {
         ClientResponse::AgentTurnResult {
@@ -300,32 +378,42 @@ pub fn render_response(
                     }
                 }
             }
-            let stdout = if assistant_message.content.is_empty() {
+            let combined = merge_assistant_content(&assistant_message.content, side_agent_buffer);
+            let mut output = presenter_output_from_assistant_content(&combined, stderr);
+            if output.human_action_formatted {
+                return output;
+            }
+            output.stdout = if combined.is_empty() {
                 None
             } else {
-                Some(assistant_message.content.clone())
+                Some(combined)
             };
-            PresenterOutput { stdout, stderr }
+            output
         }
         ClientResponse::Pong { id } => PresenterOutput {
             stdout: None,
             stderr: vec![format!("ai: pong ({id})")],
+            human_action_formatted: false,
         },
         ClientResponse::Error { message, .. } => PresenterOutput {
             stdout: None,
             stderr: vec![format!("aibe error: {message}")],
+            human_action_formatted: false,
         },
         ClientResponse::ShellExecApprovalPrompt { .. } => PresenterOutput {
             stdout: None,
             stderr: vec!["ai: internal error: unexpected shell_exec approval prompt".into()],
+            human_action_formatted: false,
         },
         ClientResponse::ToolApprovalPrompt { .. } => PresenterOutput {
             stdout: None,
             stderr: vec!["ai: internal error: unexpected tool approval prompt".into()],
+            human_action_formatted: false,
         },
         ClientResponse::ClientToolCallRequested { .. } => PresenterOutput {
             stdout: None,
             stderr: Vec::new(),
+            human_action_formatted: false,
         },
         ClientResponse::Cancelled { reason, .. } => PresenterOutput {
             stdout: None,
@@ -333,16 +421,19 @@ pub fn render_response(
                 Some(reason) => format!("ai: cancelled: {reason}"),
                 None => "ai: cancelled".to_string(),
             }],
+            human_action_formatted: false,
         },
         ClientResponse::Progress { .. } | ClientResponse::AssistantStreaming { .. } => {
             PresenterOutput {
                 stdout: None,
                 stderr: Vec::new(),
+                human_action_formatted: false,
             }
         }
         ClientResponse::RouteTurnResult { .. } => PresenterOutput {
             stdout: None,
             stderr: Vec::new(),
+            human_action_formatted: false,
         },
         ClientResponse::MemoryApplyResult { .. }
         | ClientResponse::MemoryQueryResult { .. }
@@ -354,6 +445,7 @@ pub fn render_response(
         | ClientResponse::WorkQueryResult(_) => PresenterOutput {
             stdout: None,
             stderr: Vec::new(),
+            human_action_formatted: false,
         },
     }
 }
@@ -364,7 +456,23 @@ pub fn render_response_structured(
     format: OutputFormat,
     output_filter: Option<&str>,
     shell_exec_render: ShellExecRenderOptions,
+    side_agent_buffer: &str,
 ) -> PresenterOutput {
+    if let ClientResponse::AgentTurnResult {
+        assistant_message, ..
+    } = response
+    {
+        let combined = merge_assistant_content(&assistant_message.content, side_agent_buffer);
+        if let Some((formatted, _)) =
+            crate::application::presenter_output_for_assistant_content(&combined)
+        {
+            return PresenterOutput {
+                stdout: None,
+                stderr: vec![formatted],
+                human_action_formatted: true,
+            };
+        }
+    }
     let mut view =
         ResponseView::from_response(response, verbose_tools, output_filter, shell_exec_render);
     let stdout = match format {
@@ -381,7 +489,11 @@ pub fn render_response_structured(
     stderr.append(&mut view.filter_warnings);
     stderr.append(&mut view.filter_stderr);
     stderr.append(&mut view.tool_warnings);
-    PresenterOutput { stdout, stderr }
+    PresenterOutput {
+        stdout,
+        stderr,
+        human_action_formatted: false,
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -960,6 +1072,7 @@ mod tests {
             &ClientResponse::Pong { id: "x".into() },
             false,
             ShellExecRenderOptions::default(),
+            "",
         );
         assert!(out.stdout.is_none());
         assert_eq!(out.stderr, vec!["ai: pong (x)"]);
@@ -979,6 +1092,7 @@ mod tests {
             },
             false,
             ShellExecRenderOptions::default(),
+            "",
         );
         assert!(out.stdout.is_none());
     }
@@ -1005,6 +1119,7 @@ mod tests {
                 silent: false,
                 show_always_mode_summary: true,
             },
+            "",
         );
         assert_eq!(out.stdout.as_deref(), Some("done"));
         assert_eq!(out.stderr.len(), 1);
@@ -1033,6 +1148,7 @@ mod tests {
                 silent: true,
                 show_always_mode_summary: true,
             },
+            "",
         );
         assert!(out.stderr.is_empty());
     }
@@ -1051,6 +1167,7 @@ mod tests {
             },
             false,
             ShellExecRenderOptions::default(),
+            "",
         );
         assert_eq!(out.stdout.as_deref(), Some("partial"));
         assert_eq!(out.stderr.len(), 1);
@@ -1078,6 +1195,7 @@ mod tests {
             },
             true,
             ShellExecRenderOptions::default(),
+            "",
         );
         assert_eq!(out.stdout.as_deref(), Some("final"));
         assert_eq!(out.stderr.len(), 1);
@@ -1085,6 +1203,33 @@ mod tests {
         assert!(line.starts_with("ai: tool read_file ok"));
         assert!(line.contains("[truncated]"));
         assert!(line.len() < huge_len);
+    }
+
+    #[test]
+    fn request_human_action_json_renders_as_formatted_stderr() {
+        let json = r#"{"request_human_action":{"instruction":"Run tests","reason":"Need TTY","command_candidates":["cargo test"],"expected_completion":"tests pass"}}"#;
+        let out = render_response(
+            &ClientResponse::AgentTurnResult {
+                id: "id".into(),
+                status: AgentTurnStatus::Ok,
+                assistant_message: ProtocolMessageOut {
+                    role: "assistant".into(),
+                    content: json.into(),
+                },
+                tool_calls: vec![],
+            },
+            false,
+            ShellExecRenderOptions::default(),
+            "",
+        );
+        assert!(out.human_action_formatted);
+        assert!(out.stdout.is_none());
+        assert_eq!(out.stderr.len(), 1);
+        let formatted = &out.stderr[0];
+        assert!(formatted.contains("side agent があなたの操作を待っています"));
+        assert!(formatted.contains("依頼: Run tests"));
+        assert!(formatted.contains("cargo test"));
+        assert!(!formatted.contains("request_human_action"));
     }
 
     #[test]

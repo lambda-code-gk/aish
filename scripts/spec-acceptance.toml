@@ -2406,6 +2406,15 @@ pending = false
 [[cases]]
 spec = "0055"
 phase = 2
+id = "human_shell_recall_reads_handoff_cache"
+description = "human shell が handoff suggestion cache から recall できる"
+test = "human_shell_recall_reads_handoff_suggestion_cache"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 2
 id = "candidate_inserts_command_only"
 description = "Alt+. は command 文字列のみ挿入"
 test = "recall_inserts_command_text_only"
@@ -2877,6 +2886,15 @@ phase = 5
 id = "prompt_shows_collaborative_state"
 description = "プロンプトに協調状態"
 test = "human_shell_prompt_shows_collaborative_status"
+file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "human_shell_startup_briefing"
+description = "human shell 起動時に目的・依頼・候補を briefing 表示"
+test = "human_shell_startup_prints_handoff_briefing"
 file_glob = "aish/tests/0055_collaborative_handoff_red.rs"
 pending = false
 

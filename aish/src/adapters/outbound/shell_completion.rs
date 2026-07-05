@@ -212,8 +212,8 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
             shell_quote(user_rc)
         ));
     }
-    body.push_str(BASH_SNIPPET);
     body.push_str(BASH_RECALL_ENV_SNIPPET);
+    body.push_str(BASH_SNIPPET);
     body.push_str(BASH_COLLABORATIVE_PROMPT_SNIPPET);
     body.push_str(BASH_REPLAY_SNIPPET);
     fs::write(dst, body)
@@ -228,8 +228,8 @@ fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
             shell_quote(user_zshrc)
         ));
     }
-    body.push_str(ZSH_SNIPPET);
     body.push_str(ZSH_RECALL_ENV_SNIPPET);
+    body.push_str(ZSH_SNIPPET);
     body.push_str(ZSH_COLLABORATIVE_PROMPT_SNIPPET);
     body.push_str(ZSH_REPLAY_SNIPPET);
     fs::write(dst, body)

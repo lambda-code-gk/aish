@@ -928,7 +928,8 @@ fn execute_turn(
                 settings.shell_exec_approval.as_deref(),
                 Some("always")
             ),
-        }),
+        })
+        .with_side_agent_display(side_turn.is_some()),
     );
     presenter.show_tools_startup(&plan.resolved_tools.startup);
     presenter.show_external_commands(&external_command_names());

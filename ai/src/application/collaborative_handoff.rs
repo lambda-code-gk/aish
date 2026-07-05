@@ -219,7 +219,7 @@ where
             parent_request_summary: request.parent_request_summary.clone(),
             requested_shell_execs: vec![requested.clone()],
             pending_human_request: Some(format!(
-                "Review and, if appropriate, run: {candidate_text}"
+                "次のコマンドを確認し、必要なら実行してください: {candidate_text}"
             )),
             conversation_snapshot_ref: "checkpoint.json#conversation_snapshot".into(),
             conversation_summary: request.conversation_summary.clone(),
@@ -257,7 +257,8 @@ where
             "suggestion_cache_path": suggestion_cache_path,
         })
         .to_string();
-        let human_request = format!("Review and, if appropriate, run: {candidate_text}");
+        let human_request =
+            format!("次のコマンドを確認し、必要なら実行してください: {candidate_text}");
         let checkpoint = HandoffCheckpoint {
             parent_task_id: request.parent_task_id,
             parent_conversation_id: request.parent_conversation_id,

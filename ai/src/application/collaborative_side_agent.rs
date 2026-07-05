@@ -506,7 +506,7 @@ handoff_id: {}\nparent_task_goal: {}\nwork_stage_and_plan: {}\n\
 parent_request: {}\nrequested_operation: {:?}\ncompletion_condition: {}\n\
 parent_conversation_summary: {}\nrecent_parent_context: {}\ncontextual_memory_child_goal: {}\n\
 cwd: {}\nshell_log_start: {}\nreplay_reference: {}\n\
-When human action is required, finish with JSON only: {{\"request_human_action\":{{\"instruction\":\"...\",\"reason\":\"...\",\"command_candidates\":[],\"expected_completion\":\"...\"}}}}.",
+        When human action is required, respond with a single JSON object only (no markdown fences): {{\"request_human_action\":{{\"instruction\":\"...\",\"reason\":\"...\",\"command_candidates\":[],\"expected_completion\":\"...\"}}}}. The user sees a formatted summary, not the raw JSON.",
         handoff.id,
         checkpoint.parent_goal,
         handoff.parent_request_summary,
@@ -531,4 +531,33 @@ pub fn parse_request_human_action(content: &str) -> Option<RequestHumanAction> {
     serde_json::from_str::<Envelope>(content.trim())
         .ok()
         .map(|envelope| envelope.request_human_action)
+}
+
+/// side agent の `request_human_action` をターミナル向けに整形する（JSON は出さない）。
+pub fn format_request_human_action_for_user(request: &RequestHumanAction) -> String {
+    let mut lines = vec![
+        "ai: side agent があなたの操作を待っています。".into(),
+        String::new(),
+        format!("依頼: {}", request.instruction),
+        format!("理由: {}", request.reason),
+    ];
+    if !request.expected_completion.is_empty() {
+        lines.push(format!("完了の目安: {}", request.expected_completion));
+    }
+    if !request.command_candidates.is_empty() {
+        lines.push(String::new());
+        lines.push("候補 (Alt+. / Alt+,):".into());
+        for command in &request.command_candidates {
+            lines.push(format!("  {command}"));
+        }
+    }
+    lines.push(String::new());
+    lines.push("side agent 再開: ai  または  ai <補足>".into());
+    lines.push("親へ戻る: Ctrl+D".into());
+    lines.join("\n")
+}
+
+pub fn presenter_output_for_assistant_content(content: &str) -> Option<(String, bool)> {
+    parse_request_human_action(content)
+        .map(|request| (format_request_human_action_for_user(&request), true))
 }

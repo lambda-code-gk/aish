@@ -175,6 +175,10 @@ fn ai_complete_bash_includes_recall_hook() {
     assert!(script.contains(r#"bind -x '"\e.": "_ai_recall_next"'"#));
     assert!(script.contains(r#"bind -x '"\e,": "_ai_recall_prev"'"#));
     assert!(script.contains("AI_SUGGESTION_CACHE"));
+    assert!(
+        script.contains("AI_SUGGESTION_CACHE:-"),
+        "complete bash must not overwrite an existing AI_SUGGESTION_CACHE"
+    );
 }
 
 #[test]

@@ -129,6 +129,7 @@ fn presenter_max_tool_rounds_and_verbose_tools_contract() {
         },
         true,
         ShellExecRenderOptions::default(),
+        "",
     );
     assert_eq!(out.stdout.as_deref(), Some("partial reply"));
     assert!(

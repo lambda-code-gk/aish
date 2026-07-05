@@ -81,7 +81,7 @@ _ai_recall_export_env() {
   local sid="${AI_SESSION_ID:-}"
   [[ -n "$sid" ]] || return 0
   local home="${HOME:-/tmp}"
-  export AI_SUGGESTION_CACHE="${home}/.local/share/ai/suggestions/${sid}.json"
+  export AI_SUGGESTION_CACHE="${AI_SUGGESTION_CACHE:-${home}/.local/share/ai/suggestions/${sid}.json}"
   export AI_SUGGESTED_COMMAND_RECALL="${AI_SUGGESTED_COMMAND_RECALL:-1}"
   export AI_SUGGESTED_COMMAND_RECALL_HINT="${AI_SUGGESTED_COMMAND_RECALL_HINT:-1}"
 }
@@ -108,6 +108,14 @@ pub fn recall_env_snippet_for_shell(shell: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bash_recall_env_snippet_preserves_existing_cache_path() {
+        assert!(BASH_RECALL_ENV_SNIPPET.contains("AI_SUGGESTION_CACHE:-"));
+        assert!(!BASH_RECALL_ENV_SNIPPET.contains(
+            "export AI_SUGGESTION_CACHE=\"${home}/.local/share/ai/suggestions/${sid}.json\""
+        ));
+    }
 
     #[test]
     fn bash_alt_period_inserts_suggested_command_into_readline_line() {
