@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use aibe_protocol::{
-    ClientResponse, MemoryContext, WorkApplyResponseBody, WorkMutationKindDto, WorkOperationDto,
-    WorkQueryResponseBody, WorkSnapshotDto,
+    ClientResponse, MemoryContext, WorkApplyResponseBody, WorkItemDto, WorkMutationKindDto,
+    WorkOperationDto, WorkQueryResponseBody, WorkSnapshotDto, WorkStatusDto,
 };
 
 use crate::domain::{
@@ -98,6 +98,163 @@ Handoff ID: {handoff_id}",
         }
     }
 
+    fn work_status(snapshot: &WorkSnapshotDto, work_id: u64) -> Option<WorkStatusDto> {
+        snapshot
+            .works
+            .iter()
+            .find(|work| work.id == work_id)
+            .map(|work| work.status)
+    }
+
+    fn pop_already_done(
+        snapshot: &WorkSnapshotDto,
+        parent_work_id: u64,
+        child_work_id: u64,
+    ) -> bool {
+        snapshot.active_work_id == Some(parent_work_id)
+            && Self::work_status(snapshot, child_work_id) == Some(WorkStatusDto::Done)
+            && !snapshot.stack.contains(&child_work_id)
+    }
+
+    fn finish_already_done(snapshot: &WorkSnapshotDto, child_work_id: u64) -> bool {
+        snapshot.active_work_id.is_none()
+            && Self::work_status(snapshot, child_work_id) == Some(WorkStatusDto::Done)
+    }
+
+    fn handoff_id_marker(handoff_id: &str) -> String {
+        format!("Handoff ID: {handoff_id}")
+    }
+
+    fn works_matching_handoff<'a>(
+        snapshot: &'a WorkSnapshotDto,
+        handoff_id: &str,
+    ) -> Vec<&'a WorkItemDto> {
+        let marker = Self::handoff_id_marker(handoff_id);
+        snapshot
+            .works
+            .iter()
+            .filter(|work| work.goal.contains(&marker))
+            .collect()
+    }
+
+    fn reconcile_created_work(
+        meta: &ChildGoalMeta,
+        snapshot: &WorkSnapshotDto,
+        parent_before_push: Option<u64>,
+    ) -> Result<Option<CollaborativeChildWorkMode>, CollaborativeChildGoalError> {
+        let matches = Self::works_matching_handoff(snapshot, &meta.handoff_id);
+        match matches.len() {
+            0 => Ok(None),
+            1 => {
+                let work = matches[0];
+                let child_work_id = work.id;
+                let is_active = snapshot.active_work_id == Some(child_work_id);
+                let on_stack = snapshot.stack.contains(&child_work_id);
+                if let Some(parent_work_id) = parent_before_push {
+                    if is_active && snapshot.stack.last().copied() == Some(parent_work_id) {
+                        return Ok(Some(CollaborativeChildWorkMode::Pushed {
+                            parent_work_id,
+                            child_work_id,
+                        }));
+                    }
+                    if Self::pop_already_done(snapshot, parent_work_id, child_work_id) {
+                        return Ok(Some(CollaborativeChildWorkMode::Pushed {
+                            parent_work_id,
+                            child_work_id,
+                        }));
+                    }
+                } else if (is_active && snapshot.stack.is_empty())
+                    || Self::finish_already_done(snapshot, child_work_id)
+                {
+                    return Ok(Some(CollaborativeChildWorkMode::StartedRoot {
+                        child_work_id,
+                    }));
+                }
+                if is_active || on_stack {
+                    return Err(CollaborativeChildGoalError::Create(
+                        "initialization conflict: manual reconciliation required".into(),
+                    ));
+                }
+                Err(CollaborativeChildGoalError::Create(
+                    "initialization conflict: matched work is not active or on stack".into(),
+                ))
+            }
+            _ => Err(CollaborativeChildGoalError::Create(
+                "initialization conflict: multiple works match handoff id".into(),
+            )),
+        }
+    }
+
+    fn apply_create_operation(
+        &self,
+        meta: &mut ChildGoalMeta,
+        cwd: &Path,
+        snapshot: &WorkSnapshotDto,
+        goal: String,
+    ) -> Result<(), CollaborativeChildGoalError> {
+        let parent_before_push = snapshot.active_work_id;
+        let operation = if parent_before_push.is_some() {
+            WorkOperationDto::Push { goal }
+        } else {
+            WorkOperationDto::Start { goal }
+        };
+        let apply_result =
+            self.client
+                .work_apply(&self.session_id, &self.memory_context(cwd), operation);
+        let body = match apply_result {
+            Ok(ClientResponse::WorkApplyResult(body)) => body,
+            Ok(ClientResponse::Error { message, .. }) => {
+                return Err(CollaborativeChildGoalError::Create(message));
+            }
+            Ok(_) => {
+                return Err(CollaborativeChildGoalError::Create(
+                    "unexpected work response".into(),
+                ));
+            }
+            Err(error) => {
+                let snapshot_after = self.query_snapshot(cwd)?;
+                if let Some(mode) =
+                    Self::reconcile_created_work(meta, &snapshot_after, parent_before_push)?
+                {
+                    meta.work_mode = Some(mode);
+                    meta.work_id = meta.work_mode.map(|mode| mode.child_work_id());
+                    meta.auto_root_work_id = None;
+                    meta.close_state = Some(ChildGoalCloseState::Open);
+                    meta.close_error_message = None;
+                    return Ok(());
+                }
+                return Err(CollaborativeChildGoalError::Create(error.to_string()));
+            }
+        };
+        let expected_kind = if parent_before_push.is_some() {
+            WorkMutationKindDto::Push
+        } else {
+            WorkMutationKindDto::Start
+        };
+        if body.outcome.kind != expected_kind {
+            return Err(CollaborativeChildGoalError::Create(format!(
+                "unexpected work mutation: {:?}",
+                body.outcome.kind
+            )));
+        }
+        let child_work_id = body.outcome.work_id.ok_or_else(|| {
+            CollaborativeChildGoalError::Create("work create missing work id".into())
+        })?;
+        meta.work_mode = Some(if let Some(parent_work_id) = parent_before_push {
+            CollaborativeChildWorkMode::Pushed {
+                parent_work_id,
+                child_work_id,
+            }
+        } else {
+            CollaborativeChildWorkMode::StartedRoot { child_work_id }
+        });
+        meta.work_id = meta.work_mode.map(|mode| mode.child_work_id());
+        meta.auto_root_work_id = None;
+        meta.close_state = Some(ChildGoalCloseState::Open);
+        meta.close_error_message = None;
+        Ok(())
+    }
+
     fn pop_child(
         &self,
         cwd: &Path,
@@ -107,27 +264,39 @@ Handoff ID: {handoff_id}",
         reason: ChildGoalCloseReason,
     ) -> Result<(), CollaborativeChildGoalError> {
         match snapshot.active_work_id {
-            Some(active) if active == child_work_id => {}
+            Some(active) if active == child_work_id => {
+                let Some(stack_parent) = snapshot.stack.last().copied() else {
+                    return Err(CollaborativeChildGoalError::Close(
+                        "active work conflict: child work expected on stack".into(),
+                    ));
+                };
+                if stack_parent != parent_work_id {
+                    return Err(CollaborativeChildGoalError::Close(format!(
+                        "active work conflict: stack parent={stack_parent} expected={parent_work_id}"
+                    )));
+                }
+            }
+            Some(active) if active == parent_work_id => {
+                if Self::pop_already_done(snapshot, parent_work_id, child_work_id) {
+                    return Ok(());
+                }
+                return Err(CollaborativeChildGoalError::Close(format!(
+                    "active work conflict: active={active} expected child={child_work_id}"
+                )));
+            }
             Some(active) => {
                 return Err(CollaborativeChildGoalError::Close(format!(
                     "active work mismatch: active={active} expected child={child_work_id}"
                 )));
             }
             None => {
+                if Self::pop_already_done(snapshot, parent_work_id, child_work_id) {
+                    return Ok(());
+                }
                 return Err(CollaborativeChildGoalError::Close(
                     "no active work during child goal close".into(),
                 ));
             }
-        }
-        let Some(stack_parent) = snapshot.stack.last().copied() else {
-            return Err(CollaborativeChildGoalError::Close(
-                "active work conflict: child work expected on stack".into(),
-            ));
-        };
-        if stack_parent != parent_work_id {
-            return Err(CollaborativeChildGoalError::Close(format!(
-                "active work conflict: stack parent={stack_parent} expected={parent_work_id}"
-            )));
         }
         let body = self.apply_operation(cwd, WorkOperationDto::Pop, "pop child")?;
         if body.outcome.kind != WorkMutationKindDto::Pop {
@@ -147,22 +316,26 @@ Handoff ID: {handoff_id}",
         reason: ChildGoalCloseReason,
     ) -> Result<(), CollaborativeChildGoalError> {
         match snapshot.active_work_id {
-            Some(active) if active == child_work_id => {}
+            Some(active) if active == child_work_id => {
+                if !snapshot.stack.is_empty() {
+                    return Err(CollaborativeChildGoalError::Close(
+                        "active work conflict: root child work must have empty stack".into(),
+                    ));
+                }
+            }
             Some(active) => {
                 return Err(CollaborativeChildGoalError::Close(format!(
                     "active work mismatch: active={active} expected child={child_work_id}"
                 )));
             }
             None => {
+                if Self::finish_already_done(snapshot, child_work_id) {
+                    return Ok(());
+                }
                 return Err(CollaborativeChildGoalError::Close(
                     "no active work during child goal close".into(),
                 ));
             }
-        }
-        if !snapshot.stack.is_empty() {
-            return Err(CollaborativeChildGoalError::Close(
-                "active work conflict: root child work must have empty stack".into(),
-            ));
         }
         let body = self.apply_operation(cwd, WorkOperationDto::Finish, "finish root child")?;
         if body.outcome.kind != WorkMutationKindDto::Finish {
@@ -193,75 +366,7 @@ impl<C: WorkClient> CollaborativeChildGoalService for AibeCollaborativeChildGoal
             requested_command,
             human_request,
         );
-        if let Some(parent_work_id) = snapshot.active_work_id {
-            let response = self
-                .client
-                .work_apply(
-                    &self.session_id,
-                    &self.memory_context(cwd),
-                    WorkOperationDto::Push { goal },
-                )
-                .map_err(|e| CollaborativeChildGoalError::Create(e.to_string()))?;
-            let body = match response {
-                ClientResponse::WorkApplyResult(body) => body,
-                ClientResponse::Error { message, .. } => {
-                    return Err(CollaborativeChildGoalError::Create(message));
-                }
-                _ => {
-                    return Err(CollaborativeChildGoalError::Create(
-                        "unexpected work response".into(),
-                    ));
-                }
-            };
-            if body.outcome.kind != WorkMutationKindDto::Push {
-                return Err(CollaborativeChildGoalError::Create(format!(
-                    "unexpected work mutation: {:?}",
-                    body.outcome.kind
-                )));
-            }
-            let child_work_id = body.outcome.work_id.ok_or_else(|| {
-                CollaborativeChildGoalError::Create("push missing work id".into())
-            })?;
-            meta.work_mode = Some(CollaborativeChildWorkMode::Pushed {
-                parent_work_id,
-                child_work_id,
-            });
-        } else {
-            let response = self
-                .client
-                .work_apply(
-                    &self.session_id,
-                    &self.memory_context(cwd),
-                    WorkOperationDto::Start { goal },
-                )
-                .map_err(|e| CollaborativeChildGoalError::Create(e.to_string()))?;
-            let body = match response {
-                ClientResponse::WorkApplyResult(body) => body,
-                ClientResponse::Error { message, .. } => {
-                    return Err(CollaborativeChildGoalError::Create(message));
-                }
-                _ => {
-                    return Err(CollaborativeChildGoalError::Create(
-                        "unexpected work response".into(),
-                    ));
-                }
-            };
-            if body.outcome.kind != WorkMutationKindDto::Start {
-                return Err(CollaborativeChildGoalError::Create(format!(
-                    "unexpected work mutation: {:?}",
-                    body.outcome.kind
-                )));
-            }
-            let child_work_id = body.outcome.work_id.ok_or_else(|| {
-                CollaborativeChildGoalError::Create("start missing work id".into())
-            })?;
-            meta.work_mode = Some(CollaborativeChildWorkMode::StartedRoot { child_work_id });
-        }
-        meta.work_id = meta.work_mode.map(|mode| mode.child_work_id());
-        meta.auto_root_work_id = None;
-        meta.close_state = Some(ChildGoalCloseState::Open);
-        meta.close_error_message = None;
-        Ok(())
+        self.apply_create_operation(meta, cwd, &snapshot, goal)
     }
 
     fn close_child_goal(
@@ -292,7 +397,9 @@ impl<C: WorkClient> CollaborativeChildGoalService for AibeCollaborativeChildGoal
 mod tests {
     use super::*;
     use crate::domain::ChildGoalAchievement;
-    use aibe_protocol::{WorkApplyResponseBody, WorkMutationOutcomeDto};
+    use aibe_protocol::{
+        WorkApplyResponseBody, WorkItemDto, WorkMutationOutcomeDto, WorkStatusDto,
+    };
     use std::sync::{Arc, Mutex};
 
     #[derive(Default, Clone)]
@@ -616,6 +723,249 @@ mod tests {
     }
 
     #[test]
+    fn pop_already_done_skips_second_pop() {
+        let meta = ChildGoalMeta {
+            work_mode: Some(CollaborativeChildWorkMode::Pushed {
+                parent_work_id: 1,
+                child_work_id: 2,
+            }),
+            work_id: Some(2),
+            ..sample_meta()
+        };
+        let client = DomainMockWorkClient {
+            state: Arc::new(Mutex::new(MockWorkState {
+                active_work_id: Some(1),
+                stack: vec![],
+                next_work_id: 3,
+            })),
+            operations: Arc::new(Mutex::new(Vec::new())),
+        };
+        struct PostPopClient {
+            inner: DomainMockWorkClient,
+        }
+        impl WorkClient for PostPopClient {
+            fn work_query(
+                &self,
+                session_id: &str,
+                context: &MemoryContext,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                let _ = self.inner.work_query(session_id, context)?;
+                Ok(ClientResponse::WorkQueryResult(WorkQueryResponseBody {
+                    id: "test".into(),
+                    snapshot: WorkSnapshotDto {
+                        revision: 2,
+                        active_work_id: Some(1),
+                        stack: vec![],
+                        works: vec![WorkItemDto {
+                            id: 2,
+                            title: "child".into(),
+                            goal: format!("Handoff ID: {}", sample_meta().handoff_id),
+                            status: WorkStatusDto::Done,
+                            parent_id: Some(1),
+                            created_at_ms: 1,
+                            updated_at_ms: 2,
+                            finished_at_ms: Some(2),
+                            focus: None,
+                            summary: None,
+                        }],
+                        entries: vec![],
+                    },
+                }))
+            }
+
+            fn work_apply(
+                &self,
+                session_id: &str,
+                context: &MemoryContext,
+                operation: WorkOperationDto,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                self.inner.work_apply(session_id, context, operation)
+            }
+        }
+        let service = AibeCollaborativeChildGoalService::new(
+            PostPopClient { inner: client },
+            "session".into(),
+            "project_test".into(),
+        );
+        service
+            .close_child_goal(
+                &meta,
+                Path::new("/tmp/work"),
+                ChildGoalCloseReason::ControlReturned,
+            )
+            .unwrap();
+        assert_eq!(
+            service
+                .query_snapshot(Path::new("/tmp/work"))
+                .unwrap()
+                .active_work_id,
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn finish_already_done_skips_second_finish() {
+        struct PostFinishClient;
+        impl WorkClient for PostFinishClient {
+            fn work_query(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                Ok(ClientResponse::WorkQueryResult(WorkQueryResponseBody {
+                    id: "test".into(),
+                    snapshot: WorkSnapshotDto {
+                        revision: 2,
+                        active_work_id: None,
+                        stack: vec![],
+                        works: vec![WorkItemDto {
+                            id: 1,
+                            title: "child".into(),
+                            goal: format!("Handoff ID: {}", sample_meta().handoff_id),
+                            status: WorkStatusDto::Done,
+                            parent_id: None,
+                            created_at_ms: 1,
+                            updated_at_ms: 2,
+                            finished_at_ms: Some(2),
+                            focus: None,
+                            summary: None,
+                        }],
+                        entries: vec![],
+                    },
+                }))
+            }
+
+            fn work_apply(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+                _operation: WorkOperationDto,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                panic!("Finish must not be called when already done")
+            }
+        }
+        let service = AibeCollaborativeChildGoalService::new(
+            PostFinishClient,
+            "session".into(),
+            "space".into(),
+        );
+        let meta = ChildGoalMeta {
+            work_mode: Some(CollaborativeChildWorkMode::StartedRoot { child_work_id: 1 }),
+            work_id: Some(1),
+            ..sample_meta()
+        };
+        service
+            .close_child_goal(
+                &meta,
+                Path::new("/tmp/work"),
+                ChildGoalCloseReason::ControlReturned,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn create_recovers_after_push_response_loss() {
+        struct PushResponseLossClient {
+            state: Arc<Mutex<MockWorkState>>,
+            goal: Arc<Mutex<Option<String>>>,
+            fail_apply_once: Arc<Mutex<bool>>,
+        }
+        impl WorkClient for PushResponseLossClient {
+            fn work_query(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                let state = self.state.lock().unwrap();
+                let works = self
+                    .goal
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|goal| {
+                        vec![WorkItemDto {
+                            id: 2,
+                            title: goal.clone(),
+                            goal: goal.clone(),
+                            status: WorkStatusDto::Active,
+                            parent_id: Some(1),
+                            created_at_ms: 1,
+                            updated_at_ms: 1,
+                            finished_at_ms: None,
+                            focus: None,
+                            summary: None,
+                        }]
+                    })
+                    .unwrap_or_default();
+                Ok(ClientResponse::WorkQueryResult(WorkQueryResponseBody {
+                    id: "test".into(),
+                    snapshot: WorkSnapshotDto {
+                        revision: 1,
+                        active_work_id: state.active_work_id,
+                        stack: state.stack.clone(),
+                        works,
+                        entries: vec![],
+                    },
+                }))
+            }
+
+            fn work_apply(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+                operation: WorkOperationDto,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                if let WorkOperationDto::Push { goal } = &operation {
+                    if *self.fail_apply_once.lock().unwrap() {
+                        *self.fail_apply_once.lock().unwrap() = false;
+                        let mut state = self.state.lock().unwrap();
+                        state.stack.push(1);
+                        state.active_work_id = Some(2);
+                        *self.goal.lock().unwrap() = Some(goal.clone());
+                        return Err(crate::ports::outbound::AgentError::Request(
+                            "response lost".into(),
+                        ));
+                    }
+                }
+                Err(crate::ports::outbound::AgentError::Request(
+                    "unexpected apply".into(),
+                ))
+            }
+        }
+        let service = AibeCollaborativeChildGoalService::new(
+            PushResponseLossClient {
+                state: Arc::new(Mutex::new(MockWorkState {
+                    active_work_id: Some(1),
+                    stack: vec![],
+                    next_work_id: 2,
+                })),
+                goal: Arc::new(Mutex::new(None)),
+                fail_apply_once: Arc::new(Mutex::new(true)),
+            },
+            "session".into(),
+            "space".into(),
+        );
+        let mut meta = sample_meta();
+        service
+            .create_child_goal(
+                &mut meta,
+                Path::new("/tmp/work"),
+                "goal",
+                "reason",
+                "cmd",
+                "human",
+            )
+            .unwrap();
+        assert_eq!(
+            meta.work_mode,
+            Some(CollaborativeChildWorkMode::Pushed {
+                parent_work_id: 1,
+                child_work_id: 2,
+            })
+        );
+    }
+
+    #[test]
     fn root_pop_is_rejected() {
         let service = service_with_active(Some(1), vec![]);
         let meta = ChildGoalMeta {
@@ -623,7 +973,6 @@ mod tests {
             work_id: Some(1),
             ..sample_meta()
         };
-        // finish_root_child should succeed, not pop
         service
             .close_child_goal(
                 &meta,

@@ -1274,3 +1274,110 @@ fn handoff_create_failure_preserves_resume_error_after_shell_ready() {
         handoff.resume_error
     );
 }
+
+struct FailingCandidatePublisher {
+    message: String,
+}
+
+impl ai::ports::outbound::HandoffCandidatePublisher for FailingCandidatePublisher {
+    fn publish(&self, _id: &str, _commands: &[String]) -> Result<(), String> {
+        Err(self.message.clone())
+    }
+}
+
+#[test]
+fn handoff_candidate_publish_failure_compensates_to_cancelled() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let store_root = dir.path().join("store");
+    let store = FilesystemHandoffStore::new(store_root.clone());
+    let launcher = TestLauncher {
+        root: store_root.clone(),
+        trace: Arc::new(Phase2Trace::default()),
+    };
+    let publisher = FailingCandidatePublisher {
+        message: "publish failed".into(),
+    };
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &NoopParentToolBarrier,
+        &publisher,
+        &NoopCollaborativeChildGoalService,
+        &SystemHandoffRuntime,
+    );
+    let error = policy
+        .intercept(phase2_request(work.path().to_path_buf()))
+        .expect_err("publish failure");
+    assert!(matches!(
+        error,
+        ai::application::CollaborativeHandoffError::Candidate(_)
+    ));
+    let handoff = store.list_handoffs().unwrap().into_iter().next().unwrap();
+    assert_eq!(handoff.state, HandoffState::Cancelled);
+    assert!(store.load_lease(&handoff.id).unwrap().is_none());
+}
+
+#[test]
+fn handoff_return_includes_unknown_tool_ids() {
+    use ai::domain::{upsert_tool_execution, RecoverableToolExecution, RecoverableToolStatus};
+
+    let dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let store_root: PathBuf = dir.path().into();
+    let store = FilesystemHandoffStore::new(store_root.clone());
+    struct ApprovedToolLauncher {
+        inner: TestLauncher,
+        store_root: PathBuf,
+    }
+    impl HumanShellLauncher for ApprovedToolLauncher {
+        fn launch_and_wait(
+            &self,
+            request: &HumanShellLaunchRequest,
+        ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+            let handoff_id = request.handoff_id.clone();
+            let mut checkpoint = FilesystemHandoffStore::new(self.store_root.clone())
+                .load_checkpoint(&handoff_id)
+                .unwrap();
+            upsert_tool_execution(
+                &mut checkpoint,
+                RecoverableToolExecution {
+                    tool_call_id: "approved-tool".into(),
+                    tool_name: "shell_exec".into(),
+                    status: RecoverableToolStatus::Approved,
+                },
+            );
+            FilesystemHandoffStore::new(self.store_root.clone())
+                .save_checkpoint(&handoff_id, &checkpoint)
+                .unwrap();
+            self.inner.launch_and_wait(request)
+        }
+    }
+    let launcher = ApprovedToolLauncher {
+        inner: TestLauncher {
+            root: store_root.clone(),
+            trace: Arc::new(Phase2Trace::default()),
+        },
+        store_root,
+    };
+    let policy = CollaborativeShellExecPolicy::new(
+        CollaborativeExecutionContext::parent_enabled(),
+        &store,
+        &launcher,
+        &TestObserver,
+        &NoopParentToolBarrier,
+        &NoopHandoffCandidatePublisher,
+        &NoopCollaborativeChildGoalService,
+        &SystemHandoffRuntime,
+    );
+    let result = policy
+        .intercept(phase2_request(work.path().into()))
+        .unwrap();
+    assert_eq!(result.uncertain_tool_executions.len(), 1);
+    assert_eq!(
+        result.uncertain_tool_executions[0].tool_call_id,
+        "approved-tool"
+    );
+}

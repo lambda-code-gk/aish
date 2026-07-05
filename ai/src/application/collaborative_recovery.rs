@@ -4,12 +4,13 @@ use std::path::PathBuf;
 
 use super::{
     close_child_goal_durable, compensate_child_goal_durable,
-    reconcile_child_goal_before_parent_resume,
+    reconcile_child_goal_before_parent_resume, reconcile_incomplete_creating_handoff,
 };
 use crate::domain::{
-    child_goal_close_blocks_parent_resume, mark_uncertain_tools_on_disconnect, try_transition,
-    ChildGoalCloseReason, CollaborativeAuditKind, Handoff, HandoffCheckpoint, HandoffEvent,
-    HandoffState, RecoverableToolStatus, RequestedShellExec,
+    child_goal_close_blocks_parent_resume, collect_unknown_tool_ids, collect_unknown_tools,
+    mark_uncertain_tools_on_disconnect, try_transition, ChildGoalCloseReason,
+    CollaborativeAuditKind, Handoff, HandoffCheckpoint, HandoffEvent, HandoffState,
+    RecoverableToolStatus, RequestedShellExec,
 };
 use crate::ports::outbound::{
     CheckpointRepository, CollaborativeChildGoalService, EnvironmentObserver,
@@ -85,12 +86,29 @@ pub struct ParentResumeContext {
     pub conversation_summary: String,
     pub cwd: PathBuf,
     pub uncertain_tool_executions: Vec<String>,
+    pub uncertain_tool_details: Vec<crate::domain::RecoverableToolExecution>,
     pub resume_observation: Option<String>,
 }
 
 impl ParentResumeContext {
     /// provider の未完了 tool-call ID へ再接続せず、新しい親 run に渡す意味的入力。
     pub fn semantic_prompt(&self) -> String {
+        let unknown_tools: Vec<_> = self
+            .uncertain_tool_details
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "tool_call_id": tool.tool_call_id,
+                    "tool_name": tool.tool_name,
+                    "status": "UNKNOWN",
+                    "result": "uncertain",
+                    "instructions": [
+                        "Do not automatically re-run this tool.",
+                        "Verify the current environment state before continuing."
+                    ]
+                })
+            })
+            .collect();
         serde_json::json!({
             "event": "collaborative_handoff_parent_resume",
             "handoff_id": self.handoff_id,
@@ -100,6 +118,7 @@ impl ParentResumeContext {
             "conversation_summary": self.conversation_summary,
             "cwd": self.cwd,
             "uncertain_tool_executions": self.uncertain_tool_executions,
+            "uncertain_tools": unknown_tools,
             "resume_observation": self.resume_observation,
             "instructions": [
                 "Control returned from the human shell.",
@@ -241,11 +260,17 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> CancelHandoff<'a, S, R> {
         handoff.state = transition(handoff.state, HandoffEvent::Cancel)?;
         handoff.return_reason = Some(reason.to_string());
         handoff.updated_at_ms = self.runtime.now_ms();
-        let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
-        checkpoint.control_state = HandoffState::Cancelled;
-        self.store.save_checkpoint(handoff_id, &checkpoint)?;
+        if let Ok(mut checkpoint) = self.store.load_checkpoint(handoff_id) {
+            checkpoint.control_state = HandoffState::Cancelled;
+            self.store.save_checkpoint(handoff_id, &checkpoint)?;
+        }
         self.store.save_handoff(&handoff)?;
-        let _ = compensate_child_goal_durable(self.store, self.child_goal, handoff_id);
+        if let Err(error) = compensate_child_goal_durable(self.store, self.child_goal, handoff_id) {
+            let mut handoff = self.store.load_handoff(handoff_id)?;
+            handoff.resume_error = Some(format!("{reason}; compensate: {error}"));
+            handoff.updated_at_ms = self.runtime.now_ms();
+            self.store.save_handoff(&handoff)?;
+        }
         self.store.release_lease(handoff_id)?;
         Ok(())
     }
@@ -492,7 +517,9 @@ impl<'a, S: RecoveryStore, O: EnvironmentObserver, R: HandoffRuntime>
         }
         handoff.updated_at_ms = self.runtime.now_ms();
         let mut checkpoint = self.store.load_checkpoint(handoff_id)?;
-        let uncertain_tool_executions = mark_uncertain_tools_on_disconnect(&mut checkpoint);
+        mark_uncertain_tools_on_disconnect(&mut checkpoint);
+        let uncertain_tool_executions = collect_unknown_tool_ids(&checkpoint);
+        let uncertain_tool_details = collect_unknown_tools(&checkpoint);
         let shell_log_start = handoff.shell_log_end.unwrap_or(handoff.shell_log_start);
         let cwd = PathBuf::from(&checkpoint.cwd);
         let observation = self.observer.observe(&cwd, shell_log_start);
@@ -525,6 +552,7 @@ impl<'a, S: RecoveryStore, O: EnvironmentObserver, R: HandoffRuntime>
             &handoff,
             &checkpoint,
             uncertain_tool_executions,
+            uncertain_tool_details,
             Some(resume_observation),
         ))
     }
@@ -592,14 +620,23 @@ impl<'a, S: RecoveryStore, R: HandoffRuntime> ReconcileStaleHandoffs<'a, S, R> {
                     .is_some_and(|entry| !self.runtime.process_is_alive(entry.owner_process_id));
                 if stale && (lease.is_none() || owner_dead) {
                     let child_goal = child_goal_for(&handoff.id);
-                    CancelHandoff::new(self.store, self.runtime, child_goal.as_ref()).execute(
-                        &handoff.id,
-                        if lease.is_none() {
-                            "stale_creating_without_lease"
-                        } else {
-                            "stale_creating_owner_lost"
-                        },
-                    )?;
+                    let reason = if lease.is_none() {
+                        "stale_creating_without_lease"
+                    } else {
+                        "stale_creating_owner_lost"
+                    };
+                    if self.store.load_checkpoint(&handoff.id).is_err() {
+                        reconcile_incomplete_creating_handoff(
+                            self.store,
+                            child_goal.as_ref(),
+                            self.runtime,
+                            &handoff.id,
+                            reason,
+                        )?;
+                    } else {
+                        CancelHandoff::new(self.store, self.runtime, child_goal.as_ref())
+                            .execute(&handoff.id, reason)?;
+                    }
                     reconciled.push(handoff.id);
                 }
                 continue;
@@ -672,6 +709,7 @@ fn parent_context(
     handoff: &Handoff,
     checkpoint: &HandoffCheckpoint,
     uncertain_tool_executions: Vec<String>,
+    uncertain_tool_details: Vec<crate::domain::RecoverableToolExecution>,
     resume_observation: Option<String>,
 ) -> ParentResumeContext {
     ParentResumeContext {
@@ -684,6 +722,7 @@ fn parent_context(
         conversation_summary: checkpoint.conversation_summary.clone(),
         cwd: PathBuf::from(&checkpoint.cwd),
         uncertain_tool_executions,
+        uncertain_tool_details,
         resume_observation,
     }
 }

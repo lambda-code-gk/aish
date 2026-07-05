@@ -35,9 +35,9 @@ pub use collaborative_child_goal_lifecycle::{
     reconcile_child_goal_before_parent_resume,
 };
 pub use collaborative_handoff::{
-    persist_handoff_candidates_for_recall, suggestion_cache_path_from_checkpoint,
-    CollaborativeExecutionContext, CollaborativeHandoffError, CollaborativeShellExecPolicy,
-    ParentShellExecRequest,
+    persist_handoff_candidates_for_recall, reconcile_incomplete_creating_handoff,
+    suggestion_cache_path_from_checkpoint, CollaborativeExecutionContext,
+    CollaborativeHandoffError, CollaborativeShellExecPolicy, ParentShellExecRequest,
 };
 pub use collaborative_parent_context::{
     build_conversation_snapshot, build_enriched_parent_handoff_context, checkpoint_memory_space_id,

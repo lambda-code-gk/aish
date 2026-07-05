@@ -726,3 +726,97 @@ fn parent_resume_tool_lifecycle_syncs_completed_tools() {
     .finish("resume-tools", Ok(()))
     .unwrap();
 }
+
+#[test]
+fn recovery_resume_includes_preexisting_unknown_tool_details() {
+    let fixture = Fixture::new("unknown-existing", HandoffState::Returned);
+    let mut checkpoint = fixture.store.load_checkpoint("unknown-existing").unwrap();
+    checkpoint.tool_executions = vec![
+        RecoverableToolExecution {
+            tool_call_id: "approved-tool".into(),
+            tool_name: "shell_exec".into(),
+            status: RecoverableToolStatus::Approved,
+        },
+        RecoverableToolExecution {
+            tool_call_id: "done-tool".into(),
+            tool_name: "read_file".into(),
+            status: RecoverableToolStatus::Completed,
+        },
+    ];
+    fixture
+        .store
+        .save_checkpoint("unknown-existing", &checkpoint)
+        .unwrap();
+    let context = ResumeReturnedParent::new(
+        &fixture.store,
+        &Observer,
+        &Runtime {
+            now: 20,
+            owner_alive: true,
+        },
+        &NoopCollaborativeChildGoalService,
+    )
+    .prepare("unknown-existing", &owner())
+    .unwrap();
+    assert_eq!(context.uncertain_tool_executions, vec!["approved-tool"]);
+    assert_eq!(context.uncertain_tool_details.len(), 1);
+    let prompt = context.semantic_prompt();
+    assert!(prompt.contains("approved-tool"));
+    assert!(prompt.contains("shell_exec"));
+    assert!(prompt.contains("Do not automatically re-run"));
+}
+
+#[test]
+fn stale_creating_without_checkpoint_is_reconciled() {
+    use ai::application::reconcile_incomplete_creating_handoff;
+    use ai::domain::{Handoff, HANDOFF_SCHEMA_VERSION};
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = FilesystemHandoffStore::new(temp.path().join("handoffs"));
+    store
+        .save_handoff(&Handoff {
+            id: "stale-no-checkpoint".into(),
+            schema_version: HANDOFF_SCHEMA_VERSION,
+            parent_task_id: "task".into(),
+            parent_conversation_id: "conv".into(),
+            parent_run_id: "run".into(),
+            parent_goal_id: None,
+            child_goal_id: "child".into(),
+            side_conversation_id: None,
+            state: HandoffState::Creating,
+            initial_cwd: "/tmp".into(),
+            final_shell_cwd: None,
+            parent_request_summary: "summary".into(),
+            requested_shell_execs: vec![],
+            pending_human_request: None,
+            conversation_snapshot_ref: "checkpoint.json#conversation_snapshot".into(),
+            conversation_summary: "summary".into(),
+            checkpoint_ref: "checkpoint.json".into(),
+            before_observation_ref: "{}".into(),
+            after_observation_ref: None,
+            shell_log_start: 0,
+            shell_log_end: None,
+            shell_generation: 1,
+            return_reason: None,
+            human_shell_exit_code: None,
+            resume_error: None,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .unwrap();
+    reconcile_incomplete_creating_handoff(
+        &store,
+        &NoopCollaborativeChildGoalService,
+        &Runtime {
+            now: 200_000,
+            owner_alive: false,
+        },
+        "stale-no-checkpoint",
+        "stale_creating_without_lease",
+    )
+    .unwrap();
+    assert_eq!(
+        store.load_handoff("stale-no-checkpoint").unwrap().state,
+        HandoffState::Cancelled
+    );
+}

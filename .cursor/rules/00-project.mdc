@@ -39,6 +39,13 @@ alwaysApply: true
 
 targeted検証だけで完了扱いにしない。CIも `verify.sh` を使う。詳細は `docs/testing.md`。
 
+**検証コマンドの禁止事項（エージェント向け）**
+
+- `./scripts/verify.sh` や `verify-targeted.sh` に **`| tail` / `| head` を付けない**（パイプで進捗が隠れ、異常に遅く見える）
+- 実装中は `verify-targeted.sh --package <crate>`。完了直前だけ `verify.sh`
+- 長時間の全体ゲートは `VERIFY_PROGRESS=1 ./scripts/verify.sh` とし、別ターミナルで `tail -f .verify-progress`
+- クレート限定の準ゲート: `VERIFY_PACKAGES=ai ./scripts/verify.sh`（fmt/clippy/静的検査はフル、テストのみ限定）
+
 （内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-spec-acceptance.py` / `check-codex-tooling.sh`）
 
 ### メモリ不足環境（AI エージェント・低 RAM マシン）
@@ -48,6 +55,7 @@ targeted検証だけで完了扱いにしない。CIも `verify.sh` を使う。
 - `cargo test` に **`-j 1`** を付ける（クレート並列を抑える）
 - 複数クレートの `cargo test` を **同時に走らせない**（1 本ずつ順に実行）
 - 十分な RAM があるときだけ `VERIFY_PARALLEL=1 ./scripts/verify.sh` で並列に戻す
+- **`verify.sh` を `| tail` で包まない**（進捗が見えずハングに見える）
 
 ## Git
 

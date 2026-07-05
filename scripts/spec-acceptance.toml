@@ -3293,3 +3293,84 @@ description = "縦切り最小連結 full PTY 通し（nightly）"
 test = "slice_full_collaborative_pty_nightly"
 file_glob = "ai/tests/0055_collaborative_vertical_slice.rs"
 pending = true
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_close_idempotent_after_pop"
+description = "Pop 成功後クラッシュから close を冪等再試行できる"
+test = "close_durable_retries_after_pop_without_second_pop"
+file_glob = "ai/src/application/collaborative_child_goal_lifecycle.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_close_conflict_no_misoperation"
+description = "本当の active Work conflict では Pop しない"
+test = "close_durable_true_conflict_does_not_pop"
+file_glob = "ai/src/application/collaborative_child_goal_lifecycle.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_pop_postcondition_skip"
+description = "Pop 済み postcondition では二重 Pop しない"
+test = "pop_already_done_skips_second_pop"
+file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_finish_postcondition_skip"
+description = "Finish 済み postcondition では二重 Finish しない"
+test = "finish_already_done_skips_second_finish"
+file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "child_work_create_response_loss_push"
+description = "Push 応答喪失後に handoff ID で Work を復元"
+test = "create_recovers_after_push_response_loss"
+file_glob = "ai/src/adapters/outbound/collaborative_child_goal.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "handoff_return_unknown_tool_ids"
+description = "Ctrl+D 返却で UNKNOWN tool ID を親へ渡す"
+test = "handoff_return_includes_unknown_tool_ids"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "init_candidate_publish_compensation"
+description = "candidate publish 失敗を補償して CANCELLED"
+test = "handoff_candidate_publish_failure_compensates_to_cancelled"
+file_glob = "ai/tests/0055_collaborative_handoff_red.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "resume_unknown_tool_details"
+description = "復旧時 semantic prompt に UNKNOWN tool 詳細を含める"
+test = "recovery_resume_includes_preexisting_unknown_tool_details"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 5
+id = "stale_creating_no_checkpoint"
+description = "checkpoint なし stale CREATING を reconcile"
+test = "stale_creating_without_checkpoint_is_reconciled"
+file_glob = "ai/tests/0055_collaborative_recovery.rs"
+pending = false

@@ -415,6 +415,51 @@ pub fn mark_uncertain_tools_on_disconnect(checkpoint: &mut HandoffCheckpoint) ->
         .collect()
 }
 
+/// checkpoint 上で UNKNOWN 状態の tool call ID 一覧を返す。
+pub fn collect_unknown_tool_ids(checkpoint: &HandoffCheckpoint) -> Vec<String> {
+    checkpoint
+        .tool_executions
+        .iter()
+        .filter(|tool| tool.status == RecoverableToolStatus::Unknown)
+        .map(|tool| tool.tool_call_id.clone())
+        .collect()
+}
+
+/// checkpoint 上で UNKNOWN 状態の tool execution 一覧を返す。
+pub fn collect_unknown_tools(checkpoint: &HandoffCheckpoint) -> Vec<RecoverableToolExecution> {
+    checkpoint
+        .tool_executions
+        .iter()
+        .filter(|tool| tool.status == RecoverableToolStatus::Unknown)
+        .cloned()
+        .collect()
+}
+
+/// handoff 初期化失敗と補償結果の永続化用メタデータ。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffInitializationFailure {
+    pub primary_error: String,
+    pub compensation_attempted: bool,
+    pub compensation_succeeded: bool,
+    pub compensation_errors: Vec<String>,
+    pub remaining_resources: Vec<String>,
+    pub manual_recovery_required: bool,
+    pub occurred_at_ms: u64,
+}
+
+impl HandoffInitializationFailure {
+    pub fn combined_error_message(&self) -> String {
+        if self.compensation_errors.is_empty() {
+            return self.primary_error.clone();
+        }
+        format!(
+            "{}; compensation: {}",
+            self.primary_error,
+            self.compensation_errors.join("; ")
+        )
+    }
+}
+
 /// 後方互換エイリアス。
 pub fn mark_running_tools_unknown(checkpoint: &mut HandoffCheckpoint) -> Vec<String> {
     mark_uncertain_tools_on_disconnect(checkpoint)

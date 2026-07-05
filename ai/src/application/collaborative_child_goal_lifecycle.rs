@@ -493,21 +493,171 @@ mod tests {
     }
 
     #[test]
-    fn handoff_requires_child_goal_service_false_when_completed() {
+    fn close_durable_retries_after_pop_without_second_pop() {
+        use crate::ports::outbound::WorkClient;
+        use aibe_protocol::{
+            ClientResponse, MemoryContext, WorkApplyResponseBody, WorkItemDto, WorkMutationKindDto,
+            WorkMutationOutcomeDto, WorkOperationDto, WorkQueryResponseBody, WorkSnapshotDto,
+            WorkStatusDto,
+        };
+
+        struct PostPopCloseClient {
+            pop_calls: Arc<Mutex<u32>>,
+        }
+
+        impl WorkClient for PostPopCloseClient {
+            fn work_query(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                Ok(ClientResponse::WorkQueryResult(WorkQueryResponseBody {
+                    id: "q".into(),
+                    snapshot: WorkSnapshotDto {
+                        revision: 2,
+                        active_work_id: Some(1),
+                        stack: vec![],
+                        works: vec![WorkItemDto {
+                            id: 2,
+                            title: "child".into(),
+                            goal: "Handoff ID: ho-test".into(),
+                            status: WorkStatusDto::Done,
+                            parent_id: Some(1),
+                            created_at_ms: 1,
+                            updated_at_ms: 2,
+                            finished_at_ms: Some(2),
+                            focus: None,
+                            summary: None,
+                        }],
+                        entries: vec![],
+                    },
+                }))
+            }
+
+            fn work_apply(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+                operation: WorkOperationDto,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                if matches!(operation, WorkOperationDto::Pop) {
+                    *self.pop_calls.lock().unwrap() += 1;
+                }
+                Err(crate::ports::outbound::AgentError::Request(
+                    "should not pop when already done".into(),
+                ))
+            }
+        }
+
         let child_goal = ChildGoalMeta {
             id: "child".into(),
             handoff_id: "ho-test".into(),
             parent_goal_id: None,
             work_id: Some(2),
-            work_mode: Some(CollaborativeChildWorkMode::StartedRoot { child_work_id: 2 }),
+            work_mode: Some(CollaborativeChildWorkMode::Pushed {
+                parent_work_id: 1,
+                child_work_id: 2,
+            }),
             auto_root_work_id: None,
-            close_reason: Some(ChildGoalCloseReason::ControlReturned),
-            close_state: Some(ChildGoalCloseState::Completed),
+            close_reason: None,
+            close_state: Some(ChildGoalCloseState::Closing),
             close_error_message: None,
             achievement: ChildGoalAchievement::Unknown,
         };
         let (store, handoff_id) = MemStore::with_checkpoint(child_goal);
+        let pop_calls = Arc::new(Mutex::new(0));
+        let service = crate::adapters::outbound::AibeCollaborativeChildGoalService::new(
+            PostPopCloseClient {
+                pop_calls: pop_calls.clone(),
+            },
+            "session".into(),
+            "space".into(),
+        );
+        close_child_goal_durable(
+            &store,
+            &service,
+            &handoff_id,
+            ChildGoalCloseReason::ControlReturned,
+        )
+        .unwrap();
+        assert_eq!(*pop_calls.lock().unwrap(), 0);
         let checkpoint = store.load_checkpoint(&handoff_id).unwrap();
-        assert!(!handoff_requires_child_goal_service(&checkpoint));
+        assert_eq!(
+            checkpoint.child_goal.close_state,
+            Some(ChildGoalCloseState::Completed)
+        );
+    }
+
+    #[test]
+    fn close_durable_true_conflict_does_not_pop() {
+        use crate::ports::outbound::WorkClient;
+        use aibe_protocol::{
+            ClientResponse, MemoryContext, WorkOperationDto, WorkQueryResponseBody, WorkSnapshotDto,
+        };
+
+        struct WrongActiveClient;
+
+        impl crate::ports::outbound::WorkClient for WrongActiveClient {
+            fn work_query(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                Ok(ClientResponse::WorkQueryResult(WorkQueryResponseBody {
+                    id: "q".into(),
+                    snapshot: WorkSnapshotDto {
+                        revision: 1,
+                        active_work_id: Some(99),
+                        stack: vec![1],
+                        works: vec![],
+                        entries: vec![],
+                    },
+                }))
+            }
+
+            fn work_apply(
+                &self,
+                _session_id: &str,
+                _context: &MemoryContext,
+                _operation: WorkOperationDto,
+            ) -> Result<ClientResponse, crate::ports::outbound::AgentError> {
+                panic!("must not apply work on conflict")
+            }
+        }
+
+        let child_goal = ChildGoalMeta {
+            id: "child".into(),
+            handoff_id: "ho-test".into(),
+            parent_goal_id: None,
+            work_id: Some(2),
+            work_mode: Some(CollaborativeChildWorkMode::Pushed {
+                parent_work_id: 1,
+                child_work_id: 2,
+            }),
+            auto_root_work_id: None,
+            close_reason: None,
+            close_state: Some(ChildGoalCloseState::Closing),
+            close_error_message: None,
+            achievement: ChildGoalAchievement::Unknown,
+        };
+        let (store, handoff_id) = MemStore::with_checkpoint(child_goal);
+        let service = crate::adapters::outbound::AibeCollaborativeChildGoalService::new(
+            WrongActiveClient,
+            "session".into(),
+            "space".into(),
+        );
+        let error = close_child_goal_durable(
+            &store,
+            &service,
+            &handoff_id,
+            ChildGoalCloseReason::ControlReturned,
+        )
+        .expect_err("conflict");
+        assert!(error.to_string().contains("active work mismatch"));
+        let checkpoint = store.load_checkpoint(&handoff_id).unwrap();
+        assert_eq!(
+            checkpoint.child_goal.close_state,
+            Some(ChildGoalCloseState::Conflict)
+        );
     }
 }

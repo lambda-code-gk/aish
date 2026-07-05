@@ -20,6 +20,10 @@ port モックだけでは検出しにくい **コンポーネント境界の接
 
 `#[ignore]` は **`pending = true` の AC のみ**。無期限 ignore で完了扱いしない。
 
+## 1.1 Durable workflow 硬化（Phase 5 追補・本ブランチ）
+
+設計書 §33 参照。child Work close 冪等、初期化補償、checkpoint なし `CREATING` reconciliation、Work 応答喪失復元、UNKNOWN tool 親通知は **failure injection テスト** で検証済み。full PTY E2E（下表 `pending = true` 2 件）は引き続き未完了。
+
 ## 2. 受け入れ条件（`spec = "0055"` phase = 6）
 
 | id | 条件 | テスト関数 | pending |

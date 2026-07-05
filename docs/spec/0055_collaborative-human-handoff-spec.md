@@ -556,3 +556,40 @@ Inspect the current environment and verify the completion condition.
 | 22–23 | 通常 ai / shell_exec 回帰 | `normal_ai_unchanged_regression`, `normal_shell_exec_unchanged` |
 | 24 | memory / replay / candidate 再利用 | `side_inherits_parent_context`, `candidate_in_recall_queue` |
 | 25 | domain 境界 | アーキテクチャ検査 + hexagonal（Phase 1 domain 単体） |
+
+## 33. Durable workflow 硬化（child close 冪等・初期化補償・UNKNOWN 通知）
+
+### 33.1 child Work close の冪等性
+
+`close_state = Closing` の再試行では Work 操作の **事前条件** だけでなく **事後条件（postcondition）** も確認する。
+
+| `work_mode` | 未 close（操作実行） | 既に close 済み（操作スキップ） |
+|-------------|---------------------|--------------------------------|
+| `Pushed` | `active == child` かつ stack 先端 == parent → `Pop` | `active == parent` かつ child `Done` かつ child が stack に無い |
+| `StartedRoot` | `active == child` かつ stack 空 → `Finish` | `active == None` かつ child `Done` |
+
+上記以外（別 Work が active 等）は勝手に `Pop` / `Finish` せず `Conflict` または `Failed` を永続化する。
+
+### 33.2 初期化全体の補償モデル
+
+`CollaborativeShellExecPolicy::intercept` の初期化は `HandoffInitializationContext` で段階を追跡し、**handoff 保存以降の任意失敗**で補償する。
+
+補償対象: child Work `Pop`/`Finish`、lease 解放、suggestion cache 削除、shell session 無効化マーク、handoff `CANCELLED`、checkpoint 上の `initialization_failure` メタデータ。
+
+補償失敗時は `primary_error` と `compensation_errors` の両方を `resume_error` / checkpoint `environment_metadata` に残す。
+
+### 33.3 checkpoint なし `CREATING` の reconciliation
+
+`handoff.json` のみ存在し `checkpoint.json` が無い stale `CREATING` は、`reconcile_incomplete_creating_handoff` で lease / cache を清掃し `CANCELLED` へ遷移する（checkpoint 読み込み失敗で reconciliation 自体は失敗しない）。
+
+### 33.4 Work 作成応答喪失の再探索
+
+`Push` / `Start` が AIBE 側で適用された後に応答だけ失われた場合、Work snapshot から goal 内の `Handoff ID: <id>` を検索し一意に特定できれば `work_mode` を復元する。複数件・判定不能は `initialization conflict` として手動 reconciliation を要求する。
+
+### 33.5 UNKNOWN tool の親への明示
+
+`collect_unknown_tool_ids` / `collect_unknown_tools` で checkpoint 上の **最終的に UNKNOWN の全 tool** を収集し、`HumanHandoffResult.uncertain_tool_executions` と `ParentResumeContext`（semantic prompt 内 `uncertain_tools`）へ渡す。自動再実行は禁止。
+
+### 33.6 Phase 6 pending（変更なし）
+
+`slice_structured_human_action_real_shell_ai` と `slice_full_collaborative_pty_nightly` は引き続き `pending = true`（nightly full PTY E2E）。

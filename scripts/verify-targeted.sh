@@ -5,6 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=scripts/verify-common.sh
+source "$ROOT/scripts/verify-common.sh"
+VERIFY_START_SEC=$SECONDS
+verify_init_progress_file
+
 CARGO="${VERIFY_TARGETED_CARGO:-cargo}"
 DOCS_CHECK="${VERIFY_TARGETED_DOCS_CHECK:-./scripts/check-docs-consistency.sh}"
 ARCHITECTURE_CHECK="${VERIFY_TARGETED_ARCHITECTURE_CHECK:-./scripts/check-architecture.sh}"
@@ -35,8 +40,7 @@ fail() {
 }
 
 run() {
-  echo "==> $*"
-  "$@"
+  verify_run "$@"
 }
 
 package=""
@@ -134,4 +138,5 @@ if [[ "$run_codex" == "1" ]]; then
   run "$CODEX_CHECK"
 fi
 
+verify_print_total "verify-targeted"
 echo "verify-targeted: selected checks passed; run ./scripts/verify.sh before completion"
