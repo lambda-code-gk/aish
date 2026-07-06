@@ -1,5 +1,6 @@
 //! 0055 minimal human handoff acceptance tests (ai).
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use ai::adapters::outbound::{AishHumanShellLauncher, ProcessEnvironmentObserver};
@@ -110,22 +111,68 @@ fn shell_exit_code_is_not_command_completion() {
 
 #[test]
 fn parent_reobserves_after_handoff() {
-    let launcher = TestLauncher::default();
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("human_session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let log_path = session_dir.join("log.jsonl");
+    std::fs::write(
+        &log_path,
+        b"{\"event\":\"command_start\"}\n{\"event\":\"stdout\",\"data\":\"ran ok\\n\"}\n",
+    )
+    .unwrap();
+    let log_end = std::fs::metadata(&log_path).unwrap().len();
+
+    struct SessionLauncher {
+        session_dir: PathBuf,
+        log_end: u64,
+    }
+
+    impl HumanShellLauncher for SessionLauncher {
+        fn launch_and_wait(
+            &self,
+            request: &HumanShellLaunchRequest,
+        ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+            Ok(HumanShellReturn {
+                normal_return: true,
+                exit_code: Some(0),
+                final_cwd: request.cwd.clone(),
+                shell_session_id: "sess".into(),
+                shell_session_dir: self.session_dir.clone(),
+                shell_log_start: 0,
+                shell_log_end: self.log_end,
+            })
+        }
+    }
+
+    let launcher = SessionLauncher {
+        session_dir: session_dir.clone(),
+        log_end,
+    };
     let observer = ProcessEnvironmentObserver::default();
     let service = RunSynchronousHumanHandoff::new(&launcher, &observer);
-    let dir = tempfile::tempdir().unwrap();
     let result = service
         .execute(HumanHandoffRequest {
             parent_request_summary: "summary".into(),
             command: "pwd".into(),
             args: vec![],
             cwd: dir.path().to_path_buf(),
-            shell_log_start: 0,
+            // 親 ai セッションの巨大オフセット。human shell ログ読み取りに使われてはならない。
+            shell_log_start: 99_999,
             runtime_dir: dir.path().join("runtime"),
         })
         .expect("handoff");
     let observation = result.observation.expect("observation");
     assert!(observation.cwd_exists);
+    let tail = observation
+        .shell_log_tail
+        .expect("human shell transcript must be included");
+    assert!(
+        tail.contains("ran ok"),
+        "observation must use human shell log offsets, not parent shell_log_start: {tail}"
+    );
+    let range = result.shell_log_range.expect("range");
+    assert_eq!(range.start, 0);
+    assert_eq!(range.end, Some(log_end));
 }
 
 #[test]

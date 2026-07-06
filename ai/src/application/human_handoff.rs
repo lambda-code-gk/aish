@@ -72,7 +72,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
         }
         let observation = self.environment_observer.observe(
             &shell_return.final_cwd,
-            request.shell_log_start,
+            shell_return.shell_log_start,
             Some(shell_return.shell_log_end),
             if shell_return.shell_session_dir.as_os_str().is_empty() {
                 None
@@ -87,7 +87,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
             human_shell_exit_code: shell_return.exit_code,
             final_shell_cwd: Some(shell_return.final_cwd.display().to_string()),
             shell_log_range: Some(ShellLogRange {
-                start: request.shell_log_start,
+                start: shell_return.shell_log_start,
                 end: Some(shell_return.shell_log_end),
             }),
             observation: Some(observation),

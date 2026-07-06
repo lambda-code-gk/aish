@@ -71,6 +71,27 @@ if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
 fi
 "#;
 
+const BASH_HANDOFF_RECALL_SNIPPET: &str = r#"
+# 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
+_aish_handoff_recall_apply() {
+  local cmd="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  [[ -n "$cmd" ]] || return 0
+  READLINE_LINE="$cmd"
+  READLINE_POINT=${#cmd}
+}
+_aish_handoff_recall_install() {
+  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
+  [[ -n "${AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
+  [[ "${_AISH_HANDOFF_RECALL_READY:-}" == 1 ]] && return 0
+  _AISH_HANDOFF_RECALL_READY=1
+  bind -x '"\e.": "_aish_handoff_recall_apply"' 2>/dev/null || true
+  bind -x '"\e,": "_aish_handoff_recall_apply"' 2>/dev/null || true
+}
+if [[ $- == *i* ]]; then
+  _aish_handoff_recall_install
+fi
+"#;
+
 const ZSH_SNIPPET: &str = r#"if command -v aish >/dev/null 2>&1; then eval "$(aish complete zsh)"; fi
 if command -v ai >/dev/null 2>&1; then eval "$(ai complete zsh)"; fi
 if command -v aibe >/dev/null 2>&1; then eval "$(aibe complete zsh)"; fi
@@ -119,6 +140,30 @@ _aish_handoff_return() {
 if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
   precmd_functions+=(_aish_replay_install_hooks)
   zshexit_functions+=(_aish_handoff_return)
+fi
+"#;
+
+const ZSH_HANDOFF_RECALL_SNIPPET: &str = r#"
+# 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
+_aish_handoff_recall_apply() {
+  emulate -L zsh
+  local cmd="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  [[ -n "$cmd" ]] || return 0
+  BUFFER="$cmd"
+  CURSOR=${#cmd}
+  zle reset-prompt
+}
+_aish_handoff_recall_install() {
+  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
+  [[ -n "${AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
+  [[ "$_AISH_HANDOFF_RECALL_READY" == 1 ]] && return 0
+  _AISH_HANDOFF_RECALL_READY=1
+  zle -N _aish_handoff_recall_apply
+  bindkey '\e.' _aish_handoff_recall_apply
+  bindkey '\e,' _aish_handoff_recall_apply
+}
+if [[ -o interactive ]]; then
+  _aish_handoff_recall_install
 fi
 "#;
 
@@ -192,6 +237,7 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
     body.push_str(BASH_SNIPPET);
     body.push_str(BASH_RECALL_ENV_SNIPPET);
     body.push_str(BASH_REPLAY_SNIPPET);
+    body.push_str(BASH_HANDOFF_RECALL_SNIPPET);
     fs::write(dst, body)
 }
 
@@ -207,6 +253,7 @@ fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
     body.push_str(ZSH_SNIPPET);
     body.push_str(ZSH_RECALL_ENV_SNIPPET);
     body.push_str(ZSH_REPLAY_SNIPPET);
+    body.push_str(ZSH_HANDOFF_RECALL_SNIPPET);
     fs::write(dst, body)
 }
 
@@ -234,6 +281,18 @@ mod tests {
         let content = fs::read_to_string(rc).expect("read");
         assert!(content.contains("aish complete bash"));
         assert!(content.contains("AI_SUGGESTION_CACHE"));
+        assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
+        assert!(content.contains(r#"bind -x '"\e.": "_aish_handoff_recall_apply"'"#));
+    }
+
+    #[test]
+    fn zsh_wrapper_includes_handoff_recall_hook() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let zshrc = dir.path().join(".zshrc");
+        write_zsh_wrapper(&zshrc, Path::new("/nonexistent/.zshrc")).expect("write");
+        let content = fs::read_to_string(zshrc).expect("read");
+        assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
+        assert!(content.contains(r#"bindkey '\e.' _aish_handoff_recall_apply"#));
     }
 
     #[test]

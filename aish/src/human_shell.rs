@@ -74,7 +74,7 @@ pub fn print_handoff_briefing() {
     let _ = writeln!(out);
     let _ = writeln!(
         out,
-        "Edit, run, replace, or ignore the command as needed.\nPress Ctrl+D or run `exit` to return control."
+        "Edit, run, replace, or ignore the command as needed.\nAlt+. or Alt+, inserts the suggested command.\nPress Ctrl+D or run `exit` to return control."
     );
 }
 

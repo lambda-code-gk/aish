@@ -92,4 +92,5 @@ fn human_shell_startup_prints_parent_request_and_suggested_command() {
     assert!(stderr.contains("Human control requested by the parent agent."));
     assert!(stderr.contains("create marker file"));
     assert!(stderr.contains("touch /tmp/should-not-run"));
+    assert!(stderr.contains("Alt+. or Alt+,"));
 }

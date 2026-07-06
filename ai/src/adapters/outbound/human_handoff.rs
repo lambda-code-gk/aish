@@ -55,7 +55,10 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             .arg("human-shell")
             .arg("--result-file")
             .arg(&result_path)
-            .current_dir(&request.cwd)
+            .current_dir(&request.cwd);
+        // 親 ai からの handoff 環境変数を除去してから、子 aish 用の値を設定する。
+        strip_handoff_environment(&mut child);
+        child
             .env("AISH_CONTROL_MODE", "human-shell")
             .env(
                 "AISH_HANDOFF_PARENT_REQUEST",
@@ -63,7 +66,6 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             )
             .env("AISH_HANDOFF_SUGGESTED_COMMAND", &request.suggested_command)
             .env("AISH_HANDOFF_RUNTIME_DIR", &request.runtime_dir);
-        strip_handoff_environment(&mut child);
         let status = child
             .status()
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
@@ -198,4 +200,37 @@ fn rand_handoff_suffix() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("{nanos:x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handoff_env_must_be_set_after_strip() {
+        let mut wrong_order = Command::new("sh");
+        wrong_order
+            .arg("-c")
+            .arg("printf %s \"$AISH_CONTROL_MODE\"");
+        wrong_order.env("AISH_CONTROL_MODE", "human-shell");
+        strip_handoff_environment(&mut wrong_order);
+        let wrong = wrong_order.output().expect("sh");
+        assert!(
+            String::from_utf8_lossy(&wrong.stdout).is_empty(),
+            "env_remove after env clears the value (regression guard)"
+        );
+
+        let mut correct_order = Command::new("sh");
+        correct_order
+            .arg("-c")
+            .arg("printf %s \"$AISH_CONTROL_MODE\"");
+        strip_handoff_environment(&mut correct_order);
+        correct_order.env("AISH_CONTROL_MODE", "human-shell");
+        let ok = correct_order.output().expect("sh");
+        assert_eq!(
+            String::from_utf8_lossy(&ok.stdout),
+            "human-shell",
+            "strip inherited handoff env before setting child values"
+        );
+    }
 }
