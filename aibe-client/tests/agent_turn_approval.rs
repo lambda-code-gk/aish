@@ -49,6 +49,7 @@ fn run_mock_server(mut server: UnixStream, expect_approved: bool) {
         tool_call_id,
         approved,
         approval_origin,
+        ..
     } = approval
     else {
         panic!("expected shell_exec_approval");
@@ -114,6 +115,7 @@ fn agent_turn_approval_roundtrip_approved() {
         ShellExecApprovalDecision {
             approved: true,
             approval_origin: ShellExecApprovalOrigin::UiYes,
+            handoff_result: None,
         }
     })
     .expect("agent_turn");
@@ -139,6 +141,7 @@ fn agent_turn_approval_roundtrip_denied() {
         |_p: ShellExecApprovalPrompt| ShellExecApprovalDecision {
             approved: false,
             approval_origin: ShellExecApprovalOrigin::UiNo,
+            handoff_result: None,
         },
     )
     .expect("agent_turn");

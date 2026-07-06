@@ -50,6 +50,10 @@ fn run() -> anyhow::Result<u8> {
             AishCli::run_complete(shell)?;
             Ok(0)
         }
+        AishCommand::HumanShell { result_file } => {
+            aish::human_shell::run_human_shell(&result_file)?;
+            Ok(0)
+        }
     }
 }
 

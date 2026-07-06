@@ -114,6 +114,9 @@ pub struct TurnOptions {
     /// Smart Preprocessor の route / LLM accounting trace を stderr に出す
     #[arg(long)]
     pub trace_route: bool,
+    /// 親 agent の shell_exec を human shell handoff へ変換する（0055 minimal）
+    #[arg(long, global = true)]
+    pub collaborative: bool,
 }
 
 #[derive(Parser)]

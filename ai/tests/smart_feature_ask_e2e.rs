@@ -256,6 +256,7 @@ fn memory_query_forwards_user_input_as_user_query() {
         console_hint: false,
         no_console_hint: false,
         trace_route: false,
+        collaborative: false,
     };
     let _ = execute_feature_actions_mvp(
         &actions,

@@ -192,6 +192,7 @@ struct ResolvedTurnSettings {
     shell_exec_approval: Option<String>,
     console_hint: ConsoleHintReport,
     trace_route: bool,
+    collaborative: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +220,7 @@ fn auto_approve_shell_exec_decision(
     ShellExecApprovalDecision {
         approved: true,
         approval_origin: origin,
+        handoff_result: None,
     }
 }
 
@@ -775,10 +777,18 @@ fn execute_turn(
         memory_space_id,
         replay_manifest_block.clone(),
     );
+    request.request_context.collaborative_handoff = settings.collaborative;
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
     let feature_summaries = history_messages_from_protocol(&feature_history_summaries);
-    let client_request = request_from_messages(turn_id.clone(), request, messages)?;
+    let mut client_request = request_from_messages(turn_id.clone(), request, messages)?;
+    if let ClientRequest::AgentTurn {
+        context: ref mut ctx,
+        ..
+    } = client_request
+    {
+        ctx.collaborative_handoff = settings.collaborative;
+    }
 
     let yes_exec_effective =
         settings.yes_exec && matches!(settings.shell_exec_approval.as_deref(), Some("ask"));
@@ -797,6 +807,7 @@ fn execute_turn(
             settings.timeout_secs,
             settings.silent_exec || settings.quiet,
             Arc::clone(&shell_exec_state),
+            settings.collaborative,
         )?
     } else {
         run_agent_turn_sync(
@@ -810,6 +821,7 @@ fn execute_turn(
             settings.progress,
             settings.silent_exec || settings.quiet,
             shell_exec_state,
+            settings.collaborative,
         )?
     };
 
@@ -1005,6 +1017,7 @@ fn run_agent_turn_sync(
     progress: bool,
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
@@ -1018,6 +1031,7 @@ fn run_agent_turn_sync(
         None,
         silent_shell_exec,
         shell_exec_state,
+        collaborative,
     )
 }
 
@@ -1034,6 +1048,7 @@ fn run_agent_turn_async(
     timeout_secs: Option<u64>,
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     run_agent_turn_core(
         socket_path,
@@ -1047,6 +1062,7 @@ fn run_agent_turn_async(
         timeout_secs,
         silent_shell_exec,
         shell_exec_state,
+        collaborative,
     )
 }
 
@@ -1070,8 +1086,21 @@ fn run_agent_turn_core(
     timeout_secs: Option<u64>,
     silent_shell_exec: bool,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    collaborative: bool,
 ) -> anyhow::Result<TurnExecutionOutcome> {
     let turn_id = request_turn_id(&request)?;
+    let collaborative_meta = match &request {
+        ClientRequest::AgentTurn {
+            messages, context, ..
+        } => Some((
+            context.cwd.clone().map(PathBuf::from),
+            messages
+                .iter()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone()),
+        )),
+        _ => None,
+    };
     let worker_client = AibeUnixClient::new(socket_path.clone());
     let cancel_client = AibeUnixClient::new(socket_path);
     let cancel_guard = TurnCancelGuard::new().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1087,12 +1116,21 @@ fn run_agent_turn_core(
     let streamed_thread = Arc::clone(&streamed);
     let shell_exec_state_thread = Arc::clone(&shell_exec_state);
     let silent_shell_exec_thread = silent_shell_exec;
+    let collaborative_thread = collaborative;
+    let collaborative_meta_thread = collaborative_meta;
+    let cancel_requested_thread = Arc::clone(&cancel_requested);
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
         aibe_shell_exec.auto_approve_patterns.read_only,
         aibe_shell_exec.auto_approve_patterns.mutating,
     );
     thread::spawn(move || {
+        let human_shell_launcher = ai::adapters::outbound::AishHumanShellLauncher::default();
+        let environment_observer = ai::adapters::outbound::ProcessEnvironmentObserver::default();
+        let handoff_service = ai::application::RunSynchronousHumanHandoff::new(
+            &human_shell_launcher,
+            &environment_observer,
+        );
         let mut yes_exec_cache = if yes_exec {
             Some(YesExecCache::load(
                 &history_dir_thread,
@@ -1104,6 +1142,60 @@ fn run_agent_turn_core(
         let response = {
             let shell_exec_handler =
                 |prompt: ShellExecApprovalPrompt| -> ShellExecApprovalDecision {
+                    if collaborative_thread {
+                        let (cwd, parent_summary) =
+                            collaborative_meta_thread.clone().unwrap_or((None, None));
+                        let cwd = cwd.unwrap_or_else(|| PathBuf::from("."));
+                        let runtime_dir = match ai::adapters::outbound::create_runtime_handoff_dir()
+                        {
+                            Ok(dir) => dir,
+                            Err(error) => {
+                                eprintln!("ai: failed to create handoff runtime dir: {error}");
+                                return ShellExecApprovalDecision {
+                                    approved: false,
+                                    approval_origin:
+                                        aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                    handoff_result: None,
+                                };
+                            }
+                        };
+                        let shell_log_start = std::env::var_os("AISH_SESSION_DIR")
+                            .map(PathBuf::from)
+                            .and_then(|dir| {
+                                std::fs::metadata(dir.join("log.jsonl"))
+                                    .ok()
+                                    .map(|m| m.len())
+                            })
+                            .unwrap_or(0);
+                        let result =
+                            handoff_service.execute(ai::application::HumanHandoffRequest {
+                                parent_request_summary: parent_summary.unwrap_or_default(),
+                                command: prompt.command.clone(),
+                                args: prompt.args.clone(),
+                                cwd,
+                                shell_log_start,
+                                runtime_dir: runtime_dir.clone(),
+                            });
+                        ai::adapters::outbound::cleanup_runtime_handoff_dir(&runtime_dir);
+                        return match result {
+                            Ok(handoff_result) => ShellExecApprovalDecision {
+                                approved: true,
+                                approval_origin:
+                                    aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                handoff_result: Some(handoff_result),
+                            },
+                            Err(error) => {
+                                eprintln!("ai: collaborative handoff failed: {error}");
+                                cancel_requested_thread.store(true, Ordering::SeqCst);
+                                ShellExecApprovalDecision {
+                                    approved: false,
+                                    approval_origin:
+                                        aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                    handoff_result: None,
+                                }
+                            }
+                        };
+                    }
                     let tier = ai::domain::classify_shell_exec_tier(&prompt.command, &prompt.args);
                     let invocation =
                         ai::domain::canonical_shell_exec_invocation(&prompt.command, &prompt.args);
@@ -1225,6 +1317,7 @@ fn run_agent_turn_core(
                     ShellExecApprovalDecision {
                         approved: decision.approved,
                         approval_origin: decision.approval_origin,
+                        handoff_result: None,
                     }
                 };
             let result = if use_client_tools {
@@ -2468,6 +2561,7 @@ fn resolve_turn_settings(
         shell_exec_approval,
         console_hint,
         trace_route: turn.trace_route,
+        collaborative: turn.collaborative,
     })
 }
 
@@ -3399,6 +3493,7 @@ mod cli_tests {
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
+            collaborative: false,
         };
         let turn = crate::TurnOptions::default();
         let hints = crate::RouteTurnHints {
@@ -3448,6 +3543,7 @@ mod cli_tests {
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
+            collaborative: false,
         };
         let turn = crate::TurnOptions {
             new: true,
@@ -3795,6 +3891,7 @@ mod cli_tests {
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
+            collaborative: false,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,
@@ -3886,6 +3983,7 @@ mod cli_tests {
             shell_exec_approval: None,
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
+            collaborative: false,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,

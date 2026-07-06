@@ -48,6 +48,8 @@ pub enum ClientRequest {
         tool_call_id: String,
         approved: bool,
         approval_origin: ShellExecApprovalOrigin,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_result: Option<crate::collaborative_handoff::HumanHandoffResult>,
     },
     /// write-like tool 実行前承認の応答（同一 socket 接続上）。
     ToolApproval {
@@ -88,6 +90,7 @@ pub enum ShellExecApprovalOrigin {
     SessionCacheCommandName,
     PatternReadOnly,
     PatternMutating,
+    CollaborativeHandoff,
 }
 
 /// write-like tool 承認の provenance（v1: UI yes/no のみ）。
@@ -125,6 +128,9 @@ pub struct RequestContext {
     /// クライアントが解決済みの contextual memory space。注入時の解決順 1 位（0035）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_space_id: Option<String>,
+    /// 親 collaborative handoff mode（0055 minimal）。
+    #[serde(default)]
+    pub collaborative_handoff: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -503,6 +509,7 @@ mod tests {
             tool_call_id: "c1".into(),
             approved: true,
             approval_origin: ShellExecApprovalOrigin::UiAlwaysThisSessionExactInvocation,
+            handoff_result: None,
         };
         let json = serde_json::to_string(&req).expect("serialize");
         assert!(json.contains(r#""approval_origin":"ui_always_this_session_exact_invocation""#));

@@ -140,6 +140,12 @@ pub enum AishCommand {
         #[arg(value_enum)]
         shell: CompleteShell,
     },
+    /// Collaborative human shell for parent agent handoff (hidden)
+    #[command(hide = true)]
+    HumanShell {
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        result_file: PathBuf,
+    },
 }
 
 impl AishCli {

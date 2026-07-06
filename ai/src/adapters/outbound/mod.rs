@@ -6,6 +6,7 @@ mod dynamic_completion;
 mod external_editor;
 mod file_log;
 mod file_write_approval_ui;
+mod human_handoff;
 mod local_history;
 mod memory_recipe_approval_ui;
 mod output_filter;
@@ -44,6 +45,10 @@ pub use file_write_approval_ui::{
     escape_for_file_write_approval_display, file_write_approval_decision_from_input,
     parse_file_write_approval_choice, prompt_file_write_approval,
     stdin_ready_for_file_write_approval,
+};
+pub use human_handoff::{
+    cleanup_runtime_handoff_dir, create_runtime_handoff_dir, AishHumanShellLauncher,
+    ProcessEnvironmentObserver,
 };
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{

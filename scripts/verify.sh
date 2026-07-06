@@ -46,6 +46,7 @@ run ./scripts/check-architecture.sh
 run ./scripts/check-docs-consistency.sh
 run ./scripts/check-feature-scope.py
 run ./scripts/check-spec-acceptance.py
+run ./scripts/check-minimal-human-handoff-scope.sh
 run ./scripts/check-codex-tooling.sh
 
 echo "verify: all checks passed"

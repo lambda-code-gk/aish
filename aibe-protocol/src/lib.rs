@@ -1,6 +1,7 @@
 //! aibe ↔ クライアント間の wire 契約（NDJSON / serde）。
 
 mod client_tool_validation;
+mod collaborative_handoff;
 mod executed_tool;
 mod memory;
 mod memory_space;
@@ -10,6 +11,10 @@ mod tool_name;
 mod work;
 
 pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
+pub use collaborative_handoff::{
+    HandoffExecutionOutcome, HumanHandoffResult, PostHandoffObservation,
+    RequestedCommandCompletion, ShellLogRange,
+};
 pub use executed_tool::{
     ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome, ShellExecApprovalOutcome,
     ToolApprovalState, ToolRiskClass,

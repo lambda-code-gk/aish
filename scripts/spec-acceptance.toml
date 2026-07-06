@@ -2330,3 +2330,121 @@ description = "verify.sh が checker を実行する"
 test = "scope_checker_runs_in_verify"
 file_glob = "ai/tests/0056_feature_scope_governance.rs"
 pending = false
+
+# 0055 — Minimal Human Handoff
+[[cases]]
+spec = "0055"
+phase = 1
+id = "collaborative_flag_intercepts_parent_shell_exec"
+description = "collaborative 親 shell_exec が handoff へ変換される"
+test = "collaborative_flag_intercepts_parent_shell_exec"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "normal_shell_exec_is_unchanged"
+description = "通常 shell_exec 経路に回帰がない"
+test = "normal_shell_exec_is_unchanged"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "human_shell_starts_in_requested_cwd"
+description = "human shell が要求 cwd で起動する"
+test = "human_shell_starts_in_requested_cwd"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "suggested_command_is_not_auto_executed"
+description = "候補コマンドは自動実行されない"
+test = "suggested_command_is_not_auto_executed"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "human_shell_ctrl_d_returns_control"
+description = "Ctrl+D で親へ制御が戻る"
+test = "human_shell_ctrl_d_returns_control_to_parent"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "human_shell_exit_returns_control"
+description = "exit で親へ制御が戻る"
+test = "human_shell_exit_returns_control_regardless_of_code"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "shell_exit_code_is_not_command_completion"
+description = "shell exit code を要求達成とみなさない"
+test = "shell_exit_code_is_not_command_completion"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "parent_receives_human_control_returned"
+description = "親が human_control_returned を受け取る"
+test = "parent_receives_human_control_returned"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "parent_reobserves_after_handoff"
+description = "handoff 後に再観測する"
+test = "parent_reobserves_after_handoff"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "human_shell_failure_returns_error"
+description = "handoff 失敗時にエラーを返す"
+test = "human_shell_failure_returns_error"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "human_shell_ai_is_independent"
+description = "human shell 内 ai は独立動作"
+test = "human_shell_ai_is_independent"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "no_persistent_handoff_state_is_created"
+description = "永続 handoff state を作らない"
+test = "no_persistent_handoff_state_is_created"
+file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "normal_shell_exec_regression"
+description = "通常 shell_exec tier 分類の回帰"
+test = "normal_shell_exec_tier_classification_unchanged"
+file_glob = "ai/tests/normal_shell_exec_regression.rs"
+pending = false

@@ -172,7 +172,11 @@ impl ToolExecutor for ShellExecTool {
         let external_name = self
             .match_external_command(&parsed.command)
             .map(|entry| entry.name.as_str());
-        let approval_mode = self.policy.shell_exec_approval_mode();
+        let approval_mode = if ctx.collaborative_handoff() {
+            ShellExecApprovalMode::Ask
+        } else {
+            self.policy.shell_exec_approval_mode()
+        };
         let mut approval_origin: Option<ShellExecApprovalOrigin> = None;
         let mut approval_outcome: Option<ShellExecApprovalOutcome> = None;
         match approval_mode {
@@ -244,6 +248,25 @@ impl ToolExecutor for ShellExecTool {
                     );
                 };
                 approval_origin = Some(decision.approval_origin);
+                if let Some(handoff_result) = decision.handoff_result {
+                    let body = serde_json::to_string(&handoff_result).unwrap_or_else(|_| {
+                        "{\"execution_outcome\":\"human_control_returned\"}".into()
+                    });
+                    return finish_shell_exec(
+                        ExecutedToolCall::ok(id.clone(), self.name(), args_value, body.clone()),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: format!(
+                                "Control returned from the human shell.\n\nAISH did not automatically execute the requested command.\nThe shell exit code does not prove that the requested command ran or succeeded.\nInspect the current environment and verify the task state before continuing.\n\n{body}"
+                            ),
+                            is_error: false,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::CollaborativeHandoff,
+                        external_name,
+                        approval_origin,
+                    );
+                }
                 if !decision.approved {
                     let msg = "shell_exec rejected by user";
                     return finish_shell_exec(
@@ -562,6 +585,7 @@ mod tests {
                 Some(ShellExecApprovalDecision {
                     approved: false,
                     approval_origin: ShellExecApprovalOrigin::UiNo,
+                    handoff_result: None,
                 })
             }
         }

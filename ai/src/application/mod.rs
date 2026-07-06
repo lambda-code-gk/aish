@@ -4,6 +4,7 @@ mod ask_prompt_input;
 pub mod client_tools;
 mod feature_executor;
 mod history;
+mod human_handoff;
 pub mod memory_cli;
 pub mod memory_cli_context;
 pub mod memory_cli_pack;
@@ -25,6 +26,9 @@ pub use ask_prompt_input::{
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,
     record_turn, HistoryRecordInput, HistoryReplayInput,
+};
+pub use human_handoff::{
+    handoff_tool_result_message, HumanHandoffError, HumanHandoffRequest, RunSynchronousHumanHandoff,
 };
 pub use turn_cancel::{clear_turn_cancel, register_turn_cancel, TurnCancelGuard};
 

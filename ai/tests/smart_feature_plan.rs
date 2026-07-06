@@ -99,6 +99,7 @@ fn default_turn() -> TurnOptions {
         console_hint: false,
         no_console_hint: false,
         trace_route: false,
+        collaborative: false,
     }
 }
 

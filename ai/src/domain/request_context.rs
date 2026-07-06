@@ -12,6 +12,7 @@ pub struct RequestContextInput {
     pub system_instruction: Option<String>,
     /// 解決済みの contextual memory space（0035。注入の解決順 1 位として aibe へ渡す）。
     pub memory_space_id: Option<String>,
+    pub collaborative_handoff: bool,
 }
 
 impl RequestContextInput {
@@ -23,6 +24,7 @@ impl RequestContextInput {
             conversation_id: self.conversation_id,
             system_instruction: normalize_system_instruction(self.system_instruction),
             memory_space_id: self.memory_space_id,
+            collaborative_handoff: self.collaborative_handoff,
         }
     }
 }
