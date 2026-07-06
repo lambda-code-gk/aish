@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -22,10 +23,7 @@ TASKS_DIR = ROOT / "docs" / "tasks"
 DONE_DIR = ROOT / "docs" / "done"
 
 IGNORE_RE = re.compile(r"#\s*\[\s*ignore\b", re.IGNORECASE)
-
-
-def fn_pattern(name: str) -> re.Pattern[str]:
-    return re.compile(rf"\bfn\s+({re.escape(name)})\s*\(")
+FN_NAME_RE = re.compile(r"\bfn\s+(\w+)\s*\(")
 
 
 @dataclass(frozen=True)
@@ -57,32 +55,36 @@ def load_cases() -> list[Case]:
     return out
 
 
-def rs_files() -> list[Path]:
-    return [p for p in ROOT.rglob("*.rs") if "target" not in p.parts]
+@dataclass(frozen=True)
+class TestLocationIndex:
+    """Single-pass index of Rust test fns (path + #[ignore]) keyed by fn name."""
 
+    by_name: dict[str, list[tuple[Path, bool]]] = field(default_factory=dict)
+    rel: dict[Path, str] = field(default_factory=dict)
 
-def find_test_location(test_name: str, file_glob: str) -> tuple[Path | None, bool]:
-    """Return (file, is_ignored)."""
-    candidates = [
-        p
-        for p in rs_files()
-        if fnmatch(str(p.relative_to(ROOT)), file_glob)
-        and fn_pattern(test_name).search(p.read_text(encoding="utf-8"))
-    ]
-    if not candidates:
+    @classmethod
+    def build(cls) -> TestLocationIndex:
+        by_name: dict[str, list[tuple[Path, bool]]] = defaultdict(list)
+        rel: dict[Path, str] = {}
+        for path in ROOT.rglob("*.rs"):
+            if "target" in path.parts:
+                continue
+            rel[path] = str(path.relative_to(ROOT))
+            text = path.read_text(encoding="utf-8")
+            for match in FN_NAME_RE.finditer(text):
+                name = match.group(1)
+                prefix = text[: match.start()]
+                tail = prefix.splitlines()[-6:]
+                ignored = any(IGNORE_RE.search(line) for line in tail)
+                by_name[name].append((path, ignored))
+        return cls(by_name=dict(by_name), rel=rel)
+
+    def find(self, test_name: str, file_glob: str) -> tuple[Path | None, bool]:
+        """Return (file, is_ignored) for the first fn matching file_glob."""
+        for path, ignored in self.by_name.get(test_name, []):
+            if fnmatch(self.rel[path], file_glob):
+                return path, ignored
         return None, False
-    path = candidates[0]
-    text = path.read_text(encoding="utf-8")
-    ignored = False
-    pattern = fn_pattern(test_name)
-    for match in pattern.finditer(text):
-        prefix = text[: match.start()]
-        # Look at the few lines immediately above the fn for #[ignore].
-        tail = prefix.splitlines()[-6:]
-        if any(IGNORE_RE.search(line) for line in tail):
-            ignored = True
-        break
-    return path, ignored
 
 
 def specs_with_pending(cases: list[Case]) -> set[str]:
@@ -136,11 +138,12 @@ def main() -> int:
         return 1
 
     cases = load_cases()
+    index = TestLocationIndex.build()
     errors: list[str] = []
     warnings: list[str] = []
 
     for case in cases:
-        path, ignored = find_test_location(case.test, case.file_glob)
+        path, ignored = index.find(case.test, case.file_glob)
         if path is None:
             errors.append(
                 f"{case.spec} phase {case.phase} {case.id}: "
