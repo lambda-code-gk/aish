@@ -1,0 +1,44 @@
+[policy]
+enforce_from_spec = 56
+
+yellow_actors = 3
+yellow_state_machines = 2
+yellow_persistent_aggregates = 2
+yellow_external_effects = 3
+yellow_process_boundaries = 2
+yellow_integrations = 2
+
+red_actors = 4
+red_state_machines = 3
+red_persistent_aggregates = 3
+red_external_effects = 5
+red_process_boundaries = 3
+red_integrations = 4
+
+
+
+[[features]]
+spec = "0059"
+status = "locked"
+scope_class = "feature"
+scope_revision = 1
+scope_change_reason = "initial"
+core_outcome = "Y no review"
+actors = 3
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 0
+process_boundaries = 0
+novel_mechanisms = ["ywr-mech"]
+integrations = []
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+scope_review = "pending"
+split_decision = "単一 spec"
+pending_exception = ""
+vertical_slice_ac_id = "ywr_ac"
+locked_ac_ids = ["ywr_ac"]

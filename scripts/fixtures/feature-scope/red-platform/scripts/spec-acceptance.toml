@@ -1,0 +1,8 @@
+[[cases]]
+spec="0061"
+phase=1
+id="plat_ac"
+description="g"
+test="plat_ac"
+file_glob="ai/tests/*.rs"
+pending=false

@@ -68,7 +68,7 @@
 ./scripts/verify.sh
 ```
 
-（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-spec-acceptance.py`）
+（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-feature-scope.py` / `check-spec-acceptance.py`）
 
 **メモリ不足・AI エージェント実行時**: `verify.sh` は既定で直列（`CARGO_BUILD_JOBS=1`、`cargo test -j 1`）。手動の `cargo test` も `-j 1` を付け、複数クレートのテストを同時に走らせない。十分な RAM があるときだけ `VERIFY_PARALLEL=1 ./scripts/verify.sh`。
 
@@ -103,6 +103,10 @@
 4. 「プラグイン機構」と呼ばない（動的ロードではない）
 
 参照実装: Contextual Memory Pack（0038）。`aish` は対象外。
+
+### Feature Scope Governance（0056 以降）
+
+新規 spec（番号 0056 以降）では [`docs/feature-development-policy.md`](docs/feature-development-policy.md) と [`scripts/feature-scope.toml`](scripts/feature-scope.toml) に従う。設計書は [`docs/spec/_feature-spec-template.md`](docs/spec/_feature-spec-template.md) をベースにする。実装開始時は Scope Lock（`locked_ac_ids`）を固定し、`./scripts/check-feature-scope.py` を通す。
 
 ## 報告義務（必須）
 

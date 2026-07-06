@@ -6,12 +6,24 @@
 
 （設計書へのリンクと、何を実装するか 1 段落）
 
+## 0.1 Scope Lock
+
+- Feature scope registry: `scripts/feature-scope.toml`
+- Scope revision:
+- Complexity class: Green / Yellow / Red
+- Vertical slice AC ID:
+- Locked AC IDs:
+
 ## 1. Phase 分割
 
 | Phase | 内容 | ゲート（`scripts/spec-acceptance.toml`） |
 |-------|------|------------------------------------------|
-| 1 | | `pending = false` になるまで Phase 2 に進まない |
-| 2 | | |
+| 1 | 最小 Vertical Slice E2E | `pending = false` になるまで Phase 2 に進まない |
+| 2 | 異常系・他機能統合・hardening | |
+
+**Vertical Slice Gate**: Phase 1 成功前に、追加 integration / schema migration / crash recovery / 汎用 framework 化 / 性能最適化を実装してはならない。
+
+**実装中の禁止事項**: 新しい実行主体、状態機械、永続 aggregate、外部副作用、クラッシュ復旧が必要になった場合、そのまま追加実装してはならない。`feature-scope.toml` と設計書を更新し、Complexity Gate を再判定すること（[`docs/feature-development-policy.md`](../feature-development-policy.md)）。
 
 ## 2. 受け入れ条件
 

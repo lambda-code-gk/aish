@@ -47,3 +47,18 @@ CODEX_REVIEW_MODE=fast CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-cont
 
 - リポジトリ外への無許可アクセス（`workspace_roots` 外）
 - 実 API キーのコミット
+
+## レビュー指摘の分類（0056 以降）
+
+各指摘に次のいずれかを付ける。
+
+| 分類 | 現在の PR 修正に含めてよいか |
+|------|---------------------------|
+| `BLOCKER_ORIGINAL_AC` | はい |
+| `REGRESSION` | はい |
+| `SAFETY_WITHIN_FAULT_MODEL` | はい |
+| `NEW_REQUIREMENT` | いいえ（別 spec 候補） |
+| `HARDENING` | いいえ |
+| `OUT_OF_FAULT_MODEL` | いいえ |
+
+詳細: [feature-development-policy.md](./feature-development-policy.md)

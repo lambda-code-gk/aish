@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -27,6 +29,7 @@ jobs:
       - run: ./scripts/verify.sh
         env:
           VERIFY_PARALLEL: "1"
+          FEATURE_SCOPE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '') }}
 
   smoke-mock:
     name: smoke-mock

@@ -1,0 +1,8 @@
+[[cases]]
+spec="0059"
+phase=1
+id="ywr_ac"
+description="g"
+test="ywr_ac"
+file_glob="ai/tests/*.rs"
+pending=false

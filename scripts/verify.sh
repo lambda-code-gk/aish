@@ -44,6 +44,7 @@ fi
 
 run ./scripts/check-architecture.sh
 run ./scripts/check-docs-consistency.sh
+run ./scripts/check-feature-scope.py
 run ./scripts/check-spec-acceptance.py
 run ./scripts/check-codex-tooling.sh
 

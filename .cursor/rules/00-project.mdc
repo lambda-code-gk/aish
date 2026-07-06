@@ -39,7 +39,7 @@ alwaysApply: true
 
 targeted検証だけで完了扱いにしない。CIも `verify.sh` を使う。詳細は `docs/testing.md`。
 
-（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-spec-acceptance.py` / `check-codex-tooling.sh`）
+（内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-feature-scope.py` / `check-spec-acceptance.py` / `check-codex-tooling.sh`）
 
 ### メモリ不足環境（AI エージェント・低 RAM マシン）
 

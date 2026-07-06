@@ -45,3 +45,7 @@ alwaysApply: true
 ## スコープ変更
 
 簡略化・延期するときは **黙って置き換えない**。spec 追記、AC の `pending` 化、または別番号への分割のいずれかで可視化する。
+
+## Scope Lock
+
+実装開始後の AC 集合は `scripts/feature-scope.toml` の `locked_ac_ids` で固定する。変更時は `scope_revision` を増やし `./scripts/check-feature-scope.py` を通す。詳細: [`47-feature-scope.mdc`](47-feature-scope.mdc)、[`docs/feature-development-policy.md`](../docs/feature-development-policy.md)。

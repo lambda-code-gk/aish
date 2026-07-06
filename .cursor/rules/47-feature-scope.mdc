@@ -1,0 +1,56 @@
+---
+description: 新規 feature の複雑性棚卸し・Scope Lock・Stop-the-line
+alwaysApply: true
+---
+
+# Feature Scope Governance
+
+新規 feature（spec **0056 以降**）を設計・実装する前に、次を確認する。
+
+- [`docs/feature-development-policy.md`](../docs/feature-development-policy.md)
+- [`scripts/feature-scope.toml`](../scripts/feature-scope.toml)
+
+0026–0055 は grandfathered（registry 未登録可）。大きく拡張する場合は **新 spec 番号** へ分割する。
+
+## Stop-the-line
+
+実装中に以下が必要になったら、その場で実装を止める。
+
+- 新しい実行主体
+- 新しい状態機械
+- 新しい永続 aggregate
+- 新しい外部副作用
+- crash recovery
+- lease / heartbeat
+- reconciler
+- schema migration
+- secondary agent loop
+
+勝手に scope へ追加しない。
+
+1. 設計書を更新
+2. `feature-scope.toml` の `scope_revision` を更新
+3. `./scripts/check-feature-scope.py` で Complexity Gate を再実行
+4. Red なら別 spec へ分割
+
+最小 Vertical Slice が通る前に、hardening / migration / recovery / 他機能統合を追加しない。
+
+## Scope Lock
+
+実装開始時は `locked_ac_ids` を固定する。詳細は [`45-spec-completion-gates.mdc`](45-spec-completion-gates.mdc) の Phase ゲートと併用する。
+
+## Codex / レビュー報告形式
+
+実装中に複雑性要因を発見したら次の形式で報告する。
+
+```text
+STOP-THE-LINE
+
+発見した要因:
+現在のscopeへの影響:
+Complexity判定の変化:
+削除案:
+別spec案:
+```
+
+レビュー指摘は `BLOCKER_ORIGINAL_AC` / `REGRESSION` / `SAFETY_WITHIN_FAULT_MODEL` / `NEW_REQUIREMENT` / `HARDENING` / `OUT_OF_FAULT_MODEL` のいずれかを付ける。後者 3 つを現在の修正指示へ無条件に入れない。

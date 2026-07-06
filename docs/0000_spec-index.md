@@ -49,6 +49,7 @@
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
 | 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装済み） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
+| 0056 | [0056_feature-scope-governance-spec.md](spec/0056_feature-scope-governance-spec.md) | 設計確定（実装済み） | Feature Scope Governance / Complexity Gate（scope lock・CI 検査） |
 
 ### 状態ラベルの意味
 
@@ -130,6 +131,7 @@
 | 0054 | [0054_safe-file-write-tools-phase7-implementation-spec.md](done/0054_safe-file-write-tools-phase7-implementation-spec.md) | 実装済み（Phase 7） | apply_patch |
 | 0054 | [0054_safe-file-write-tools-phase8-implementation-spec.md](done/0054_safe-file-write-tools-phase8-implementation-spec.md) | 実装済み（Phase 8） | ai 承認 UI |
 | 0054 | [0054_safe-file-write-tools-phase9-implementation-spec.md](done/0054_safe-file-write-tools-phase9-implementation-spec.md) | 実装済み（Phase 9） | 統合 / docs |
+| 0056 | [0056_feature-scope-governance-implementation-spec.md](done/0056_feature-scope-governance-implementation-spec.md) | 実装済み | Feature Scope Governance / Complexity Gate（設計: [0056](spec/0056_feature-scope-governance-spec.md)） |
 | 0041 | [0041_ai-smart-feature-plan-implementation-spec.md](done/0041_ai-smart-feature-plan-implementation-spec.md) | 実装済み | `ai` Smart Feature Plan（設計: [0041](spec/0041_ai-smart-feature-plan-spec.md)） |
 | 0042 | [0042_configurable-smart-features-implementation-spec.md](done/0042_configurable-smart-features-implementation-spec.md) | 実装済み | Configurable Smart Features（設計: [0042](spec/0042_configurable-smart-features-spec.md)） |
 | 0043 | [0043_feature-pack-boundary-hardening-implementation-spec.md](done/0043_feature-pack-boundary-hardening-implementation-spec.md) | 実装済み（Phase 1） | Feature Pack Boundary Hardening（設計: [0043](spec/0043_feature-pack-boundary-hardening-spec.md)） |

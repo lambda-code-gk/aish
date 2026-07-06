@@ -104,7 +104,7 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 | 値 | 用途 |
 |----|------|
 | `subagent` | 既定。調査・実装・修正・検証など自由記述（reasoning effort: medium） |
-| `spec` | **設計書**を `docs/spec/` に出力。実装指示は `docs/tasks/`（effort: medium） |
+| `spec` | **設計書**を `docs/spec/` に出力。実装指示は `docs/tasks/`（effort: medium）。**0056 以降**は [`_feature-spec-template.md`](spec/_feature-spec-template.md) の必須節（Core outcome / Fault model / Complexity Gate 等）を含める |
 | `review` | 変更の監査（パケット任意、effort: low） |
 | `audit` | 境界・セキュリティ横断（effort: medium） |
 | `spike` | 設計比較・調査のみ |
@@ -138,6 +138,16 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 | 全体完了 | 全 Phase の `pending = false` + `./scripts/verify.sh` + 実装指示書を `docs/done/` へ |
 
 `verify.sh` だけ緑でも、受け入れレジストリに `pending = true` が残っていれば **仕様未完了** とする。
+
+## Feature Scope（0056 以降）
+
+新規 spec では次を守る。
+
+**仕様作成時** — 設計書に Core outcome / Minimum vertical slice / Fault model / Non-goals / Complexity inventory / Complexity Gate / Complexity budget / Split triggers / Deferred specs を含め、`scripts/feature-scope.toml` に entry を追加する。
+
+**実装時** — 新しい複雑性要因を発見しても自動実装しない。`STOP-THE-LINE` 形式で報告する（詳細: [feature-development-policy.md](./feature-development-policy.md)）。
+
+**レビュー時** — 指摘に `BLOCKER_ORIGINAL_AC` / `REGRESSION` / `SAFETY_WITHIN_FAULT_MODEL` / `NEW_REQUIREMENT` / `HARDENING` / `OUT_OF_FAULT_MODEL` を付ける。`NEW_REQUIREMENT` / `HARDENING` / `OUT_OF_FAULT_MODEL` は別 spec 候補として分離する。
 
 ## Linux: `bwrap: loopback: Operation not permitted`
 

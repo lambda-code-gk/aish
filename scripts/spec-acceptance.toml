@@ -2229,3 +2229,104 @@ description = "atomic write 失敗時 journal は committed にならない"
 test = "journal_is_not_committed_when_atomic_write_fails"
 file_glob = "aibe/tests/0054_safe_file_write_red.rs"
 pending = false
+
+# 0056 — Feature Scope Governance / Complexity Gate
+
+[[cases]]
+spec = "0056"
+phase = 1
+id = "scope_template_required_sections"
+description = "設計書テンプレートに必須節が揃っている"
+test = "scope_template_required_sections"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 1
+id = "scope_registry_requires_new_specs"
+description = "enforce_from_spec 以降の設計書に registry entry が必要"
+test = "scope_registry_requires_new_specs"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 1
+id = "scope_existing_specs_are_grandfathered"
+description = "0026–0055 は registry 未登録でも通過"
+test = "scope_existing_specs_are_grandfathered"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 2
+id = "scope_checker_accepts_valid_green_spec"
+description = "Green fixture が checker を通過する"
+test = "scope_checker_accepts_valid_green_spec"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 2
+id = "scope_checker_classifies_yellow"
+description = "Yellow fixture が適切に分類される"
+test = "scope_checker_classifies_yellow"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 2
+id = "scope_checker_rejects_red_feature"
+description = "Red な通常 feature が拒否される"
+test = "scope_checker_rejects_red_feature"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 2
+id = "scope_checker_requires_yellow_review"
+description = "Yellow で review 不足が拒否される"
+test = "scope_checker_requires_yellow_review"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 3
+id = "scope_lock_matches_acceptance_ids"
+description = "locked AC 集合と acceptance registry が一致"
+test = "scope_lock_matches_acceptance_ids"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 3
+id = "scope_revision_required_on_locked_change"
+description = "Lock 後の scope 変更に revision 増加が必要"
+test = "scope_revision_required_on_locked_change"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 3
+id = "scope_vertical_slice_required"
+description = "vertical_slice_ac_id が必須"
+test = "scope_vertical_slice_required"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false
+
+[[cases]]
+spec = "0056"
+phase = 4
+id = "scope_checker_runs_in_verify"
+description = "verify.sh が checker を実行する"
+test = "scope_checker_runs_in_verify"
+file_glob = "ai/tests/0056_feature_scope_governance.rs"
+pending = false

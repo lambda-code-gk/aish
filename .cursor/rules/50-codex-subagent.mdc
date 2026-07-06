@@ -59,6 +59,7 @@ Output in Japanese. Mark 推測 explicitly.
 During implementation, run ./scripts/verify-targeted.sh or the narrowest relevant check/test. Before reporting completion, run ./scripts/verify.sh once. After a failure, iterate on the failed check and rerun verify.sh at the end.
 No require_escalated retries on the same command.
 For new optional features: evaluate Pack Composition applicability per docs/spec/0045_pack-composition-spec.md §6; document Yes/No/partial in the feature spec.
+For new specs (0056+): follow docs/feature-development-policy.md and scripts/feature-scope.toml; use STOP-THE-LINE when complexity grows; classify review findings per docs/codex-review.md.
 ```
 
 ## ドキュメント出力（既定）

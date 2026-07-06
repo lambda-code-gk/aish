@@ -1,0 +1,8 @@
+[[cases]]
+spec="0058"
+phase=1
+id="yellow_ac"
+description="g"
+test="yellow_ac"
+file_glob="ai/tests/*.rs"
+pending=false
