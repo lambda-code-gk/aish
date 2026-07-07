@@ -221,6 +221,7 @@ fn auto_approve_shell_exec_decision(
         approved: true,
         approval_origin: origin,
         handoff_result: None,
+        handoff_error: None,
     }
 }
 
@@ -1096,8 +1097,9 @@ fn run_agent_turn_core(
             context.cwd.clone().map(PathBuf::from),
             messages
                 .iter()
+                .rev()
                 .find(|m| m.role == "user")
-                .map(|m| m.content.clone()),
+                .map(|m| ai::domain::truncate_parent_request_summary(&m.content)),
         )),
         _ => None,
     };
@@ -1151,29 +1153,25 @@ fn run_agent_turn_core(
                             Ok(dir) => dir,
                             Err(error) => {
                                 eprintln!("ai: failed to create handoff runtime dir: {error}");
+                                cancel_requested_thread.store(true, Ordering::SeqCst);
                                 return ShellExecApprovalDecision {
                                     approved: false,
                                     approval_origin:
                                         aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
                                     handoff_result: None,
+                                    handoff_error: Some(aibe_protocol::HumanHandoffFailure {
+                                        code: "human_handoff_failed".into(),
+                                        message: error.to_string(),
+                                    }),
                                 };
                             }
                         };
-                        let shell_log_start = std::env::var_os("AISH_SESSION_DIR")
-                            .map(PathBuf::from)
-                            .and_then(|dir| {
-                                std::fs::metadata(dir.join("log.jsonl"))
-                                    .ok()
-                                    .map(|m| m.len())
-                            })
-                            .unwrap_or(0);
                         let result =
                             handoff_service.execute(ai::application::HumanHandoffRequest {
                                 parent_request_summary: parent_summary.unwrap_or_default(),
                                 command: prompt.command.clone(),
                                 args: prompt.args.clone(),
                                 cwd,
-                                shell_log_start,
                                 runtime_dir: runtime_dir.clone(),
                             });
                         ai::adapters::outbound::cleanup_runtime_handoff_dir(&runtime_dir);
@@ -1183,6 +1181,7 @@ fn run_agent_turn_core(
                                 approval_origin:
                                     aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
                                 handoff_result: Some(handoff_result),
+                                handoff_error: None,
                             },
                             Err(error) => {
                                 eprintln!("ai: collaborative handoff failed: {error}");
@@ -1192,6 +1191,10 @@ fn run_agent_turn_core(
                                     approval_origin:
                                         aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
                                     handoff_result: None,
+                                    handoff_error: Some(aibe_protocol::HumanHandoffFailure {
+                                        code: "human_handoff_failed".into(),
+                                        message: error.to_string(),
+                                    }),
                                 }
                             }
                         };
@@ -1318,6 +1321,7 @@ fn run_agent_turn_core(
                         approved: decision.approved,
                         approval_origin: decision.approval_origin,
                         handoff_result: None,
+                        handoff_error: None,
                     }
                 };
             let result = if use_client_tools {

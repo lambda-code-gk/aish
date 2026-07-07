@@ -63,7 +63,27 @@ ai --collaborative "..."
 
 ## セキュリティ
 
-human shell へ渡す環境変数は `AISH_CONTROL_MODE=human-shell` と handoff 表示用 hint のみ。親の秘密情報・token・memory 内容は渡さない。
+human shell へ渡す環境変数は起動 briefing 用のみ。対話 shell 開始前（user `.bashrc` / `.zshrc` を source する前）に `AISH_CONTROL_MODE` / `AISH_HANDOFF_*` を unset し、候補コマンドは非 export の `_AISH_HANDOFF_SUGGESTED_COMMAND` のみ rc wrapper 内で保持する。親の秘密情報・token・memory 内容は渡さない。
+
+### 正式対応 shell
+
+minimal 版の正式対応は **bash** と **zsh** のみ。起動前に検証し、それ以外は対話 shell を起動せず `minimal human handoff currently supports bash and zsh only` で fail-closed する。
+
+### handoff 失敗
+
+`ShellExecApproval` は `handoff_error: Option<HumanHandoffFailure>` を持つ。handoff 失敗は user denial（`shell_exec rejected by user`）と区別し、aibe 側では `human_handoff_failed`（`is_error = true`）として扱う。
+
+### runtime file permissions
+
+`$XDG_RUNTIME_DIR/aish/` および `handoff-*/` は `0700`。`result.json` は `0600`。
+
+### shell log tail 上限
+
+human shell 再観測の transcript 読み込みは末尾 **32 KiB** を上限とする。超過時は truncation を observation に記録する。
+
+### 非目標（維持）
+
+side agent / durable workflow / crash recovery / lease / reconciler は引き続き非目標である。
 
 ## 受け入れ条件
 

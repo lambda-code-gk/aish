@@ -60,7 +60,7 @@ _aish_replay_install_hooks() {
 }
 _aish_handoff_return() {
   local code=$?
-  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
+  [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
   _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
 }
 if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
@@ -71,17 +71,33 @@ if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
 fi
 "#;
 
+const BASH_HANDOFF_EXIT_SNIPPET: &str = r#"
+# 0055 minimal human handoff: 1 回の Ctrl+D / exit で親へ戻る
+if [[ $- == *i* && "${_AISH_HUMAN_SHELL:-}" == 1 ]]; then
+  set +o ignoreeof 2>/dev/null || true
+fi
+"#;
+
+const BASH_HANDOFF_ENV_STRIP_SNIPPET: &str = r#"
+# 0055 minimal human handoff: 対話 shell へ handoff 環境変数を渡さない
+if [[ "${AISH_CONTROL_MODE:-}" == human-shell ]]; then
+  _AISH_HUMAN_SHELL=1
+  _AISH_HANDOFF_SUGGESTED_COMMAND="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  unset AISH_CONTROL_MODE AISH_HANDOFF_PARENT_REQUEST AISH_HANDOFF_SUGGESTED_COMMAND AISH_HANDOFF_RUNTIME_DIR
+fi
+"#;
+
 const BASH_HANDOFF_RECALL_SNIPPET: &str = r#"
 # 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
 _aish_handoff_recall_apply() {
-  local cmd="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  local cmd="${_AISH_HANDOFF_SUGGESTED_COMMAND:-}"
   [[ -n "$cmd" ]] || return 0
   READLINE_LINE="$cmd"
   READLINE_POINT=${#cmd}
 }
 _aish_handoff_recall_install() {
-  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
-  [[ -n "${AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
+  [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
+  [[ -n "${_AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
   [[ "${_AISH_HANDOFF_RECALL_READY:-}" == 1 ]] && return 0
   _AISH_HANDOFF_RECALL_READY=1
   bind -x '"\e.": "_aish_handoff_recall_apply"' 2>/dev/null || true
@@ -134,7 +150,7 @@ _aish_replay_install_hooks() {
 }
 _aish_handoff_return() {
   local code=$?
-  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return
+  [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return
   _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
 }
 if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
@@ -143,19 +159,35 @@ if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
 fi
 "#;
 
+const ZSH_HANDOFF_EXIT_SNIPPET: &str = r#"
+# 0055 minimal human handoff: 1 回の Ctrl+D / exit で親へ戻る
+if [[ -o interactive && "${_AISH_HUMAN_SHELL:-}" == 1 ]]; then
+  unsetopt IGNORE_EOF 2>/dev/null || true
+fi
+"#;
+
+const ZSH_HANDOFF_ENV_STRIP_SNIPPET: &str = r#"
+# 0055 minimal human handoff: 対話 shell へ handoff 環境変数を渡さない
+if [[ "${AISH_CONTROL_MODE:-}" == human-shell ]]; then
+  _AISH_HUMAN_SHELL=1
+  _AISH_HANDOFF_SUGGESTED_COMMAND="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  unset AISH_CONTROL_MODE AISH_HANDOFF_PARENT_REQUEST AISH_HANDOFF_SUGGESTED_COMMAND AISH_HANDOFF_RUNTIME_DIR
+fi
+"#;
+
 const ZSH_HANDOFF_RECALL_SNIPPET: &str = r#"
 # 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
 _aish_handoff_recall_apply() {
   emulate -L zsh
-  local cmd="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  local cmd="${_AISH_HANDOFF_SUGGESTED_COMMAND:-}"
   [[ -n "$cmd" ]] || return 0
   BUFFER="$cmd"
   CURSOR=${#cmd}
   zle reset-prompt
 }
 _aish_handoff_recall_install() {
-  [[ "${AISH_CONTROL_MODE:-}" == human-shell ]] || return 0
-  [[ -n "${AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
+  [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
+  [[ -n "${_AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
   [[ "$_AISH_HANDOFF_RECALL_READY" == 1 ]] && return 0
   _AISH_HANDOFF_RECALL_READY=1
   zle -N _aish_handoff_recall_apply
@@ -227,6 +259,7 @@ pub struct ShellRcLayout {
 
 fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
     let mut body = String::new();
+    body.push_str(BASH_HANDOFF_ENV_STRIP_SNIPPET);
     if user_rc.is_file() {
         body.push_str(&format!(
             "if [ -f {} ]; then . {}; fi\n",
@@ -234,6 +267,7 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
             shell_quote(user_rc)
         ));
     }
+    body.push_str(BASH_HANDOFF_EXIT_SNIPPET);
     body.push_str(BASH_SNIPPET);
     body.push_str(BASH_RECALL_ENV_SNIPPET);
     body.push_str(BASH_REPLAY_SNIPPET);
@@ -243,6 +277,7 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
 
 fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
     let mut body = String::new();
+    body.push_str(ZSH_HANDOFF_ENV_STRIP_SNIPPET);
     if user_zshrc.is_file() {
         body.push_str(&format!(
             "if [ -f {} ]; then . {}; fi\n",
@@ -250,6 +285,7 @@ fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
             shell_quote(user_zshrc)
         ));
     }
+    body.push_str(ZSH_HANDOFF_EXIT_SNIPPET);
     body.push_str(ZSH_SNIPPET);
     body.push_str(ZSH_RECALL_ENV_SNIPPET);
     body.push_str(ZSH_REPLAY_SNIPPET);
@@ -271,6 +307,26 @@ mod tests {
         assert_eq!(detect_child_shell("/bin/bash"), ChildShellKind::Bash);
         assert_eq!(detect_child_shell("/usr/bin/zsh"), ChildShellKind::Zsh);
         assert_eq!(detect_child_shell("/bin/fish"), ChildShellKind::Other);
+    }
+
+    #[test]
+    fn bash_wrapper_disables_ignoreeof_for_human_handoff() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rc = dir.path().join("rc");
+        write_bash_wrapper(&rc, Path::new("/nonexistent/.bashrc")).expect("write");
+        let content = fs::read_to_string(rc).expect("read");
+        assert!(content.contains("set +o ignoreeof"));
+        assert!(content.contains("_AISH_HUMAN_SHELL"));
+    }
+
+    #[test]
+    fn zsh_wrapper_disables_ignore_eof_for_human_handoff() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let zshrc = dir.path().join(".zshrc");
+        write_zsh_wrapper(&zshrc, Path::new("/nonexistent/.zshrc")).expect("write");
+        let content = fs::read_to_string(zshrc).expect("read");
+        assert!(content.contains("unsetopt IGNORE_EOF"));
+        assert!(content.contains("_AISH_HUMAN_SHELL"));
     }
 
     #[test]

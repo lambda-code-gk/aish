@@ -36,6 +36,7 @@ fn shell_exec_approval_callback(
         approved: decision.approved,
         approval_origin: decision.approval_origin,
         handoff_result: None,
+        handoff_error: None,
     }
 }
 

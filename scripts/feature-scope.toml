@@ -16,6 +16,61 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0055"
+status = "locked"
+scope_class = "feature"
+
+scope_revision = 1
+scope_change_reason = "minimal human handoff re-implementation scope lock"
+
+core_outcome = "同期型 collaborative human handoff（親 shell_exec を実 PTY human shell へ）"
+
+actors = 2
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 2
+
+novel_mechanisms = ["synchronous-human-handoff"]
+integrations = ["ai", "aish"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+scope_review = "approved"
+split_decision = "0055 minimal は単一 spec として scope 登録（grandfathered 番号だが再実装のため governance 対象）"
+
+vertical_slice_ac_id = "collaborative_flag_intercepts_parent_shell_exec"
+
+locked_ac_ids = [
+  "collaborative_flag_intercepts_parent_shell_exec",
+  "normal_shell_exec_is_unchanged",
+  "human_shell_starts_in_requested_cwd",
+  "suggested_command_is_not_auto_executed",
+  "human_shell_ctrl_d_returns_control",
+  "human_shell_exit_returns_control",
+  "shell_exit_code_is_not_command_completion",
+  "parent_receives_human_control_returned",
+  "parent_reobserves_after_handoff",
+  "human_shell_failure_returns_error",
+  "human_shell_ai_is_independent",
+  "no_persistent_handoff_state_is_created",
+  "normal_shell_exec_regression",
+  "briefing_escapes_control_sequences",
+  "briefing_blocks_osc_sequences",
+  "handoff_env_not_inherited_by_child",
+  "bash_human_return_marker",
+  "unsupported_shell_rejected",
+  "runtime_handoff_dir_permissions",
+  "handoff_result_file_permissions",
+  "shell_log_tail_bounded",
+]
+
+[[features]]
 spec = "0056"
 status = "done"
 scope_class = "governance"

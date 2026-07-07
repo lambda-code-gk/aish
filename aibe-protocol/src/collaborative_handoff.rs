@@ -24,6 +24,13 @@ pub struct ShellLogRange {
     pub end: Option<u64>,
 }
 
+/// human handoff 失敗の structured error（user denial と区別する）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HumanHandoffFailure {
+    pub code: String,
+    pub message: String,
+}
+
 /// human shell 終了後の軽量再観測。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PostHandoffObservation {
@@ -37,6 +44,8 @@ pub struct PostHandoffObservation {
     pub git_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_log_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_log_truncated: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observation_errors: Vec<String>,
 }

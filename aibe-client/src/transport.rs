@@ -30,6 +30,7 @@ pub struct ShellExecApprovalDecision {
     pub approved: bool,
     pub approval_origin: ShellExecApprovalOrigin,
     pub handoff_result: Option<aibe_protocol::HumanHandoffResult>,
+    pub handoff_error: Option<aibe_protocol::HumanHandoffFailure>,
 }
 
 /// write-like tool 承認 prompt の内容。
@@ -261,6 +262,7 @@ pub fn agent_turn_with_client_tools_on_stream(
                         approved: decision.approved,
                         approval_origin: decision.approval_origin,
                         handoff_result: decision.handoff_result,
+                        handoff_error: decision.handoff_error,
                     },
                 )
                 .map_err(ClientError::Connect)?;
@@ -516,6 +518,7 @@ mod tests {
                 approved: true,
                 approval_origin: ShellExecApprovalOrigin::UiYes,
                 handoff_result: None,
+                handoff_error: None,
             }),
         )
         .expect("agent turn");

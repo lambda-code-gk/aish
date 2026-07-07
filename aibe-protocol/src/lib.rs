@@ -12,7 +12,7 @@ mod work;
 
 pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
 pub use collaborative_handoff::{
-    HandoffExecutionOutcome, HumanHandoffResult, PostHandoffObservation,
+    HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult, PostHandoffObservation,
     RequestedCommandCompletion, ShellLogRange,
 };
 pub use executed_tool::{

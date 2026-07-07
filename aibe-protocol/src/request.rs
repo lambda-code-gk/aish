@@ -50,6 +50,8 @@ pub enum ClientRequest {
         approval_origin: ShellExecApprovalOrigin,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         handoff_result: Option<crate::collaborative_handoff::HumanHandoffResult>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_error: Option<crate::collaborative_handoff::HumanHandoffFailure>,
     },
     /// write-like tool 実行前承認の応答（同一 socket 接続上）。
     ToolApproval {
@@ -510,6 +512,7 @@ mod tests {
             approved: true,
             approval_origin: ShellExecApprovalOrigin::UiAlwaysThisSessionExactInvocation,
             handoff_result: None,
+            handoff_error: None,
         };
         let json = serde_json::to_string(&req).expect("serialize");
         assert!(json.contains(r#""approval_origin":"ui_always_this_session_exact_invocation""#));

@@ -98,6 +98,7 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
                 approved,
                 approval_origin,
                 handoff_result,
+                handoff_error,
             }) = serde_json::from_str::<ClientRequest>(line.trim())
             else {
                 return None;
@@ -108,6 +109,7 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
                     approved,
                     approval_origin,
                     handoff_result,
+                    handoff_error,
                 });
             }
             return None;

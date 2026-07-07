@@ -57,6 +57,10 @@ pub trait EnvironmentObserver: Send + Sync {
 }
 
 pub trait ShellTranscriptReader: Send + Sync {
-    fn read_tail(&self, session_dir: &Path, start: u64, end: Option<u64>)
-        -> Result<String, String>;
+    fn read_tail(
+        &self,
+        session_dir: &Path,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<(String, bool), String>;
 }

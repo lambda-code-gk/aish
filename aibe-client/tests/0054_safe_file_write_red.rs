@@ -29,6 +29,7 @@ fn aibe_client_tool_approval_roundtrip() {
                 approved: false,
                 approval_origin: aibe_protocol::ShellExecApprovalOrigin::UiNo,
                 handoff_result: None,
+                handoff_error: None,
             },
             |prompt: aibe_client::ToolApprovalPrompt| {
                 seen_prompt = true;

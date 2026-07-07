@@ -17,7 +17,6 @@ pub struct HumanHandoffRequest {
     pub command: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
-    pub shell_log_start: u64,
     pub runtime_dir: PathBuf,
 }
 

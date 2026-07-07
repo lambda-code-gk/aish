@@ -203,6 +203,7 @@ mod phase8_file_write_approval_ui {
                     approved: false,
                     approval_origin: aibe_protocol::ShellExecApprovalOrigin::UiNo,
                     handoff_result: None,
+                    handoff_error: None,
                 },
                 |prompt: ToolApprovalPrompt| {
                     seen = true;
@@ -236,6 +237,7 @@ mod phase8_file_write_approval_ui {
                     approved: false,
                     approval_origin: aibe_protocol::ShellExecApprovalOrigin::UiNo,
                     handoff_result: None,
+                    handoff_error: None,
                 },
                 |_| file_write_approval_decision_from_input(true, "n\n"),
             ),

@@ -38,8 +38,9 @@ pub use history::{
     HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryMessage, HistoryPayload,
     HistoryRecordKind, HistoryRecordStatus, HistoryReplayRequest, HistorySummary, HistoryTurnInput,
 };
-pub use human_handoff::build_suggested_command;
-pub use human_handoff::HANDOFF_ENV_KEYS;
+pub use human_handoff::{
+    build_suggested_command, truncate_parent_request_summary, HANDOFF_ENV_KEYS,
+};
 pub use llm_profile::resolve_llm_profile;
 pub use log_tail::{resolve_log_tail_bytes, LogTailResolveError, DEFAULT_LOG_TAIL_BYTES};
 pub use output_filter::resolve_output_filter;

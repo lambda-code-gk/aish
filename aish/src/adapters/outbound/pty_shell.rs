@@ -766,7 +766,14 @@ fn relay_stdin_to_pty(stdin_fd: RawFd, stdin_master: RawFd, shutdown_read_fd: Ra
                 Ok(n) => n,
                 Err(_) => break,
             };
-            if n <= 0 {
+            if n == 0 {
+                if unsafe { libc::isatty(stdin_fd) } != 0 {
+                    // raw TTY では Ctrl+D が read(0) になる。PTY 側へ EOT を渡して shell を終了させる。
+                    let _ = write_all_fd(stdin_master, &[0x04]);
+                }
+                break;
+            }
+            if n < 0 {
                 break;
             }
             if !write_all_fd(stdin_master, &buf[..n as usize]) {

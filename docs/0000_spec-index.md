@@ -49,6 +49,7 @@
 | 0052 | [0052_ai_work.md](spec/0052_ai_work.md) | 設計確定（実装済み） | `ai work` 作業文脈管理（start/status/list/switch/push/pop/defer/idea/note/decide/focus/finish） |
 | 0053 | [0053_ai-suggested-command-recall-spec.md](spec/0053_ai-suggested-command-recall-spec.md) | 設計確定（実装済み） | `ai` 提案コマンド再呼び出し（bash / zsh、`aish shell` / `ai complete` hook） |
 | 0054 | [0054_safe-file-write-tools-spec.md](spec/0054_safe-file-write-tools-spec.md) | 設計確定（実装済み） | Safe File Write Tools（`write_file` / `apply_patch`、承認・journal・SHA-256） |
+| 0055 | [0055_minimal-human-handoff-spec.md](spec/0055_minimal-human-handoff-spec.md) | 設計確定（実装中） | Minimal Human Handoff（同期型 collaborative `shell_exec` → 実 PTY human shell） |
 | 0056 | [0056_feature-scope-governance-spec.md](spec/0056_feature-scope-governance-spec.md) | 設計確定（実装済み） | Feature Scope Governance / Complexity Gate（scope lock・CI 検査） |
 
 ### 状態ラベルの意味

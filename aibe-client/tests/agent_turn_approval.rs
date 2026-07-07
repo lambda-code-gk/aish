@@ -116,6 +116,7 @@ fn agent_turn_approval_roundtrip_approved() {
             approved: true,
             approval_origin: ShellExecApprovalOrigin::UiYes,
             handoff_result: None,
+            handoff_error: None,
         }
     })
     .expect("agent_turn");
@@ -142,6 +143,7 @@ fn agent_turn_approval_roundtrip_denied() {
             approved: false,
             approval_origin: ShellExecApprovalOrigin::UiNo,
             handoff_result: None,
+            handoff_error: None,
         },
     )
     .expect("agent_turn");

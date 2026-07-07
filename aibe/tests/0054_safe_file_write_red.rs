@@ -1520,6 +1520,7 @@ fn mixed_shell_and_write_approval_in_one_turn() {
                     approved: true,
                     approval_origin: ShellExecApprovalOrigin::UiYes,
                     handoff_result: None,
+                    handoff_error: None,
                 }
             },
             |prompt: ToolApprovalPrompt| {
@@ -2029,6 +2030,7 @@ async fn shell_exec_approval_regression_unchanged() {
                 approved: true,
                 approval_origin: ShellExecApprovalOrigin::UiYes,
                 handoff_result: None,
+                handoff_error: None,
             })
         }
     }

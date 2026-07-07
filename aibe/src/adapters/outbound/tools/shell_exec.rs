@@ -267,6 +267,27 @@ impl ToolExecutor for ShellExecTool {
                         approval_origin,
                     );
                 }
+                if let Some(handoff_error) = decision.handoff_error {
+                    let msg = handoff_error.message.clone();
+                    return finish_shell_exec(
+                        ExecutedToolCall::err(
+                            id.clone(),
+                            self.name(),
+                            args_value,
+                            "human_handoff_failed",
+                            &msg,
+                        ),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: msg,
+                            is_error: true,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::CollaborativeHandoff,
+                        external_name,
+                        approval_origin,
+                    );
+                }
                 if !decision.approved {
                     let msg = "shell_exec rejected by user";
                     return finish_shell_exec(
@@ -586,6 +607,7 @@ mod tests {
                     approved: false,
                     approval_origin: ShellExecApprovalOrigin::UiNo,
                     handoff_result: None,
+                    handoff_error: None,
                 })
             }
         }

@@ -9,6 +9,20 @@ pub const HANDOFF_ENV_KEYS: [&str; 4] = [
     "AISH_HANDOFF_RUNTIME_DIR",
 ];
 
+pub const HANDOFF_PARENT_REQUEST_MAX_BYTES: usize = 4 * 1024;
+
+/// 親リクエスト表示用に bounded truncate する。
+pub fn truncate_parent_request_summary(summary: &str) -> String {
+    if summary.len() <= HANDOFF_PARENT_REQUEST_MAX_BYTES {
+        return summary.to_string();
+    }
+    let mut end = HANDOFF_PARENT_REQUEST_MAX_BYTES;
+    while end > 0 && !summary.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("…{}", &summary[summary.len().saturating_sub(end)..])
+}
+
 pub fn build_suggested_command(command: &str, args: &[String]) -> String {
     if args.is_empty() {
         command.to_string()

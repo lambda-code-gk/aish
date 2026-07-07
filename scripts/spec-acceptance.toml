@@ -2336,9 +2336,9 @@ pending = false
 spec = "0055"
 phase = 1
 id = "collaborative_flag_intercepts_parent_shell_exec"
-description = "collaborative 親 shell_exec が handoff へ変換される"
-test = "collaborative_flag_intercepts_parent_shell_exec"
-file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+description = "collaborative 親 shell_exec が handoff へ変換される（full vertical E2E）"
+test = "collaborative_handoff_full_vertical_pty_e2e"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
 
 [[cases]]
@@ -2346,8 +2346,8 @@ spec = "0055"
 phase = 1
 id = "normal_shell_exec_is_unchanged"
 description = "通常 shell_exec 経路に回帰がない"
-test = "normal_shell_exec_is_unchanged"
-file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+test = "normal_shell_exec_path_uses_approval_without_human_shell"
+file_glob = "ai/tests/normal_shell_exec_regression.rs"
 pending = false
 
 [[cases]]
@@ -2356,7 +2356,7 @@ phase = 1
 id = "human_shell_starts_in_requested_cwd"
 description = "human shell が要求 cwd で起動する"
 test = "human_shell_starts_in_requested_cwd"
-file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
 pending = false
 
 [[cases]]
@@ -2399,9 +2399,9 @@ pending = false
 spec = "0055"
 phase = 1
 id = "parent_receives_human_control_returned"
-description = "親が human_control_returned を受け取る"
-test = "parent_receives_human_control_returned"
-file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+description = "親が human_control_returned を受け取る（full vertical E2E）"
+test = "collaborative_handoff_full_vertical_pty_e2e"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
 
 [[cases]]
@@ -2417,7 +2417,7 @@ pending = false
 spec = "0055"
 phase = 1
 id = "human_shell_failure_returns_error"
-description = "handoff 失敗時にエラーを返す"
+description = "handoff 失敗時に structured error を返す"
 test = "human_shell_failure_returns_error"
 file_glob = "ai/tests/0055_minimal_human_handoff.rs"
 pending = false
@@ -2428,7 +2428,7 @@ phase = 1
 id = "human_shell_ai_is_independent"
 description = "human shell 内 ai は独立動作"
 test = "human_shell_ai_is_independent"
-file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
 pending = false
 
 [[cases]]
@@ -2437,7 +2437,7 @@ phase = 1
 id = "no_persistent_handoff_state_is_created"
 description = "永続 handoff state を作らない"
 test = "no_persistent_handoff_state_is_created"
-file_glob = "ai/tests/0055_minimal_human_handoff.rs"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
 
 [[cases]]
@@ -2447,4 +2447,76 @@ id = "normal_shell_exec_regression"
 description = "通常 shell_exec tier 分類の回帰"
 test = "normal_shell_exec_tier_classification_unchanged"
 file_glob = "ai/tests/normal_shell_exec_regression.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "briefing_escapes_control_sequences"
+description = "briefing が ANSI / 制御文字を raw 出力しない"
+test = "briefing_escapes_ansi_control_sequences"
+file_glob = "aish/src/human_shell.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "briefing_blocks_osc_sequences"
+description = "briefing が terminal title / OSC を出力できない"
+test = "briefing_cannot_emit_terminal_title_or_osc_sequence"
+file_glob = "aish/src/human_shell.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_env_not_inherited_by_child"
+description = "handoff 環境変数が子 process へ継承されない"
+test = "human_shell_child_cannot_read_handoff_env_vars"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "bash_human_return_marker"
+description = "bash human shell が return marker を返す"
+test = "bash_human_return_marker"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "unsupported_shell_rejected"
+description = "bash/zsh 以外の shell を起動前に拒否する"
+test = "unsupported_shell_fails_before_interactive_launch"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "runtime_handoff_dir_permissions"
+description = "runtime handoff directory が 0700"
+test = "runtime_handoff_dir_is_0700"
+file_glob = "ai/src/adapters/outbound/human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_result_file_permissions"
+description = "handoff result file が 0600"
+test = "handoff_result_file_is_0600"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "shell_log_tail_bounded"
+description = "shell log tail 読み込みに上限がある"
+test = "shell_log_tail_is_bounded"
+file_glob = "ai/src/adapters/outbound/human_handoff.rs"
 pending = false
