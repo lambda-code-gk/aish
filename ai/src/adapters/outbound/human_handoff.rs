@@ -270,15 +270,26 @@ fn strip_handoff_environment(command: &mut Command) {
     }
 }
 
-pub fn create_runtime_handoff_dir() -> std::io::Result<PathBuf> {
-    let aish_root = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+pub fn runtime_handoff_aish_root(
+    xdg_runtime_dir: Option<&std::ffi::OsStr>,
+    tmpdir: Option<&std::ffi::OsStr>,
+    uid: u32,
+) -> PathBuf {
+    if let Some(dir) = xdg_runtime_dir {
         PathBuf::from(dir).join("aish")
-    } else if let Some(dir) = std::env::var_os("TMPDIR") {
+    } else if let Some(dir) = tmpdir {
         PathBuf::from(dir).join("aish")
     } else {
-        let uid = unsafe { libc::getuid() };
         PathBuf::from(format!("/tmp/aish-{uid}"))
-    };
+    }
+}
+
+pub fn create_runtime_handoff_dir_from(
+    xdg_runtime_dir: Option<&std::ffi::OsStr>,
+    tmpdir: Option<&std::ffi::OsStr>,
+    uid: u32,
+) -> std::io::Result<PathBuf> {
+    let aish_root = runtime_handoff_aish_root(xdg_runtime_dir, tmpdir, uid);
     ensure_dir_0700(&aish_root)?;
     ensure_private_dir_owned_0700(&aish_root)?;
     let dir = aish_root.join(format!(
@@ -289,6 +300,14 @@ pub fn create_runtime_handoff_dir() -> std::io::Result<PathBuf> {
     ensure_dir_0700(&dir)?;
     ensure_private_dir_owned_0700(&dir)?;
     Ok(dir)
+}
+
+pub fn create_runtime_handoff_dir() -> std::io::Result<PathBuf> {
+    create_runtime_handoff_dir_from(
+        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+        std::env::var_os("TMPDIR").as_deref(),
+        unsafe { libc::getuid() },
+    )
 }
 
 pub fn cleanup_runtime_handoff_dir(dir: &PathBuf) {
@@ -399,25 +418,16 @@ mod tests {
 
     #[test]
     fn runtime_handoff_dir_fallback_uses_uid() {
-        let saved_xdg = std::env::var_os("XDG_RUNTIME_DIR");
-        let saved_tmp = std::env::var_os("TMPDIR");
-        std::env::remove_var("XDG_RUNTIME_DIR");
-        std::env::remove_var("TMPDIR");
         let uid = unsafe { libc::getuid() };
-        let expected_root = PathBuf::from(format!("/tmp/aish-{uid}"));
-        let handoff = create_runtime_handoff_dir().expect("runtime dir");
+        let expected_root = runtime_handoff_aish_root(None, None, uid);
+        let handoff = create_runtime_handoff_dir_from(None, None, uid).expect("runtime dir");
         assert!(
             handoff.starts_with(&expected_root),
             "handoff={} expected_root={}",
             handoff.display(),
             expected_root.display()
         );
-        if let Some(dir) = saved_xdg {
-            std::env::set_var("XDG_RUNTIME_DIR", dir);
-        }
-        if let Some(dir) = saved_tmp {
-            std::env::set_var("TMPDIR", dir);
-        }
+        cleanup_runtime_handoff_dir(&handoff);
     }
 
     #[test]

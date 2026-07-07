@@ -876,9 +876,113 @@ mod tests {
         let (record, result) = tool.execute("tc-handoff-fail", &args, 5000, &ctx).await;
         assert!(result.is_error);
         assert_eq!(record.error.as_deref(), Some("human_handoff_failed"));
-        assert_eq!(record.decision.as_deref(), Some("human_control_returned"));
+        assert_eq!(record.decision.as_deref(), Some("human_handoff_failed"));
         assert!(!result.content.contains("rejected by user"));
         assert!(!result.content.contains("exit_code:"));
+    }
+
+    #[tokio::test]
+    async fn collaborative_approved_without_result_is_rejected() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::ShellExecApprovalOrigin;
+
+        struct MalformedGate;
+
+        #[async_trait]
+        impl ShellExecApprovalGate for MalformedGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: true,
+                    approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+                    handoff_result: None,
+                    handoff_error: None,
+                })
+            }
+        }
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["touch".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let dir = tempdir().expect("tempdir");
+        let marker = dir.path().join("must-not-exist");
+        let ctx = shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("cwd"))
+            .with_collaborative_handoff(true)
+            .with_turn_id("turn-malformed")
+            .with_approval_gate(Arc::new(MalformedGate));
+        let args = json!({
+            "command": "touch",
+            "args": [marker.to_string_lossy()]
+        });
+
+        let (record, result) = tool.execute("tc-malformed", &args, 5000, &ctx).await;
+        assert!(result.is_error);
+        assert_eq!(record.error.as_deref(), Some("invalid_approval_decision"));
+        assert!(
+            !marker.exists(),
+            "marker command must not run on malformed approval"
+        );
+    }
+
+    #[tokio::test]
+    async fn handoff_failure_audit_is_not_human_control_returned() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::{HumanHandoffFailure, ShellExecApprovalOrigin};
+
+        struct HandoffFailGate;
+
+        #[async_trait]
+        impl ShellExecApprovalGate for HandoffFailGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: false,
+                    approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+                    handoff_result: None,
+                    handoff_error: Some(HumanHandoffFailure {
+                        code: "human_handoff_failed".into(),
+                        message: "launcher failed".into(),
+                    }),
+                })
+            }
+        }
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["sleep".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let ctx = shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("cwd"))
+            .with_collaborative_handoff(true)
+            .with_turn_id("turn-audit-fail")
+            .with_approval_gate(Arc::new(HandoffFailGate));
+        let args = json!({ "command": "sleep", "args": ["30"] });
+
+        let (record, _result) = tool.execute("tc-audit-fail", &args, 5000, &ctx).await;
+        assert_ne!(record.decision.as_deref(), Some("human_control_returned"));
+        assert_eq!(record.decision.as_deref(), Some("human_handoff_failed"));
     }
 
     #[tokio::test]

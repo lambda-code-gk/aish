@@ -12,8 +12,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use aibe_protocol::{
-    AgentTurnStatus, ClientRequest, ClientResponse, HandoffExecutionOutcome, ProtocolMessageOut,
-    RequestedCommandCompletion, ShellExecApprovalOrigin,
+    AgentTurnStatus, ClientRequest, ClientResponse, ErrorCode, HandoffExecutionOutcome,
+    ProtocolMessageOut, RequestedCommandCompletion, ShellExecApprovalOrigin,
 };
 
 fn e2e_timeout() -> Duration {
@@ -24,10 +24,24 @@ fn e2e_timeout() -> Duration {
     Duration::from_secs(secs.min(60))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureFinalResponse {
+    ToolError,
+    SuccessTurnResult,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedHandoffDecision {
+    Success,
+    Failure(FailureFinalResponse),
+}
+
 struct DiagnosticLog {
     mock_requests: Vec<String>,
     mock_responses: Vec<String>,
     handoff_result_json: Option<String>,
+    handoff_error_json: Option<String>,
     ai_stderr: String,
     aish_transcript_hint: String,
     child_exit: Option<i32>,
@@ -40,10 +54,11 @@ struct CollaborativeMockServer {
     listener: Option<UnixListener>,
     log: Arc<Mutex<DiagnosticLog>>,
     candidate_marker: PathBuf,
+    expected: ExpectedHandoffDecision,
 }
 
 impl CollaborativeMockServer {
-    fn spawn(candidate_marker: PathBuf) -> Self {
+    fn spawn(candidate_marker: PathBuf, expected: ExpectedHandoffDecision) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
@@ -52,6 +67,7 @@ impl CollaborativeMockServer {
             mock_requests: Vec::new(),
             mock_responses: Vec::new(),
             handoff_result_json: None,
+            handoff_error_json: None,
             ai_stderr: String::new(),
             aish_transcript_hint: String::new(),
             child_exit: None,
@@ -63,6 +79,7 @@ impl CollaborativeMockServer {
             listener: Some(listener),
             log,
             candidate_marker,
+            expected,
         }
     }
 
@@ -70,27 +87,15 @@ impl CollaborativeMockServer {
         let listener = self.listener.take().expect("listener");
         let log_thread = Arc::clone(&self.log);
         let marker_thread = self.candidate_marker.clone();
+        let expected = self.expected;
         listener.set_nonblocking(true).expect("set_nonblocking");
         let handle = thread::spawn(move || {
             let deadline = Instant::now() + e2e_timeout();
-            let (stream, _) = loop {
-                if Instant::now() >= deadline {
-                    return;
-                }
-                match listener.accept() {
-                    Ok(conn) => break conn,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(20));
-                    }
-                    Err(_) => return,
-                }
-            };
+            let (stream, _) = accept_with_deadline(&listener, deadline);
             let mut writer = stream.try_clone().expect("clone");
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
-            if read_line_with_deadline(&mut reader, &mut line, deadline).is_err() {
-                return;
-            }
+            read_line_with_deadline(&mut reader, &mut line, deadline).expect("read agent_turn");
             log_thread
                 .lock()
                 .expect("log")
@@ -132,9 +137,7 @@ impl CollaborativeMockServer {
             writer.flush().expect("flush");
 
             line.clear();
-            if read_line_with_deadline(&mut reader, &mut line, deadline).is_err() {
-                return;
-            }
+            read_line_with_deadline(&mut reader, &mut line, deadline).expect("read approval");
             log_thread
                 .lock()
                 .expect("log")
@@ -152,61 +155,127 @@ impl CollaborativeMockServer {
             else {
                 panic!("expected shell_exec_approval");
             };
-            assert!(approved, "handoff must succeed");
             assert_eq!(
                 approval_origin,
                 ShellExecApprovalOrigin::CollaborativeHandoff
             );
-            assert!(handoff_error.is_none());
-            let handoff = handoff_result.expect("handoff_result");
-            assert_eq!(
-                handoff.execution_outcome,
-                HandoffExecutionOutcome::HumanControlReturned
-            );
-            assert_eq!(
-                handoff.requested_command_completion,
-                RequestedCommandCompletion::Unknown
-            );
-            log_thread.lock().expect("log").handoff_result_json =
-                Some(serde_json::to_string(&handoff).expect("handoff json"));
 
-            let final_resp = ClientResponse::AgentTurnResult {
-                id,
-                status: AgentTurnStatus::Ok,
-                assistant_message: ProtocolMessageOut {
-                    role: "assistant".into(),
-                    content: "handoff complete".into(),
-                },
-                tool_calls: vec![],
-            };
-            let final_json = serde_json::to_string(&final_resp).expect("final json");
-            log_thread
-                .lock()
-                .expect("log")
-                .mock_responses
-                .push(final_json.clone());
-            writeln!(writer, "{final_json}").expect("write final");
-            writer.flush().expect("flush");
+            match expected {
+                ExpectedHandoffDecision::Success => {
+                    assert!(approved, "handoff must succeed");
+                    assert!(handoff_error.is_none());
+                    let handoff = handoff_result.expect("handoff_result");
+                    assert_eq!(
+                        handoff.execution_outcome,
+                        HandoffExecutionOutcome::HumanControlReturned
+                    );
+                    assert_eq!(
+                        handoff.requested_command_completion,
+                        RequestedCommandCompletion::Unknown
+                    );
+                    log_thread.lock().expect("log").handoff_result_json =
+                        Some(serde_json::to_string(&handoff).expect("handoff json"));
+
+                    let final_resp = ClientResponse::AgentTurnResult {
+                        id,
+                        status: AgentTurnStatus::Ok,
+                        assistant_message: ProtocolMessageOut {
+                            role: "assistant".into(),
+                            content: "handoff complete".into(),
+                        },
+                        tool_calls: vec![],
+                    };
+                    let final_json = serde_json::to_string(&final_resp).expect("final json");
+                    log_thread
+                        .lock()
+                        .expect("log")
+                        .mock_responses
+                        .push(final_json.clone());
+                    writeln!(writer, "{final_json}").expect("write final");
+                    writer.flush().expect("flush");
+                }
+                ExpectedHandoffDecision::Failure(final_response) => {
+                    assert!(!approved, "handoff must fail");
+                    assert!(handoff_result.is_none());
+                    let error = handoff_error.expect("handoff_error");
+                    assert_eq!(error.code, "human_handoff_failed");
+                    log_thread.lock().expect("log").handoff_error_json =
+                        Some(serde_json::to_string(&error).expect("error json"));
+
+                    match final_response {
+                        FailureFinalResponse::ToolError => {
+                            let final_resp = ClientResponse::Error {
+                                id,
+                                code: ErrorCode::ToolError,
+                                message: format!("human_handoff_failed: {}", error.message),
+                            };
+                            let final_json =
+                                serde_json::to_string(&final_resp).expect("final json");
+                            log_thread
+                                .lock()
+                                .expect("log")
+                                .mock_responses
+                                .push(final_json.clone());
+                            writeln!(writer, "{final_json}").expect("write final");
+                            writer.flush().expect("flush");
+                        }
+                        FailureFinalResponse::SuccessTurnResult => {
+                            let final_resp = ClientResponse::AgentTurnResult {
+                                id,
+                                status: AgentTurnStatus::Ok,
+                                assistant_message: ProtocolMessageOut {
+                                    role: "assistant".into(),
+                                    content: "should not win".into(),
+                                },
+                                tool_calls: vec![],
+                            };
+                            let final_json =
+                                serde_json::to_string(&final_resp).expect("final json");
+                            log_thread
+                                .lock()
+                                .expect("log")
+                                .mock_responses
+                                .push(final_json.clone());
+                            writeln!(writer, "{final_json}").expect("write final");
+                            writer.flush().expect("flush");
+                        }
+                        FailureFinalResponse::None => {}
+                    }
+                }
+            }
         });
         self.handle = Some(handle);
     }
 
-    fn join(mut self, deadline: Instant) -> DiagnosticLog {
-        if let Some(handle) = self.handle.take() {
-            while Instant::now() < deadline {
-                if handle.is_finished() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            if handle.is_finished() {
-                let _ = handle.join();
-            }
+    fn join(self, deadline: Instant) -> DiagnosticLog {
+        if let Some(handle) = self.handle {
+            join_with_deadline(handle, deadline);
         }
         Arc::try_unwrap(self.log)
             .ok()
             .and_then(|m| m.into_inner().ok())
             .expect("log mutex")
+    }
+}
+
+fn accept_with_deadline(
+    listener: &UnixListener,
+    deadline: Instant,
+) -> (
+    std::os::unix::net::UnixStream,
+    std::os::unix::net::SocketAddr,
+) {
+    loop {
+        if Instant::now() >= deadline {
+            panic!("mock server accept deadline exceeded");
+        }
+        match listener.accept() {
+            Ok(conn) => return conn,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => panic!("mock server accept failed: {e}"),
+        }
     }
 }
 
@@ -234,6 +303,17 @@ fn read_line_with_deadline(
     ))
 }
 
+fn join_with_deadline(handle: JoinHandle<()>, deadline: Instant) {
+    while Instant::now() < deadline {
+        if handle.is_finished() {
+            handle.join().expect("mock aibe server panicked");
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("mock server thread join deadline exceeded");
+}
+
 fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
     loop {
         match child.try_wait() {
@@ -241,8 +321,12 @@ fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process:
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
                 let _ = child.kill();
-                let _ = child.wait();
-                panic!("ai child timed out after {:?}", e2e_timeout());
+                let output = child.wait_with_output().expect("wait output after kill");
+                panic!(
+                    "ai child timed out after {:?}, stderr={}",
+                    e2e_timeout(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             Err(e) => panic!("wait child failed: {e}"),
         }
@@ -301,6 +385,9 @@ fn fail_with_diagnostics(context: &str, log: DiagnosticLog) -> ! {
     }
     if let Some(json) = &log.handoff_result_json {
         eprintln!("--- handoff result JSON ---\n{json}");
+    }
+    if let Some(json) = &log.handoff_error_json {
+        eprintln!("--- handoff error JSON ---\n{json}");
     }
     eprintln!("--- child exit status --- {:?}", log.child_exit);
     panic!("0055 transport E2E failed: {context}");
@@ -406,8 +493,28 @@ fn run_collaborative_handoff(
     candidate_marker: PathBuf,
     shell_input: &[u8],
 ) -> HandoffRun {
+    run_collaborative_handoff_with_expected(
+        ai_bin,
+        aish_bin,
+        home,
+        work,
+        candidate_marker,
+        shell_input,
+        ExpectedHandoffDecision::Success,
+    )
+}
+
+fn run_collaborative_handoff_with_expected(
+    ai_bin: &Path,
+    aish_bin: &Path,
+    home: &Path,
+    work: &Path,
+    candidate_marker: PathBuf,
+    shell_input: &[u8],
+    expected: ExpectedHandoffDecision,
+) -> HandoffRun {
     let deadline = Instant::now() + e2e_timeout();
-    let mut server = CollaborativeMockServer::spawn(candidate_marker);
+    let mut server = CollaborativeMockServer::spawn(candidate_marker, expected);
     server.start_accept();
     let history_dir = home.join("history");
     fs::create_dir_all(&history_dir).expect("history");
@@ -447,6 +554,36 @@ fn run_collaborative_handoff(
         server,
         deadline,
     }
+}
+
+fn spawn_ai_collaborative_failure(
+    ai_bin: &Path,
+    home: &Path,
+    work: &Path,
+    socket_path: &Path,
+    aish_bin: &Path,
+    xdg_runtime_dir: &Path,
+    prompt: &str,
+) -> Child {
+    let history_dir = home.join("history");
+    fs::create_dir_all(&history_dir).expect("history");
+    let ai_cfg = write_ai_config(home, socket_path, &history_dir);
+    let aibe_cfg = write_aibe_config(home);
+    let aish_cfg = write_aish_config(home, &home.join("aish-sessions"));
+    Command::new(ai_bin)
+        .args(["ask", "--collaborative", "--quiet", "--no-start", prompt])
+        .current_dir(work)
+        .env("AI_CONFIG", &ai_cfg)
+        .env("AIBE_CONFIG", &aibe_cfg)
+        .env("AISH_CONFIG", &aish_cfg)
+        .env("HOME", home)
+        .env("AISH_BIN", aish_bin)
+        .env("XDG_RUNTIME_DIR", xdg_runtime_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn ai")
 }
 
 #[test]
@@ -573,35 +710,22 @@ fn handoff_runtime_dir_failure_exits_nonzero() {
     fs::write(blocked.join("aish"), b"not-a-directory").expect("block aish root");
 
     let deadline = Instant::now() + e2e_timeout();
-    let mut server = CollaborativeMockServer::spawn(work.join("candidate"));
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::ToolError),
+    );
     server.start_accept();
-    let history_dir = home.path().join("history");
-    fs::create_dir_all(&history_dir).expect("history");
-    let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
-    let aibe_cfg = write_aibe_config(home.path());
-    let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
 
     let output = wait_child_with_timeout(
-        Command::new(&ai_bin)
-            .args([
-                "ask",
-                "--collaborative",
-                "--quiet",
-                "--no-start",
-                "verify handoff failure",
-            ])
-            .current_dir(&work)
-            .env("AI_CONFIG", &ai_cfg)
-            .env("AIBE_CONFIG", &aibe_cfg)
-            .env("AISH_CONFIG", &aish_cfg)
-            .env("HOME", home.path())
-            .env("AISH_BIN", &aish_bin)
-            .env("XDG_RUNTIME_DIR", &blocked)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn ai"),
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &aish_bin,
+            &blocked,
+            "verify handoff failure",
+        ),
         deadline,
     );
     let log = server.join(deadline);
@@ -623,7 +747,16 @@ fn handoff_runtime_dir_failure_exits_nonzero() {
         !stderr.contains("shell_exec rejected by user"),
         "handoff failure must not be reported as user denial"
     );
-    let _ = log;
+    assert!(
+        log.handoff_error_json.is_some(),
+        "mock server must receive structured handoff_error"
+    );
+    assert!(
+        log.handoff_error_json
+            .as_deref()
+            .is_some_and(|json| json.contains("human_handoff_failed")),
+        "handoff_error.code must be human_handoff_failed"
+    );
 }
 
 #[test]
@@ -633,45 +766,36 @@ fn handoff_launcher_failure_is_not_sigint() {
     let work = home.path().join("work");
     fs::create_dir_all(&work).expect("work");
     let deadline = Instant::now() + e2e_timeout();
-    let mut server = CollaborativeMockServer::spawn(work.join("candidate"));
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::ToolError),
+    );
     server.start_accept();
-    let history_dir = home.path().join("history");
-    fs::create_dir_all(&history_dir).expect("history");
-    let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
-    let aibe_cfg = write_aibe_config(home.path());
-    let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
 
     let missing_aish = work.join("missing-aish-binary");
     let output = wait_child_with_timeout(
-        Command::new(&ai_bin)
-            .args([
-                "ask",
-                "--collaborative",
-                "--quiet",
-                "--no-start",
-                "verify launcher failure",
-            ])
-            .current_dir(&work)
-            .env("AI_CONFIG", &ai_cfg)
-            .env("AIBE_CONFIG", &aibe_cfg)
-            .env("AISH_CONFIG", &aish_cfg)
-            .env("HOME", home.path())
-            .env("AISH_BIN", &missing_aish)
-            .env("XDG_RUNTIME_DIR", home.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn ai"),
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &missing_aish,
+            home.path(),
+            "verify launcher failure",
+        ),
         deadline,
     );
-    let _ = server.join(deadline);
+    let log = server.join(deadline);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert_ne!(output.status.code(), Some(130));
     assert!(
         stderr.contains("human_handoff_failed") || stderr.contains("collaborative handoff failed"),
         "stderr={stderr}"
+    );
+    assert!(
+        log.handoff_error_json.is_some(),
+        "mock server must receive structured handoff_error"
     );
 }
 
@@ -682,80 +806,117 @@ fn handoff_failure_cannot_finish_as_success() {
     let work = home.path().join("work");
     fs::create_dir_all(&work).expect("work");
     let deadline = Instant::now() + e2e_timeout();
-    let dir = tempfile::tempdir().expect("sock dir");
-    let socket_path = dir.path().join("aibe.sock");
-    let listener = UnixListener::bind(&socket_path).expect("bind");
-    let handle = thread::spawn(move || {
-        let Ok((stream, _)) = listener.accept() else {
-            return;
-        };
-        let mut writer = stream.try_clone().expect("clone");
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        let _ = reader.read_line(&mut line);
-        let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse");
-        let ClientRequest::AgentTurn { id, .. } = req else {
-            return;
-        };
-        let prompt = ClientResponse::ShellExecApprovalPrompt {
-            id: "p1".into(),
-            turn_id: id.clone(),
-            tool_call_id: "call1".into(),
-            command: "true".into(),
-            args: vec![],
-        };
-        writeln!(writer, "{}", serde_json::to_string(&prompt).unwrap()).unwrap();
-        line.clear();
-        let _ = reader.read_line(&mut line);
-        let final_resp = ClientResponse::AgentTurnResult {
-            id,
-            status: AgentTurnStatus::Ok,
-            assistant_message: ProtocolMessageOut {
-                role: "assistant".into(),
-                content: "should not win".into(),
-            },
-            tool_calls: vec![],
-        };
-        writeln!(writer, "{}", serde_json::to_string(&final_resp).unwrap()).unwrap();
-    });
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::SuccessTurnResult),
+    );
+    server.start_accept();
 
-    let history_dir = home.path().join("history");
-    fs::create_dir_all(&history_dir).expect("history");
-    let ai_cfg = write_ai_config(home.path(), &socket_path, &history_dir);
-    let aibe_cfg = write_aibe_config(home.path());
-    let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
     let missing_aish = work.join("missing-aish");
-
     let output = wait_child_with_timeout(
-        Command::new(&ai_bin)
-            .args([
-                "ask",
-                "--collaborative",
-                "--quiet",
-                "--no-start",
-                "verify cannot succeed",
-            ])
-            .current_dir(&work)
-            .env("AI_CONFIG", &ai_cfg)
-            .env("AIBE_CONFIG", &aibe_cfg)
-            .env("AISH_CONFIG", &aish_cfg)
-            .env("HOME", home.path())
-            .env("AISH_BIN", &missing_aish)
-            .env("XDG_RUNTIME_DIR", home.path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn ai"),
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &missing_aish,
+            home.path(),
+            "verify cannot succeed",
+        ),
         deadline,
     );
-    let _ = handle.join();
+    let log = server.join(deadline);
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("handoff complete"),
+        "handoff failure must not finish as successful assistant output"
+    );
     assert!(
         !stdout.contains("should not win"),
         "handoff failure must not finish as successful assistant output"
     );
+    assert!(log.handoff_error_json.is_some());
+}
+
+#[test]
+fn handoff_failure_aborts_when_server_sends_no_final_response() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let deadline = Instant::now() + e2e_timeout();
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::None),
+    );
+    server.start_accept();
+
+    let missing_aish = work.join("missing-aish");
+    let output = wait_child_with_timeout(
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &missing_aish,
+            home.path(),
+            "verify abort without final response",
+        ),
+        deadline,
+    );
+    let _log = server.join(deadline);
+    assert!(
+        !output.status.success(),
+        "handoff failure must exit non-zero even without server final response"
+    );
+    assert_ne!(output.status.code(), Some(130));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("human_handoff_failed") || stderr.contains("collaborative handoff failed"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn handoff_failure_server_receives_structured_error() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let deadline = Instant::now() + e2e_timeout();
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::ToolError),
+    );
+    server.start_accept();
+    let missing_aish = work.join("missing-aish-binary");
+    let output = wait_child_with_timeout(
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &missing_aish,
+            home.path(),
+            "verify structured handoff error",
+        ),
+        deadline,
+    );
+    let log = server.join(deadline);
+    assert!(!output.status.success());
+    let error_json = log
+        .handoff_error_json
+        .expect("server must receive handoff_error");
+    assert!(error_json.contains("human_handoff_failed"));
+}
+
+#[test]
+#[should_panic(expected = "mock aibe server panicked")]
+fn mock_server_panic_propagates() {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let handle = thread::spawn(|| panic!("mock aibe server panicked"));
+    join_with_deadline(handle, deadline);
 }
 
 #[test]
@@ -764,4 +925,49 @@ fn e2e_has_bounded_timeout() {
         e2e_timeout() <= Duration::from_secs(60),
         "E2E timeout must be bounded"
     );
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/0055_collaborative_handoff_vertical_e2e.rs");
+    let content = fs::read_to_string(&path).expect("read e2e source");
+    let mut in_read_line_helper = false;
+    let mut in_accept_helper = false;
+    for (idx, line) in content.lines().enumerate() {
+        let line_no = idx + 1;
+        if line.contains("fn read_line_with_deadline") {
+            in_read_line_helper = true;
+        }
+        if line.contains("fn accept_with_deadline") {
+            in_accept_helper = true;
+        }
+        if in_read_line_helper
+            && line.starts_with("fn ")
+            && !line.contains("read_line_with_deadline")
+        {
+            in_read_line_helper = false;
+        }
+        if in_accept_helper && line.starts_with("fn ") && !line.contains("accept_with_deadline") {
+            in_accept_helper = false;
+        }
+        if line.contains("contains(") || line.trim_start().starts_with("assert!(") {
+            continue;
+        }
+        assert!(
+            !line.contains("let _ = handle.join()"),
+            "unbounded join at line {line_no}: {line}"
+        );
+        if line.contains(".join()")
+            && !line.contains("join_with_deadline")
+            && !line.contains(".expect(")
+        {
+            panic!("unbounded join at line {line_no}: {line}");
+        }
+        if line.contains("listener.accept()") && !in_accept_helper {
+            panic!("blocking accept at line {line_no}: {line}");
+        }
+        if line.contains(".read_line(")
+            && !in_read_line_helper
+            && !line.contains("read_line_with_deadline")
+        {
+            panic!("blocking read_line at line {line_no}: {line}");
+        }
+    }
 }

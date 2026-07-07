@@ -217,7 +217,11 @@ impl ExecutedToolCall {
             }
             ShellExecApprovalOutcome::CollaborativeHandoff => {
                 self.approval_state = Some(ToolApprovalState::ExplicitClientOptIn);
-                self.decision = Some("human_control_returned".into());
+                self.decision = Some(if self.status == ExecutedToolStatus::Ok {
+                    "human_control_returned".into()
+                } else {
+                    "human_handoff_failed".into()
+                });
             }
         }
         if let Some(origin) = approval_origin {

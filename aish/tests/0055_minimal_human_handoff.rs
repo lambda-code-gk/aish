@@ -23,6 +23,34 @@ fn private_temp_home() -> tempfile::TempDir {
     home
 }
 
+fn resolve_zsh_binary() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("ZSH") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    if let Ok(paths) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join("zsh");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    std::process::Command::new("sh")
+        .args(["-c", "command -v zsh"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8(o.stdout)
+                .ok()
+                .map(|s| PathBuf::from(s.trim()))
+        })
+        .filter(|p| p.is_file())
+}
+
 fn run_human_shell_with(
     input: &[u8],
     home: &Path,
@@ -126,16 +154,15 @@ fn bash_human_return_marker() {
 }
 
 #[test]
-#[ignore = "requires zsh at /bin/zsh or ZSH env; run: AISH_0055_ZSH=1 cargo test -p aish --test 0055_minimal_human_handoff zsh_human_return_marker -- --ignored --exact"]
 fn zsh_human_return_marker() {
-    let zsh = std::env::var_os("ZSH")
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .or_else(|| {
-            let p = PathBuf::from("/bin/zsh");
-            p.is_file().then_some(p)
-        })
-        .expect("zsh binary");
+    let require_zsh = std::env::var("AISH_0055_ZSH").is_ok();
+    let Some(zsh) = resolve_zsh_binary() else {
+        if require_zsh {
+            panic!("AISH_0055_ZSH=1 but zsh binary not found");
+        }
+        eprintln!("skipping zsh_human_return_marker: not under verify (set AISH_0055_ZSH=1)");
+        return;
+    };
     let home = private_temp_home();
     let result_file = home.path().join("result.json");
     let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))

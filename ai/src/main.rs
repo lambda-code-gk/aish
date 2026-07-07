@@ -1113,6 +1113,8 @@ fn run_agent_turn_core(
     let handoff_failure = Arc::new(std::sync::Mutex::new(
         None::<aibe_protocol::HumanHandoffFailure>,
     ));
+    let (handoff_failure_tx, handoff_failure_rx) =
+        mpsc::channel::<aibe_protocol::HumanHandoffFailure>();
 
     let use_client_tools = should_use_client_tool_stream(&request);
     let (tx, rx) = mpsc::channel();
@@ -1126,6 +1128,7 @@ fn run_agent_turn_core(
     let collaborative_meta_thread = collaborative_meta;
     let _cancel_requested_thread = Arc::clone(&cancel_requested);
     let handoff_failure_thread = Arc::clone(&handoff_failure);
+    let handoff_failure_tx_thread = handoff_failure_tx.clone();
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
         aibe_shell_exec.auto_approve_patterns.read_only,
@@ -1165,6 +1168,7 @@ fn run_agent_turn_core(
                                 *handoff_failure_thread
                                     .lock()
                                     .expect("handoff failure mutex") = Some(failure.clone());
+                                let _ = handoff_failure_tx_thread.send(failure.clone());
                                 return ShellExecApprovalDecision {
                                     approved: false,
                                     approval_origin:
@@ -1200,6 +1204,7 @@ fn run_agent_turn_core(
                                 *handoff_failure_thread
                                     .lock()
                                     .expect("handoff failure mutex") = Some(failure.clone());
+                                let _ = handoff_failure_tx_thread.send(failure.clone());
                                 ShellExecApprovalDecision {
                                     approved: false,
                                     approval_origin:
@@ -1387,8 +1392,13 @@ fn run_agent_turn_core(
         let _ = tx.send(response);
     });
 
+    drop(handoff_failure_tx);
+
     let timeout = timeout_secs.map(Duration::from_secs);
     let start = Instant::now();
+    let handoff_abort_wait = Duration::from_secs(5);
+    let mut pending_handoff_failure: Option<aibe_protocol::HumanHandoffFailure> = None;
+    let mut handoff_abort_deadline: Option<Instant> = None;
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
             if abort_reason.is_none() {
@@ -1403,6 +1413,30 @@ fn run_agent_turn_core(
                 let _ = cancel_client.cancel_turn(&turn_id);
             }
         }
+        if let Ok(failure) = handoff_failure_rx.try_recv() {
+            if pending_handoff_failure.is_none() {
+                pending_handoff_failure = Some(failure.clone());
+                *handoff_failure.lock().expect("handoff failure") = Some(failure);
+                abort_reason = Some(TurnAbortReason::HumanHandoffFailure);
+                let _ = cancel_client.cancel_turn(&turn_id);
+                handoff_abort_deadline = Some(Instant::now() + handoff_abort_wait);
+            }
+        }
+        if let (Some(deadline), Some(failure)) =
+            (handoff_abort_deadline, pending_handoff_failure.as_ref())
+        {
+            if Instant::now() >= deadline {
+                return Ok(TurnExecutionOutcome {
+                    response: ClientResponse::Error {
+                        id: turn_id.clone(),
+                        code: aibe_protocol::ErrorCode::ToolError,
+                        message: failure.message.clone(),
+                    },
+                    abort_reason,
+                    streamed: streamed.load(Ordering::SeqCst),
+                });
+            }
+        }
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(mut resp) => {
                 if matches!(
@@ -1411,13 +1445,19 @@ fn run_agent_turn_core(
                 ) {
                     continue;
                 }
-                if let Some(failure) = handoff_failure.lock().expect("handoff failure").take() {
+                if pending_handoff_failure.is_none() {
+                    if let Some(failure) = handoff_failure.lock().expect("handoff failure").take() {
+                        pending_handoff_failure = Some(failure);
+                        abort_reason = Some(TurnAbortReason::HumanHandoffFailure);
+                    }
+                }
+                if let Some(failure) = pending_handoff_failure.as_ref() {
                     abort_reason = Some(TurnAbortReason::HumanHandoffFailure);
                     if matches!(resp, ClientResponse::AgentTurnResult { .. }) {
                         resp = ClientResponse::Error {
                             id: turn_id.clone(),
                             code: aibe_protocol::ErrorCode::ToolError,
-                            message: failure.message,
+                            message: failure.message.clone(),
                         };
                     }
                 }
@@ -1429,6 +1469,17 @@ fn run_agent_turn_core(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if let Some(failure) = pending_handoff_failure {
+                    return Ok(TurnExecutionOutcome {
+                        response: ClientResponse::Error {
+                            id: turn_id.clone(),
+                            code: aibe_protocol::ErrorCode::ToolError,
+                            message: failure.message,
+                        },
+                        abort_reason: Some(TurnAbortReason::HumanHandoffFailure),
+                        streamed: streamed.load(Ordering::SeqCst),
+                    });
+                }
                 return Err(anyhow::anyhow!("agent turn worker disconnected"));
             }
         }

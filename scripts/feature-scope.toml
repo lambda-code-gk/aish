@@ -20,8 +20,8 @@ spec = "0055"
 status = "locked"
 scope_class = "feature"
 
-scope_revision = 2
-scope_change_reason = "0055 final fix: add handoff failure, invariant, timeout, UTF-8, PTY EOF ACs"
+scope_revision = 3
+scope_change_reason = "0055 convergence fix: invariant fail-closed, failure channel, E2E bounded I/O, audit separation"
 
 core_outcome = "同期型 collaborative human handoff（親 shell_exec を実 PTY human shell へ）"
 
@@ -80,6 +80,12 @@ locked_ac_ids = [
   "handoff_failure_cannot_finish_as_success",
   "terminal_disconnect_no_normal_return",
   "runtime_fallback_uid_isolated",
+  "collaborative_approval_without_payload_is_rejected",
+  "handoff_failure_server_receives_structured_error",
+  "handoff_failure_aborts_without_final_response",
+  "mock_server_panic_propagates",
+  "handoff_failure_audit_is_not_human_control_returned",
+  "zsh_supported_in_ci",
 ]
 
 [[features]]

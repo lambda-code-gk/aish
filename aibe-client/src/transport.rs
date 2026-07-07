@@ -33,6 +33,22 @@ pub struct ShellExecApprovalDecision {
     pub handoff_error: Option<aibe_protocol::HumanHandoffFailure>,
 }
 
+fn validate_handoff_error_fields(error: &aibe_protocol::HumanHandoffFailure) -> Result<(), String> {
+    if error.code.trim().is_empty() {
+        return Err("handoff_error.code must not be empty".into());
+    }
+    if error.code != "human_handoff_failed" {
+        return Err(format!(
+            "handoff_error.code must be human_handoff_failed, got {}",
+            error.code
+        ));
+    }
+    if error.message.trim().is_empty() {
+        return Err("handoff_error.message must not be empty".into());
+    }
+    Ok(())
+}
+
 /// `ShellExecApprovalDecision` の protocol invariant を検証する。
 pub fn validate_shell_exec_approval_decision(
     decision: &ShellExecApprovalDecision,
@@ -44,21 +60,29 @@ pub fn validate_shell_exec_approval_decision(
     if has_result && has_error {
         return Err("handoff_result and handoff_error cannot both be set".into());
     }
-    if !decision.approved && has_result {
-        return Err("approved=false with handoff_result is invalid".into());
-    }
-    if decision.approved && has_error {
-        return Err("approved=true with handoff_error is invalid".into());
-    }
     if !collaborative && (has_result || has_error) {
         return Err("handoff fields require CollaborativeHandoff origin".into());
     }
-    if collaborative && has_result && !decision.approved {
-        return Err("handoff success requires approved=true".into());
+
+    if collaborative {
+        return match (decision.approved, has_result, has_error) {
+            (true, true, false) => Ok(()),
+            (false, false, true) => decision
+                .handoff_error
+                .as_ref()
+                .map(validate_handoff_error_fields)
+                .unwrap_or(Ok(())),
+            (true, false, false) => {
+                Err("collaborative handoff success requires handoff_result".into())
+            }
+            (false, false, false) => {
+                Err("collaborative handoff failure requires handoff_error".into())
+            }
+            (false, true, _) => Err("handoff success requires approved=true".into()),
+            (true, _, true) => Err("handoff failure requires approved=false".into()),
+        };
     }
-    if collaborative && has_error && decision.approved {
-        return Err("handoff failure requires approved=false".into());
-    }
+
     Ok(())
 }
 
@@ -282,6 +306,11 @@ pub fn agent_turn_with_client_tools_on_stream(
                     command: command.clone(),
                     args: args.clone(),
                 });
+                if let Err(reason) = validate_shell_exec_approval_decision(&decision) {
+                    return Err(ClientError::Unexpected(format!(
+                        "invalid shell_exec approval decision: {reason}"
+                    )));
+                }
                 send_request(
                     &mut writer,
                     &ClientRequest::ShellExecApproval {
@@ -574,18 +603,19 @@ mod tests {
         };
         validate_shell_exec_approval_decision(&valid_normal).expect("normal approval");
 
+        let sample_handoff_result = HumanHandoffResult {
+            execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
+            requested_command: None,
+            requested_command_completion: RequestedCommandCompletion::Unknown,
+            human_shell_exit_code: None,
+            final_shell_cwd: None,
+            shell_log_range: None,
+            observation: None,
+        };
         let valid_handoff = ShellExecApprovalDecision {
             approved: true,
             approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
-            handoff_result: Some(HumanHandoffResult {
-                execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
-                requested_command: None,
-                requested_command_completion: RequestedCommandCompletion::Unknown,
-                human_shell_exit_code: None,
-                final_shell_cwd: None,
-                shell_log_range: None,
-                observation: None,
-            }),
+            handoff_result: Some(sample_handoff_result.clone()),
             handoff_error: None,
         };
         validate_shell_exec_approval_decision(&valid_handoff).expect("handoff success");
@@ -593,12 +623,77 @@ mod tests {
         let both_set = ShellExecApprovalDecision {
             approved: false,
             approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
-            handoff_result: Some(valid_handoff.handoff_result.unwrap()),
+            handoff_result: Some(sample_handoff_result.clone()),
             handoff_error: Some(HumanHandoffFailure {
                 code: "human_handoff_failed".into(),
                 message: "fail".into(),
             }),
         };
         assert!(validate_shell_exec_approval_decision(&both_set).is_err());
+
+        let collaborative_approved_without_result = ShellExecApprovalDecision {
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: None,
+            handoff_error: None,
+        };
+        assert!(
+            validate_shell_exec_approval_decision(&collaborative_approved_without_result).is_err()
+        );
+
+        let collaborative_denied_without_error = ShellExecApprovalDecision {
+            approved: false,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: None,
+            handoff_error: None,
+        };
+        assert!(
+            validate_shell_exec_approval_decision(&collaborative_denied_without_error).is_err()
+        );
+
+        let collaborative_success_requires_approved = ShellExecApprovalDecision {
+            approved: false,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: Some(sample_handoff_result.clone()),
+            handoff_error: None,
+        };
+        assert!(
+            validate_shell_exec_approval_decision(&collaborative_success_requires_approved)
+                .is_err()
+        );
+
+        let collaborative_failure_requires_denied = ShellExecApprovalDecision {
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: None,
+            handoff_error: Some(HumanHandoffFailure {
+                code: "human_handoff_failed".into(),
+                message: "fail".into(),
+            }),
+        };
+        assert!(
+            validate_shell_exec_approval_decision(&collaborative_failure_requires_denied).is_err()
+        );
+
+        let normal_approval_rejects_handoff_fields = ShellExecApprovalDecision {
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::UiYes,
+            handoff_result: Some(sample_handoff_result.clone()),
+            handoff_error: None,
+        };
+        assert!(
+            validate_shell_exec_approval_decision(&normal_approval_rejects_handoff_fields).is_err()
+        );
+
+        let empty_handoff_error_code = ShellExecApprovalDecision {
+            approved: false,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: None,
+            handoff_error: Some(HumanHandoffFailure {
+                code: String::new(),
+                message: "fail".into(),
+            }),
+        };
+        assert!(validate_shell_exec_approval_decision(&empty_handoff_error_code).is_err());
     }
 }

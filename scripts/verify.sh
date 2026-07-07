@@ -40,6 +40,12 @@ else
     run cargo test --workspace --exclude aibe-client -- --test-threads=1
     run cargo test -p aibe-client -- --test-threads=1
   fi
+
+  if ! command -v zsh >/dev/null 2>&1; then
+    echo "verify FAIL: zsh is required for 0055 zsh_supported_in_ci (install zsh package)" >&2
+    exit 1
+  fi
+  run env AISH_0055_ZSH=1 cargo test -p aish --test 0055_minimal_human_handoff zsh_human_return_marker -- --exact
 fi
 
 run ./scripts/check-architecture.sh

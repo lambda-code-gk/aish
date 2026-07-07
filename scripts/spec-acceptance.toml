@@ -2553,8 +2553,8 @@ spec = "0055"
 phase = 1
 id = "approval_decision_invariant"
 description = "ShellExecApprovalDecision の invariant を検証する"
-test = "invalid_approval_decision_is_rejected"
-file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
+test = "approval_decision_invariant_rejects_contradictions"
+file_glob = "aibe-client/src/transport.rs"
 pending = false
 
 [[cases]]
@@ -2627,4 +2627,58 @@ id = "runtime_fallback_uid_isolated"
 description = "/tmp fallback が UID 単位で分離される"
 test = "runtime_handoff_dir_fallback_uses_uid"
 file_glob = "ai/src/adapters/outbound/human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "collaborative_approval_without_payload_is_rejected"
+description = "CollaborativeHandoff で result/error なし decision を拒否する"
+test = "collaborative_approved_without_result_is_rejected"
+file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_server_receives_structured_error"
+description = "handoff 失敗時に mock server が structured error を受信する"
+test = "handoff_failure_server_receives_structured_error"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_aborts_without_final_response"
+description = "aibe 最終 response なしでも handoff 失敗で有限時間内に終了する"
+test = "handoff_failure_aborts_when_server_sends_no_final_response"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "mock_server_panic_propagates"
+description = "mock server thread の panic をテスト失敗へ伝播する"
+test = "mock_server_panic_propagates"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_audit_is_not_human_control_returned"
+description = "handoff 失敗の audit decision が human_control_returned にならない"
+test = "handoff_failure_audit_is_not_human_control_returned"
+file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "zsh_supported_in_ci"
+description = "zsh human shell return marker が CI で検証される"
+test = "zsh_human_return_marker"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
 pending = false
