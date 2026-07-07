@@ -195,16 +195,17 @@ struct ResolvedTurnSettings {
     collaborative: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TurnCancelSource {
+#[derive(Debug, Clone)]
+enum TurnAbortReason {
     Sigint,
     Timeout,
+    HumanHandoffFailure,
 }
 
 #[derive(Debug, Clone)]
 struct TurnExecutionOutcome {
     response: ClientResponse,
-    cancel_source: Option<TurnCancelSource>,
+    abort_reason: Option<TurnAbortReason>,
     streamed: bool,
 }
 
@@ -292,7 +293,7 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
     )?;
     Ok(exit_code_for_response(
         &response.response,
-        response.cancel_source,
+        response.abort_reason,
     ))
 }
 
@@ -343,7 +344,7 @@ fn run_chat(turn: TurnOptions) -> anyhow::Result<ExitCode> {
             None,
             Arc::clone(&shell_exec_state),
         )?;
-        let exit_code = exit_code_for_response(&outcome.response, outcome.cancel_source);
+        let exit_code = exit_code_for_response(&outcome.response, outcome.abort_reason);
         match &outcome.response {
             ClientResponse::AgentTurnResult {
                 assistant_message, ..
@@ -441,7 +442,7 @@ fn run_retry(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     )?;
     Ok(exit_code_for_response(
         &response.response,
-        response.cancel_source,
+        response.abort_reason,
     ))
 }
 
@@ -542,7 +543,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     )?;
     Ok(exit_code_for_response(
         &response.response,
-        response.cancel_source,
+        response.abort_reason,
     ))
 }
 
@@ -828,7 +829,7 @@ fn execute_turn(
 
     let TurnExecutionOutcome {
         response,
-        cancel_source,
+        abort_reason,
         streamed,
     } = response;
     let agent_turn_latency_ms = agent_turn_started.elapsed().as_millis() as u64;
@@ -932,7 +933,7 @@ fn execute_turn(
 
     Ok(TurnExecutionOutcome {
         response,
-        cancel_source,
+        abort_reason,
         streamed,
     })
 }
@@ -1108,7 +1109,10 @@ fn run_agent_turn_core(
     let cancel_guard = TurnCancelGuard::new().map_err(|e| anyhow::anyhow!("{e}"))?;
     let cancel_requested = Arc::clone(cancel_guard.flag());
     let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut cancel_source: Option<TurnCancelSource> = None;
+    let mut abort_reason: Option<TurnAbortReason> = None;
+    let handoff_failure = Arc::new(std::sync::Mutex::new(
+        None::<aibe_protocol::HumanHandoffFailure>,
+    ));
 
     let use_client_tools = should_use_client_tool_stream(&request);
     let (tx, rx) = mpsc::channel();
@@ -1120,7 +1124,8 @@ fn run_agent_turn_core(
     let silent_shell_exec_thread = silent_shell_exec;
     let collaborative_thread = collaborative;
     let collaborative_meta_thread = collaborative_meta;
-    let cancel_requested_thread = Arc::clone(&cancel_requested);
+    let _cancel_requested_thread = Arc::clone(&cancel_requested);
+    let handoff_failure_thread = Arc::clone(&handoff_failure);
     let aibe_shell_exec = load_shell_exec_approval();
     let auto_patterns = ai::domain::parse_shell_exec_auto_approve_patterns(
         aibe_shell_exec.auto_approve_patterns.read_only,
@@ -1153,16 +1158,19 @@ fn run_agent_turn_core(
                             Ok(dir) => dir,
                             Err(error) => {
                                 eprintln!("ai: failed to create handoff runtime dir: {error}");
-                                cancel_requested_thread.store(true, Ordering::SeqCst);
+                                let failure = aibe_protocol::HumanHandoffFailure {
+                                    code: "human_handoff_failed".into(),
+                                    message: error.to_string(),
+                                };
+                                *handoff_failure_thread
+                                    .lock()
+                                    .expect("handoff failure mutex") = Some(failure.clone());
                                 return ShellExecApprovalDecision {
                                     approved: false,
                                     approval_origin:
                                         aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
                                     handoff_result: None,
-                                    handoff_error: Some(aibe_protocol::HumanHandoffFailure {
-                                        code: "human_handoff_failed".into(),
-                                        message: error.to_string(),
-                                    }),
+                                    handoff_error: Some(failure),
                                 };
                             }
                         };
@@ -1185,16 +1193,19 @@ fn run_agent_turn_core(
                             },
                             Err(error) => {
                                 eprintln!("ai: collaborative handoff failed: {error}");
-                                cancel_requested_thread.store(true, Ordering::SeqCst);
+                                let failure = aibe_protocol::HumanHandoffFailure {
+                                    code: "human_handoff_failed".into(),
+                                    message: error.to_string(),
+                                };
+                                *handoff_failure_thread
+                                    .lock()
+                                    .expect("handoff failure mutex") = Some(failure.clone());
                                 ShellExecApprovalDecision {
                                     approved: false,
                                     approval_origin:
                                         aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
                                     handoff_result: None,
-                                    handoff_error: Some(aibe_protocol::HumanHandoffFailure {
-                                        code: "human_handoff_failed".into(),
-                                        message: error.to_string(),
-                                    }),
+                                    handoff_error: Some(failure),
                                 }
                             }
                         };
@@ -1380,29 +1391,39 @@ fn run_agent_turn_core(
     let start = Instant::now();
     loop {
         if cancel_requested.load(Ordering::SeqCst) {
-            if cancel_source.is_none() {
-                cancel_source = Some(TurnCancelSource::Sigint);
+            if abort_reason.is_none() {
+                abort_reason = Some(TurnAbortReason::Sigint);
             }
             let _ = cancel_client.cancel_turn(&turn_id);
         }
         if let Some(deadline) = timeout {
             if start.elapsed() >= deadline && !cancel_requested.load(Ordering::SeqCst) {
                 cancel_requested.store(true, Ordering::SeqCst);
-                cancel_source = Some(TurnCancelSource::Timeout);
+                abort_reason = Some(TurnAbortReason::Timeout);
                 let _ = cancel_client.cancel_turn(&turn_id);
             }
         }
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 if matches!(
                     resp,
                     ClientResponse::Progress { .. } | ClientResponse::AssistantStreaming { .. }
                 ) {
                     continue;
                 }
+                if let Some(failure) = handoff_failure.lock().expect("handoff failure").take() {
+                    abort_reason = Some(TurnAbortReason::HumanHandoffFailure);
+                    if matches!(resp, ClientResponse::AgentTurnResult { .. }) {
+                        resp = ClientResponse::Error {
+                            id: turn_id.clone(),
+                            code: aibe_protocol::ErrorCode::ToolError,
+                            message: failure.message,
+                        };
+                    }
+                }
                 return Ok(TurnExecutionOutcome {
                     response: resp,
-                    cancel_source,
+                    abort_reason,
                     streamed: streamed.load(Ordering::SeqCst),
                 });
             }
@@ -1583,12 +1604,15 @@ fn request_from_messages(
 
 fn exit_code_for_response(
     response: &ClientResponse,
-    cancel_source: Option<TurnCancelSource>,
+    abort_reason: Option<TurnAbortReason>,
 ) -> ExitCode {
+    if matches!(abort_reason, Some(TurnAbortReason::HumanHandoffFailure)) {
+        return ExitCode::from(5);
+    }
     match response {
         ClientResponse::AgentTurnResult { .. } => ExitCode::SUCCESS,
-        ClientResponse::Cancelled { .. } => match cancel_source {
-            Some(TurnCancelSource::Sigint) => ExitCode::from(130),
+        ClientResponse::Cancelled { .. } => match abort_reason {
+            Some(TurnAbortReason::Sigint) => ExitCode::from(130),
             _ => ExitCode::from(3),
         },
         ClientResponse::Error { code, .. } => match code {
@@ -3265,7 +3289,7 @@ mod cli_tests {
                     turn_id: "id".into(),
                     reason: Some("cancelled".into()),
                 },
-                Some(crate::TurnCancelSource::Sigint),
+                Some(crate::TurnAbortReason::Sigint),
             ),
             std::process::ExitCode::from(130)
         );

@@ -1,18 +1,28 @@
 #![cfg(unix)]
-//! 0055 full vertical PTY E2E: `ai` → mock aibe → human handoff → `aish` → PTY shell。
+//! 0055 transport E2E: `ai` → mock aibe → human handoff → `aish` → PTY shell。
+//! 実 aibe server の ShellExecTool 境界は通さない（aibe 側 integration test で担保）。
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, HandoffExecutionOutcome, ProtocolMessageOut,
     RequestedCommandCompletion, ShellExecApprovalOrigin,
 };
+
+fn e2e_timeout() -> Duration {
+    let secs = std::env::var("AISH_0055_E2E_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+    Duration::from_secs(secs.min(60))
+}
 
 struct DiagnosticLog {
     mock_requests: Vec<String>,
@@ -27,12 +37,13 @@ struct CollaborativeMockServer {
     socket_path: PathBuf,
     _dir: tempfile::TempDir,
     handle: Option<JoinHandle<()>>,
+    listener: Option<UnixListener>,
     log: Arc<Mutex<DiagnosticLog>>,
-    marker: PathBuf,
+    candidate_marker: PathBuf,
 }
 
 impl CollaborativeMockServer {
-    fn spawn(marker: PathBuf) -> Self {
+    fn spawn(candidate_marker: PathBuf) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
@@ -45,16 +56,41 @@ impl CollaborativeMockServer {
             aish_transcript_hint: String::new(),
             child_exit: None,
         }));
-        let log_thread = Arc::clone(&log);
-        let marker_thread = marker.clone();
+        Self {
+            socket_path,
+            _dir: dir,
+            handle: None,
+            listener: Some(listener),
+            log,
+            candidate_marker,
+        }
+    }
+
+    fn start_accept(&mut self) {
+        let listener = self.listener.take().expect("listener");
+        let log_thread = Arc::clone(&self.log);
+        let marker_thread = self.candidate_marker.clone();
+        listener.set_nonblocking(true).expect("set_nonblocking");
         let handle = thread::spawn(move || {
-            let Ok((stream, _)) = listener.accept() else {
-                return;
+            let deadline = Instant::now() + e2e_timeout();
+            let (stream, _) = loop {
+                if Instant::now() >= deadline {
+                    return;
+                }
+                match listener.accept() {
+                    Ok(conn) => break conn,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => return,
+                }
             };
             let mut writer = stream.try_clone().expect("clone");
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
-            reader.read_line(&mut line).expect("read agent_turn");
+            if read_line_with_deadline(&mut reader, &mut line, deadline).is_err() {
+                return;
+            }
             log_thread
                 .lock()
                 .expect("log")
@@ -96,7 +132,9 @@ impl CollaborativeMockServer {
             writer.flush().expect("flush");
 
             line.clear();
-            reader.read_line(&mut line).expect("read approval");
+            if read_line_with_deadline(&mut reader, &mut line, deadline).is_err() {
+                return;
+            }
             log_thread
                 .lock()
                 .expect("log")
@@ -150,23 +188,64 @@ impl CollaborativeMockServer {
             writeln!(writer, "{final_json}").expect("write final");
             writer.flush().expect("flush");
         });
-        Self {
-            socket_path,
-            _dir: dir,
-            handle: Some(handle),
-            log,
-            marker,
-        }
+        self.handle = Some(handle);
     }
 
-    fn join(mut self) -> DiagnosticLog {
+    fn join(mut self, deadline: Instant) -> DiagnosticLog {
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            while Instant::now() < deadline {
+                if handle.is_finished() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
         }
         Arc::try_unwrap(self.log)
             .ok()
             .and_then(|m| m.into_inner().ok())
             .expect("log mutex")
+    }
+}
+
+fn read_line_with_deadline(
+    reader: &mut BufReader<std::os::unix::net::UnixStream>,
+    line: &mut String,
+    deadline: Instant,
+) -> std::io::Result<()> {
+    while Instant::now() < deadline {
+        reader.get_mut().set_nonblocking(true)?;
+        match reader.read_line(line) {
+            Ok(0) => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "mock server read_line deadline exceeded",
+    ))
+}
+
+fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("wait output"),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("ai child timed out after {:?}", e2e_timeout());
+            }
+            Err(e) => panic!("wait child failed: {e}"),
+        }
     }
 }
 
@@ -209,7 +288,7 @@ shell_exec_approval = "ask"
 }
 
 fn fail_with_diagnostics(context: &str, log: DiagnosticLog) -> ! {
-    eprintln!("=== 0055 vertical E2E failure: {context} ===");
+    eprintln!("=== 0055 transport E2E failure: {context} ===");
     eprintln!("--- ai stderr ---\n{}", log.ai_stderr);
     eprintln!("--- aish transcript hint ---\n{}", log.aish_transcript_hint);
     eprintln!("--- mock aibe requests ---");
@@ -224,7 +303,7 @@ fn fail_with_diagnostics(context: &str, log: DiagnosticLog) -> ! {
         eprintln!("--- handoff result JSON ---\n{json}");
     }
     eprintln!("--- child exit status --- {:?}", log.child_exit);
-    panic!("0055 vertical E2E failed: {context}");
+    panic!("0055 transport E2E failed: {context}");
 }
 
 fn require_test_binary(env_key: &str, fallback_name: &str) -> PathBuf {
@@ -313,15 +392,23 @@ fn assert_runtime_handoff_cleaned(home: &Path) {
     }
 }
 
+struct HandoffRun {
+    output: std::process::Output,
+    server: CollaborativeMockServer,
+    deadline: Instant,
+}
+
 fn run_collaborative_handoff(
     ai_bin: &Path,
     aish_bin: &Path,
     home: &Path,
     work: &Path,
+    candidate_marker: PathBuf,
     shell_input: &[u8],
-) -> (std::process::Output, CollaborativeMockServer) {
-    let marker = work.join("handoff-marker");
-    let server = CollaborativeMockServer::spawn(marker);
+) -> HandoffRun {
+    let deadline = Instant::now() + e2e_timeout();
+    let mut server = CollaborativeMockServer::spawn(candidate_marker);
+    server.start_accept();
     let history_dir = home.join("history");
     fs::create_dir_all(&history_dir).expect("history");
     let ai_cfg = write_ai_config(home, &server.socket_path, &history_dir);
@@ -354,8 +441,12 @@ fn run_collaborative_handoff(
             .write_all(shell_input)
             .expect("write shell input to ai stdin");
     }
-    let output = child.wait_with_output().expect("wait ai");
-    (output, server)
+    let output = wait_child_with_timeout(child, deadline);
+    HandoffRun {
+        output,
+        server,
+        deadline,
+    }
 }
 
 #[test]
@@ -373,13 +464,19 @@ fn no_persistent_handoff_state_is_created() {
     let before_aibe = forbidden_snapshot(&aibe_root);
     let before_aish = forbidden_snapshot(&aish_log);
 
-    let (output, server) =
-        run_collaborative_handoff(&ai_bin, &aish_bin, home.path(), &work, b"exit\n");
-    let mut log = server.join();
-    log.ai_stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    log.child_exit = output.status.code();
+    let run = run_collaborative_handoff(
+        &ai_bin,
+        &aish_bin,
+        home.path(),
+        &work,
+        work.join("unused-candidate-marker"),
+        b"exit\n",
+    );
+    let mut log = run.server.join(run.deadline);
+    log.ai_stderr = String::from_utf8_lossy(&run.output.stderr).into_owned();
+    log.child_exit = run.output.status.code();
 
-    if !output.status.success() {
+    if !run.output.status.success() {
         fail_with_diagnostics("ai exited with failure", log);
     }
     if log.handoff_result_json.is_none() {
@@ -400,7 +497,7 @@ fn no_persistent_handoff_state_is_created() {
 }
 
 #[test]
-fn collaborative_handoff_full_vertical_pty_e2e() {
+fn ai_to_aish_handoff_transport_pty_e2e() {
     let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
     let aish_bin = require_test_binary("CARGO_BIN_EXE_aish", "aish");
     assert!(
@@ -412,45 +509,259 @@ fn collaborative_handoff_full_vertical_pty_e2e() {
     let home = tempfile::tempdir().expect("home");
     let work = home.path().join("work");
     fs::create_dir_all(&work).expect("work dir");
-    let marker = work.join("human-created-marker");
-    assert!(!marker.exists(), "marker must not exist before handoff");
-
-    let server = CollaborativeMockServer::spawn(marker.clone());
-    let history_dir = home.path().join("history");
-    fs::create_dir_all(&history_dir).expect("history");
-    let _ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
-    let _aibe_cfg = write_aibe_config(home.path());
+    let candidate_marker = work.join("candidate-marker");
+    let human_marker = work.join("human-marker");
+    let verdict_file = work.join("verdict.txt");
+    assert!(!candidate_marker.exists());
+    assert!(!human_marker.exists());
+    assert!(!verdict_file.exists());
 
     let shell_input = format!(
-        "test -f {} && exit 1\n touch {}\n exit\n",
-        shell_quote(marker.to_str().unwrap()),
-        shell_quote(marker.to_str().unwrap()),
+        "if test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
+        shell_quote(candidate_marker.to_str().unwrap()),
+        shell_quote(verdict_file.to_str().unwrap()),
+        shell_quote(verdict_file.to_str().unwrap()),
+        shell_quote(human_marker.to_str().unwrap()),
     );
 
-    let (output, server) = run_collaborative_handoff(
+    let run = run_collaborative_handoff(
         &ai_bin,
         &aish_bin,
         home.path(),
         &work,
+        candidate_marker.clone(),
         shell_input.as_bytes(),
     );
-    let mut log = server.join();
-    log.ai_stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    log.child_exit = output.status.code();
+    let mut log = run.server.join(run.deadline);
+    log.ai_stderr = String::from_utf8_lossy(&run.output.stderr).into_owned();
+    log.child_exit = run.output.status.code();
     log.aish_transcript_hint = log.handoff_result_json.clone().unwrap_or_default();
 
-    if !output.status.success() {
+    if !run.output.status.success() {
         fail_with_diagnostics("ai exited with failure", log);
     }
-    if !marker.exists() {
-        fail_with_diagnostics("human did not create marker file", log);
+    let verdict = fs::read_to_string(&verdict_file).unwrap_or_default();
+    if verdict.trim() != "not_auto_executed" {
+        fail_with_diagnostics("candidate command appears to have been auto-executed", log);
+    }
+    if !human_marker.exists() {
+        fail_with_diagnostics("human did not create human_marker file", log);
+    }
+    if candidate_marker.exists() {
+        fail_with_diagnostics("candidate_marker must not exist", log);
     }
     if log.handoff_result_json.is_none() {
         fail_with_diagnostics("mock aibe never received handoff_result", log);
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
     assert!(
         stdout.contains("handoff complete"),
         "unexpected stdout: {stdout}"
+    );
+}
+
+#[test]
+fn handoff_runtime_dir_failure_exits_nonzero() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let aish_bin = require_test_binary("CARGO_BIN_EXE_aish", "aish");
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+
+    let blocked = home.path().join("blocked-runtime");
+    fs::create_dir_all(&blocked).expect("blocked");
+    fs::write(blocked.join("aish"), b"not-a-directory").expect("block aish root");
+
+    let deadline = Instant::now() + e2e_timeout();
+    let mut server = CollaborativeMockServer::spawn(work.join("candidate"));
+    server.start_accept();
+    let history_dir = home.path().join("history");
+    fs::create_dir_all(&history_dir).expect("history");
+    let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
+    let aibe_cfg = write_aibe_config(home.path());
+    let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
+
+    let output = wait_child_with_timeout(
+        Command::new(&ai_bin)
+            .args([
+                "ask",
+                "--collaborative",
+                "--quiet",
+                "--no-start",
+                "verify handoff failure",
+            ])
+            .current_dir(&work)
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("AISH_CONFIG", &aish_cfg)
+            .env("HOME", home.path())
+            .env("AISH_BIN", &aish_bin)
+            .env("XDG_RUNTIME_DIR", &blocked)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn ai"),
+        deadline,
+    );
+    let log = server.join(deadline);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "handoff runtime failure must exit non-zero, stderr={stderr}"
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(130),
+        "handoff failure must not look like SIGINT"
+    );
+    assert!(
+        stderr.contains("human_handoff_failed") || stderr.contains("handoff runtime dir"),
+        "stderr must mention handoff failure: {stderr}"
+    );
+    assert!(
+        !stderr.contains("shell_exec rejected by user"),
+        "handoff failure must not be reported as user denial"
+    );
+    let _ = log;
+}
+
+#[test]
+fn handoff_launcher_failure_is_not_sigint() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let deadline = Instant::now() + e2e_timeout();
+    let mut server = CollaborativeMockServer::spawn(work.join("candidate"));
+    server.start_accept();
+    let history_dir = home.path().join("history");
+    fs::create_dir_all(&history_dir).expect("history");
+    let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
+    let aibe_cfg = write_aibe_config(home.path());
+    let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
+
+    let missing_aish = work.join("missing-aish-binary");
+    let output = wait_child_with_timeout(
+        Command::new(&ai_bin)
+            .args([
+                "ask",
+                "--collaborative",
+                "--quiet",
+                "--no-start",
+                "verify launcher failure",
+            ])
+            .current_dir(&work)
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("AISH_CONFIG", &aish_cfg)
+            .env("HOME", home.path())
+            .env("AISH_BIN", &missing_aish)
+            .env("XDG_RUNTIME_DIR", home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn ai"),
+        deadline,
+    );
+    let _ = server.join(deadline);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert_ne!(output.status.code(), Some(130));
+    assert!(
+        stderr.contains("human_handoff_failed") || stderr.contains("collaborative handoff failed"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn handoff_failure_cannot_finish_as_success() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let deadline = Instant::now() + e2e_timeout();
+    let dir = tempfile::tempdir().expect("sock dir");
+    let socket_path = dir.path().join("aibe.sock");
+    let listener = UnixListener::bind(&socket_path).expect("bind");
+    let handle = thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut writer = stream.try_clone().expect("clone");
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        let _ = reader.read_line(&mut line);
+        let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse");
+        let ClientRequest::AgentTurn { id, .. } = req else {
+            return;
+        };
+        let prompt = ClientResponse::ShellExecApprovalPrompt {
+            id: "p1".into(),
+            turn_id: id.clone(),
+            tool_call_id: "call1".into(),
+            command: "true".into(),
+            args: vec![],
+        };
+        writeln!(writer, "{}", serde_json::to_string(&prompt).unwrap()).unwrap();
+        line.clear();
+        let _ = reader.read_line(&mut line);
+        let final_resp = ClientResponse::AgentTurnResult {
+            id,
+            status: AgentTurnStatus::Ok,
+            assistant_message: ProtocolMessageOut {
+                role: "assistant".into(),
+                content: "should not win".into(),
+            },
+            tool_calls: vec![],
+        };
+        writeln!(writer, "{}", serde_json::to_string(&final_resp).unwrap()).unwrap();
+    });
+
+    let history_dir = home.path().join("history");
+    fs::create_dir_all(&history_dir).expect("history");
+    let ai_cfg = write_ai_config(home.path(), &socket_path, &history_dir);
+    let aibe_cfg = write_aibe_config(home.path());
+    let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
+    let missing_aish = work.join("missing-aish");
+
+    let output = wait_child_with_timeout(
+        Command::new(&ai_bin)
+            .args([
+                "ask",
+                "--collaborative",
+                "--quiet",
+                "--no-start",
+                "verify cannot succeed",
+            ])
+            .current_dir(&work)
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("AISH_CONFIG", &aish_cfg)
+            .env("HOME", home.path())
+            .env("AISH_BIN", &missing_aish)
+            .env("XDG_RUNTIME_DIR", home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn ai"),
+        deadline,
+    );
+    let _ = handle.join();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("should not win"),
+        "handoff failure must not finish as successful assistant output"
+    );
+}
+
+#[test]
+fn e2e_has_bounded_timeout() {
+    assert!(
+        e2e_timeout() <= Duration::from_secs(60),
+        "E2E timeout must be bounded"
     );
 }

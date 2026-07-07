@@ -33,6 +33,35 @@ pub struct ShellExecApprovalDecision {
     pub handoff_error: Option<aibe_protocol::HumanHandoffFailure>,
 }
 
+/// `ShellExecApprovalDecision` の protocol invariant を検証する。
+pub fn validate_shell_exec_approval_decision(
+    decision: &ShellExecApprovalDecision,
+) -> Result<(), String> {
+    let has_result = decision.handoff_result.is_some();
+    let has_error = decision.handoff_error.is_some();
+    let collaborative = decision.approval_origin == ShellExecApprovalOrigin::CollaborativeHandoff;
+
+    if has_result && has_error {
+        return Err("handoff_result and handoff_error cannot both be set".into());
+    }
+    if !decision.approved && has_result {
+        return Err("approved=false with handoff_result is invalid".into());
+    }
+    if decision.approved && has_error {
+        return Err("approved=true with handoff_error is invalid".into());
+    }
+    if !collaborative && (has_result || has_error) {
+        return Err("handoff fields require CollaborativeHandoff origin".into());
+    }
+    if collaborative && has_result && !decision.approved {
+        return Err("handoff success requires approved=true".into());
+    }
+    if collaborative && has_error && decision.approved {
+        return Err("handoff failure requires approved=false".into());
+    }
+    Ok(())
+}
+
 /// write-like tool 承認 prompt の内容。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolApprovalPrompt {
@@ -528,5 +557,48 @@ mod tests {
             ClientResponse::AgentTurnResult { .. } => {}
             other => panic!("expected prompt response, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn approval_decision_invariant_rejects_contradictions() {
+        use aibe_protocol::{
+            HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult,
+            RequestedCommandCompletion, ShellExecApprovalOrigin,
+        };
+
+        let valid_normal = ShellExecApprovalDecision {
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::UiYes,
+            handoff_result: None,
+            handoff_error: None,
+        };
+        validate_shell_exec_approval_decision(&valid_normal).expect("normal approval");
+
+        let valid_handoff = ShellExecApprovalDecision {
+            approved: true,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: Some(HumanHandoffResult {
+                execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
+                requested_command: None,
+                requested_command_completion: RequestedCommandCompletion::Unknown,
+                human_shell_exit_code: None,
+                final_shell_cwd: None,
+                shell_log_range: None,
+                observation: None,
+            }),
+            handoff_error: None,
+        };
+        validate_shell_exec_approval_decision(&valid_handoff).expect("handoff success");
+
+        let both_set = ShellExecApprovalDecision {
+            approved: false,
+            approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+            handoff_result: Some(valid_handoff.handoff_result.unwrap()),
+            handoff_error: Some(HumanHandoffFailure {
+                code: "human_handoff_failed".into(),
+                message: "fail".into(),
+            }),
+        };
+        assert!(validate_shell_exec_approval_decision(&both_set).is_err());
     }
 }

@@ -20,8 +20,8 @@ spec = "0055"
 status = "locked"
 scope_class = "feature"
 
-scope_revision = 1
-scope_change_reason = "minimal human handoff re-implementation scope lock"
+scope_revision = 2
+scope_change_reason = "0055 final fix: add handoff failure, invariant, timeout, UTF-8, PTY EOF ACs"
 
 core_outcome = "同期型 collaborative human handoff（親 shell_exec を実 PTY human shell へ）"
 
@@ -68,6 +68,18 @@ locked_ac_ids = [
   "runtime_handoff_dir_permissions",
   "handoff_result_file_permissions",
   "shell_log_tail_bounded",
+  "handoff_failure_is_not_user_denial",
+  "handoff_failure_exits_nonzero",
+  "handoff_failure_is_not_sigint",
+  "approval_decision_invariant",
+  "stdin_eof_does_not_synthesize_ctrl_d",
+  "parent_request_truncate_is_utf8_safe",
+  "e2e_has_bounded_timeout",
+  "aibe_handoff_result_becomes_synthetic_tool_result",
+  "non_collaborative_ai_uses_normal_approval_protocol",
+  "handoff_failure_cannot_finish_as_success",
+  "terminal_disconnect_no_normal_return",
+  "runtime_fallback_uid_isolated",
 ]
 
 [[features]]

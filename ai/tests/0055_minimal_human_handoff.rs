@@ -5,14 +5,11 @@ use std::sync::{Arc, Mutex};
 
 use ai::adapters::outbound::ProcessEnvironmentObserver;
 use ai::application::{HumanHandoffRequest, RunSynchronousHumanHandoff};
-use ai::domain::{build_suggested_command, HANDOFF_ENV_KEYS};
+use ai::domain::HANDOFF_ENV_KEYS;
 use ai::ports::outbound::{
     HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
 };
-use aibe_protocol::{
-    HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion,
-    ShellExecApprovalOrigin,
-};
+use aibe_protocol::{HandoffExecutionOutcome, RequestedCommandCompletion};
 
 #[derive(Default)]
 struct TestLauncher {
@@ -183,25 +180,6 @@ fn collaborative_flag_intercepts_parent_shell_exec() {
 }
 
 #[test]
-fn parent_receives_human_control_returned() {
-    let launcher = TestLauncher::default();
-    let observer = ProcessEnvironmentObserver::default();
-    let service = RunSynchronousHumanHandoff::new(&launcher, &observer);
-    let dir = tempfile::tempdir().unwrap();
-    let result = service
-        .execute(HumanHandoffRequest {
-            parent_request_summary: "summary".into(),
-            command: "echo".into(),
-            args: vec!["hi".into()],
-            cwd: dir.path().to_path_buf(),
-            runtime_dir: dir.path().join("runtime"),
-        })
-        .expect("handoff");
-    assert_eq!(result.requested_command.as_deref(), Some("'echo' 'hi'"));
-    assert!(result.observation.is_some());
-}
-
-#[test]
 fn human_shell_starts_in_requested_cwd() {
     let launcher = TestLauncher::default();
     let observer = ProcessEnvironmentObserver::default();
@@ -220,23 +198,4 @@ fn human_shell_starts_in_requested_cwd() {
         .expect("handoff");
     let call = launcher.calls.lock().unwrap().pop().unwrap();
     assert_eq!(call.cwd, cwd);
-}
-
-#[test]
-fn normal_shell_exec_is_unchanged() {
-    let text = build_suggested_command("echo", &["ok".into()]);
-    assert_eq!(text, "'echo' 'ok'");
-    assert_ne!(
-        ShellExecApprovalOrigin::UiYes,
-        ShellExecApprovalOrigin::CollaborativeHandoff
-    );
-    let _dto = HumanHandoffResult {
-        execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
-        requested_command: None,
-        requested_command_completion: RequestedCommandCompletion::Unknown,
-        human_shell_exit_code: None,
-        final_shell_cwd: None,
-        shell_log_range: None,
-        observation: None,
-    };
 }

@@ -15,6 +15,7 @@ use crate::domain::{Capability, ExecutedToolCall, ShellExecApprovalOutcome, Tool
 use crate::ports::outbound::{
     CommandPolicy, ExternalCommandConfig, ShellExecApprovalMode, ToolExecutionContext, ToolExecutor,
 };
+use aibe_client::validate_shell_exec_approval_decision;
 use aibe_protocol::ShellExecApprovalOrigin;
 
 use super::subprocess::{run_subprocess, ShellRunOutcome};
@@ -248,6 +249,27 @@ impl ToolExecutor for ShellExecTool {
                     );
                 };
                 approval_origin = Some(decision.approval_origin);
+                if let Err(reason) = validate_shell_exec_approval_decision(&decision) {
+                    let msg = format!("invalid shell_exec approval decision: {reason}");
+                    return finish_shell_exec(
+                        ExecutedToolCall::err(
+                            id.clone(),
+                            self.name(),
+                            args_value,
+                            "invalid_approval_decision",
+                            &msg,
+                        ),
+                        ToolResult {
+                            tool_call_id: id,
+                            content: msg,
+                            is_error: true,
+                        },
+                        approval_mode,
+                        ShellExecApprovalOutcome::ApprovalUnavailable,
+                        external_name,
+                        approval_origin,
+                    );
+                }
                 if let Some(handoff_result) = decision.handoff_result {
                     let body = serde_json::to_string(&handoff_result).unwrap_or_else(|_| {
                         "{\"execution_outcome\":\"human_control_returned\"}".into()
@@ -680,5 +702,245 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("timed out"));
         assert_eq!(record.error.as_deref(), Some("timeout"));
+    }
+
+    #[tokio::test]
+    async fn normal_shell_exec_is_unchanged() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::ShellExecApprovalOrigin;
+
+        struct ApproveGate;
+
+        #[async_trait]
+        impl ShellExecApprovalGate for ApproveGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: true,
+                    approval_origin: ShellExecApprovalOrigin::UiYes,
+                    handoff_result: None,
+                    handoff_error: None,
+                })
+            }
+        }
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"))
+                .with_turn_id("turn-1")
+                .with_approval_gate(Arc::new(ApproveGate));
+        let args = json!({ "command": "echo", "args": ["ok"] });
+
+        let (record, result) = tool.execute("tc1", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(result.content.contains("exit_code: 0"));
+        assert!(result.content.contains("stdout:"));
+        assert!(result.content.contains("ok"));
+        assert_eq!(record.error, None);
+        assert_eq!(record.decision.as_deref(), Some("executed"));
+    }
+
+    #[tokio::test]
+    async fn collaborative_handoff_success_becomes_synthetic_tool_result() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::{
+            HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion,
+            ShellExecApprovalOrigin,
+        };
+
+        struct HandoffGate {
+            observation_json: String,
+        }
+
+        #[async_trait]
+        impl ShellExecApprovalGate for HandoffGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: true,
+                    approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+                    handoff_result: Some(HumanHandoffResult {
+                        execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
+                        requested_command: Some("'echo' 'hi'".into()),
+                        requested_command_completion: RequestedCommandCompletion::Unknown,
+                        human_shell_exit_code: Some(0),
+                        final_shell_cwd: Some("/tmp".into()),
+                        shell_log_range: None,
+                        observation: Some(serde_json::from_str(&self.observation_json).unwrap()),
+                    }),
+                    handoff_error: None,
+                })
+            }
+        }
+
+        let observation = serde_json::json!({
+            "cwd_exists": true,
+            "cwd": "/tmp",
+            "shell_log_tail": "human ran commands"
+        });
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["sleep".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let ctx = shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("cwd"))
+            .with_collaborative_handoff(true)
+            .with_turn_id("turn-handoff")
+            .with_approval_gate(Arc::new(HandoffGate {
+                observation_json: observation.to_string(),
+            }));
+        let args = json!({ "command": "sleep", "args": ["30"] });
+
+        let (record, result) = tool.execute("tc-handoff", &args, 5000, &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(record.error, None);
+        assert_eq!(record.decision.as_deref(), Some("human_control_returned"));
+        assert!(result.content.contains("human_control_returned"));
+        assert!(result.content.contains("requested_command_completion"));
+        assert!(result.content.contains("unknown"));
+        assert!(result.content.contains(
+            "shell exit code does not prove that the requested command ran or succeeded"
+        ));
+        assert!(result.content.contains("human ran commands"));
+        assert!(!result.content.contains("exit_code: 0"));
+    }
+
+    #[tokio::test]
+    async fn collaborative_handoff_failure_is_not_user_denial() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::{HumanHandoffFailure, ShellExecApprovalOrigin};
+
+        struct HandoffFailGate;
+
+        #[async_trait]
+        impl ShellExecApprovalGate for HandoffFailGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: false,
+                    approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
+                    handoff_result: None,
+                    handoff_error: Some(HumanHandoffFailure {
+                        code: "human_handoff_failed".into(),
+                        message: "launcher failed".into(),
+                    }),
+                })
+            }
+        }
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["sleep".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let ctx = shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("cwd"))
+            .with_collaborative_handoff(true)
+            .with_turn_id("turn-handoff-fail")
+            .with_approval_gate(Arc::new(HandoffFailGate));
+        let args = json!({ "command": "sleep", "args": ["30"] });
+
+        let (record, result) = tool.execute("tc-handoff-fail", &args, 5000, &ctx).await;
+        assert!(result.is_error);
+        assert_eq!(record.error.as_deref(), Some("human_handoff_failed"));
+        assert_eq!(record.decision.as_deref(), Some("human_control_returned"));
+        assert!(!result.content.contains("rejected by user"));
+        assert!(!result.content.contains("exit_code:"));
+    }
+
+    #[tokio::test]
+    async fn invalid_approval_decision_is_rejected() {
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        use crate::ports::outbound::ShellExecApprovalGate;
+        use aibe_client::ShellExecApprovalDecision;
+        use aibe_protocol::{
+            HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult,
+            RequestedCommandCompletion, ShellExecApprovalOrigin,
+        };
+
+        struct InvalidGate;
+
+        #[async_trait]
+        impl ShellExecApprovalGate for InvalidGate {
+            async fn request_shell_exec_approval(
+                &self,
+                _tool_call_id: &str,
+                _command: &str,
+                _args: &[String],
+            ) -> Option<ShellExecApprovalDecision> {
+                Some(ShellExecApprovalDecision {
+                    approved: true,
+                    approval_origin: ShellExecApprovalOrigin::UiYes,
+                    handoff_result: Some(HumanHandoffResult {
+                        execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
+                        requested_command: None,
+                        requested_command_completion: RequestedCommandCompletion::Unknown,
+                        human_shell_exit_code: None,
+                        final_shell_cwd: None,
+                        shell_log_range: None,
+                        observation: None,
+                    }),
+                    handoff_error: Some(HumanHandoffFailure {
+                        code: "human_handoff_failed".into(),
+                        message: "contradiction".into(),
+                    }),
+                })
+            }
+        }
+
+        let policy = Arc::new(ConfigAllowlistPolicy::new(ShellExecConfig {
+            enabled: true,
+            allowed_commands: vec!["echo".into()],
+            approval: ShellExecApprovalMode::Ask,
+            ..Default::default()
+        }));
+        let tool = ShellExecTool::new(policy, 4096, Vec::new());
+        let ctx =
+            shell_ctx(ClientCwd::new(std::env::current_dir().expect("cwd")).expect("absolute cwd"))
+                .with_turn_id("turn-invalid")
+                .with_approval_gate(Arc::new(InvalidGate));
+        let args = json!({ "command": "echo", "args": ["hi"] });
+
+        let (record, result) = tool.execute("tc-invalid", &args, 5000, &ctx).await;
+        assert!(result.is_error);
+        assert_eq!(record.error.as_deref(), Some("invalid_approval_decision"));
+        assert!(result
+            .content
+            .contains("invalid shell_exec approval decision"));
     }
 }

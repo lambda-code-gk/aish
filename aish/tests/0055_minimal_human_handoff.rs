@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -126,11 +126,8 @@ fn bash_human_return_marker() {
 }
 
 #[test]
-#[ignore = "requires zsh at /bin/zsh or ZSH env; run with AISH_0055_ZSH=1"]
+#[ignore = "requires zsh at /bin/zsh or ZSH env; run: AISH_0055_ZSH=1 cargo test -p aish --test 0055_minimal_human_handoff zsh_human_return_marker -- --ignored --exact"]
 fn zsh_human_return_marker() {
-    if std::env::var_os("AISH_0055_ZSH").is_none() {
-        return;
-    }
     let zsh = std::env::var_os("ZSH")
         .map(PathBuf::from)
         .filter(|p| p.is_file())
@@ -310,4 +307,60 @@ fn handoff_result_file_is_0600() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600, "result.json must be 0600");
+}
+
+#[test]
+fn terminal_disconnect_does_not_create_normal_return_marker() {
+    let home = private_temp_home();
+    let result_file = home.path().join("result.json");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
+        .args(["human-shell", "--result-file"])
+        .arg(&result_file)
+        .env("HOME", home.path())
+        .env("SHELL", "/bin/bash")
+        .env("AISH_CONTROL_MODE", "human-shell")
+        .env("AISH_HANDOFF_PARENT_REQUEST", "disconnect test")
+        .env("AISH_HANDOFF_SUGGESTED_COMMAND", "true")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    drop(child.stdin.take());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let output: Option<std::process::Output> = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break Some(child.wait_with_output().unwrap()),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Err(err) => panic!("wait failed: {err}"),
+        }
+    };
+    if let Some(output) = output {
+        if output.status.success() && result_file.is_file() {
+            let result: aish::human_shell::HumanShellResult =
+                serde_json::from_str(&std::fs::read_to_string(&result_file).unwrap()).unwrap();
+            assert!(
+                !result.normal_return,
+                "stdin EOF must not synthesize Ctrl+D normal return"
+            );
+        } else {
+            assert!(
+                !result_file.is_file(),
+                "disconnect must not write a normal-return result file"
+            );
+        }
+    } else {
+        assert!(
+            !result_file.is_file(),
+            "hung shell must not have written normal-return marker"
+        );
+    }
 }

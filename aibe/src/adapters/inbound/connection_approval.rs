@@ -10,7 +10,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Instant};
 
-use aibe_client::ShellExecApprovalDecision;
+use aibe_client::{validate_shell_exec_approval_decision, ShellExecApprovalDecision};
 use aibe_protocol::{ClientRequest, ClientResponse, ToolRiskClass};
 
 use crate::ports::outbound::{
@@ -105,12 +105,17 @@ impl ShellExecApprovalGate for ConnectionApprovalGate {
             };
 
             if id == prompt_id && turn_id == self.turn_id && tc_id == tool_call_id {
-                return Some(ShellExecApprovalDecision {
+                let decision = ShellExecApprovalDecision {
                     approved,
                     approval_origin,
                     handoff_result,
                     handoff_error,
-                });
+                };
+                if let Err(reason) = validate_shell_exec_approval_decision(&decision) {
+                    tracing::warn!("invalid shell_exec approval decision: {reason}");
+                    return None;
+                }
+                return Some(decision);
             }
             return None;
         }

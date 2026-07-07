@@ -766,14 +766,7 @@ fn relay_stdin_to_pty(stdin_fd: RawFd, stdin_master: RawFd, shutdown_read_fd: Ra
                 Ok(n) => n,
                 Err(_) => break,
             };
-            if n == 0 {
-                if unsafe { libc::isatty(stdin_fd) } != 0 {
-                    // raw TTY では Ctrl+D が read(0) になる。PTY 側へ EOT を渡して shell を終了させる。
-                    let _ = write_all_fd(stdin_master, &[0x04]);
-                }
-                break;
-            }
-            if n < 0 {
+            if n <= 0 {
                 break;
             }
             if !write_all_fd(stdin_master, &buf[..n as usize]) {
@@ -1539,6 +1532,54 @@ mod tests {
             .read_to_string(&mut output)
             .expect("read pty output");
         assert_eq!(output, "hello");
+    }
+
+    #[test]
+    fn stdin_byte_eot_is_forwarded_to_pty() {
+        let (input_read, input_write) = pipe_pair();
+        let (shutdown_read, shutdown_write) = open_shutdown_pipe().expect("shutdown pipe");
+        let (pty_read, pty_write) = pipe_pair();
+
+        let relay_handle = thread::spawn(move || {
+            relay_stdin_to_pty(input_read, pty_write, shutdown_read);
+        });
+
+        {
+            let mut input_file = unsafe { std::fs::File::from_raw_fd(input_write) };
+            input_file.write_all(&[0x04]).expect("write EOT");
+        }
+        close_raw_fd(input_write);
+
+        relay_handle.join().expect("relay thread panicked");
+        close_raw_fd(shutdown_write);
+
+        let mut output = Vec::new();
+        unsafe { std::fs::File::from_raw_fd(pty_read) }
+            .read_to_end(&mut output)
+            .expect("read pty output");
+        assert_eq!(output, vec![0x04]);
+    }
+
+    #[test]
+    fn stdin_eof_does_not_synthesize_eot() {
+        let (input_read, input_write) = pipe_pair();
+        let (shutdown_read, shutdown_write) = open_shutdown_pipe().expect("shutdown pipe");
+        let (pty_read, pty_write) = pipe_pair();
+
+        let relay_handle = thread::spawn(move || {
+            relay_stdin_to_pty(input_read, pty_write, shutdown_read);
+        });
+
+        close_raw_fd(input_write);
+
+        relay_handle.join().expect("relay thread panicked");
+        close_raw_fd(shutdown_write);
+
+        let mut output = Vec::new();
+        unsafe { std::fs::File::from_raw_fd(pty_read) }
+            .read_to_end(&mut output)
+            .expect("read pty output");
+        assert!(output.is_empty(), "EOF must not synthesize EOT");
     }
 
     #[test]

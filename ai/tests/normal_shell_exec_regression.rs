@@ -5,18 +5,26 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut, ShellExecApprovalOrigin,
 };
 
+fn regression_timeout() -> Duration {
+    let secs = std::env::var("AISH_0055_E2E_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+    Duration::from_secs(secs.min(60))
+}
+
 struct NormalShellExecMock {
     socket_path: std::path::PathBuf,
     _dir: tempfile::TempDir,
     handle: Option<JoinHandle<()>>,
-    human_shell_called: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl NormalShellExecMock {
@@ -25,10 +33,21 @@ impl NormalShellExecMock {
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).expect("bind");
-        let human_shell_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let called_flag = std::sync::Arc::clone(&human_shell_called);
+        let deadline = Instant::now() + regression_timeout();
         let handle = thread::spawn(move || {
-            let (stream, _) = listener.accept().expect("accept");
+            listener.set_nonblocking(true).expect("set_nonblocking");
+            let (stream, _) = loop {
+                if Instant::now() >= deadline {
+                    panic!("mock server accept timed out");
+                }
+                match listener.accept() {
+                    Ok(conn) => break conn,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(e) => panic!("accept failed: {e}"),
+                }
+            };
             let mut writer = stream.try_clone().expect("clone");
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
@@ -55,7 +74,7 @@ impl NormalShellExecMock {
             reader.read_line(&mut line).expect("read approval");
             let approval: ClientRequest = serde_json::from_str(line.trim()).expect("approval");
             let ClientRequest::ShellExecApproval {
-                approved: _,
+                approved: _approval_approved,
                 approval_origin,
                 handoff_result,
                 handoff_error,
@@ -70,7 +89,6 @@ impl NormalShellExecMock {
             );
             assert!(handoff_result.is_none());
             assert!(handoff_error.is_none());
-            called_flag.store(false, std::sync::atomic::Ordering::SeqCst);
 
             let result = ClientResponse::AgentTurnResult {
                 id,
@@ -87,15 +105,35 @@ impl NormalShellExecMock {
             socket_path,
             _dir: dir,
             handle: Some(handle),
-            human_shell_called,
+        }
+    }
+
+    fn join_with_timeout(mut self) {
+        if let Some(handle) = self.handle.take() {
+            let deadline = Instant::now() + regression_timeout();
+            while Instant::now() < deadline {
+                if handle.is_finished() {
+                    let _ = handle.join();
+                    return;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            panic!("normal shell regression mock server join timed out");
         }
     }
 }
 
-impl Drop for NormalShellExecMock {
-    fn drop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("wait output"),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("ai child timed out");
+            }
+            Err(e) => panic!("wait child failed: {e}"),
         }
     }
 }
@@ -114,7 +152,7 @@ fn normal_shell_exec_tier_classification_unchanged() {
 }
 
 #[test]
-fn normal_shell_exec_path_uses_approval_without_human_shell() {
+fn non_collaborative_ai_uses_normal_approval_protocol() {
     let server = NormalShellExecMock::spawn();
     let home = tempfile::tempdir().expect("home");
     let history_dir = home.path().join("history");
@@ -146,30 +184,32 @@ shell_exec_approval = "ask"
     )
     .expect("aibe config");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
-        .env("AI_CONFIG", &ai_cfg)
-        .env("AIBE_CONFIG", &aibe_cfg)
-        .env("HOME", home.path())
-        .env(
-            "AISH_BIN",
-            Path::new(env!("CARGO_BIN_EXE_ai"))
-                .parent()
-                .unwrap()
-                .join("aish"),
-        )
-        .args(["ask", "--quiet", "--no-start", "run echo"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .expect("run ai");
+    let deadline = Instant::now() + regression_timeout();
+    let output = wait_child_with_timeout(
+        Command::new(env!("CARGO_BIN_EXE_ai"))
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("HOME", home.path())
+            .env(
+                "AISH_BIN",
+                Path::new(env!("CARGO_BIN_EXE_ai"))
+                    .parent()
+                    .unwrap()
+                    .join("aish"),
+            )
+            .args(["ask", "--quiet", "--no-start", "run echo"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn ai"),
+        deadline,
+    );
+    server.join_with_timeout();
 
     assert!(
-        out.status.success(),
+        output.status.success(),
         "stderr={}",
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!server
-        .human_shell_called
-        .load(std::sync::atomic::Ordering::SeqCst));
 }

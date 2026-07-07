@@ -271,11 +271,14 @@ fn strip_handoff_environment(command: &mut Command) {
 }
 
 pub fn create_runtime_handoff_dir() -> std::io::Result<PathBuf> {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("TMPDIR").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    let aish_root = base.join("aish");
+    let aish_root = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        PathBuf::from(dir).join("aish")
+    } else if let Some(dir) = std::env::var_os("TMPDIR") {
+        PathBuf::from(dir).join("aish")
+    } else {
+        let uid = unsafe { libc::getuid() };
+        PathBuf::from(format!("/tmp/aish-{uid}"))
+    };
     ensure_dir_0700(&aish_root)?;
     ensure_private_dir_owned_0700(&aish_root)?;
     let dir = aish_root.join(format!(
@@ -392,6 +395,29 @@ mod tests {
         let aish_root = dir.path().join("aish");
         let root_mode = std::fs::metadata(&aish_root).unwrap().permissions().mode() & 0o777;
         assert_eq!(root_mode, 0o700);
+    }
+
+    #[test]
+    fn runtime_handoff_dir_fallback_uses_uid() {
+        let saved_xdg = std::env::var_os("XDG_RUNTIME_DIR");
+        let saved_tmp = std::env::var_os("TMPDIR");
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        std::env::remove_var("TMPDIR");
+        let uid = unsafe { libc::getuid() };
+        let expected_root = PathBuf::from(format!("/tmp/aish-{uid}"));
+        let handoff = create_runtime_handoff_dir().expect("runtime dir");
+        assert!(
+            handoff.starts_with(&expected_root),
+            "handoff={} expected_root={}",
+            handoff.display(),
+            expected_root.display()
+        );
+        if let Some(dir) = saved_xdg {
+            std::env::set_var("XDG_RUNTIME_DIR", dir);
+        }
+        if let Some(dir) = saved_tmp {
+            std::env::set_var("TMPDIR", dir);
+        }
     }
 
     #[test]

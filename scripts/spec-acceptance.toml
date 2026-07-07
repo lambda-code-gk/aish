@@ -2336,8 +2336,8 @@ pending = false
 spec = "0055"
 phase = 1
 id = "collaborative_flag_intercepts_parent_shell_exec"
-description = "collaborative 親 shell_exec が handoff へ変換される（full vertical E2E）"
-test = "collaborative_handoff_full_vertical_pty_e2e"
+description = "collaborative 親 shell_exec が handoff へ変換される（ai→aish PTY transport E2E）"
+test = "ai_to_aish_handoff_transport_pty_e2e"
 file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
 
@@ -2346,8 +2346,8 @@ spec = "0055"
 phase = 1
 id = "normal_shell_exec_is_unchanged"
 description = "通常 shell_exec 経路に回帰がない"
-test = "normal_shell_exec_path_uses_approval_without_human_shell"
-file_glob = "ai/tests/normal_shell_exec_regression.rs"
+test = "normal_shell_exec_is_unchanged"
+file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
 pending = false
 
 [[cases]]
@@ -2399,8 +2399,8 @@ pending = false
 spec = "0055"
 phase = 1
 id = "parent_receives_human_control_returned"
-description = "親が human_control_returned を受け取る（full vertical E2E）"
-test = "collaborative_handoff_full_vertical_pty_e2e"
+description = "親が human_control_returned を受け取る（ai→aish PTY transport E2E）"
+test = "ai_to_aish_handoff_transport_pty_e2e"
 file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
 
@@ -2518,5 +2518,113 @@ phase = 1
 id = "shell_log_tail_bounded"
 description = "shell log tail 読み込みに上限がある"
 test = "shell_log_tail_is_bounded"
+file_glob = "ai/src/adapters/outbound/human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_is_not_user_denial"
+description = "handoff 失敗を user denial と区別する"
+test = "collaborative_handoff_failure_is_not_user_denial"
+file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_exits_nonzero"
+description = "handoff 失敗時に非 zero 終了する"
+test = "handoff_runtime_dir_failure_exits_nonzero"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_is_not_sigint"
+description = "handoff 失敗を SIGINT として扱わない"
+test = "handoff_launcher_failure_is_not_sigint"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "approval_decision_invariant"
+description = "ShellExecApprovalDecision の invariant を検証する"
+test = "invalid_approval_decision_is_rejected"
+file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "stdin_eof_does_not_synthesize_ctrl_d"
+description = "stdin EOF を Ctrl+D へ変換しない"
+test = "stdin_eof_does_not_synthesize_eot"
+file_glob = "aish/src/adapters/outbound/pty_shell.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "parent_request_truncate_is_utf8_safe"
+description = "親リクエスト truncate が UTF-8 安全"
+test = "truncate_parent_request_never_panics_at_boundary"
+file_glob = "ai/src/domain/human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "e2e_has_bounded_timeout"
+description = "E2E に上限付きタイムアウトがある"
+test = "e2e_has_bounded_timeout"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "aibe_handoff_result_becomes_synthetic_tool_result"
+description = "aibe が handoff 成功を synthetic tool result に変換する"
+test = "collaborative_handoff_success_becomes_synthetic_tool_result"
+file_glob = "aibe/src/adapters/outbound/tools/shell_exec.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "non_collaborative_ai_uses_normal_approval_protocol"
+description = "非 collaborative ai が通常 approval protocol を使う"
+test = "non_collaborative_ai_uses_normal_approval_protocol"
+file_glob = "ai/tests/normal_shell_exec_regression.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "handoff_failure_cannot_finish_as_success"
+description = "handoff 失敗後に成功応答で終了しない"
+test = "handoff_failure_cannot_finish_as_success"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "terminal_disconnect_no_normal_return"
+description = "端末切断が normal return marker を作らない"
+test = "terminal_disconnect_does_not_create_normal_return_marker"
+file_glob = "aish/tests/0055_minimal_human_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
+id = "runtime_fallback_uid_isolated"
+description = "/tmp fallback が UID 単位で分離される"
+test = "runtime_handoff_dir_fallback_uses_uid"
 file_glob = "ai/src/adapters/outbound/human_handoff.rs"
 pending = false
