@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::thread::{self, JoinHandle};
@@ -74,7 +75,7 @@ impl NormalShellExecMock {
             reader.read_line(&mut line).expect("read approval");
             let approval: ClientRequest = serde_json::from_str(line.trim()).expect("approval");
             let ClientRequest::ShellExecApproval {
-                approved: _approval_approved,
+                approved,
                 approval_origin,
                 handoff_result,
                 handoff_error,
@@ -83,6 +84,7 @@ impl NormalShellExecMock {
             else {
                 panic!("expected approval");
             };
+            assert!(approved || approval_origin != ShellExecApprovalOrigin::CollaborativeHandoff);
             assert_ne!(
                 approval_origin,
                 ShellExecApprovalOrigin::CollaborativeHandoff
@@ -113,7 +115,9 @@ impl NormalShellExecMock {
             let deadline = Instant::now() + regression_timeout();
             while Instant::now() < deadline {
                 if handle.is_finished() {
-                    let _ = handle.join();
+                    handle
+                        .join()
+                        .expect("normal shell regression mock server panicked");
                     return;
                 }
                 thread::sleep(Duration::from_millis(20));
@@ -123,15 +127,39 @@ impl NormalShellExecMock {
     }
 }
 
+fn spawn_in_new_process_group(command: &mut Command) -> Child {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command.spawn().expect("spawn child in new process group")
+}
+
+fn kill_process_group_and_reap(child: Child) -> std::process::Output {
+    let pgid = child.id() as i32;
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+    child
+        .wait_with_output()
+        .expect("wait output after process group kill")
+}
+
 fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return child.wait_with_output().expect("wait output"),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("ai child timed out");
+                let output = kill_process_group_and_reap(child);
+                panic!(
+                    "ai child timed out, stderr={}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             Err(e) => panic!("wait child failed: {e}"),
         }
@@ -185,26 +213,23 @@ shell_exec_approval = "ask"
     .expect("aibe config");
 
     let deadline = Instant::now() + regression_timeout();
-    let output = wait_child_with_timeout(
-        Command::new(env!("CARGO_BIN_EXE_ai"))
-            .env("AI_CONFIG", &ai_cfg)
-            .env("AIBE_CONFIG", &aibe_cfg)
-            .env("HOME", home.path())
-            .env(
-                "AISH_BIN",
-                Path::new(env!("CARGO_BIN_EXE_ai"))
-                    .parent()
-                    .unwrap()
-                    .join("aish"),
-            )
-            .args(["ask", "--quiet", "--no-start", "run echo"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("spawn ai"),
-        deadline,
-    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ai"));
+    command
+        .env("AI_CONFIG", &ai_cfg)
+        .env("AIBE_CONFIG", &aibe_cfg)
+        .env("HOME", home.path())
+        .env(
+            "AISH_BIN",
+            Path::new(env!("CARGO_BIN_EXE_ai"))
+                .parent()
+                .unwrap()
+                .join("aish"),
+        )
+        .args(["ask", "--quiet", "--no-start", "run echo"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = wait_child_with_timeout(spawn_in_new_process_group(&mut command), deadline);
     server.join_with_timeout();
 
     assert!(

@@ -3,8 +3,9 @@
 //! 実 aibe server の ShellExecTool 境界は通さない（aibe 側 integration test で担保）。
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixListener;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -28,7 +29,8 @@ fn e2e_timeout() -> Duration {
 enum FailureFinalResponse {
     ToolError,
     SuccessTurnResult,
-    None,
+    HoldConnectionOpen,
+    CloseConnection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,8 @@ struct DiagnosticLog {
     mock_responses: Vec<String>,
     handoff_result_json: Option<String>,
     handoff_error_json: Option<String>,
+    held_connection_without_final_response: bool,
+    connection_closed_by_client: bool,
     ai_stderr: String,
     aish_transcript_hint: String,
     child_exit: Option<i32>,
@@ -68,6 +72,8 @@ impl CollaborativeMockServer {
             mock_responses: Vec::new(),
             handoff_result_json: None,
             handoff_error_json: None,
+            held_connection_without_final_response: false,
+            connection_closed_by_client: false,
             ai_stderr: String::new(),
             aish_transcript_hint: String::new(),
             child_exit: None,
@@ -137,7 +143,9 @@ impl CollaborativeMockServer {
             writer.flush().expect("flush");
 
             line.clear();
-            read_line_with_deadline(&mut reader, &mut line, deadline).expect("read approval");
+            if read_line_with_deadline(&mut reader, &mut line, deadline).is_err() {
+                return;
+            }
             log_thread
                 .lock()
                 .expect("log")
@@ -239,7 +247,37 @@ impl CollaborativeMockServer {
                             writeln!(writer, "{final_json}").expect("write final");
                             writer.flush().expect("flush");
                         }
-                        FailureFinalResponse::None => {}
+                        FailureFinalResponse::HoldConnectionOpen => {
+                            log_thread
+                                .lock()
+                                .expect("log")
+                                .held_connection_without_final_response = true;
+                            let stream = reader.get_mut();
+                            stream.set_nonblocking(true).expect("set nonblocking");
+                            let mut probe = [0_u8; 1];
+                            loop {
+                                if Instant::now() >= deadline {
+                                    panic!("client did not abort handoff before E2E deadline");
+                                }
+                                match stream.read(&mut probe) {
+                                    Ok(0) => {
+                                        log_thread
+                                            .lock()
+                                            .expect("log")
+                                            .connection_closed_by_client = true;
+                                        break;
+                                    }
+                                    Ok(_) => {}
+                                    Err(error)
+                                        if error.kind() == std::io::ErrorKind::WouldBlock =>
+                                    {
+                                        thread::sleep(Duration::from_millis(20));
+                                    }
+                                    Err(error) => panic!("connection hold failed: {error}"),
+                                }
+                            }
+                        }
+                        FailureFinalResponse::CloseConnection => {}
                     }
                 }
             }
@@ -288,7 +326,10 @@ fn read_line_with_deadline(
         reader.get_mut().set_nonblocking(true)?;
         match reader.read_line(line) {
             Ok(0) => {
-                thread::sleep(Duration::from_millis(20));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "mock server connection closed by peer",
+                ));
             }
             Ok(_) => return Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -314,14 +355,49 @@ fn join_with_deadline(handle: JoinHandle<()>, deadline: Instant) {
     panic!("mock server thread join deadline exceeded");
 }
 
+fn spawn_in_new_process_group(command: &mut Command) -> Child {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command.spawn().expect("spawn child in new process group")
+}
+
+fn kill_process_group_and_reap(child: Child) -> std::process::Output {
+    let pgid = child.id() as i32;
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+    child
+        .wait_with_output()
+        .expect("wait output after process group kill")
+}
+
+fn process_group_is_alive(pgid: i32) -> bool {
+    unsafe { libc::kill(-pgid, 0) == 0 }
+}
+
+fn wait_for_process_group_death(pgid: i32, deadline: Instant) -> bool {
+    while Instant::now() < deadline {
+        if !process_group_is_alive(pgid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    !process_group_is_alive(pgid)
+}
+
 fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return child.wait_with_output().expect("wait output"),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
-                let _ = child.kill();
-                let output = child.wait_with_output().expect("wait output after kill");
+                let output = kill_process_group_and_reap(child);
                 panic!(
                     "ai child timed out after {:?}, stderr={}",
                     e2e_timeout(),
@@ -523,26 +599,28 @@ fn run_collaborative_handoff_with_expected(
     let aish_log = home.join("aish-sessions");
     let aish_cfg = write_aish_config(home, &aish_log);
 
-    let mut child = Command::new(ai_bin)
-        .args([
-            "ask",
-            "--collaborative",
-            "--quiet",
-            "--no-start",
-            "verify collaborative handoff",
-        ])
-        .current_dir(work)
-        .env("AI_CONFIG", &ai_cfg)
-        .env("AIBE_CONFIG", &aibe_cfg)
-        .env("AISH_CONFIG", &aish_cfg)
-        .env("HOME", home)
-        .env("AISH_BIN", aish_bin)
-        .env("XDG_RUNTIME_DIR", home)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn ai");
+    let mut child = {
+        let mut command = Command::new(ai_bin);
+        command
+            .args([
+                "ask",
+                "--collaborative",
+                "--quiet",
+                "--no-start",
+                "verify collaborative handoff",
+            ])
+            .current_dir(work)
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("AISH_CONFIG", &aish_cfg)
+            .env("HOME", home)
+            .env("AISH_BIN", aish_bin)
+            .env("XDG_RUNTIME_DIR", home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        spawn_in_new_process_group(&mut command)
+    };
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(shell_input)
@@ -570,7 +648,8 @@ fn spawn_ai_collaborative_failure(
     let ai_cfg = write_ai_config(home, socket_path, &history_dir);
     let aibe_cfg = write_aibe_config(home);
     let aish_cfg = write_aish_config(home, &home.join("aish-sessions"));
-    Command::new(ai_bin)
+    let mut command = Command::new(ai_bin);
+    command
         .args(["ask", "--collaborative", "--quiet", "--no-start", prompt])
         .current_dir(work)
         .env("AI_CONFIG", &ai_cfg)
@@ -581,9 +660,8 @@ fn spawn_ai_collaborative_failure(
         .env("XDG_RUNTIME_DIR", xdg_runtime_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn ai")
+        .stderr(Stdio::piped());
+    spawn_in_new_process_group(&mut command)
 }
 
 #[test]
@@ -848,7 +926,7 @@ fn handoff_failure_aborts_when_server_sends_no_final_response() {
     let deadline = Instant::now() + e2e_timeout();
     let mut server = CollaborativeMockServer::spawn(
         work.join("candidate"),
-        ExpectedHandoffDecision::Failure(FailureFinalResponse::None),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::HoldConnectionOpen),
     );
     server.start_accept();
 
@@ -865,7 +943,7 @@ fn handoff_failure_aborts_when_server_sends_no_final_response() {
         ),
         deadline,
     );
-    let _log = server.join(deadline);
+    let log = server.join(deadline);
     assert!(
         !output.status.success(),
         "handoff failure must exit non-zero even without server final response"
@@ -875,6 +953,65 @@ fn handoff_failure_aborts_when_server_sends_no_final_response() {
     assert!(
         stderr.contains("human_handoff_failed") || stderr.contains("collaborative handoff failed"),
         "stderr={stderr}"
+    );
+    assert!(
+        log.handoff_error_json.is_some(),
+        "mock server must receive structured handoff_error"
+    );
+    assert!(
+        log.handoff_error_json
+            .as_deref()
+            .is_some_and(|json| json.contains("human_handoff_failed")),
+        "handoff_error.code must be human_handoff_failed"
+    );
+    assert!(
+        log.held_connection_without_final_response,
+        "server must hold agent-turn connection open without final response"
+    );
+    assert!(
+        log.connection_closed_by_client,
+        "server must observe client closing the agent-turn connection"
+    );
+    assert_eq!(
+        log.mock_responses.len(),
+        1,
+        "server must send only the approval prompt, not a final response"
+    );
+}
+
+#[test]
+fn handoff_failure_handles_server_disconnect() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let deadline = Instant::now() + e2e_timeout();
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::CloseConnection),
+    );
+    server.start_accept();
+
+    let missing_aish = work.join("missing-aish");
+    let output = wait_child_with_timeout(
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &missing_aish,
+            home.path(),
+            "verify disconnect without final response",
+        ),
+        deadline,
+    );
+    let log = server.join(deadline);
+    assert!(!output.status.success());
+    assert_ne!(output.status.code(), Some(130));
+    assert!(log.handoff_error_json.is_some());
+    assert!(
+        !log.held_connection_without_final_response,
+        "disconnect path must not use connection hold"
     );
 }
 
@@ -917,6 +1054,75 @@ fn mock_server_panic_propagates() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let handle = thread::spawn(|| panic!("mock aibe server panicked"));
     join_with_deadline(handle, deadline);
+}
+
+#[test]
+fn e2e_timeout_kills_process_group() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let aish_bin = require_test_binary("CARGO_BIN_EXE_aish", "aish");
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+
+    let mut server =
+        CollaborativeMockServer::spawn(work.join("candidate"), ExpectedHandoffDecision::Success);
+    server.start_accept();
+
+    let mut child = {
+        let history_dir = home.path().join("history");
+        fs::create_dir_all(&history_dir).expect("history");
+        let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
+        let aibe_cfg = write_aibe_config(home.path());
+        let aish_cfg = write_aish_config(home.path(), &home.path().join("aish-sessions"));
+        let mut command = Command::new(&ai_bin);
+        command
+            .args([
+                "ask",
+                "--collaborative",
+                "--quiet",
+                "--no-start",
+                "verify timeout process group kill",
+            ])
+            .current_dir(&work)
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("AISH_CONFIG", &aish_cfg)
+            .env("HOME", home.path())
+            .env("AISH_BIN", &aish_bin)
+            .env("XDG_RUNTIME_DIR", home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = spawn_in_new_process_group(&mut command);
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(b"sleep 120\n")
+                .expect("write shell input to ai stdin");
+        }
+        child
+    };
+
+    let pgid = child.id() as i32;
+    let kill_deadline = Instant::now() + Duration::from_secs(8);
+    let mut killed = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < kill_deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = kill_process_group_and_reap(child);
+                killed = true;
+                break;
+            }
+            Err(e) => panic!("wait child failed: {e}"),
+        }
+    }
+    assert!(killed, "expected ai child to outlive short kill deadline");
+    assert!(
+        wait_for_process_group_death(pgid, Instant::now() + Duration::from_secs(1)),
+        "process group {pgid} must be dead after timeout kill"
+    );
+    let _ = server.join(Instant::now() + e2e_timeout());
 }
 
 #[test]

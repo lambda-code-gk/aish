@@ -2659,6 +2659,15 @@ pending = false
 [[cases]]
 spec = "0055"
 phase = 1
+id = "e2e_timeout_kills_process_group"
+description = "E2E timeout時にai・aish・PTY shellのprocess group全体を終了する"
+test = "e2e_timeout_kills_process_group"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0055"
+phase = 1
 id = "mock_server_panic_propagates"
 description = "mock server thread の panic をテスト失敗へ伝播する"
 test = "mock_server_panic_propagates"
