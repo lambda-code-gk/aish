@@ -1418,8 +1418,8 @@ fn run_agent_turn_core(
                 pending_handoff_failure = Some(failure.clone());
                 *handoff_failure.lock().expect("handoff failure") = Some(failure);
                 abort_reason = Some(TurnAbortReason::HumanHandoffFailure);
-                let _ = cancel_client.cancel_turn(&turn_id);
                 handoff_abort_deadline = Some(Instant::now() + handoff_abort_wait);
+                let _ = cancel_client.cancel_turn(&turn_id);
             }
         }
         if let (Some(deadline), Some(failure)) =

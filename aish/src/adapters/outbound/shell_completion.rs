@@ -34,7 +34,8 @@ _aish_json_escape() {
 _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
-  printf '%s\n' "$1" >"$fifo" 2>/dev/null || true
+  # FIFO 読み手がいないとブロックするため、shell 本体は待たない。
+  ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
 }
 _aish_replay_debug() {
   [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return 0
@@ -75,6 +76,11 @@ const BASH_HANDOFF_EXIT_SNIPPET: &str = r#"
 # 0055 minimal human handoff: 1 回の Ctrl+D / exit で親へ戻る
 if [[ $- == *i* && "${_AISH_HUMAN_SHELL:-}" == 1 ]]; then
   set +o ignoreeof 2>/dev/null || true
+  _aish_handoff_on_hup() {
+    trap - EXIT
+    exit 129
+  }
+  trap _aish_handoff_on_hup HUP
 fi
 "#;
 
@@ -128,7 +134,8 @@ _aish_json_escape() {
 _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
-  printf '%s\n' "$1" >"$fifo" 2>/dev/null || true
+  # FIFO 読み手がいないとブロックするため、shell 本体は待たない。
+  ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
 }
 _aish_replay_preexec() {
   emulate -L zsh
@@ -163,6 +170,11 @@ const ZSH_HANDOFF_EXIT_SNIPPET: &str = r#"
 # 0055 minimal human handoff: 1 回の Ctrl+D / exit で親へ戻る
 if [[ -o interactive && "${_AISH_HUMAN_SHELL:-}" == 1 ]]; then
   unsetopt IGNORE_EOF 2>/dev/null || true
+  _aish_handoff_on_hup() {
+    zshexit_functions=(${zshexit_functions:#_aish_handoff_return})
+    exit 129
+  }
+  trap _aish_handoff_on_hup HUP
 fi
 "#;
 

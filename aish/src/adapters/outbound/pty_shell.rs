@@ -825,6 +825,14 @@ fn close_raw_fd(fd: RawFd) {
 
 /// 子プロセスを新しいセッションのリーダーにし、スレーブ PTY を制御端末にする。
 fn setup_controlling_tty(slave: RawFd) -> Result<(), InteractiveShellError> {
+    // 親 aish が SIGKILL 等で突然終了したとき、setsid 済み shell を孤児にしない。
+    if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGHUP) } == -1 {
+        return Err(InteractiveShellError::Failed(format!(
+            "PR_SET_PDEATHSIG: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+
     if unsafe { libc::setsid() } == -1 {
         return Err(InteractiveShellError::Failed(format!(
             "setsid: {}",

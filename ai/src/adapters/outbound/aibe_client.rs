@@ -4,9 +4,8 @@ use std::path::Path;
 
 use aibe_client::{
     agent_turn_with_client_tools, memory_request as transport_memory_request,
-    route_turn as transport_route_turn, send_cancel_request, AgentTurnCallbacks,
-    AgentTurnProgressEvent, ClientError, ClientToolCallRequest, ShellExecApprovalDecision,
-    ToolApprovalDecision,
+    route_turn as transport_route_turn, AgentTurnCallbacks, AgentTurnProgressEvent, ClientError,
+    ClientToolCallRequest, ShellExecApprovalDecision, ToolApprovalDecision,
 };
 
 use super::file_write_approval_ui::prompt_file_write_approval;
@@ -187,17 +186,8 @@ impl AibeUnixClient {
     }
 
     pub fn cancel_turn(&self, turn_id: &str) -> Result<(), AgentError> {
-        use std::io::Write;
-        use std::os::unix::net::UnixStream;
-
-        let mut stream = UnixStream::connect(self.socket_path())
-            .map_err(|e| AgentError::Request(format!("connect to aibe: {e}")))?;
-        send_cancel_request(&mut stream, correlation_id(), turn_id.to_string())
-            .map_err(|e| AgentError::Request(format!("cancel turn: {e}")))?;
-        stream
-            .flush()
-            .map_err(|e| AgentError::Request(format!("cancel flush: {e}")))?;
-        Ok(())
+        aibe_client::cancel_turn(self.socket_path(), correlation_id(), turn_id)
+            .map_err(map_client_error)
     }
 }
 

@@ -391,6 +391,60 @@ fn wait_for_process_group_death(pgid: i32, deadline: Instant) -> bool {
     !process_group_is_alive(pgid)
 }
 
+fn process_is_alive(pid: i32) -> bool {
+    pid > 0 && unsafe { libc::kill(pid, 0) == 0 }
+}
+
+fn wait_for_process_death(pid: i32, deadline: Instant) -> bool {
+    while Instant::now() < deadline {
+        if !process_is_alive(pid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    !process_is_alive(pid)
+}
+
+fn process_snapshot(pid: i32) -> String {
+    fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()
+        .and_then(|status| {
+            let lines = status
+                .lines()
+                .filter(|line| {
+                    line.starts_with("Name:")
+                        || line.starts_with("State:")
+                        || line.starts_with("Pid:")
+                        || line.starts_with("PPid:")
+                        || line.starts_with("NSpid:")
+                })
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                None
+            } else {
+                Some(lines.join(", "))
+            }
+        })
+        .unwrap_or_else(|| "no /proc status".to_string())
+}
+
+fn read_pid_file(path: &Path) -> Option<i32> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i32>().ok())
+        .filter(|pid| *pid > 0)
+}
+
+fn wait_for_pid_files(paths: &[&Path], deadline: Instant) -> bool {
+    while Instant::now() < deadline {
+        if paths.iter().all(|path| read_pid_file(path).is_some()) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    paths.iter().all(|path| read_pid_file(path).is_some())
+}
+
 fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
     loop {
         match child.try_wait() {
@@ -980,6 +1034,51 @@ fn handoff_failure_aborts_when_server_sends_no_final_response() {
 }
 
 #[test]
+fn handoff_failure_abort_is_not_blocked_by_cancel_connection() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(8);
+    let mut server = CollaborativeMockServer::spawn(
+        work.join("candidate"),
+        ExpectedHandoffDecision::Failure(FailureFinalResponse::HoldConnectionOpen),
+    );
+    server.start_accept();
+
+    let missing_aish = work.join("missing-aish");
+    let output = wait_child_with_timeout(
+        spawn_ai_collaborative_failure(
+            &ai_bin,
+            home.path(),
+            &work,
+            &server.socket_path,
+            &missing_aish,
+            home.path(),
+            "verify cancel connect does not block abort",
+        ),
+        deadline,
+    );
+    let log = server.join(deadline);
+    assert!(
+        started.elapsed() < Duration::from_secs(7),
+        "handoff failure abort must finish within bounded time even when cancel connect is not accepted (elapsed={:?})",
+        started.elapsed()
+    );
+    assert!(
+        !output.status.success(),
+        "handoff failure must exit non-zero when cancel connect is not accepted"
+    );
+    assert_ne!(output.status.code(), Some(130));
+    assert!(log.handoff_error_json.is_some());
+    assert!(
+        log.held_connection_without_final_response,
+        "mock server must hold the agent_turn connection without accepting cancel"
+    );
+}
+
+#[test]
 fn handoff_failure_handles_server_disconnect() {
     let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
     let home = tempfile::tempdir().expect("home");
@@ -1064,6 +1163,20 @@ fn e2e_timeout_kills_process_group() {
     let work = home.path().join("work");
     fs::create_dir_all(&work).expect("work");
 
+    let aish_pid_file = work.join("aish.pid");
+    let shell_pid_file = work.join("shell.pid");
+    let command_pid_file = work.join("command.pid");
+    let shell_input = format!(
+        "printf '%s\\n' \"$PPID\" > {}\n\
+         printf '%s\\n' \"$$\" > {}\n\
+         sleep 120 &\n\
+         printf '%s\\n' \"$!\" > {}\n\
+         wait\n",
+        shell_quote(&aish_pid_file.to_string_lossy()),
+        shell_quote(&shell_pid_file.to_string_lossy()),
+        shell_quote(&command_pid_file.to_string_lossy()),
+    );
+
     let mut server =
         CollaborativeMockServer::spawn(work.join("candidate"), ExpectedHandoffDecision::Success);
     server.start_accept();
@@ -1090,19 +1203,38 @@ fn e2e_timeout_kills_process_group() {
             .env("HOME", home.path())
             .env("AISH_BIN", &aish_bin)
             .env("XDG_RUNTIME_DIR", home.path())
+            .env("AISH_PID_FILE", &aish_pid_file)
+            .env("SHELL_PID_FILE", &shell_pid_file)
+            .env("COMMAND_PID_FILE", &command_pid_file)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = spawn_in_new_process_group(&mut command);
         if let Some(mut stdin) = child.stdin.take() {
             stdin
-                .write_all(b"sleep 120\n")
+                .write_all(shell_input.as_bytes())
                 .expect("write shell input to ai stdin");
         }
         child
     };
 
-    let pgid = child.id() as i32;
+    let ai_pid = child.id() as i32;
+    let pgid = ai_pid;
+    let pid_file_deadline = Instant::now() + Duration::from_secs(8);
+    let pid_paths = [
+        aish_pid_file.as_path(),
+        shell_pid_file.as_path(),
+        command_pid_file.as_path(),
+    ];
+    assert!(
+        wait_for_pid_files(&pid_paths, pid_file_deadline),
+        "timed out waiting for descendant PID files under {}",
+        work.display()
+    );
+    let aish_pid = read_pid_file(&aish_pid_file).expect("aish pid file");
+    let shell_pid = read_pid_file(&shell_pid_file).expect("shell pid file");
+    let command_pid = read_pid_file(&command_pid_file).expect("command pid file");
+
     let kill_deadline = Instant::now() + Duration::from_secs(8);
     let mut killed = false;
     loop {
@@ -1122,6 +1254,19 @@ fn e2e_timeout_kills_process_group() {
         wait_for_process_group_death(pgid, Instant::now() + Duration::from_secs(1)),
         "process group {pgid} must be dead after timeout kill"
     );
+
+    for (label, pid) in [
+        ("ai", ai_pid),
+        ("aish", aish_pid),
+        ("human shell", shell_pid),
+        ("shell command", command_pid),
+    ] {
+        assert!(
+            wait_for_process_death(pid, Instant::now() + Duration::from_secs(8)),
+            "{label} process {pid} must be dead after timeout kill; {}",
+            process_snapshot(pid)
+        );
+    }
     let _ = server.join(Instant::now() + e2e_timeout());
 }
 

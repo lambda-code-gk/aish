@@ -22,6 +22,33 @@ fn regression_timeout() -> Duration {
     Duration::from_secs(secs.min(60))
 }
 
+fn read_line_with_deadline(
+    reader: &mut BufReader<std::os::unix::net::UnixStream>,
+    line: &mut String,
+    deadline: Instant,
+) -> std::io::Result<()> {
+    while Instant::now() < deadline {
+        reader.get_mut().set_nonblocking(true)?;
+        match reader.read_line(line) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "mock server connection closed by peer",
+                ));
+            }
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "mock server read_line deadline exceeded",
+    ))
+}
+
 struct NormalShellExecMock {
     socket_path: std::path::PathBuf,
     _dir: tempfile::TempDir,
@@ -52,7 +79,7 @@ impl NormalShellExecMock {
             let mut writer = stream.try_clone().expect("clone");
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
-            reader.read_line(&mut line).expect("read");
+            read_line_with_deadline(&mut reader, &mut line, deadline).expect("read");
             let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse");
             let ClientRequest::AgentTurn { id, context, .. } = req else {
                 panic!("expected agent_turn");
@@ -72,7 +99,7 @@ impl NormalShellExecMock {
             writeln!(writer, "{}", serde_json::to_string(&prompt).expect("json")).expect("write");
 
             line.clear();
-            reader.read_line(&mut line).expect("read approval");
+            read_line_with_deadline(&mut reader, &mut line, deadline).expect("read approval");
             let approval: ClientRequest = serde_json::from_str(line.trim()).expect("approval");
             let ClientRequest::ShellExecApproval {
                 approved,

@@ -5,7 +5,7 @@
 mod transport;
 mod unix_connect;
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -21,11 +21,13 @@ pub use transport::{
     ClientToolCallRequest, ShellExecApprovalDecision, ShellExecApprovalPrompt,
     ToolApprovalDecision, ToolApprovalPrompt,
 };
-
-use unix_connect::connect_unix_stream;
+pub use unix_connect::connect_unix_stream;
 
 /// `ping` の connect / read / write 上限。
 const PING_IO_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// `cancel_turn` の connect / write 上限。
+pub const CANCEL_IO_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// デフォルトの Unix socket パス（`$HOME/.local/share/aibe/run.sock`）。
 pub fn default_socket_path() -> PathBuf {
@@ -105,6 +107,22 @@ pub fn ensure_running(socket_path: &Path) -> Result<(), String> {
         "aibe did not become ready at {}",
         socket_path.display()
     ))
+}
+
+/// 進行中 turn へ best-effort で cancel を送る（connect / write は `CANCEL_IO_TIMEOUT` で上限）。
+pub fn cancel_turn(
+    socket_path: &Path,
+    request_id: impl Into<String>,
+    turn_id: impl Into<String>,
+) -> Result<(), ClientError> {
+    let mut stream =
+        connect_unix_stream(socket_path, CANCEL_IO_TIMEOUT).map_err(ClientError::Connect)?;
+    stream
+        .set_write_timeout(Some(CANCEL_IO_TIMEOUT))
+        .map_err(ClientError::Connect)?;
+    send_cancel_request(&mut stream, request_id, turn_id).map_err(ClientError::Connect)?;
+    stream.flush().map_err(ClientError::Connect)?;
+    Ok(())
 }
 
 fn resolve_aibe_binary() -> PathBuf {
