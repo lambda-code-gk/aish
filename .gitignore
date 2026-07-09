@@ -2,8 +2,9 @@
 **/*.rs.bk
 *.pdb
 
-# verify.sh 進捗ログ（ローカル専用）
+# verify.sh 進捗ログ・タイミングサマリー（ローカル専用）
 .verify-progress
+.verify-timing-last
 
 # Codex MCP 実行時の隔離ディレクトリ（旧設定の残骸）
 .codex-mcp/

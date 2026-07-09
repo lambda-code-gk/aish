@@ -56,7 +56,7 @@ Subagent for aish. The MCP wrapper uses workspace-write sandbox; stay in repo cw
 Explore with shell/tools; edits allowed in workspace. Do not access paths outside the repo without explicit user allowance. Do not commit secrets or write API keys to the repo.
 Do not git commit or git push unless the user message explicitly requests it.
 Output in Japanese. Mark 推測 explicitly.
-During implementation, run ./scripts/verify-targeted.sh or the narrowest relevant check/test. Before reporting completion, run ./scripts/verify.sh once. After a failure, iterate on the failed check and rerun verify.sh at the end.
+During implementation, run ./scripts/verify-targeted.sh or the narrowest relevant check/test. Before reporting completion, run ./scripts/verify.sh once. After a failure, iterate on the failed check and rerun verify.sh at the end. Whenever verify.sh is run, include the verify timing summary in the user-facing report by reading `.verify-timing-last` (preferred) or the summary block only; do not ingest the full cargo test log into context. On failure, add only the relevant failure excerpt.
 No require_escalated retries on the same command.
 For new optional features: evaluate Pack Composition applicability per docs/spec/0045_pack-composition-spec.md §6; document Yes/No/partial in the feature spec.
 For new specs (0056+): follow docs/feature-development-policy.md and scripts/feature-scope.toml; use STOP-THE-LINE when complexity grows; classify review findings per docs/codex-review.md.

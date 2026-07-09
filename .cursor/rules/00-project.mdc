@@ -37,6 +37,17 @@ alwaysApply: true
 ./scripts/verify.sh
 ```
 
+`verify.sh` は各ステップと終了時に `verify timing summary` を出力し、同内容を **`.verify-timing-last`**（gitignore 済み）にも書き出す。
+
+**Cursor / Codex などの AI エージェント**は `verify.sh` 実行後、ユーザー向け返信にタイミングを転記する。ただし **cargo test の全出力をコンテキストに載せない**（10万文字超・トークン激増の原因）。次のどちらかでよい。
+
+1. **推奨**: `.verify-timing-last` だけを読んでサマリーを報告する
+2. 失敗時のみ、失敗ログ周辺を追加で読む（全文は不要）
+
+報告に含める項目: 成否、ステップ別時間、`total (steps)` / `total (wall clock)`、失敗時は失敗ステップ名。
+
+人間向けにターミナル表示を抑えたいときの `| tail` は可。AI がタイミング取得のために `verify.sh` 全体を `tail` で切り捨てないこと。
+
 targeted検証だけで完了扱いにしない。CIも `verify.sh` を使う。詳細は `docs/testing.md`。
 
 （内訳: `fmt` / `clippy` / `test` / `check-architecture.sh` / `check-docs-consistency.sh` / `check-feature-scope.py` / `check-spec-acceptance.py` / `check-codex-tooling.sh`）

@@ -168,6 +168,9 @@ fi
 
 const ZSH_HANDOFF_EXIT_SNIPPET: &str = r#"
 # 0055 minimal human handoff: 1 回の Ctrl+D / exit で親へ戻る
+if [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]]; then
+  setopt NO_CHECK_JOBS 2>/dev/null || true
+fi
 if [[ -o interactive && "${_AISH_HUMAN_SHELL:-}" == 1 ]]; then
   unsetopt IGNORE_EOF 2>/dev/null || true
   _aish_handoff_on_hup() {
@@ -338,6 +341,7 @@ mod tests {
         write_zsh_wrapper(&zshrc, Path::new("/nonexistent/.zshrc")).expect("write");
         let content = fs::read_to_string(zshrc).expect("read");
         assert!(content.contains("unsetopt IGNORE_EOF"));
+        assert!(content.contains("setopt NO_CHECK_JOBS"));
         assert!(content.contains("_AISH_HUMAN_SHELL"));
     }
 

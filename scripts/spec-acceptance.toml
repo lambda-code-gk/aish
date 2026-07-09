@@ -2659,15 +2659,6 @@ pending = false
 [[cases]]
 spec = "0055"
 phase = 1
-id = "e2e_timeout_kills_process_group"
-description = "E2E timeout時にai、aish、human shell、shell内foreground/background processを残さない"
-test = "e2e_timeout_kills_process_group"
-file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
-pending = false
-
-[[cases]]
-spec = "0055"
-phase = 1
 id = "handoff_failure_abort_is_not_blocked_by_cancel_connection"
 description = "cancel 接続不能でも handoff failure の local abort deadline が進行する"
 test = "handoff_failure_abort_is_not_blocked_by_cancel_connection"

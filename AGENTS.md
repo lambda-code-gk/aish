@@ -52,6 +52,7 @@
 
 - **実装中**: `./scripts/verify-targeted.sh` または対象クレートの `cargo check` / `cargo test -j 1` で変更箇所だけを検証する
 - **完了直前**: `./scripts/verify.sh` を1回実行する。失敗時は該当検査だけで修正を回し、最後に `verify.sh` を再実行する
+- **`verify.sh` 実行後の報告（必須）**: 成功・失敗を問わず、ユーザー向け返信にタイミングサマリーを転記する。取得元は **`.verify-timing-last`**（推奨）または出力末尾の `verify timing summary`。cargo test の全ログをコンテキストに載せない
 - targeted検証だけで機能を「完了」と報告しない。CIも常に `verify.sh` を使う
 
 詳細: [`docs/testing.md`](docs/testing.md)「二段階検証」。

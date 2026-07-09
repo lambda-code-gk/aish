@@ -20,8 +20,8 @@ spec = "0055"
 status = "locked"
 scope_class = "feature"
 
-scope_revision = 5
-scope_change_reason = "0055 final gate: PTY descendant kill verification, bounded cancel connect"
+scope_revision = 6
+scope_change_reason = "defer PTY descendant process cleanup hardening to a follow-up spec; 0055 remains minimal synchronous human handoff"
 
 core_outcome = "同期型 collaborative human handoff（親 shell_exec を実 PTY human shell へ）"
 
@@ -84,7 +84,6 @@ locked_ac_ids = [
   "handoff_failure_server_receives_structured_error",
   "handoff_failure_aborts_without_final_response",
   "handoff_failure_abort_is_not_blocked_by_cancel_connection",
-  "e2e_timeout_kills_process_group",
   "mock_server_panic_propagates",
   "handoff_failure_audit_is_not_human_control_returned",
   "zsh_supported_in_ci",
