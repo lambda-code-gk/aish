@@ -5,12 +5,22 @@ use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, IntoRawFd};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::adapters::outbound::ShellRcLayout;
 use crate::domain::{rfc3339_now, LogEvent};
 use crate::ports::outbound::{InteractiveShellError, InteractiveShellRunner, SessionLog};
+
+/// PTY session の外部 cancel（SIGTERM / SIGINT）要求。
+static PTY_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// signal handler から poll を起こす self-pipe の書き込み端。
+static PTY_CANCEL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
+
+const PTY_TERM_GRACE: Duration = Duration::from_secs(1);
+const PTY_KILL_WAIT: Duration = Duration::from_secs(1);
 
 /// マスタ PTY と stdin/stdout を中継し、出力を `SessionLog` に追記する。
 pub struct PtyShell<'a, L: SessionLog> {
@@ -329,6 +339,9 @@ fn run_shell_parent<L: SessionLog>(
     control_channel: Option<(RawFd, std::path::PathBuf)>,
     replay_enabled: bool,
 ) -> Result<i32, InteractiveShellError> {
+    install_pty_cancel_handlers();
+    PTY_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+
     // 親 TTY のローカル echo と PTY 内シェルの echo が重ならないよう raw にする。
     let _stdin_tty =
         StdinTermiosGuard::enter_raw().map_err(|e| fail_after_fork(child, master, [], e))?;
@@ -338,12 +351,34 @@ fn run_shell_parent<L: SessionLog>(
     let (shutdown_read, shutdown_write) =
         open_shutdown_pipe().map_err(|e| fail_after_fork(child, master, [stdin_master], e))?;
 
+    let (cancel_read, cancel_write) = open_shutdown_pipe().map_err(|e| {
+        fail_after_fork(
+            child,
+            master,
+            [stdin_master, shutdown_read, shutdown_write],
+            e,
+        )
+    })?;
+    set_fd_nonblocking(cancel_read);
+    set_fd_nonblocking(cancel_write);
+    PTY_CANCEL_WRITE_FD.store(cancel_write, Ordering::SeqCst);
+
     let stdin_thread = std::thread::spawn(move || {
         relay_stdin_to_pty(libc::STDIN_FILENO, stdin_master, shutdown_read);
     });
 
     let control_read = control_channel.as_ref().map(|(fd, _)| *fd);
-    let relay_result = relay_master_fd(master, child, pty, control_read, replay_enabled);
+    let relay_result = relay_master_fd(
+        master,
+        child,
+        pty,
+        control_read,
+        cancel_read,
+        replay_enabled,
+    );
+    PTY_CANCEL_WRITE_FD.store(-1, Ordering::SeqCst);
+    close_raw_fd(cancel_read);
+    close_raw_fd(cancel_write);
     if let Some((fd, fifo_path)) = control_channel {
         close_raw_fd(fd);
         let _ = std::fs::remove_file(fifo_path);
@@ -364,22 +399,210 @@ fn fail_after_fork(
         close_raw_fd(fd);
     }
     close_raw_fd(master);
-    kill_and_wait(child);
+    kill_and_wait(
+        child,
+        PTY_TERM_GRACE,
+        Instant::now() + PTY_TERM_GRACE + PTY_KILL_WAIT,
+    );
     err
 }
 
-/// 子を終了させて reap する（失敗経路・`ESRCH` は無視）。
-fn kill_and_wait(child: libc::pid_t) {
+fn install_pty_cancel_handlers() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = pty_cancel_signal_handler as usize;
+        action.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut action.sa_mask);
+        let _ = libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+        let _ = libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    });
+}
+
+extern "C" fn pty_cancel_signal_handler(_sig: libc::c_int) {
+    PTY_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    let fd = PTY_CANCEL_WRITE_FD.load(Ordering::SeqCst);
+    if fd >= 0 {
+        let byte = 1u8;
+        unsafe {
+            let _ = libc::write(fd, (&raw const byte).cast(), 1);
+        }
+    }
+}
+
+/// PTY shell と同一 session の通常ジョブを有限時間で終了・回収する。
+fn terminate_pty_session(
+    shell_pid: libc::pid_t,
+    master: RawFd,
+) -> Result<i32, InteractiveShellError> {
+    let deadline = Instant::now() + PTY_TERM_GRACE + PTY_KILL_WAIT;
+    let session = unsafe { libc::getsid(shell_pid) };
+
+    // foreground process group へ先に届ける。
+    let fg = unsafe { libc::tcgetpgrp(master) };
+    if fg > 0 {
+        unsafe {
+            let _ = libc::kill(-fg, libc::SIGHUP);
+            let _ = libc::kill(-fg, libc::SIGTERM);
+        }
+    }
+
+    // shell の process group。
+    let shell_pg = unsafe { libc::getpgid(shell_pid) };
+    if shell_pg > 0 {
+        unsafe {
+            let _ = libc::kill(-shell_pg, libc::SIGHUP);
+            let _ = libc::kill(-shell_pg, libc::SIGTERM);
+        }
+    }
+    unsafe {
+        let _ = libc::kill(shell_pid, libc::SIGHUP);
+        let _ = libc::kill(shell_pid, libc::SIGTERM);
+    }
+
+    // master close で HUP/EOF を促す。
+    close_raw_fd(master);
+
+    if session > 0 {
+        signal_session_pids(session, libc::SIGHUP);
+        signal_session_pids(session, libc::SIGTERM);
+    }
+
+    let grace_deadline = Instant::now() + PTY_TERM_GRACE;
+    while Instant::now() < grace_deadline {
+        if let Some(status) = wait_nonblocking(shell_pid)? {
+            if session > 0 {
+                reap_session_zombies(session);
+            }
+            return Ok(status);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    if session > 0 {
+        signal_session_pids(session, libc::SIGKILL);
+    }
+    unsafe {
+        let _ = libc::kill(shell_pid, libc::SIGKILL);
+        if shell_pg > 0 {
+            let _ = libc::kill(-shell_pg, libc::SIGKILL);
+        }
+    }
+
+    let status = wait_with_deadline(shell_pid, deadline)?;
+    if session > 0 {
+        reap_session_zombies(session);
+    }
+    Ok(status.unwrap_or(-1))
+}
+
+/// PTY master が EOF/EIO になったあとの回収。
+/// 子が既に終了していればその status を返し、残存していれば bounded terminate する。
+fn reap_after_master_eof(
+    child: libc::pid_t,
+    master_file: std::fs::File,
+) -> Result<i32, InteractiveShellError> {
+    let deadline = Instant::now() + PTY_TERM_GRACE;
+    if let Some(status) = wait_with_deadline(child, deadline)? {
+        return Ok(status);
+    }
+    let master_raw = master_file.into_raw_fd();
+    terminate_pty_session(child, master_raw)
+}
+
+fn signal_session_pids(session: libc::pid_t, signal: i32) {
+    for pid in pids_in_session(session) {
+        unsafe {
+            let _ = libc::kill(pid, signal);
+            let pgid = libc::getpgid(pid);
+            if pgid > 0 {
+                let _ = libc::kill(-pgid, signal);
+            }
+        }
+    }
+}
+
+fn pids_in_session(session: libc::pid_t) -> Vec<libc::pid_t> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut pids = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid_str) = name.to_str() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<libc::pid_t>() else {
+            continue;
+        };
+        let stat_path = entry.path().join("stat");
+        let Ok(stat) = std::fs::read_to_string(stat_path) else {
+            continue;
+        };
+        if parse_session_from_stat(&stat) == Some(session) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+fn parse_session_from_stat(stat: &str) -> Option<libc::pid_t> {
+    let rp = stat.rfind(')')?;
+    let fields: Vec<&str> = stat[rp + 2..].split_whitespace().collect();
+    // After ")": state ppid pgrp session ...
+    fields.get(3)?.parse().ok()
+}
+
+fn reap_session_zombies(session: libc::pid_t) {
+    for pid in pids_in_session(session) {
+        let mut status = 0;
+        let _ = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+    }
+}
+
+/// 子を終了させて reap する（失敗経路・`ESRCH` は無視）。有限時間で SIGKILL へ escalate する。
+fn kill_and_wait(child: libc::pid_t, grace: Duration, deadline: Instant) {
     unsafe {
         libc::kill(child, libc::SIGTERM);
     }
-    let mut status: libc::c_int = 0;
-    loop {
-        match waitpid_loop(child, &mut status, 0) {
-            Ok(pid) if pid > 0 => break,
-            Ok(_) => continue,
-            Err(_) => break,
+    let grace_deadline = Instant::now() + grace;
+    while Instant::now() < grace_deadline && Instant::now() < deadline {
+        let mut status: libc::c_int = 0;
+        match waitpid_loop(child, &mut status, libc::WNOHANG) {
+            Ok(pid) if pid > 0 => return,
+            Ok(_) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return,
         }
+    }
+    unsafe {
+        libc::kill(child, libc::SIGKILL);
+    }
+    while Instant::now() < deadline {
+        let mut status: libc::c_int = 0;
+        match waitpid_loop(child, &mut status, libc::WNOHANG) {
+            Ok(pid) if pid > 0 => return,
+            Ok(_) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return,
+        }
+    }
+}
+
+fn wait_with_deadline(
+    child: libc::pid_t,
+    deadline: Instant,
+) -> Result<Option<i32>, InteractiveShellError> {
+    while Instant::now() < deadline {
+        if let Some(status) = wait_nonblocking(child)? {
+            return Ok(Some(status));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // 最後に一度だけ blocking に近い回収を試みる（短時間）。
+    let mut status: libc::c_int = 0;
+    match waitpid_loop(child, &mut status, libc::WNOHANG) {
+        Ok(pid) if pid > 0 => Ok(Some(exit_code_from_status(status))),
+        Ok(_) => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -909,6 +1132,7 @@ fn relay_master_fd<L: SessionLog>(
     child: libc::pid_t,
     pty: &mut PtyShell<'_, L>,
     control_read: Option<RawFd>,
+    cancel_read: RawFd,
     replay_enabled: bool,
 ) -> Result<i32, InteractiveShellError> {
     let winch = WinchMonitor::install().ok();
@@ -926,6 +1150,14 @@ fn relay_master_fd<L: SessionLog>(
     let control_fd = control_read.unwrap_or(-1);
 
     loop {
+        if PTY_CANCEL_REQUESTED.swap(false, Ordering::SeqCst) {
+            let master_raw = master_file.into_raw_fd();
+            let _ = terminate_pty_session(child, master_raw);
+            return Err(InteractiveShellError::Failed(
+                "pty session cancelled".into(),
+            ));
+        }
+
         if let Some(status) = wait_nonblocking(child)? {
             drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
             drain_master_output(
@@ -965,6 +1197,14 @@ fn relay_master_fd<L: SessionLog>(
         } else {
             None
         };
+        let cancel_index = {
+            poll_fds.push(libc::pollfd {
+                fd: cancel_read,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+            poll_fds.len() - 1
+        };
 
         let rc = unsafe { libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, -1) };
         if rc < 0 {
@@ -975,6 +1215,19 @@ fn relay_master_fd<L: SessionLog>(
                 "poll(pty master): {}",
                 std::io::Error::last_os_error()
             )));
+        }
+
+        if poll_fds[cancel_index].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+            let mut discard = [0u8; 64];
+            loop {
+                let n =
+                    unsafe { libc::read(cancel_read, discard.as_mut_ptr().cast(), discard.len()) };
+                if n <= 0 {
+                    break;
+                }
+            }
+            // 次ループ先頭で PTY_CANCEL_REQUESTED を処理する。
+            continue;
         }
 
         if let Some(idx) = winch_index {
@@ -1006,7 +1259,7 @@ fn relay_master_fd<L: SessionLog>(
                 flush_line(pty, &mut line_buf, &mut span)?;
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 pty.finish_active_span(&mut span)?;
-                return wait_blocking(child);
+                return reap_after_master_eof(child, master_file);
             }
             Ok(n) => {
                 relay_master_chunk(&buf[..n], &mut stdout, pty, &mut line_buf, &mut span)?;
@@ -1016,7 +1269,7 @@ fn relay_master_fd<L: SessionLog>(
                 flush_line(pty, &mut line_buf, &mut span)?;
                 if e.raw_os_error() == Some(libc::EIO) {
                     pty.finish_active_span(&mut span)?;
-                    return wait_blocking(child);
+                    return reap_after_master_eof(child, master_file);
                 }
                 return Err(InteractiveShellError::Failed(e.to_string()));
             }
@@ -1115,17 +1368,6 @@ fn wait_nonblocking(child: libc::pid_t) -> Result<Option<i32>, InteractiveShellE
         return Ok(None);
     }
     Ok(Some(exit_code_from_status(status)))
-}
-
-fn wait_blocking(child: libc::pid_t) -> Result<i32, InteractiveShellError> {
-    let mut status: libc::c_int = 0;
-    let pid = waitpid_loop(child, &mut status, 0)?;
-    if pid <= 0 {
-        return Err(InteractiveShellError::Failed(
-            "waitpid returned no child".into(),
-        ));
-    }
-    Ok(exit_code_from_status(status))
 }
 
 fn exit_code_from_status(status: libc::c_int) -> i32 {

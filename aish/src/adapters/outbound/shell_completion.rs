@@ -35,7 +35,9 @@ _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
   # FIFO 読み手がいないとブロックするため、shell 本体は待たない。
+  # job control に載せると `jobs` / 終了通知がユーザーに見えるので disown する。
   ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
+  disown "$!" 2>/dev/null || true
 }
 _aish_replay_debug() {
   [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return 0
@@ -135,7 +137,9 @@ _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
   # FIFO 読み手がいないとブロックするため、shell 本体は待たない。
+  # job control に載せると `jobs` / 終了通知がユーザーに見えるので disown する。
   ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
+  disown "$!" 2>/dev/null || true
 }
 _aish_replay_preexec() {
   emulate -L zsh
@@ -382,6 +386,25 @@ mod tests {
         assert!(
             !before_install.contains("trap '_aish_replay_debug' DEBUG"),
             "DEBUG trap must not be set before deferred install"
+        );
+    }
+
+    #[test]
+    fn replay_emit_disowns_background_fifo_writer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bash_rc = dir.path().join("bashrc");
+        let zsh_rc = dir.path().join("zshrc");
+        write_bash_wrapper(&bash_rc, Path::new("/nonexistent/.bashrc")).expect("bash");
+        write_zsh_wrapper(&zsh_rc, Path::new("/nonexistent/.zshrc")).expect("zsh");
+        let bash = fs::read_to_string(bash_rc).expect("read bash");
+        let zsh = fs::read_to_string(zsh_rc).expect("read zsh");
+        assert!(
+            bash.contains(r#"disown "$!""#),
+            "bash replay emit must disown fifo writer"
+        );
+        assert!(
+            zsh.contains(r#"disown "$!""#),
+            "zsh replay emit must disown fifo writer"
         );
     }
 

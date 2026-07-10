@@ -5,6 +5,96 @@
 # pending = false … テストが存在し、#[ignore] であってはならない（verify で実行される想定）。
 
 [[cases]]
+spec = "0057"
+phase = 1
+id = "handoff_timeout_terminates_bounded"
+description = "ai --timeout 中 handoff でも有限時間終了する"
+test = "handoff_timeout_terminates_bounded"
+file_glob = "ai/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "external_sigint_sigterm_stops_handoff"
+description = "外部 SIGTERM/SIGINT で handoff が停止する"
+test = "external_sigint_sigterm_stops_handoff"
+file_glob = "ai/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "aish_human_shell_and_pty_shell_reaped"
+description = "aish human-shell と PTY shell が残らない"
+test = "aish_human_shell_and_pty_shell_reaped"
+file_glob = "aish/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "foreground_and_normal_background_jobs_terminated"
+description = "foreground job と通常 background job が残らない"
+test = "foreground_and_normal_background_jobs_terminated"
+file_glob = "aish/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "sigterm_ignored_escalates_sigkill"
+description = "SIGTERM を無視する job は SIGKILL escalation される"
+test = "sigterm_ignored_escalates_sigkill"
+file_glob = "aish/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "direct_children_reaped_no_zombies"
+description = "直接の子を zombie にしない"
+test = "direct_children_reaped_no_zombies"
+file_glob = "aish/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "terminal_echo_canonical_restored"
+description = "terminal echo/canonical が復元される"
+test = "terminal_echo_canonical_restored"
+file_glob = "ai/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "runtime_handoff_dir_removed_on_abort"
+description = "abort 経路でも runtime handoff dir が削除される"
+test = "runtime_handoff_dir_removed_on_abort"
+file_glob = "ai/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "normal_handoff_success_path_unchanged"
+description = "正常 handoff 経路を壊さない"
+test = "normal_handoff_success_path_unchanged"
+file_glob = "ai/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
+spec = "0057"
+phase = 1
+id = "cleanup_e2e_has_outer_watchdog"
+description = "実 PTY E2E は外側 watchdog を持つ"
+test = "cleanup_e2e_has_outer_watchdog"
+file_glob = "ai/tests/0057_pty_process_cleanup_hardening.rs"
+pending = false
+
+[[cases]]
 spec = "0044"
 phase = 1
 id = "shadow_observation"

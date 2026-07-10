@@ -90,6 +90,50 @@ locked_ac_ids = [
 ]
 
 [[features]]
+spec = "0057"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 2
+scope_change_reason = "correct 0057 external_effects count to include process signal/reap, termios restore, and runtime dir cleanup separately"
+
+core_outcome = "0055 human handoff の timeout / signal / abnormal termination 時に PTY process cleanup と terminal/runtime cleanup を有限時間で完了する"
+
+actors = 2
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 3
+process_boundaries = 2
+
+novel_mechanisms = ["bounded-pty-handoff-cleanup"]
+integrations = ["ai", "aish"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+scope_review = "approved"
+split_decision = "0055 から defer された hardening のみに限定し、durable recovery / side agent / cgroup 必須化は別 spec へ送る"
+
+vertical_slice_ac_id = "handoff_timeout_terminates_bounded"
+
+locked_ac_ids = [
+  "handoff_timeout_terminates_bounded",
+  "external_sigint_sigterm_stops_handoff",
+  "aish_human_shell_and_pty_shell_reaped",
+  "foreground_and_normal_background_jobs_terminated",
+  "sigterm_ignored_escalates_sigkill",
+  "direct_children_reaped_no_zombies",
+  "terminal_echo_canonical_restored",
+  "runtime_handoff_dir_removed_on_abort",
+  "normal_handoff_success_path_unchanged",
+  "cleanup_e2e_has_outer_watchdog",
+]
+
+[[features]]
 spec = "0056"
 status = "done"
 scope_class = "governance"

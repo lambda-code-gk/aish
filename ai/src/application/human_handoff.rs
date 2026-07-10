@@ -1,6 +1,7 @@
-//! Synchronous human handoff application service（0055 minimal）。
+//! Synchronous human handoff application service（0055 minimal / 0057 cancel）。
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
@@ -49,6 +50,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
     pub fn execute(
         &self,
         request: HumanHandoffRequest,
+        cancel_requested: &AtomicBool,
     ) -> Result<HumanHandoffResult, HumanHandoffError> {
         if !request.cwd.is_dir() {
             return Err(HumanHandoffError::MissingCwd(
@@ -56,14 +58,15 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
             ));
         }
         let suggested_command = build_suggested_command(&request.command, &request.args);
-        let shell_return = self
-            .shell_launcher
-            .launch_and_wait(&HumanShellLaunchRequest {
+        let shell_return = self.shell_launcher.launch_and_wait(
+            &HumanShellLaunchRequest {
                 cwd: request.cwd.clone(),
                 parent_request_summary: request.parent_request_summary.clone(),
                 suggested_command: suggested_command.clone(),
                 runtime_dir: request.runtime_dir.clone(),
-            })?;
+            },
+            cancel_requested,
+        )?;
         if !shell_return.normal_return {
             return Err(HumanHandoffError::Launch(
                 HumanShellLaunchError::MissingReturnMarker,

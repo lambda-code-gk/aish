@@ -19,10 +19,10 @@ use ai::adapters::outbound::{
     external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
     load_preprocessor_model, load_replay_events, load_shell_exec_approval, read_chat_line,
     resolve_editor_command_from_env, resolve_session_error_summary, resolve_shell_log_for_ask,
-    resolve_suggestion_cache_path, smart_preprocessor_trace_enabled, AibeUnixClient,
-    ChatReadLineResult, FileLogTail, FileSuggestedCommandRecallStore, LocalHistoryStore,
-    LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions, StdoutPresenter,
-    YesExecCache,
+    resolve_suggestion_cache_path, signal_cancel_requested, smart_preprocessor_trace_enabled,
+    AibeUnixClient, ChatReadLineResult, FileLogTail, FileSuggestedCommandRecallStore,
+    LocalHistoryStore, LocalRouteMetrics, PreprocessorObservationDraft, ShellExecRenderOptions,
+    StdoutPresenter, TurnCancelGuard, YesExecCache,
 };
 use ai::application::memory_cli_context::MemoryCliContext;
 use ai::application::memory_cli_pack::{load_command_policy, MemoryCliPack};
@@ -34,7 +34,7 @@ use ai::application::{
     plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn,
     resolve_recall_gating, HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute,
     PreprocessorRunInput, PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext,
-    ShellLogMode, TurnCancelGuard,
+    ShellLogMode,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -1126,7 +1126,7 @@ fn run_agent_turn_core(
     let silent_shell_exec_thread = silent_shell_exec;
     let collaborative_thread = collaborative;
     let collaborative_meta_thread = collaborative_meta;
-    let _cancel_requested_thread = Arc::clone(&cancel_requested);
+    let cancel_requested_thread = Arc::clone(&cancel_requested);
     let handoff_failure_thread = Arc::clone(&handoff_failure);
     let handoff_failure_tx_thread = handoff_failure_tx.clone();
     let aibe_shell_exec = load_shell_exec_approval();
@@ -1178,15 +1178,22 @@ fn run_agent_turn_core(
                                 };
                             }
                         };
-                        let result =
-                            handoff_service.execute(ai::application::HumanHandoffRequest {
+                        let _runtime_guard = ai::adapters::outbound::RuntimeHandoffDirGuard::new(
+                            runtime_dir.clone(),
+                        );
+                        let _termios_guard = ai::adapters::outbound::ParentTermiosGuard::save();
+                        let result = handoff_service.execute(
+                            ai::application::HumanHandoffRequest {
                                 parent_request_summary: parent_summary.unwrap_or_default(),
                                 command: prompt.command.clone(),
                                 args: prompt.args.clone(),
                                 cwd,
-                                runtime_dir: runtime_dir.clone(),
-                            });
-                        ai::adapters::outbound::cleanup_runtime_handoff_dir(&runtime_dir);
+                                runtime_dir,
+                            },
+                            cancel_requested_thread.as_ref(),
+                        );
+                        // Drop restores termios even if aish was SIGKILL'd.
+                        drop(_termios_guard);
                         return match result {
                             Ok(handoff_result) => ShellExecApprovalDecision {
                                 approved: true,
@@ -1400,6 +1407,9 @@ fn run_agent_turn_core(
     let mut pending_handoff_failure: Option<aibe_protocol::HumanHandoffFailure> = None;
     let mut handoff_abort_deadline: Option<Instant> = None;
     loop {
+        if signal_cancel_requested() {
+            cancel_requested.store(true, Ordering::SeqCst);
+        }
         if cancel_requested.load(Ordering::SeqCst) {
             if abort_reason.is_none() {
                 abort_reason = Some(TurnAbortReason::Sigint);

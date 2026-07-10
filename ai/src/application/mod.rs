@@ -15,7 +15,6 @@ pub mod memory_stub;
 pub mod replay_manifest;
 mod smart_preprocessor;
 mod suggested_command_recall;
-mod turn_cancel;
 pub mod work_cli;
 
 pub use ask::{Ask, AskError, AskOutcome, AskRunOptions};
@@ -30,7 +29,6 @@ pub use history::{
 pub use human_handoff::{
     handoff_tool_result_message, HumanHandoffError, HumanHandoffRequest, RunSynchronousHumanHandoff,
 };
-pub use turn_cancel::{clear_turn_cancel, register_turn_cancel, TurnCancelGuard};
 
 pub use feature_executor::{execute_feature_actions_mvp, FeatureExecutionOutcome};
 pub use replay_manifest::ShellLogMode;

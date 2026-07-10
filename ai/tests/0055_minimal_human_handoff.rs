@@ -20,6 +20,7 @@ impl HumanShellLauncher for TestLauncher {
     fn launch_and_wait(
         &self,
         request: &HumanShellLaunchRequest,
+        _cancel_requested: &std::sync::atomic::AtomicBool,
     ) -> Result<HumanShellReturn, HumanShellLaunchError> {
         self.calls.lock().unwrap().push(request.clone());
         Ok(HumanShellReturn {
@@ -40,14 +41,18 @@ fn shell_exit_code_is_not_command_completion() {
     let observer = ProcessEnvironmentObserver::default();
     let service = RunSynchronousHumanHandoff::new(&launcher, &observer);
     let dir = tempfile::tempdir().unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
     let result = service
-        .execute(HumanHandoffRequest {
-            parent_request_summary: "summary".into(),
-            command: "false".into(),
-            args: vec![],
-            cwd: dir.path().to_path_buf(),
-            runtime_dir: dir.path().join("runtime"),
-        })
+        .execute(
+            HumanHandoffRequest {
+                parent_request_summary: "summary".into(),
+                command: "false".into(),
+                args: vec![],
+                cwd: dir.path().to_path_buf(),
+                runtime_dir: dir.path().join("runtime"),
+            },
+            &cancel,
+        )
         .expect("handoff");
     assert_eq!(result.human_shell_exit_code, Some(0));
     assert_eq!(
@@ -78,6 +83,7 @@ fn parent_reobserves_after_handoff() {
         fn launch_and_wait(
             &self,
             request: &HumanShellLaunchRequest,
+            _cancel_requested: &std::sync::atomic::AtomicBool,
         ) -> Result<HumanShellReturn, HumanShellLaunchError> {
             Ok(HumanShellReturn {
                 normal_return: true,
@@ -97,14 +103,18 @@ fn parent_reobserves_after_handoff() {
     };
     let observer = ProcessEnvironmentObserver::default();
     let service = RunSynchronousHumanHandoff::new(&launcher, &observer);
+    let cancel = std::sync::atomic::AtomicBool::new(false);
     let result = service
-        .execute(HumanHandoffRequest {
-            parent_request_summary: "summary".into(),
-            command: "pwd".into(),
-            args: vec![],
-            cwd: dir.path().to_path_buf(),
-            runtime_dir: dir.path().join("runtime"),
-        })
+        .execute(
+            HumanHandoffRequest {
+                parent_request_summary: "summary".into(),
+                command: "pwd".into(),
+                args: vec![],
+                cwd: dir.path().to_path_buf(),
+                runtime_dir: dir.path().join("runtime"),
+            },
+            &cancel,
+        )
         .expect("handoff");
     let observation = result.observation.expect("observation");
     assert!(observation.cwd_exists);
@@ -127,6 +137,7 @@ fn human_shell_failure_returns_error() {
         fn launch_and_wait(
             &self,
             _request: &HumanShellLaunchRequest,
+            _cancel_requested: &std::sync::atomic::AtomicBool,
         ) -> Result<HumanShellReturn, HumanShellLaunchError> {
             Err(HumanShellLaunchError::Interrupted(
                 "Human handoff was interrupted.\nRestart the original request.".into(),
@@ -136,14 +147,18 @@ fn human_shell_failure_returns_error() {
     let observer = ProcessEnvironmentObserver::default();
     let service = RunSynchronousHumanHandoff::new(&FailingLauncher, &observer);
     let dir = tempfile::tempdir().unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
     let err = service
-        .execute(HumanHandoffRequest {
-            parent_request_summary: "summary".into(),
-            command: "echo".into(),
-            args: vec![],
-            cwd: dir.path().to_path_buf(),
-            runtime_dir: dir.path().join("runtime"),
-        })
+        .execute(
+            HumanHandoffRequest {
+                parent_request_summary: "summary".into(),
+                command: "echo".into(),
+                args: vec![],
+                cwd: dir.path().to_path_buf(),
+                runtime_dir: dir.path().join("runtime"),
+            },
+            &cancel,
+        )
         .expect_err("should fail");
     assert!(err.to_string().contains("interrupted"));
 }
@@ -163,14 +178,18 @@ fn collaborative_flag_intercepts_parent_shell_exec() {
     let service = RunSynchronousHumanHandoff::new(&launcher, &observer);
     let dir = tempfile::tempdir().unwrap();
     let runtime = dir.path().join("runtime");
+    let cancel = std::sync::atomic::AtomicBool::new(false);
     let result = service
-        .execute(HumanHandoffRequest {
-            parent_request_summary: "verify build".into(),
-            command: "cargo".into(),
-            args: vec!["test".into()],
-            cwd: dir.path().to_path_buf(),
-            runtime_dir: runtime,
-        })
+        .execute(
+            HumanHandoffRequest {
+                parent_request_summary: "verify build".into(),
+                command: "cargo".into(),
+                args: vec!["test".into()],
+                cwd: dir.path().to_path_buf(),
+                runtime_dir: runtime,
+            },
+            &cancel,
+        )
         .expect("handoff");
     assert_eq!(
         result.execution_outcome,
@@ -187,14 +206,18 @@ fn human_shell_starts_in_requested_cwd() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("work");
     std::fs::create_dir_all(&cwd).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
     let _ = service
-        .execute(HumanHandoffRequest {
-            parent_request_summary: "summary".into(),
-            command: "pwd".into(),
-            args: vec![],
-            cwd: cwd.clone(),
-            runtime_dir: dir.path().join("runtime"),
-        })
+        .execute(
+            HumanHandoffRequest {
+                parent_request_summary: "summary".into(),
+                command: "pwd".into(),
+                args: vec![],
+                cwd: cwd.clone(),
+                runtime_dir: dir.path().join("runtime"),
+            },
+            &cancel,
+        )
         .expect("handoff");
     let call = launcher.calls.lock().unwrap().pop().unwrap();
     assert_eq!(call.cwd, cwd);

@@ -1,9 +1,11 @@
-//! Minimal human handoff adapters（0055）。
+//! Minimal human handoff adapters（0055 / 0057）。
 
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use aibe_protocol::PostHandoffObservation;
 
@@ -15,6 +17,10 @@ use crate::ports::outbound::{
 
 /// shell log tail の最大読み込みサイズ。
 pub const SHELL_LOG_TAIL_MAX_BYTES: usize = 32 * 1024;
+
+const LAUNCHER_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const CHILD_TERM_GRACE: Duration = Duration::from_secs(1);
+const CHILD_KILL_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct AishHumanShellLauncher {
@@ -46,6 +52,7 @@ impl HumanShellLauncher for AishHumanShellLauncher {
     fn launch_and_wait(
         &self,
         request: &HumanShellLaunchRequest,
+        cancel_requested: &AtomicBool,
     ) -> Result<HumanShellReturn, HumanShellLaunchError> {
         if !request.cwd.is_dir() {
             return Err(HumanShellLaunchError::MissingCwd(
@@ -57,15 +64,15 @@ impl HumanShellLauncher for AishHumanShellLauncher {
         ensure_private_dir_owned_0700(&request.runtime_dir)
             .map_err(|e| HumanShellLaunchError::Failed(format!("runtime dir permissions: {e}")))?;
         let result_path = request.runtime_dir.join("result.json");
-        let mut child = Command::new(&self.binary);
-        child
+        let mut command = Command::new(&self.binary);
+        command
             .arg("human-shell")
             .arg("--result-file")
             .arg(&result_path)
             .current_dir(&request.cwd);
         // 親 ai からの handoff 環境変数を除去してから、子 aish 用の値を設定する。
-        strip_handoff_environment(&mut child);
-        child
+        strip_handoff_environment(&mut command);
+        command
             .env("AISH_CONTROL_MODE", "human-shell")
             .env(
                 "AISH_HANDOFF_PARENT_REQUEST",
@@ -73,9 +80,18 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             )
             .env("AISH_HANDOFF_SUGGESTED_COMMAND", &request.suggested_command)
             .env("AISH_HANDOFF_RUNTIME_DIR", &request.runtime_dir);
-        let status = child
-            .status()
+        // aish は親端末の stdin を raw にして PTY へ中継する。
+        // 別 process group にすると background 扱いになり SIGTTIN/SIGTTOU で停止し、
+        // プロンプトが出ない（PTY shell は setsid 済みなので group kill の対象外）。
+        let mut child = command
+            .spawn()
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
+        let status = wait_child_cancellable(&mut child, cancel_requested)?;
+        if cancel_requested.load(Ordering::SeqCst) && !result_path.is_file() {
+            return Err(HumanShellLaunchError::Cancelled(
+                "Human handoff was cancelled.\nRestart the original request.".into(),
+            ));
+        }
         if !status.success() && !result_path.is_file() {
             return Err(HumanShellLaunchError::Interrupted(format!(
                 "Human handoff was interrupted.\nRestart the original request. (exit={:?})",
@@ -83,9 +99,15 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             )));
         }
         let raw = std::fs::read_to_string(&result_path).map_err(|_| {
-            HumanShellLaunchError::Interrupted(
-                "Human handoff was interrupted.\nRestart the original request.".into(),
-            )
+            if cancel_requested.load(Ordering::SeqCst) {
+                HumanShellLaunchError::Cancelled(
+                    "Human handoff was cancelled.\nRestart the original request.".into(),
+                )
+            } else {
+                HumanShellLaunchError::Interrupted(
+                    "Human handoff was interrupted.\nRestart the original request.".into(),
+                )
+            }
         })?;
         let mut returned: HumanShellReturn = serde_json::from_str(raw.trim())
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
@@ -96,6 +118,126 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             returned.exit_code = status.code();
         }
         Ok(returned)
+    }
+}
+
+fn wait_child_cancellable(
+    child: &mut Child,
+    cancel_requested: &AtomicBool,
+) -> Result<std::process::ExitStatus, HumanShellLaunchError> {
+    let mut cancel_started = false;
+    let mut term_deadline: Option<Instant> = None;
+    let mut kill_deadline: Option<Instant> = None;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?
+        {
+            return Ok(status);
+        }
+
+        if !cancel_started && cancel_requested.load(Ordering::SeqCst) {
+            cancel_started = true;
+            signal_child(child.id(), libc::SIGTERM);
+            term_deadline = Some(Instant::now() + CHILD_TERM_GRACE);
+        }
+
+        if let Some(deadline) = term_deadline {
+            if Instant::now() >= deadline && kill_deadline.is_none() {
+                signal_child(child.id(), libc::SIGKILL);
+                kill_deadline = Some(Instant::now() + CHILD_KILL_WAIT);
+            }
+        }
+
+        if let Some(deadline) = kill_deadline {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?
+                {
+                    return Ok(status);
+                }
+                return Err(HumanShellLaunchError::Cancelled(
+                    "Human handoff was cancelled before child exit was observed.\nRestart the original request."
+                        .into(),
+                ));
+            }
+        }
+
+        std::thread::sleep(LAUNCHER_POLL_INTERVAL);
+    }
+}
+
+fn signal_child(pid: u32, signal: i32) {
+    if pid == 0 {
+        return;
+    }
+    unsafe {
+        let _ = libc::kill(pid as i32, signal);
+    }
+}
+
+/// runtime handoff dir を Drop 時に削除する RAII guard。
+pub struct RuntimeHandoffDirGuard {
+    dir: Option<PathBuf>,
+}
+
+impl RuntimeHandoffDirGuard {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir: Some(dir) }
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.dir.as_deref()
+    }
+}
+
+impl Drop for RuntimeHandoffDirGuard {
+    fn drop(&mut self) {
+        if let Some(dir) = self.dir.take() {
+            cleanup_runtime_handoff_dir(&dir);
+        }
+    }
+}
+
+/// 親 TTY の termios を保存し、Drop で復元する（非 TTY は no-op）。
+pub struct ParentTermiosGuard {
+    active: bool,
+    original: libc::termios,
+}
+
+impl ParentTermiosGuard {
+    pub fn save() -> Self {
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+            return Self {
+                active: false,
+                original: unsafe { std::mem::zeroed() },
+            };
+        }
+        let mut original: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut original) } != 0 {
+            return Self {
+                active: false,
+                original: unsafe { std::mem::zeroed() },
+            };
+        }
+        Self {
+            active: true,
+            original,
+        }
+    }
+
+    pub fn restore_now(&self) {
+        if self.active {
+            let _ = unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &self.original) };
+        }
+    }
+}
+
+impl Drop for ParentTermiosGuard {
+    fn drop(&mut self) {
+        self.restore_now();
     }
 }
 

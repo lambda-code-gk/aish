@@ -1,6 +1,7 @@
-//! Minimal human handoff ports（0055）。
+//! Minimal human handoff ports（0055 / 0057）。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use aibe_protocol::PostHandoffObservation;
 
@@ -37,12 +38,15 @@ pub enum HumanShellLaunchError {
     MissingReturnMarker,
     #[error("human handoff was interrupted: {0}")]
     Interrupted(String),
+    #[error("human handoff was cancelled: {0}")]
+    Cancelled(String),
 }
 
 pub trait HumanShellLauncher: Send + Sync {
     fn launch_and_wait(
         &self,
         request: &HumanShellLaunchRequest,
+        cancel_requested: &AtomicBool,
     ) -> Result<HumanShellReturn, HumanShellLaunchError>;
 }
 

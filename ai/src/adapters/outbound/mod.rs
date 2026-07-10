@@ -25,6 +25,7 @@ mod stdout_presenter;
 mod suggested_command_recall_store;
 mod terminal_size;
 pub mod toml_config;
+mod turn_cancel;
 mod yes_exec_cache;
 
 pub use ::aibe_client::ToolApprovalDecision;
@@ -48,7 +49,7 @@ pub use file_write_approval_ui::{
 };
 pub use human_handoff::{
     cleanup_runtime_handoff_dir, create_runtime_handoff_dir, AishHumanShellLauncher,
-    ProcessEnvironmentObserver,
+    ParentTermiosGuard, ProcessEnvironmentObserver, RuntimeHandoffDirGuard,
 };
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{
@@ -89,4 +90,7 @@ pub use suggested_command_recall_store::{
     default_suggestion_cache_path, resolve_suggestion_cache_path, FileSuggestedCommandRecallStore,
 };
 pub use terminal_size::detect_terminal_size;
+pub use turn_cancel::{
+    clear_turn_cancel, register_turn_cancel, signal_cancel_requested, TurnCancelGuard,
+};
 pub use yes_exec_cache::YesExecCache;
