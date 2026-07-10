@@ -83,6 +83,23 @@ fn wait_pid_gone_or_zombie(pid: i32, deadline: Instant) {
     panic!("pid {pid} still alive with state {:?}", process_state(pid));
 }
 
+/// aish の直接子が reap 済みであること用。zombie 残留は成功にしない。
+fn wait_pid_fully_gone(pid: i32, deadline: Instant) {
+    while Instant::now() < deadline {
+        if !pid_exists(pid) {
+            return;
+        }
+        if process_state(pid) == Some('Z') {
+            panic!("pid {pid} remained as zombie (not reaped)");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!(
+        "pid {pid} still present with state {:?}",
+        process_state(pid)
+    );
+}
+
 fn read_pid(path: &Path) -> i32 {
     fs::read_to_string(path)
         .expect("pid file")
@@ -219,9 +236,7 @@ fn direct_children_reaped_no_zombies() {
         !output.status.success(),
         "SIGTERM cancel must not report success"
     );
-    wait_pid_gone_or_zombie(pty_shell, deadline);
-    assert!(
-        !pid_exists(aish_pid) || process_state(aish_pid) != Some('Z'),
-        "aish direct child process must not remain zombie"
-    );
+    // aish の直接子（PTY shell）が zombie 残留せず完全に消えること。
+    // aish 自身の zombie 判定は親テストが wait 済みのため行わない。
+    wait_pid_fully_gone(pty_shell, deadline);
 }
