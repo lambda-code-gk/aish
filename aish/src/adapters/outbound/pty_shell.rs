@@ -510,6 +510,67 @@ fn reap_after_master_eof(
     terminate_pty_session(child, master_raw)
 }
 
+/// `relay_master_fd` の一般エラー / cancel / panic で session cleanup を漏らさないための RAII。
+///
+/// - `needs_terminate == true` のまま Drop → `terminate_pty_session`
+/// - 子を既に wait 済みなら `mark_child_reaped`（PID 再利用への誤 signal を避ける）
+/// - EOF 経路は `into_master` で所有権を渡し、明示 reap に任せる
+struct PtyRelayCleanup {
+    child: libc::pid_t,
+    master: Option<std::fs::File>,
+    needs_terminate: bool,
+}
+
+impl PtyRelayCleanup {
+    fn new(child: libc::pid_t, master: std::fs::File) -> Self {
+        Self {
+            child,
+            master: Some(master),
+            needs_terminate: true,
+        }
+    }
+
+    fn master_mut(&mut self) -> &mut std::fs::File {
+        self.master
+            .as_mut()
+            .expect("PtyRelayCleanup master still owned")
+    }
+
+    fn as_raw_fd(&self) -> RawFd {
+        self.master
+            .as_ref()
+            .expect("PtyRelayCleanup master still owned")
+            .as_raw_fd()
+    }
+
+    fn mark_child_reaped(&mut self) {
+        self.needs_terminate = false;
+    }
+
+    fn into_master(mut self) -> (libc::pid_t, std::fs::File) {
+        self.needs_terminate = false;
+        let child = self.child;
+        let master = self
+            .master
+            .take()
+            .expect("PtyRelayCleanup master still owned");
+        (child, master)
+    }
+}
+
+impl Drop for PtyRelayCleanup {
+    fn drop(&mut self) {
+        let Some(master) = self.master.take() else {
+            return;
+        };
+        if self.needs_terminate {
+            let master_raw = master.into_raw_fd();
+            let _ = terminate_pty_session(self.child, master_raw);
+        }
+        // needs_terminate == false のときは File Drop で master を close するだけ。
+    }
+}
+
 fn signal_session_pids(session: libc::pid_t, signal: i32) {
     for pid in pids_in_session(session) {
         unsafe {
@@ -1136,7 +1197,7 @@ fn relay_master_fd<L: SessionLog>(
     replay_enabled: bool,
 ) -> Result<i32, InteractiveShellError> {
     let winch = WinchMonitor::install().ok();
-    let mut master_file = unsafe { std::fs::File::from_raw_fd(master) };
+    let mut cleanup = PtyRelayCleanup::new(child, unsafe { std::fs::File::from_raw_fd(master) });
     let mut stdout = std::io::stdout().lock();
     let mut buf = [0u8; 4096];
     let mut line_buf = String::new();
@@ -1151,17 +1212,18 @@ fn relay_master_fd<L: SessionLog>(
 
     loop {
         if PTY_CANCEL_REQUESTED.swap(false, Ordering::SeqCst) {
-            let master_raw = master_file.into_raw_fd();
-            let _ = terminate_pty_session(child, master_raw);
+            // Drop(cleanup) が terminate_pty_session を実行する。
             return Err(InteractiveShellError::Failed(
                 "pty session cancelled".into(),
             ));
         }
 
         if let Some(status) = wait_nonblocking(child)? {
+            // 子は既に reap 済み。以降の ? 失敗でも PID へ再 signal しない。
+            cleanup.mark_child_reaped();
             drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
             drain_master_output(
-                &mut master_file,
+                cleanup.master_mut(),
                 &mut stdout,
                 pty,
                 &mut line_buf,
@@ -1174,7 +1236,7 @@ fn relay_master_fd<L: SessionLog>(
             return Ok(status);
         }
 
-        let master_raw = master_file.as_raw_fd();
+        let master_raw = cleanup.as_raw_fd();
         let mut poll_fds = vec![libc::pollfd {
             fd: master_raw,
             events: libc::POLLIN,
@@ -1211,6 +1273,7 @@ fn relay_master_fd<L: SessionLog>(
             if os_error_is_eintr() {
                 continue;
             }
+            // Drop(cleanup) が terminate_pty_session を実行する。
             return Err(InteractiveShellError::Failed(format!(
                 "poll(pty master): {}",
                 std::io::Error::last_os_error()
@@ -1253,12 +1316,13 @@ fn relay_master_fd<L: SessionLog>(
             drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
         }
 
-        match master_file.read(&mut buf) {
+        match cleanup.master_mut().read(&mut buf) {
             Ok(0) => {
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 flush_line(pty, &mut line_buf, &mut span)?;
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 pty.finish_active_span(&mut span)?;
+                let (child, master_file) = cleanup.into_master();
                 return reap_after_master_eof(child, master_file);
             }
             Ok(n) => {
@@ -1269,8 +1333,10 @@ fn relay_master_fd<L: SessionLog>(
                 flush_line(pty, &mut line_buf, &mut span)?;
                 if e.raw_os_error() == Some(libc::EIO) {
                     pty.finish_active_span(&mut span)?;
+                    let (child, master_file) = cleanup.into_master();
                     return reap_after_master_eof(child, master_file);
                 }
+                // Drop(cleanup) が terminate_pty_session を実行する。
                 return Err(InteractiveShellError::Failed(e.to_string()));
             }
         }
@@ -1607,6 +1673,96 @@ mod tests {
         let mut status: libc::c_int = 0;
         let pid = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
         assert!(pid <= 0, "child should be reaped (waitpid returned {pid})");
+    }
+
+    #[test]
+    fn pty_relay_cleanup_drop_terminates_and_reaps_child() {
+        let (master, slave) = open_pty_pair().expect("openpty");
+        let (ready_r, ready_w) = pipe_pair();
+        let child = match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                unsafe {
+                    libc::close(master);
+                    libc::close(ready_r);
+                    // 本番の PTY shell と同様、独自 session に入る。
+                    assert!(libc::setsid() >= 0, "setsid");
+                    let _ = libc::ioctl(slave, libc::TIOCSCTTY, 0);
+                    for stdfd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                        let _ = libc::dup2(slave, stdfd);
+                    }
+                    libc::close(slave);
+                    // SIGHUP/SIGTERM 無視でも Drop → SIGKILL escalation で回収できること。
+                    libc::signal(libc::SIGHUP, libc::SIG_IGN);
+                    libc::signal(libc::SIGTERM, libc::SIG_IGN);
+                    let byte = 1u8;
+                    let _ = libc::write(ready_w, (&raw const byte).cast(), 1);
+                    libc::close(ready_w);
+                    loop {
+                        libc::sleep(1);
+                    }
+                }
+            }
+            pid => pid,
+        };
+        unsafe {
+            libc::close(slave);
+            libc::close(ready_w);
+        }
+        let mut ready = [0u8; 1];
+        let n = unsafe { libc::read(ready_r, ready.as_mut_ptr().cast(), 1) };
+        unsafe {
+            libc::close(ready_r);
+        }
+        assert_eq!(n, 1, "child must signal setsid readiness");
+
+        let master_file = unsafe { std::fs::File::from_raw_fd(master) };
+
+        // 一般エラー経路相当: disarm せず Drop → terminate_pty_session。
+        drop(PtyRelayCleanup::new(child, master_file));
+
+        let mut status: libc::c_int = 0;
+        let pid = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
+        assert!(
+            pid <= 0,
+            "child should be reaped by PtyRelayCleanup drop (waitpid returned {pid})"
+        );
+    }
+
+    #[test]
+    fn pty_relay_cleanup_mark_reaped_does_not_kill() {
+        let child = match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                unsafe {
+                    libc::sleep(3600);
+                }
+                std::process::exit(0);
+            }
+            pid => pid,
+        };
+
+        let (master, slave) = open_pty_pair().expect("openpty");
+        unsafe {
+            libc::close(slave);
+        }
+        let master_file = unsafe { std::fs::File::from_raw_fd(master) };
+        let mut cleanup = PtyRelayCleanup::new(child, master_file);
+        cleanup.mark_child_reaped();
+        drop(cleanup);
+
+        // mark_child_reaped 後は terminate しないので子は生存したまま。
+        let alive = unsafe { libc::kill(child, 0) } == 0;
+        assert!(
+            alive,
+            "child must still be alive after mark_child_reaped drop"
+        );
+
+        unsafe {
+            let _ = libc::kill(child, libc::SIGKILL);
+            let mut status = 0;
+            let _ = libc::waitpid(child, &mut status, 0);
+        }
     }
 
     #[test]
