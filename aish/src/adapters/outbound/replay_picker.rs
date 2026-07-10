@@ -144,9 +144,43 @@ fn parse_selected_index(selected: &str, entries: &[PickerEntry]) -> Result<u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::RawFd;
+
+    /// 親が TTY（aish shell 等）でも対話 picker に入らず NotTty を検証する。
+    struct NonTtyStdinGuard {
+        saved: RawFd,
+    }
+
+    impl NonTtyStdinGuard {
+        fn install() -> Self {
+            let saved = unsafe { libc::dup(libc::STDIN_FILENO) };
+            assert!(saved >= 0, "dup(stdin)");
+            let null =
+                unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+            assert!(null >= 0, "open(/dev/null)");
+            assert!(
+                unsafe { libc::dup2(null, libc::STDIN_FILENO) } >= 0,
+                "dup2(/dev/null -> stdin)"
+            );
+            unsafe {
+                libc::close(null);
+            }
+            Self { saved }
+        }
+    }
+
+    impl Drop for NonTtyStdinGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = libc::dup2(self.saved, libc::STDIN_FILENO);
+                libc::close(self.saved);
+            }
+        }
+    }
 
     #[test]
     fn replay_pick_rejects_non_tty() {
+        let _stdin = NonTtyStdinGuard::install();
         let entries = vec![PickerEntry {
             index: 1,
             line: "1 echo".to_string(),

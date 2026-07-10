@@ -10,6 +10,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# aish shell 内で verify を実行すると child shell へ注入された session 関連 env が
+# cargo test 経由の ai 起動を汚染する（AI_ASK_LOG=session + テスト用 AISH_SESSION_DIR 等）。
+# AI_FILTER も assistant 本文を加工して structured 出力の期待値を壊す。
+unset AI_ASK_LOG AISH_SESSION_DIR AI_SESSION_ID AISH_CONTROL_FIFO AISH_CURRENT_LOG AI_FILTER 2>/dev/null || true
+
+# aish shell 内など stdin が TTY のとき、!isatty(stdin) 前提の単体テストが壊れたり
+# replay pick 等が対話待ちで止まるのを防ぐ。stdout/stderr は進捗表示のため維持する。
+if [[ -t 0 ]]; then
+  exec </dev/null
+fi
+
 VERIFY_STARTED_AT=$SECONDS
 VERIFY_STEP_NAMES=()
 VERIFY_STEP_ELAPSED=()

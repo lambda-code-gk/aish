@@ -134,6 +134,17 @@ default_profile = "fast"
     .expect("write config");
     config_path
 }
+
+/// 親シェル（aish / 手動 export）由来の env がテストの ai 起動へ漏れないようにする。
+fn ai_cmd() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ai"));
+    cmd.env_remove("AI_FILTER")
+        .env_remove("AI_ASK_LOG")
+        .env_remove("AISH_SESSION_DIR")
+        .env_remove("AI_SESSION_ID")
+        .env_remove("AISH_CONTROL_FIFO");
+    cmd
+}
 #[test]
 fn retry_structured_format_ignores_stream_chunks() {
     let server = MultiSocketServer::spawn_streaming_turns(2, |req, turn| {
@@ -177,7 +188,7 @@ fn retry_structured_format_ignores_stream_chunks() {
     fs::create_dir_all(&history_dir).expect("history dir");
     let cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
 
-    let seed = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let seed = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args(["--quiet", "--no-start", "hello"])
@@ -185,7 +196,7 @@ fn retry_structured_format_ignores_stream_chunks() {
         .expect("seed ask");
     assert!(seed.status.success());
 
-    let history = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let history = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args(["history", "--quiet", "--format", "json"])
@@ -194,7 +205,7 @@ fn retry_structured_format_ignores_stream_chunks() {
     let entries: Vec<Value> = serde_json::from_slice(&history.stdout).expect("history json");
     let history_id = entries[0]["history_id"].as_str().expect("history_id");
 
-    let retry = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let retry = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args([
@@ -223,7 +234,7 @@ fn chat_dry_run_skips_aibe() {
     let cfg_path = home.path().join("ai.toml");
     fs::write(&cfg_path, "socket_path = \"/tmp/does-not-exist.sock\"\n").expect("write config");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let out = ai_cmd()
         .env("AI_CONFIG", &cfg_path)
         .env("HOME", home.path())
         .args(["chat", "--quiet", "--dry-run", "--format", "json"])
@@ -279,7 +290,7 @@ fn chat_accumulates_transcript_and_records_conversation_id() {
     fs::create_dir_all(&history_dir).expect("history dir");
     let cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let mut child = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args(["chat", "--quiet", "--no-start"])
@@ -303,7 +314,7 @@ fn chat_accumulates_transcript_and_records_conversation_id() {
     );
     assert_eq!(server.requests().len(), 2);
 
-    let history = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let history = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args([
@@ -360,7 +371,7 @@ fn chat_rerun_restores_saved_transcript() {
     fs::create_dir_all(&history_dir).expect("history dir");
     let cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let mut child = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args(["chat", "--quiet", "--no-start"])
@@ -377,7 +388,7 @@ fn chat_rerun_restores_saved_transcript() {
         .expect("write stdin");
     assert!(child.wait().expect("wait").success());
 
-    let history = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let history = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args([
@@ -397,7 +408,7 @@ fn chat_rerun_restores_saved_transcript() {
         .expect("history_id")
         .to_string();
 
-    let rerun = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let rerun = ai_cmd()
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
         .args(["rerun", "--quiet", "--no-start", &second_turn_id])

@@ -1284,8 +1284,46 @@ mod tests {
         (fds[0], fds[1])
     }
 
+    /// 親が TTY（aish shell 等）でも、非 TTY 前提の単体テストを CI 相当にする。
+    struct NonTtyStdinGuard {
+        saved: RawFd,
+    }
+
+    impl NonTtyStdinGuard {
+        fn install() -> Self {
+            let saved = unsafe { libc::dup(libc::STDIN_FILENO) };
+            assert!(saved >= 0, "dup(stdin)");
+            let null =
+                unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+            assert!(null >= 0, "open(/dev/null)");
+            assert!(
+                unsafe { libc::dup2(null, libc::STDIN_FILENO) } >= 0,
+                "dup2(/dev/null -> stdin)"
+            );
+            unsafe {
+                libc::close(null);
+            }
+            assert_eq!(
+                unsafe { libc::isatty(libc::STDIN_FILENO) },
+                0,
+                "stdin must be non-tty for this test"
+            );
+            Self { saved }
+        }
+    }
+
+    impl Drop for NonTtyStdinGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = libc::dup2(self.saved, libc::STDIN_FILENO);
+                libc::close(self.saved);
+            }
+        }
+    }
+
     #[test]
     fn winch_monitor_skips_install_when_stdin_not_tty() {
+        let _stdin = NonTtyStdinGuard::install();
         assert!(WinchMonitor::install().is_err());
     }
 

@@ -5,8 +5,10 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, ProtocolMessageOut, RouteTurnConversation,
@@ -15,6 +17,7 @@ use aibe_protocol::{
 
 struct MockSocketServer {
     handle: Option<JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
     _dir: tempfile::TempDir,
     socket_path: std::path::PathBuf,
     route_turn_count: Arc<Mutex<usize>>,
@@ -28,6 +31,11 @@ impl MockSocketServer {
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).expect("bind");
+        listener
+            .set_nonblocking(true)
+            .expect("set_nonblocking listener");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_for_thread = Arc::clone(&shutdown);
         let route_turn_count = Arc::new(Mutex::new(0usize));
         let count_clone = Arc::clone(&route_turn_count);
         let agent_turn_count = Arc::new(Mutex::new(0usize));
@@ -37,9 +45,14 @@ impl MockSocketServer {
         let handle = thread::spawn(move || {
             let mut handled = 0usize;
             let max = if expected == 0 { 1 } else { expected + 1 };
-            while handled < max {
-                let Ok((stream, _)) = listener.accept() else {
-                    break;
+            while handled < max && !shutdown_for_thread.load(Ordering::Relaxed) {
+                let stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
                 };
                 let mut writer = stream.try_clone().expect("clone");
                 let mut reader = BufReader::new(stream);
@@ -115,6 +128,7 @@ impl MockSocketServer {
         });
         Self {
             handle: Some(handle),
+            shutdown,
             _dir: dir,
             socket_path,
             route_turn_count,
@@ -138,6 +152,7 @@ impl MockSocketServer {
 
 impl Drop for MockSocketServer {
     fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -204,7 +219,11 @@ fn run_tty_ask(
         .arg(&transcript)
         .env("AI_CONFIG", cfg)
         .env("HOME", home)
-        .env_remove("AISH_SESSION_DIR");
+        .env_remove("AI_ASK_LOG")
+        .env_remove("AISH_SESSION_DIR")
+        .env_remove("AI_SESSION_ID")
+        .env_remove("AISH_CONTROL_FIFO")
+        .env_remove("AI_FILTER");
     for (key, value) in extra_env {
         cmd.env(key, value);
     }

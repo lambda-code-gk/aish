@@ -154,6 +154,11 @@ fn tty_ask_applies_route_feature_actions_before_agent_turn() {
         .arg(&transcript)
         .env("AI_CONFIG", &cfg)
         .env("HOME", home.path())
+        .env_remove("AI_ASK_LOG")
+        .env_remove("AISH_SESSION_DIR")
+        .env_remove("AI_SESSION_ID")
+        .env_remove("AISH_CONTROL_FIFO")
+        .env_remove("AI_FILTER")
         .status()
         .expect("run script+ai");
 
