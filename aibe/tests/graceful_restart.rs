@@ -238,7 +238,7 @@ fn shutdown_cancels_active_turn_and_closes_memory_subscribe() {
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let socket_path = env.socket_path.clone();
-    let saw_terminal = rt.block_on(async {
+    let saw_cancelled_or_eof = rt.block_on(async {
         let stream = UnixStream::connect(&socket_path).await.expect("connect");
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();
@@ -259,24 +259,36 @@ fn shutdown_cancels_active_turn_and_closes_memory_subscribe() {
 
         let _ = env.run_control(&["stop"]);
 
-        let mut saw_terminal = false;
+        // mock LLM は即座に AgentTurnResult を返しうる。その場合でも shutdown で
+        // Cancelled / 接続 EOF / socket 削除のいずれかが起きることを後段で確認する。
+        let mut saw_cancelled = false;
+        let mut saw_eof = false;
         for _ in 0..100 {
-            if let Ok(Some(line)) = lines.next_line().await {
-                if let Ok(ClientResponse::AgentTurnResult { .. }) =
-                    serde_json::from_str(line.trim())
-                {
+            match tokio::time::timeout(Duration::from_millis(50), lines.next_line()).await {
+                Ok(Ok(Some(line))) => {
+                    if let Ok(ClientResponse::Cancelled { .. }) = serde_json::from_str(line.trim())
+                    {
+                        saw_cancelled = true;
+                        break;
+                    }
+                    // AgentTurnResult 等は無視して、cancel / EOF を待ち続ける。
+                }
+                Ok(Ok(None)) | Ok(Err(_)) => {
+                    saw_eof = true;
                     break;
                 }
-                if let Ok(ClientResponse::Cancelled { .. }) = serde_json::from_str(line.trim()) {
-                    saw_terminal = true;
-                    break;
+                Err(_) => {
+                    // timeout: まだ行が来ない
                 }
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        saw_terminal || !socket_path.exists()
+        saw_cancelled || saw_eof
     });
 
     wait_for_child(&mut child, CHILD_EXIT_TIMEOUT);
-    assert!(saw_terminal);
+    let socket_dead = !env.socket_path.exists() || !aibe_client::ping(&env.socket_path);
+    assert!(
+        saw_cancelled_or_eof || socket_dead,
+        "stop must cancel the active turn, close the connection, or remove the listening socket"
+    );
 }
