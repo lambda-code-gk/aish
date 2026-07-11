@@ -2,7 +2,8 @@
 //! 0057 PTY process cleanup hardening acceptance tests.
 //!
 //! - launcher 単体（fake aish + cancel flag）
-//! - real vertical E2E: mock aibe + `ai --collaborative --timeout` + real `aish human-shell` + PTY
+//! - real vertical E2E: mock aibe + `ai --collaborative --timeout` / OS signal
+//!   + real `aish human-shell` + PTY
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -13,6 +14,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -290,21 +292,24 @@ fn require_aish_binary() -> PathBuf {
     sibling
 }
 
-/// mock aibe: AgentTurn → ShellExecApprovalPrompt →（timeout 後の）failed approval → Error。
+/// mock aibe: AgentTurn → ShellExecApprovalPrompt →（cancel 後の）failed approval → Error。
 /// 同一 listener で cancel_turn 接続も受け、AgentTurn 以外は捨てる。
-struct TimeoutHandoffMock {
+struct CancelPathHandoffMock {
     socket_path: PathBuf,
     _dir: tempfile::TempDir,
     handle: Option<JoinHandle<()>>,
+    saw_cancel_turn: Arc<AtomicBool>,
 }
 
-impl TimeoutHandoffMock {
+impl CancelPathHandoffMock {
     fn spawn() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let socket_path = dir.path().join("aibe.sock");
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).expect("bind");
         listener.set_nonblocking(true).expect("set_nonblocking");
+        let saw_cancel_turn = Arc::new(AtomicBool::new(false));
+        let saw_cancel_turn_thread = Arc::clone(&saw_cancel_turn);
 
         let deadline = Instant::now() + e2e_timeout();
         let handle = thread::spawn(move || {
@@ -323,7 +328,7 @@ impl TimeoutHandoffMock {
                             break (reader, line);
                         }
                         Ok(ClientRequest::CancelTurn { .. }) => {
-                            // best-effort cancel: 読み捨てて次の接続へ
+                            saw_cancel_turn_thread.store(true, Ordering::SeqCst);
                             continue;
                         }
                         Ok(_) | Err(_) => continue,
@@ -366,14 +371,28 @@ impl TimeoutHandoffMock {
 
             // approval 待ち中も cancel 接続を受け付ける
             let listener_cancel = listener.try_clone().expect("clone listener for cancel");
-            let stop_cancel = std::sync::Arc::new(AtomicBool::new(false));
-            let stop_cancel_thread = std::sync::Arc::clone(&stop_cancel);
+            let stop_cancel = Arc::new(AtomicBool::new(false));
+            let stop_cancel_thread = Arc::clone(&stop_cancel);
+            let saw_cancel_drain = Arc::clone(&saw_cancel_turn_thread);
             let cancel_deadline = deadline;
             let cancel_drain = thread::spawn(move || {
                 while Instant::now() < cancel_deadline && !stop_cancel_thread.load(Ordering::SeqCst)
                 {
                     match listener_cancel.accept() {
-                        Ok((stream, _)) => drop(stream),
+                        Ok((stream, _)) => {
+                            let mut reader = BufReader::new(stream);
+                            let mut line = String::new();
+                            if read_line_with_deadline(&mut reader, &mut line, cancel_deadline)
+                                .is_ok()
+                            {
+                                if matches!(
+                                    serde_json::from_str::<ClientRequest>(line.trim()),
+                                    Ok(ClientRequest::CancelTurn { .. })
+                                ) {
+                                    saw_cancel_drain.store(true, Ordering::SeqCst);
+                                }
+                            }
+                        }
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(20));
                         }
@@ -384,7 +403,7 @@ impl TimeoutHandoffMock {
 
             let mut approval_line = String::new();
             read_line_with_deadline(&mut reader, &mut approval_line, deadline)
-                .expect("read shell_exec_approval after timeout");
+                .expect("read shell_exec_approval after cancel");
             stop_cancel.store(true, Ordering::SeqCst);
             let _ = cancel_drain.join();
 
@@ -403,19 +422,13 @@ impl TimeoutHandoffMock {
                     approval_line.trim()
                 );
             };
-            assert!(
-                !approved,
-                "timeout path must not approve handoff as success"
-            );
+            assert!(!approved, "cancel path must not approve handoff as success");
             assert_eq!(
                 approval_origin,
                 ShellExecApprovalOrigin::CollaborativeHandoff
             );
             assert!(handoff_result.is_none());
-            assert!(
-                handoff_error.is_some(),
-                "timeout cancel must report handoff_error"
-            );
+            assert!(handoff_error.is_some(), "cancel must report handoff_error");
 
             let final_resp = ClientResponse::Error {
                 id,
@@ -433,14 +446,40 @@ impl TimeoutHandoffMock {
             socket_path,
             _dir: dir,
             handle: Some(handle),
+            saw_cancel_turn,
         }
     }
 
-    fn join(mut self, deadline: Instant) {
+    fn join(mut self, deadline: Instant) -> bool {
         if let Some(handle) = self.handle.take() {
             join_with_deadline(handle, deadline);
         }
+        self.saw_cancel_turn.load(Ordering::SeqCst)
     }
+}
+
+fn wait_for_handoff_pids(
+    child: &mut Child,
+    pty_pid_file: &Path,
+    aish_pid_file: &Path,
+    job_pid_file: &Path,
+    deadline: Instant,
+) -> Option<(i32, i32, i32)> {
+    while Instant::now() < deadline {
+        if let (Some(pty), Some(aish_pid), Some(job)) = (
+            read_pid_file(pty_pid_file),
+            read_pid_file(aish_pid_file),
+            read_pid_file(job_pid_file),
+        ) {
+            return Some((pty, aish_pid, job));
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => return None,
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("try_wait failed: {e}"),
+        }
+    }
+    None
 }
 
 /// launcher 単体: 既に立っている cancel flag で子を止められること。
@@ -481,7 +520,7 @@ fn handoff_timeout_terminates_bounded() {
     let aish_pid_file = work.join("aish.pid");
     let job_pid_file = work.join("job.pid");
 
-    let server = TimeoutHandoffMock::spawn();
+    let server = CancelPathHandoffMock::spawn();
     let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
     let aibe_cfg = write_aibe_config(home.path());
     let aish_cfg = write_aish_config(home.path(), &aish_log);
@@ -530,26 +569,17 @@ fn handoff_timeout_terminates_bounded() {
         .expect("write shell input");
     stdin.flush().expect("flush shell input");
 
-    let mut captured = None;
-    while Instant::now() < deadline {
-        if let (Some(pty), Some(aish_pid), Some(job)) = (
-            read_pid_file(&pty_pid_file),
-            read_pid_file(&aish_pid_file),
-            read_pid_file(&job_pid_file),
-        ) {
-            captured = Some((pty, aish_pid, job));
-            break;
-        }
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => thread::sleep(Duration::from_millis(50)),
-            Err(e) => panic!("try_wait failed: {e}"),
-        }
-    }
+    let captured = wait_for_handoff_pids(
+        &mut child,
+        &pty_pid_file,
+        &aish_pid_file,
+        &job_pid_file,
+        deadline,
+    );
 
     let output = wait_child_with_timeout(child, deadline);
     drop(stdin);
-    server.join(deadline);
+    let _ = server.join(deadline);
 
     let elapsed = started.elapsed();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -582,24 +612,147 @@ fn handoff_timeout_terminates_bounded() {
     assert_no_runtime_handoff_dirs(&runtime_root);
 }
 
+/// launcher 単体: 遅延で立った cancel flag を検知できること（OS signal は送らない）。
+#[test]
+fn launcher_delayed_cancel_flag_stops_child_bounded() {
+    let home = tempfile::tempdir().unwrap();
+    let runtime = home.path().join("aish").join("handoff-signal");
+    let fake = fake_aish_script(home.path(), "sleep 30");
+    let launcher = AishHumanShellLauncher::new(fake);
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(200));
+            cancel.store(true, Ordering::SeqCst);
+        });
+        let err = launcher
+            .launch_and_wait(&request(home.path(), runtime), &cancel)
+            .expect_err("signal cancel must fail");
+        assert!(matches!(err, HumanShellLaunchError::Cancelled(_)));
+    });
+}
+
+/// AC: 子プロセスの real `ai` へ SIGINT / SIGTERM を送り、handoff 中でも有限時間で停止する。
 #[test]
 fn external_sigint_sigterm_stops_handoff() {
-    for _signal in [libc::SIGTERM, libc::SIGINT] {
-        let home = tempfile::tempdir().unwrap();
-        let runtime = home.path().join("aish").join("handoff-signal");
-        let fake = fake_aish_script(home.path(), "sleep 30");
-        let launcher = AishHumanShellLauncher::new(fake);
-        let cancel = AtomicBool::new(false);
-        std::thread::scope(|scope| {
-            scope.spawn(|| {
-                std::thread::sleep(Duration::from_millis(200));
-                cancel.store(true, Ordering::SeqCst);
-            });
-            let err = launcher
-                .launch_and_wait(&request(home.path(), runtime), &cancel)
-                .expect_err("signal cancel must fail");
-            assert!(matches!(err, HumanShellLaunchError::Cancelled(_)));
-        });
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let signal_name = if signal == libc::SIGINT {
+            "SIGINT"
+        } else {
+            "SIGTERM"
+        };
+        let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+        let aish_bin = require_aish_binary();
+        let home = tempfile::tempdir().expect("home");
+        let work = home.path().join("work");
+        fs::create_dir_all(&work).expect("work");
+        let history_dir = home.path().join("history");
+        fs::create_dir_all(&history_dir).expect("history");
+        let aish_log = home.path().join("aish-sessions");
+        fs::create_dir_all(&aish_log).expect("aish log");
+
+        let pty_pid_file = work.join(format!("pty-{signal_name}.pid"));
+        let aish_pid_file = work.join(format!("aish-{signal_name}.pid"));
+        let job_pid_file = work.join(format!("job-{signal_name}.pid"));
+
+        let server = CancelPathHandoffMock::spawn();
+        let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
+        let aibe_cfg = write_aibe_config(home.path());
+        let aish_cfg = write_aish_config(home.path(), &aish_log);
+
+        let deadline = Instant::now() + e2e_timeout();
+        let started = Instant::now();
+
+        let shell_input = format!(
+            "echo $$ > {}\necho $PPID > {}\nsleep 30 &\necho $! > {}\nsleep 30\n",
+            shell_quote(pty_pid_file.to_str().unwrap()),
+            shell_quote(aish_pid_file.to_str().unwrap()),
+            shell_quote(job_pid_file.to_str().unwrap()),
+        );
+
+        let mut child = {
+            let mut command = Command::new(&ai_bin);
+            command
+                .args([
+                    "ask",
+                    "--collaborative",
+                    "--quiet",
+                    "--no-start",
+                    &format!("verify 0057 {signal_name} handoff cleanup"),
+                ])
+                .current_dir(&work)
+                .env("AI_CONFIG", &ai_cfg)
+                .env("AIBE_CONFIG", &aibe_cfg)
+                .env("AISH_CONFIG", &aish_cfg)
+                .env("HOME", home.path())
+                .env("AISH_BIN", &aish_bin)
+                .env("XDG_RUNTIME_DIR", home.path())
+                .env("SHELL", "/bin/bash")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            spawn_in_new_process_group(&mut command)
+        };
+        let ai_pid = child.id() as i32;
+        // stdin を閉じると shell が EOF で終わるため、signal 後まで開いたままにする。
+        let mut stdin = child.stdin.take().expect("ai stdin");
+        stdin
+            .write_all(shell_input.as_bytes())
+            .expect("write shell input");
+        stdin.flush().expect("flush shell input");
+
+        let captured = wait_for_handoff_pids(
+            &mut child,
+            &pty_pid_file,
+            &aish_pid_file,
+            &job_pid_file,
+            deadline,
+        );
+        let (pty_pid, aish_pid, job_pid) = match captured {
+            Some(pids) => pids,
+            None => {
+                let output = kill_process_group_and_reap(child);
+                panic!(
+                    "{signal_name}: handoff PIDs not ready before signal; stderr={}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        };
+
+        // ai 自身の handler 経路を検証するため、PID 単体へ送る（process group ではない）。
+        let kill_rc = unsafe { libc::kill(ai_pid, signal) };
+        assert_eq!(
+            kill_rc,
+            0,
+            "{signal_name}: kill(ai_pid={ai_pid}) failed: {}",
+            std::io::Error::last_os_error()
+        );
+
+        let output = wait_child_with_timeout(child, deadline);
+        drop(stdin);
+        let saw_cancel = server.join(deadline);
+
+        let elapsed = started.elapsed();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            elapsed < e2e_timeout(),
+            "{signal_name}: ai must finish before outer watchdog ({:?}); elapsed={elapsed:?}; stderr={stderr}",
+            e2e_timeout()
+        );
+        assert!(
+            !output.status.success(),
+            "{signal_name}: must not exit as normal success; code={:?}; stderr={stderr}",
+            output.status.code()
+        );
+        assert!(
+            saw_cancel,
+            "{signal_name}: mock aibe must observe cancel_turn (or equivalent cancel connect)"
+        );
+
+        wait_pid_gone_or_zombie(pty_pid, deadline);
+        wait_pid_gone_or_zombie(aish_pid, deadline);
+        wait_pid_gone_or_zombie(job_pid, deadline);
+        assert_no_runtime_handoff_dirs(&home.path().join("aish"));
     }
 }
 
@@ -738,19 +891,43 @@ fn cleanup_e2e_has_outer_watchdog() {
         ai_source.contains("verify 0057 timeout handoff cleanup"),
         "vertical E2E must run a real collaborative ask prompt"
     );
-    // handoff_timeout_terminates_bounded 本体で cancel flag を事前に立てないこと
-    let e2e_fn = ai_source
+    assert!(
+        ai_source.contains("libc::kill(ai_pid, signal)"),
+        "signal E2E must kill ai PID (not process group) with OS signal"
+    );
+    assert!(
+        ai_source.contains("saw_cancel"),
+        "signal E2E must observe cancel_turn on mock aibe"
+    );
+
+    let timeout_e2e = ai_source
         .split("fn handoff_timeout_terminates_bounded()")
         .nth(1)
         .and_then(|rest| {
-            rest.split("fn external_sigint_sigterm_stops_handoff()")
+            rest.split("fn launcher_delayed_cancel_flag_stops_child_bounded()")
                 .next()
         })
         .expect("locate handoff_timeout_terminates_bounded body");
     assert!(
-        !e2e_fn.contains("cancel.store(true") && !e2e_fn.contains("AtomicBool::new(true)"),
-        "vertical AC must not pre-set cancel flag; use --timeout path"
+        !timeout_e2e.contains("cancel.store(true")
+            && !timeout_e2e.contains("AtomicBool::new(true)"),
+        "timeout vertical AC must not pre-set cancel flag; use --timeout path"
     );
+
+    let signal_e2e = ai_source
+        .split("fn external_sigint_sigterm_stops_handoff()")
+        .nth(1)
+        .and_then(|rest| rest.split("fn terminal_echo_canonical_restored()").next())
+        .expect("locate external_sigint_sigterm_stops_handoff body");
+    assert!(
+        !signal_e2e.contains("cancel.store(true"),
+        "signal vertical AC must not pre-set cancel flag; use OS signal path"
+    );
+    assert!(
+        signal_e2e.contains("libc::SIGINT") && signal_e2e.contains("libc::SIGTERM"),
+        "signal E2E must cover both SIGINT and SIGTERM"
+    );
+
     assert!(aish_source.contains("fn wait_child_with_timeout"));
     assert!(aish_source.contains("fn kill_process_group_and_reap"));
     assert!(aish_source.contains("libc::SIGKILL"));
