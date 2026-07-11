@@ -196,8 +196,9 @@ fn foreground_and_normal_background_jobs_terminated() {
 fn sigterm_ignored_escalates_sigkill() {
     let home = tempfile::tempdir().expect("home");
     let stubborn_pid = home.path().join("stubborn.pid");
+    // foreground だけでなく、shell が先に終わり得る background stubborn も対象にする。
     let script = format!(
-        "sh -c 'trap \"\" TERM HUP; echo $$ > {}; while :; do sleep 1; done'\n",
+        "sh -c 'trap \"\" TERM HUP; echo $$ > {}; while :; do sleep 1; done' &\nsleep 30\n",
         shell_quote(stubborn_pid.to_str().unwrap()),
     );
     let deadline = Instant::now() + e2e_timeout();

@@ -470,13 +470,30 @@ fn terminate_pty_session(
         signal_session_pids(session, libc::SIGTERM);
     }
 
+    // shell が先に終了しても、同一 session の SIGTERM 無視 job が残っていれば
+    // grace 終了まで待ち SIGKILL escalation へ進む（早期 return しない）。
+    let mut shell_status: Option<i32> = None;
     let grace_deadline = Instant::now() + PTY_TERM_GRACE;
     while Instant::now() < grace_deadline {
-        if let Some(status) = wait_nonblocking(shell_pid)? {
-            if session > 0 {
-                reap_session_zombies(session);
+        match shell_status {
+            None => {
+                if let Some(status) = wait_nonblocking(shell_pid)? {
+                    if session > 0 {
+                        reap_session_zombies(session);
+                    }
+                    shell_status = Some(status);
+                    if session <= 0 || !session_has_live_pids(session) {
+                        return Ok(status);
+                    }
+                }
             }
-            return Ok(status);
+            Some(status) if session > 0 => {
+                reap_session_zombies(session);
+                if !session_has_live_pids(session) {
+                    return Ok(status);
+                }
+            }
+            Some(_) => {}
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -489,6 +506,21 @@ fn terminate_pty_session(
         if shell_pg > 0 {
             let _ = libc::kill(-shell_pg, libc::SIGKILL);
         }
+    }
+
+    if let Some(status) = shell_status {
+        // shell は既に reap 済み。残 session メンバーの消滅を期限まで待つ。
+        if session > 0 {
+            while Instant::now() < deadline {
+                reap_session_zombies(session);
+                if !session_has_live_pids(session) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            reap_session_zombies(session);
+        }
+        return Ok(status);
     }
 
     let status = wait_with_deadline(shell_pid, deadline)?;
@@ -606,6 +638,15 @@ fn signal_session_pids(session: libc::pid_t, signal: i32) {
 }
 
 fn pids_in_session(session: libc::pid_t) -> Vec<libc::pid_t> {
+    session_pids(session, false)
+}
+
+/// 同一 session に zombie 以外のプロセスが残っているか。
+fn session_has_live_pids(session: libc::pid_t) -> bool {
+    !session_pids(session, true).is_empty()
+}
+
+fn session_pids(session: libc::pid_t, live_only: bool) -> Vec<libc::pid_t> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
@@ -622,18 +663,27 @@ fn pids_in_session(session: libc::pid_t) -> Vec<libc::pid_t> {
         let Ok(stat) = std::fs::read_to_string(stat_path) else {
             continue;
         };
-        if parse_session_from_stat(&stat) == Some(session) {
-            pids.push(pid);
+        let Some((sid, state)) = parse_session_and_state_from_stat(&stat) else {
+            continue;
+        };
+        if sid != session {
+            continue;
         }
+        if live_only && state == 'Z' {
+            continue;
+        }
+        pids.push(pid);
     }
     pids
 }
 
-fn parse_session_from_stat(stat: &str) -> Option<libc::pid_t> {
+fn parse_session_and_state_from_stat(stat: &str) -> Option<(libc::pid_t, char)> {
     let rp = stat.rfind(')')?;
     let fields: Vec<&str> = stat[rp + 2..].split_whitespace().collect();
     // After ")": state ppid pgrp session ...
-    fields.get(3)?.parse().ok()
+    let state = fields.first()?.chars().next()?;
+    let sid = fields.get(3)?.parse().ok()?;
+    Some((sid, state))
 }
 
 fn reap_session_zombies(session: libc::pid_t) {
@@ -1842,6 +1892,104 @@ mod tests {
 
         let _status = terminate_pty_session(child, master).expect("must reap, not fake -1");
         assert_child_already_reaped(child);
+    }
+
+    /// shell が先に終了しても、同一 session の SIGTERM 無視 background job へ
+    /// SIGKILL escalation が届くこと。
+    #[test]
+    fn terminate_pty_session_sigkills_sigterm_ignored_background_after_shell_exits() {
+        let (master, slave) = open_pty_pair().expect("openpty");
+        let (stubborn_r, stubborn_w) = pipe_pair();
+        let shell = match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => unsafe {
+                libc::close(master);
+                libc::close(stubborn_r);
+                assert!(libc::setsid() >= 0, "setsid");
+                let _ = libc::ioctl(slave, libc::TIOCSCTTY, 0);
+                for stdfd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                    let _ = libc::dup2(slave, stdfd);
+                }
+                libc::close(slave);
+                // session leader 終了時の SIGHUP より先に、子へ ignore を継承させる。
+                libc::signal(libc::SIGHUP, libc::SIG_IGN);
+                libc::signal(libc::SIGTERM, libc::SIG_IGN);
+
+                let (sync_r, sync_w) = {
+                    let mut fds = [-1i32; 2];
+                    assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+                    (fds[0], fds[1])
+                };
+
+                match libc::fork() {
+                    -1 => libc::_exit(1),
+                    0 => {
+                        libc::close(sync_r);
+                        // 通常の background job と同様、独自 process group へ。
+                        let _ = libc::setpgid(0, 0);
+                        let pid = libc::getpid();
+                        let _ = libc::write(
+                            stubborn_w,
+                            (&raw const pid).cast(),
+                            std::mem::size_of_val(&pid),
+                        );
+                        libc::close(stubborn_w);
+                        let byte = 1u8;
+                        let _ = libc::write(sync_w, (&raw const byte).cast(), 1);
+                        libc::close(sync_w);
+                        loop {
+                            libc::sleep(1);
+                        }
+                    }
+                    _ => {
+                        libc::close(stubborn_w);
+                        libc::close(sync_w);
+                        let mut byte = [0u8; 1];
+                        let _ = libc::read(sync_r, byte.as_mut_ptr().cast(), 1);
+                        libc::close(sync_r);
+                        // background job 準備完了後に shell 相当が先に終了する。
+                        libc::_exit(0);
+                    }
+                }
+            },
+            pid => pid,
+        };
+        unsafe {
+            libc::close(slave);
+            libc::close(stubborn_w);
+        }
+
+        let mut stubborn_buf = [0u8; std::mem::size_of::<libc::pid_t>()];
+        let n = unsafe {
+            libc::read(
+                stubborn_r,
+                stubborn_buf.as_mut_ptr().cast(),
+                stubborn_buf.len(),
+            )
+        };
+        unsafe {
+            libc::close(stubborn_r);
+        }
+        assert_eq!(
+            n as usize,
+            stubborn_buf.len(),
+            "stubborn must report its pid"
+        );
+        let stubborn = libc::pid_t::from_ne_bytes(stubborn_buf);
+
+        // shell が先に exit 済みでも master は親が保持。
+        let _status = terminate_pty_session(shell, master).expect("must finish cleanup");
+        assert_child_already_reaped(shell);
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            let alive = unsafe { libc::kill(stubborn, 0) } == 0;
+            if !alive {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("SIGTERM-ignored background job {stubborn} must be SIGKILL'd");
     }
 
     #[test]
