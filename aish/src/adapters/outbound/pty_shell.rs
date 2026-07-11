@@ -501,10 +501,14 @@ fn terminate_pty_session(
     if session > 0 {
         signal_session_pids(session, libc::SIGKILL);
     }
-    unsafe {
-        let _ = libc::kill(shell_pid, libc::SIGKILL);
-        if shell_pg > 0 {
-            let _ = libc::kill(-shell_pg, libc::SIGKILL);
+    // 既に reap 済みの shell PID / 旧 PGID は再利用され得るため送らない。
+    // 残 session job は上の signal_session_pids で処理する。
+    if shell_status.is_none() {
+        unsafe {
+            let _ = libc::kill(shell_pid, libc::SIGKILL);
+            if shell_pg > 0 {
+                let _ = libc::kill(-shell_pg, libc::SIGKILL);
+            }
         }
     }
 
