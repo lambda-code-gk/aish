@@ -515,21 +515,16 @@ fn terminate_pty_session(
     if let Some(status) = shell_status {
         // shell は既に reap 済み。残 session メンバーの消滅を期限まで待つ。
         if session > 0 {
-            while Instant::now() < deadline {
-                reap_session_zombies(session);
-                if !session_has_live_pids(session) {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            reap_session_zombies(session);
+            wait_session_cleared(session, deadline)?;
         }
         return Ok(status);
     }
 
     let status = wait_with_deadline(shell_pid, deadline)?;
     if session > 0 {
-        reap_session_zombies(session);
+        // shell 待ちで deadline を使い切っていても、短い追加窓で session を確認する。
+        let clear_deadline = deadline.max(Instant::now() + PTY_FINAL_REAP);
+        wait_session_cleared(session, clear_deadline)?;
     }
     if let Some(code) = status {
         return Ok(code);
@@ -538,13 +533,7 @@ fn terminate_pty_session(
     // deadline 境界の race / 遅延 exit 向けに短い追加窓で最終 reap。
     let final_deadline = Instant::now() + PTY_FINAL_REAP;
     if let Some(code) = wait_with_deadline(shell_pid, final_deadline)? {
-        if session > 0 {
-            reap_session_zombies(session);
-        }
         return Ok(code);
-    }
-    if session > 0 {
-        reap_session_zombies(session);
     }
     if let Some(code) = wait_nonblocking(shell_pid)? {
         return Ok(code);
@@ -695,6 +684,27 @@ fn reap_session_zombies(session: libc::pid_t) {
         let mut status = 0;
         let _ = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
     }
+}
+
+/// SIGKILL 後に同一 session の生存プロセスが消えるまで待つ。期限超過で残存なら失敗。
+fn wait_session_cleared(
+    session: libc::pid_t,
+    deadline: Instant,
+) -> Result<(), InteractiveShellError> {
+    while Instant::now() < deadline {
+        reap_session_zombies(session);
+        if !session_has_live_pids(session) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    reap_session_zombies(session);
+    if session_has_live_pids(session) {
+        return Err(InteractiveShellError::Failed(format!(
+            "PTY session {session} still has live processes after SIGKILL deadline"
+        )));
+    }
+    Ok(())
 }
 
 /// 子を終了させて reap する（失敗経路・`ESRCH` は無視）。有限時間で SIGKILL へ escalate する。
