@@ -8,6 +8,135 @@ use super::console_hint::{
 };
 use super::output_format::{append_env_line, append_tsv_row, OutputFormat};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckStatus {
+    Ok,
+    Warn,
+    Fail,
+}
+
+impl CheckStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HealthCheck {
+    pub id: String,
+    pub status: CheckStatus,
+    pub message: String,
+    pub suggestion: Option<String>,
+}
+
+impl HealthCheck {
+    pub fn new(
+        id: &str,
+        status: CheckStatus,
+        message: impl Into<String>,
+        suggestion: Option<&str>,
+    ) -> Self {
+        debug_assert!(status == CheckStatus::Ok || suggestion.is_some());
+        Self {
+            id: id.into(),
+            status,
+            message: message.into(),
+            suggestion: suggestion.map(str::to_owned),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DoctorReport {
+    pub command: String,
+    pub status: CheckStatus,
+    pub checks: Vec<HealthCheck>,
+}
+
+impl DoctorReport {
+    pub fn new(checks: Vec<HealthCheck>) -> Self {
+        let status = checks
+            .iter()
+            .map(|check| check.status)
+            .max()
+            .unwrap_or(CheckStatus::Ok);
+        Self {
+            command: "doctor".into(),
+            status,
+            checks,
+        }
+    }
+
+    pub fn has_failure(&self) -> bool {
+        self.status == CheckStatus::Fail
+    }
+
+    pub fn render_human(&self) -> String {
+        let mut out = format!("{} doctor\n", self.status.as_str().to_uppercase());
+        for check in &self.checks {
+            out.push_str(&format!(
+                "[{}] {}: {}\n",
+                check.status.as_str().to_uppercase(),
+                check.id,
+                check.message
+            ));
+            if let Some(suggestion) = &check.suggestion {
+                out.push_str(&format!("  suggestion: {suggestion}\n"));
+            }
+        }
+        out
+    }
+
+    pub fn render(&self, format: OutputFormat, legacy: &DiagnosticsReport) -> String {
+        match format {
+            OutputFormat::Json => serde_json::to_string(self).expect("DoctorReport serializes"),
+            OutputFormat::Tsv => {
+                let mut out = legacy.render_tsv();
+                append_tsv_row(&mut out, "doctor.status", self.status.as_str());
+                for check in &self.checks {
+                    append_check_tsv(&mut out, check);
+                }
+                out
+            }
+            OutputFormat::Env => {
+                let mut out = legacy.render_env();
+                append_env_line(&mut out, "AI_DOCTOR_STATUS", self.status.as_str());
+                for check in &self.checks {
+                    append_check_env(&mut out, check);
+                }
+                out
+            }
+        }
+    }
+}
+
+fn append_check_tsv(out: &mut String, check: &HealthCheck) {
+    let prefix = format!("check.{}", check.id);
+    append_tsv_row(out, &format!("{prefix}.status"), check.status.as_str());
+    append_tsv_row(out, &format!("{prefix}.message"), &check.message);
+    append_tsv_row(
+        out,
+        &format!("{prefix}.suggestion"),
+        check.suggestion.as_deref().unwrap_or(""),
+    );
+}
+
+fn append_check_env(out: &mut String, check: &HealthCheck) {
+    let prefix = format!("AI_DOCTOR_CHECK_{}", check.id.to_ascii_uppercase());
+    append_env_line(out, &format!("{prefix}_STATUS"), check.status.as_str());
+    append_env_line(out, &format!("{prefix}_MESSAGE"), &check.message);
+    append_env_line(
+        out,
+        &format!("{prefix}_SUGGESTION"),
+        check.suggestion.as_deref().unwrap_or(""),
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FilterMetadata {
     pub enabled: bool,
@@ -452,6 +581,27 @@ fn append_console_hint_env(out: &mut String, hint: &ConsoleHintReport) {
 mod tests {
     use super::*;
     use crate::domain::resolve_console_hints;
+
+    #[test]
+    fn doctor_report_aggregates_severity_and_renders_human() {
+        let report = DoctorReport::new(vec![
+            HealthCheck::new("one", CheckStatus::Ok, "ready", None),
+            HealthCheck::new(
+                "two",
+                CheckStatus::Warn,
+                "optional context missing",
+                Some("set it"),
+            ),
+        ]);
+        assert_eq!(report.status, CheckStatus::Warn);
+        assert!(!report.has_failure());
+        let human = report.render_human();
+        assert!(human.starts_with("WARN doctor\n"));
+        assert!(human.contains("[OK] one: ready"));
+        assert!(human.contains("suggestion: set it"));
+        let json = serde_json::to_value(&report).expect("json");
+        assert_eq!(json["checks"][0]["suggestion"], serde_json::Value::Null);
+    }
 
     #[test]
     fn dry_run_render_masks_filter_metadata_not_raw_filter() {

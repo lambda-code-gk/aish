@@ -51,7 +51,9 @@ pub use progress::{format_progress_label, resolve_progress};
 pub use prompt_input::{
     is_substantive_prompt, strip_prompt_template_comments, PromptAcquisitionResult,
 };
-pub use reports::{DiagnosticsReport, DryRunReport, FilterMetadata};
+pub use reports::{
+    CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
+};
 pub use request_context::RequestContextInput;
 pub use shell_exec_approval::{
     canonical_shell_exec_invocation, classify_shell_exec_tier, command_shell_exec_key,

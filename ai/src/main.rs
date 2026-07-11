@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-use std::io::IsTerminal;
+use std::io::{BufRead, BufReader, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
@@ -54,7 +54,9 @@ use ai::domain::{
     OutputFormat, OutputFormatError, PromptAcquisitionResult, RequestContextInput,
     ShellExecSessionState, ShellExecTier, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
-use ai::domain::{DiagnosticsReport, DryRunReport, FilterMetadata};
+use ai::domain::{
+    CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
+};
 use ai::ports::outbound::Presenter;
 use ai::ports::outbound::{AgentError, MemoryClient};
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
@@ -126,12 +128,12 @@ fn run() -> anyhow::Result<ExitCode> {
             quiet,
             format,
             socket,
-        } => run_diagnostic_command("status", quiet, format.into(), socket, false),
+        } => run_diagnostic_command("status", quiet, format.into(), socket),
         AiCommand::Doctor {
             quiet,
             format,
             socket,
-        } => run_diagnostic_command("doctor", quiet, format.into(), socket, true),
+        } => run_doctor_command(quiet, format.map(Into::into), socket),
         AiCommand::Ping {
             quiet,
             format,
@@ -2963,7 +2965,6 @@ fn run_diagnostic_command(
     quiet: bool,
     format: OutputFormat,
     socket_override: Option<PathBuf>,
-    is_doctor: bool,
 ) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let socket_path = socket_override.unwrap_or(cfg.socket_path.clone());
@@ -3007,12 +3008,221 @@ fn run_diagnostic_command(
             },
             report.socket_path
         );
-        if is_doctor {
-            eprintln!("ai: doctor: config, session, and shell-log state are shown below");
-        }
     }
     write_stdout(report.render(format))?;
     Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Debug)]
+enum PingObservation {
+    Pong,
+    Unreachable(String),
+    InvalidResponse,
+}
+
+fn observe_ping(socket_path: &Path) -> PingObservation {
+    let timeout = Duration::from_millis(500);
+    let mut stream = match aibe_client::connect_unix_stream(socket_path, timeout) {
+        Ok(stream) => stream,
+        Err(error) => return PingObservation::Unreachable(error.to_string()),
+    };
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    let request = ClientRequest::Ping {
+        id: "health".into(),
+    };
+    if let Err(error) = aibe_client::send_request(&mut stream, &request) {
+        return PingObservation::Unreachable(error.to_string());
+    }
+    let mut line = String::new();
+    if let Err(error) = BufReader::new(&mut stream).read_line(&mut line) {
+        return PingObservation::Unreachable(error.to_string());
+    }
+    match serde_json::from_str::<ClientResponse>(line.trim()) {
+        Ok(ClientResponse::Pong { .. }) => PingObservation::Pong,
+        _ => PingObservation::InvalidResponse,
+    }
+}
+
+fn run_doctor_command(
+    quiet: bool,
+    format: Option<OutputFormat>,
+    socket_override: Option<PathBuf>,
+) -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let socket_path = socket_override.unwrap_or(cfg.socket_path.clone());
+    let ping = observe_ping(&socket_path);
+    let shell_log = resolve_shell_log_info();
+    let filter = resolve_filter_metadata(
+        std::env::var("AI_FILTER").ok(),
+        None,
+        cfg.ask_filter.as_deref(),
+    );
+    let tools = resolve_tools(None, &cfg.ask_tools);
+    let session_dir = std::env::var("AISH_SESSION_DIR").ok();
+    let session_id = implicit_session_id_from_env();
+    let legacy = DiagnosticsReport {
+        command: "doctor".into(),
+        config_socket_path: cfg.socket_path.display().to_string(),
+        ask_default_profile: cfg.ask_default_profile.clone(),
+        ask_filter: filter.clone(),
+        ask_tools: cfg.ask_tools.0.clone(),
+        socket_path: socket_path.display().to_string(),
+        socket_alive: matches!(ping, PingObservation::Pong),
+        socket_error: match &ping {
+            PingObservation::Unreachable(e) => Some(e.clone()),
+            PingObservation::InvalidResponse => Some("invalid response".into()),
+            _ => None,
+        },
+        aish_session_dir: session_dir.clone(),
+        implicit_session_id: session_id.clone(),
+        ai_ask_log: std::env::var("AI_ASK_LOG").ok(),
+        shell_log_choice: shell_log.choice.clone(),
+        shell_log_path: shell_log.path.clone(),
+        shell_log_error: shell_log.error.clone(),
+        preset: None,
+        log_tail_bytes: resolve_log_tail_bytes(None, None, cfg.log_tail_bytes)?,
+    };
+    let (socket_status, socket_message, socket_suggestion) = match &ping {
+        PingObservation::Pong => (
+            CheckStatus::Ok,
+            "aibe socket accepted the Ping request",
+            None,
+        ),
+        PingObservation::InvalidResponse => {
+            (CheckStatus::Ok, "aibe socket accepted a request", None)
+        }
+        PingObservation::Unreachable(_) => (
+            CheckStatus::Fail,
+            "aibe socket is unreachable",
+            Some("Check the configured socket path and start aibe explicitly"),
+        ),
+    };
+    let session_check = if session_dir.is_some() && session_id.is_some() {
+        HealthCheck::new(
+            "session_context",
+            CheckStatus::Ok,
+            "shell session context is available",
+            None,
+        )
+    } else {
+        HealthCheck::new(
+            "session_context",
+            CheckStatus::Warn,
+            "shell session context is not available",
+            Some("Run ai from an aish session or set AISH_SESSION_DIR"),
+        )
+    };
+    let shell_check = if let Some(error) = &shell_log.error {
+        let explicit = std::env::var_os("AI_ASK_LOG").is_some();
+        HealthCheck::new(
+            "shell_log_readable",
+            if explicit {
+                CheckStatus::Fail
+            } else {
+                CheckStatus::Warn
+            },
+            format!("shell log could not be resolved: {error}"),
+            Some("Check AI_ASK_LOG and the session log path"),
+        )
+    } else if let Some(path) = &shell_log.path {
+        match std::fs::File::open(path) {
+            Ok(_) => HealthCheck::new(
+                "shell_log_readable",
+                CheckStatus::Ok,
+                "selected shell log is readable",
+                None,
+            ),
+            Err(_) => HealthCheck::new(
+                "shell_log_readable",
+                CheckStatus::Fail,
+                "selected shell log is not readable",
+                Some("Check shell log path and permissions"),
+            ),
+        }
+    } else {
+        HealthCheck::new(
+            "shell_log_readable",
+            CheckStatus::Warn,
+            "no shell log is selected",
+            Some("Run ai from aish or set AI_ASK_LOG"),
+        )
+    };
+    let tools_check = match tools {
+        Ok(resolved) if resolved.allowlist.is_empty() => HealthCheck::new(
+            "tools_configuration",
+            CheckStatus::Warn,
+            "no tools are enabled",
+            Some("Configure ask_tools when tool use is needed"),
+        ),
+        Ok(resolved) => HealthCheck::new(
+            "tools_configuration",
+            CheckStatus::Ok,
+            format!("{} tools are enabled", resolved.allowlist.names().len()),
+            None,
+        ),
+        Err(_) => HealthCheck::new(
+            "tools_configuration",
+            CheckStatus::Fail,
+            "tool configuration is invalid",
+            Some("Check ask_tools tokens in the ai configuration"),
+        ),
+    };
+    let protocol_check = match ping {
+        PingObservation::Pong => HealthCheck::new(
+            "protocol_compatibility",
+            CheckStatus::Ok,
+            "Ping response decoded as Pong",
+            None,
+        ),
+        PingObservation::InvalidResponse => HealthCheck::new(
+            "protocol_compatibility",
+            CheckStatus::Fail,
+            "socket response is not a valid Pong",
+            Some("Check that ai and aibe use a compatible protocol"),
+        ),
+        PingObservation::Unreachable(_) => HealthCheck::new(
+            "protocol_compatibility",
+            CheckStatus::Fail,
+            "protocol compatibility could not be verified",
+            Some("Restore socket connectivity and retry"),
+        ),
+    };
+    let report = DoctorReport::new(vec![
+        HealthCheck::new(
+            "socket_reachable",
+            socket_status,
+            socket_message,
+            socket_suggestion,
+        ),
+        session_check,
+        shell_check,
+        tools_check,
+        HealthCheck::new(
+            "output_filter_configuration",
+            CheckStatus::Ok,
+            if filter.enabled {
+                "output filter is configured and masked"
+            } else {
+                "output filter is not configured"
+            },
+            None,
+        ),
+        protocol_check,
+    ]);
+    if !quiet {
+        eprintln!("ai: doctor: {}", report.status.as_str());
+    }
+    let output = match format {
+        None => report.render_human(),
+        Some(format) => report.render(format, &legacy),
+    };
+    write_stdout(output)?;
+    Ok(if report.has_failure() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 fn run_ping_command(

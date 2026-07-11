@@ -184,12 +184,12 @@ pub enum AiCommand {
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         socket: Option<PathBuf>,
     },
-    /// Human-oriented alias of `status`
+    /// Check local prerequisites for everyday use
     Doctor {
         #[arg(long, short = 'q')]
         quiet: bool,
-        #[arg(long, value_enum, default_value_t = OutputFormatArg::Tsv)]
-        format: OutputFormatArg,
+        #[arg(long, value_enum)]
+        format: Option<OutputFormatArg>,
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         socket: Option<PathBuf>,
     },

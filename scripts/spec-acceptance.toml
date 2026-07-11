@@ -5,6 +5,105 @@
 # pending = false … テストが存在し、#[ignore] であってはならない（verify で実行される想定）。
 
 [[cases]]
+spec = "0058"
+phase = 0
+id = "doctor_alias_uses_doctor_command_name"
+description = "現行 ai doctor が doctor command として dispatch される設計基点"
+test = "doctor_alias_uses_doctor_command_name"
+file_glob = "ai/tests/phase_a_cli.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_health_checks_render_human_and_json"
+description = "同じ診断 checks を同順序と判定で human と JSON に表示する"
+test = "doctor_health_checks_render_human_and_json"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_json_has_stable_check_schema"
+description = "doctor JSON の report と check schema が安定している"
+test = "doctor_json_has_stable_check_schema"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_preflight_covers_locked_checks"
+description = "固定 6 check ID を順に一度ずつ出力する"
+test = "doctor_preflight_covers_locked_checks"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_fail_exit_and_warn_success"
+description = "FAIL は exit 1、OK/WARN のみは exit 0 になる"
+test = "doctor_fail_exit_and_warn_success"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_does_not_call_external_llm_or_mutate"
+description = "doctor は外部 LLM や process を呼ばずローカル状態を更新しない"
+test = "doctor_does_not_call_external_llm_or_mutate"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_masks_filter_and_secret_values"
+description = "filter、秘密値、log 本文を診断出力へ露出しない"
+test = "doctor_masks_filter_and_secret_values"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_checks_continue_after_failure"
+description = "一 check の失敗後も独立した local checks を評価する"
+test = "doctor_checks_continue_after_failure"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_protocol_check_uses_existing_ping_contract"
+description = "socket と protocol checks が一回の既存 Ping/Pong 観測を共有する"
+test = "doctor_protocol_check_uses_existing_ping_contract"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "status_legacy_output_remains_compatible"
+description = "ai status の fields、形式、socket failure 時 exit 方針を維持する"
+test = "status_legacy_output_remains_compatible"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
+spec = "0058"
+phase = 1
+id = "doctor_tsv_env_remain_machine_readable"
+description = "doctor TSV/env は legacy keys を維持して check keys を追記する"
+test = "doctor_tsv_env_remain_machine_readable"
+file_glob = "ai/tests/0058_aish_doctor_diagnostics.rs"
+pending = false
+
+[[cases]]
 spec = "0057"
 phase = 1
 id = "handoff_timeout_terminates_bounded"

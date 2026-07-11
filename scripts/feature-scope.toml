@@ -16,6 +16,50 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0058"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 4
+scope_change_reason = "mark 0058 done after all acceptance criteria green and implementation spec moved to docs/done/"
+
+core_outcome = "ai doctor で日常利用の前提を OK/WARN/FAIL と次の一手として可視化する"
+
+actors = 1
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 1
+
+novel_mechanisms = ["health-check-report"]
+integrations = ["ai-diagnostics"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "network/provider, remediation, aish CLI, replay and other runtime feature diagnostics, and install provenance diagnostics are deferred to separate specs"
+
+vertical_slice_ac_id = "doctor_health_checks_render_human_and_json"
+
+locked_ac_ids = [
+  "doctor_alias_uses_doctor_command_name",
+  "doctor_health_checks_render_human_and_json",
+  "doctor_json_has_stable_check_schema",
+  "doctor_preflight_covers_locked_checks",
+  "doctor_fail_exit_and_warn_success",
+  "doctor_does_not_call_external_llm_or_mutate",
+  "doctor_masks_filter_and_secret_values",
+  "doctor_checks_continue_after_failure",
+  "doctor_protocol_check_uses_existing_ping_contract",
+  "status_legacy_output_remains_compatible",
+  "doctor_tsv_env_remain_machine_readable",
+]
+
+[[features]]
 spec = "0055"
 status = "locked"
 scope_class = "feature"

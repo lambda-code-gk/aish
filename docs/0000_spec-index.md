@@ -52,6 +52,7 @@
 | 0055 | [0055_minimal-human-handoff-spec.md](spec/0055_minimal-human-handoff-spec.md) | 設計確定（実装済み） | Minimal Human Handoff（同期型 collaborative `shell_exec` → 実 PTY human shell） |
 | 0056 | [0056_feature-scope-governance-spec.md](spec/0056_feature-scope-governance-spec.md) | 設計確定（実装済み） | Feature Scope Governance / Complexity Gate（scope lock・CI 検査） |
 | 0057 | [0057_pty-process-cleanup-hardening-spec.md](spec/0057_pty-process-cleanup-hardening-spec.md) | 設計確定（実装済み） | PTY Process Cleanup Hardening（0055 human handoff の timeout / signal / 異常終了 cleanup） |
+| 0058 | [0058_aish-doctor-diagnostics-spec.md](spec/0058_aish-doctor-diagnostics-spec.md) | 設計確定（実装済み） | AISH Doctor / 常用診断導線（`ai doctor` HealthCheck、日常 preflight、human / JSON 出力） |
 
 ### 状態ラベルの意味
 
@@ -71,6 +72,7 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0058 | [0058_aish-doctor-diagnostics-implementation-spec.md](done/0058_aish-doctor-diagnostics-implementation-spec.md) | 実装済み | `ai doctor` の 6 HealthCheck、human / structured 出力、exit code、`status` 互換 |
 | 0057 | [0057_pty-process-cleanup-hardening-implementation-spec.md](done/0057_pty-process-cleanup-hardening-implementation-spec.md) | 実装済み | PTY Process Cleanup Hardening（0055 human handoff の timeout / signal / 異常終了 cleanup） |
 | 0001 | [0001_aibe-tool-agent-loop-spec.md](done/0001_aibe-tool-agent-loop-spec.md) | 実装済み | aibe ツール付きエージェントループ |
 | 0002 | [0002_ai-tools-client-spec.md](done/0002_ai-tools-client-spec.md) | 実装済み | `ai ask` の allowlist・表示契約 |
