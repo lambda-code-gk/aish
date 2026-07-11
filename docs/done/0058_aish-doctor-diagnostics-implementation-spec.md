@@ -107,7 +107,7 @@ checks は以下の順で必ず一度ずつ構築する。
 2. `session_context`: `AISH_SESSION_DIR` と `implicit_session_id_from_env` を既存規則で解決する。両方が妥当なら OK、通常利用に必須でない未設定は WARN。不正 UTF-8 / basename 解決不能など利用不能は WARN とし、次の確認手順を suggestion にする。
 3. `shell_log_readable`: `resolve_shell_log_info` / `resolve_shell_log_for_ask` の選択結果を使う。選択 path が存在し read 可能なら OK。明示 `AI_ASK_LOG` の解決失敗・存在するが read 不可は FAIL。log を利用しない選択または暗黙候補なしは WARN。本文は読んでも出力せず、可能なら metadata/open のみで可読性を判定する。
 4. `tools_configuration`: `resolve_tools(None, &cfg.ask_tools)` で token/category 展開を検証する。成功かつ非空は OK、成功だが空集合は WARN、不正 token/category/`none` 混在は FAIL。message は有効 tool 名または件数だけに限定する。
-5. `output_filter_configuration`: `AiConfig::load_for_diagnostics` で設定ファイルの read/parse 成否を観測し、失敗時は FAIL（suggestion 必須）。成功時は `resolve_filter_metadata(AI_FILTER, None, cfg.ask_filter)` の `enabled/source/masked` を使う。未設定は利用可能な通常状態として OK、設定済みかつ source が解決し masked なら OK。通常コマンド向けの `AiConfig::load()`（fail-open）は変更しない。filter command 本文は絶対に含めない。
+5. `output_filter_configuration`: `AiConfig::load_for_diagnostics` で設定ファイルの read/parse 成否を観測し、失敗時は FAIL（suggestion 必須）。FAIL message は filter 単体障害ではなく、ai config 全体の読込または parse 失敗であることが分かる表現にする（例: `ai config could not be read or parsed; output filter configuration cannot be verified`）。成功時は `resolve_filter_metadata(AI_FILTER, None, cfg.ask_filter)` の `enabled/source/masked` を使う。未設定は利用可能な通常状態として OK、設定済みかつ source が解決し masked なら OK。通常コマンド向けの `AiConfig::load()`（fail-open）は変更しない。filter command 本文は絶対に含めない。
 6. `protocol_compatibility`: 下記共有 Ping 観測が正しい `ClientResponse::Pong` として decode できれば OK。不正応答 / decode failure は FAIL。数値 version は表示しない。
 
 各 FAIL 後も依存しない local checks を続行する。依存観測が取れない check は推測で OK にせず、設計書の範囲で WARN / FAIL と理由・suggestion を返す。

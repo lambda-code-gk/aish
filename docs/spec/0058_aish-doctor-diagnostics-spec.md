@@ -113,11 +113,11 @@ DoctorReport = { command, status, checks[] }
 
 | check ID | 判定範囲 |
 |----------|----------|
-| `socket_reachable` | 設定または `--socket` で解決した Unix socket に既存 Ping/Pong が成立するか。未到達・timeout・不正応答は FAIL |
+| `socket_reachable` | 設定または `--socket` で解決した Unix socket へ接続し request を送受信できるか。未到達または timeout は FAIL とする。socket へ接続できたが応答を Pong として decode できない場合は、`socket_reachable` を OK、`protocol_compatibility` を FAIL とする |
 | `session_context` | `AISH_SESSION_DIR` と implicit session id を既存規則で解決できるか。通常利用に必須でない未設定は WARN |
 | `shell_log_readable` | 既存 `resolve_shell_log_info` が選んだ log path の存在・read 可否。明示要求された log の解決失敗は FAIL、利用しない設定は WARN |
 | `tools_configuration` | 既存 tool token / group 解決が成功し、有効 tool 集合を説明できるか。不正 token は FAIL、空集合は WARN |
-| `output_filter_configuration` | filter の有無・source・masked 状態を既存秘匿規則で確認する。設定済みで内容を露出せず解決できれば OK、解決不能は FAIL |
+| `output_filter_configuration` | filter の有無・source・masked 状態を既存秘匿規則で確認する。設定ファイル全体の読込または parse に失敗した場合も FAIL とし、message は filter 単体ではなく config 読込/parse 失敗であることが分かる表現にする。設定済みで内容を露出せず解決できれば OK |
 | `protocol_compatibility` | 現行経路では Ping request に Pong response を decode できることを wire 互換の根拠とする。成立時 OK、不正応答は FAIL。client/server の数値 version 表示は Deferred |
 
 ### 9.3 出力・exit code・`ai status` 互換

@@ -3046,10 +3046,11 @@ fn observe_ping(socket_path: &Path) -> PingObservation {
 
 fn filter_configuration_check(load_error: Option<&str>, filter: &FilterMetadata) -> HealthCheck {
     if load_error.is_some() {
+        // load_error は filter 専用ではなく、TOML 全体の読込/parse 失敗を表す。
         return HealthCheck::new(
             "output_filter_configuration",
             CheckStatus::Fail,
-            "output filter configuration could not be resolved safely",
+            "ai config could not be read or parsed; output filter configuration cannot be verified",
             Some("Fix the ai config file syntax or permissions and rerun ai doctor"),
         );
     }

@@ -3,12 +3,13 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex, MutexGuard,
 };
 use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -20,6 +21,9 @@ const IDS: [&str; 6] = [
     "output_filter_configuration",
     "protocol_compatibility",
 ];
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(2);
+const JOIN_TIMEOUT: Duration = Duration::from_secs(3);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 static SOCKET_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 
 struct Fixture {
@@ -37,16 +41,39 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("aibe.sock");
         let listener = UnixListener::bind(&socket).unwrap();
+        listener
+            .set_nonblocking(true)
+            .expect("set socket fixture nonblocking");
         let payload = response.to_string();
         let count = Arc::new(AtomicUsize::new(0));
         let seen = count.clone();
         let handle = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let mut writer = stream.try_clone().unwrap();
-            let mut line = String::new();
-            BufReader::new(stream).read_line(&mut line).unwrap();
-            seen.fetch_add(1, Ordering::SeqCst);
-            writeln!(writer, "{payload}").unwrap();
+            let deadline = Instant::now() + ACCEPT_TIMEOUT;
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        // Listener is nonblocking; restore blocking I/O for the accepted stream.
+                        stream
+                            .set_nonblocking(false)
+                            .expect("set accepted stream blocking");
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+                        let mut writer = stream.try_clone().unwrap();
+                        let mut line = String::new();
+                        BufReader::new(stream).read_line(&mut line).unwrap();
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        writeln!(writer, "{payload}").unwrap();
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("socket fixture accept failed: {error}"),
+                }
+            }
         });
         Self {
             _guard: guard,
@@ -59,11 +86,50 @@ impl Fixture {
     fn pong() -> Self {
         Self::server(r#"{"type":"pong","id":"health"}"#)
     }
+
+    fn join_with_timeout(mut self) {
+        if let Some(handle) = self.handle.take() {
+            let deadline = Instant::now() + JOIN_TIMEOUT;
+            while Instant::now() < deadline {
+                if handle.is_finished() {
+                    handle.join().expect("socket fixture server panicked");
+                    return;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            panic!("socket fixture join timed out after {JOIN_TIMEOUT:?}");
+        }
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
+        if let Some(handle) = self.handle.take() {
+            let deadline = Instant::now() + JOIN_TIMEOUT;
+            while Instant::now() < deadline {
+                if handle.is_finished() {
+                    let _ = handle.join();
+                    return;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            // Detach: accept loop is deadline-bounded, so the thread exits soon.
+            // Avoid unbounded join in Drop (e.g. panic mid-test).
+            drop(handle);
+        }
+    }
+}
+
+fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> Output {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("wait child output"),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("ai doctor child exceeded timeout {COMMAND_TIMEOUT:?}");
+            }
+            Err(error) => panic!("ai doctor child wait failed: {error}"),
         }
     }
 }
@@ -92,14 +158,17 @@ fn run(socket: &std::path::Path, args: &[&str], session: bool, extra: &str) -> O
         .env_remove("AISH_SESSION_DIR")
         .arg("doctor")
         .arg("--quiet")
-        .args(args);
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if session {
         let dir = home.path().join("session-1");
         fs::create_dir(&dir).unwrap();
         fs::write(dir.join("log.jsonl"), "SECRET_LOG_BODY\n").unwrap();
         command.env("AISH_SESSION_DIR", dir);
     }
-    command.output().unwrap()
+    let child = command.spawn().expect("spawn ai doctor");
+    wait_child_with_timeout(child, Instant::now() + COMMAND_TIMEOUT)
 }
 fn json(out: &Output) -> Value {
     serde_json::from_slice(&out.stdout).unwrap()
@@ -174,7 +243,8 @@ fn doctor_fail_exit_and_warn_success() {
     let home = tempfile::tempdir().unwrap();
     let cfg = home.path().join("bad.toml");
     fs::write(&cfg, "[ask]\nfilter = [\"broken\"]\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ai"));
+    command
         .env("HOME", home.path())
         .env("AI_CONFIG", &cfg)
         .env_remove("AI_FILTER")
@@ -186,13 +256,26 @@ fn doctor_fail_exit_and_warn_success() {
             "--socket",
             f.socket.to_str().unwrap(),
         ])
-        .output()
-        .unwrap();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = wait_child_with_timeout(
+        command.spawn().expect("spawn ai doctor"),
+        Instant::now() + COMMAND_TIMEOUT,
+    );
     assert_eq!(out.status.code(), Some(1));
     let v = json(&out);
     assert_eq!(v["checks"][4]["id"], "output_filter_configuration");
     assert_eq!(v["checks"][4]["status"], "fail");
     assert!(v["checks"][4]["suggestion"].is_string());
+    let message = v["checks"][4]["message"].as_str().unwrap();
+    assert!(
+        message.contains("ai config could not be read or parsed"),
+        "config parse failure must mention config read/parse, got: {message}"
+    );
+    assert!(
+        !message.to_ascii_lowercase().contains("resolved safely"),
+        "message must not look like a filter-only failure: {message}"
+    );
 }
 
 #[test]
@@ -213,14 +296,19 @@ fn doctor_masks_filter_and_secret_values() {
     let dir = home.path().join("session");
     fs::create_dir(&dir).unwrap();
     fs::write(dir.join("log.jsonl"), "SECRET_LOG_BODY API_KEY_SECRET\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ai"));
+    command
         .env("HOME", home.path())
         .env("AI_CONFIG", cfg)
         .env("AISH_SESSION_DIR", dir)
         .env("AI_FILTER", "SECRET_FILTER_COMMAND")
         .args(["doctor", "--quiet", "--format", "json"])
-        .output()
-        .unwrap();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = wait_child_with_timeout(
+        command.spawn().expect("spawn ai doctor"),
+        Instant::now() + COMMAND_TIMEOUT,
+    );
     let all = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -254,6 +342,7 @@ fn doctor_protocol_check_uses_existing_ping_contract() {
     assert_eq!(f.count.load(Ordering::SeqCst), 1);
     assert_eq!(v["checks"][0]["status"], "ok");
     assert_eq!(v["checks"][5]["status"], "fail");
+    assert_eq!(out.status.code(), Some(1));
 }
 
 #[test]
@@ -261,12 +350,17 @@ fn status_legacy_output_remains_compatible() {
     let home = tempfile::tempdir().unwrap();
     let cfg = config(&home, &home.path().join("none.sock"), "");
     for format in ["json", "tsv", "env"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ai"));
+        command
             .env("HOME", home.path())
             .env("AI_CONFIG", &cfg)
             .args(["status", "--quiet", "--format", format])
-            .output()
-            .unwrap();
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let out = wait_child_with_timeout(
+            command.spawn().expect("spawn ai status"),
+            Instant::now() + COMMAND_TIMEOUT,
+        );
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(text.to_ascii_lowercase().contains("socket"));
@@ -292,4 +386,17 @@ fn doctor_tsv_env_remain_machine_readable() {
             "AI_DOCTOR_CHECK_SOCKET_REACHABLE_STATUS"
         }));
     }
+}
+
+#[test]
+fn socket_fixture_exits_without_client_connection() {
+    let started = Instant::now();
+    let f = Fixture::pong();
+    // Do not connect: accept loop and Drop join must still finish in bounded time.
+    f.join_with_timeout();
+    assert!(
+        started.elapsed() < ACCEPT_TIMEOUT + JOIN_TIMEOUT + Duration::from_secs(1),
+        "unused socket fixture must finish quickly; elapsed={:?}",
+        started.elapsed()
+    );
 }
