@@ -1,15 +1,40 @@
 #![cfg(unix)]
 //! 0057 PTY process cleanup hardening acceptance tests.
+//!
+//! - launcher 単体（fake aish + cancel flag）
+//! - real vertical E2E: mock aibe + `ai --collaborative --timeout` + real `aish human-shell` + PTY
 
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixListener;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use ai::adapters::outbound::{AishHumanShellLauncher, RuntimeHandoffDirGuard};
 use ai::ports::outbound::{HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher};
+use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ShellExecApprovalOrigin};
+
+fn e2e_timeout() -> Duration {
+    let secs = std::env::var("AISH_0057_E2E_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+    Duration::from_secs(secs.min(60))
+}
+
+fn ai_timeout_secs() -> u64 {
+    std::env::var("AISH_0057_AI_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2)
+        .clamp(1, 5)
+}
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -67,13 +92,367 @@ fn assert_no_runtime_handoff_dirs(root: &Path) {
     }
 }
 
+fn pid_exists(pid: i32) -> bool {
+    unsafe {
+        libc::kill(pid, 0) == 0
+            || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+}
+
+fn process_state(pid: i32) -> Option<char> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rp = stat.rfind(')')?;
+    stat[rp + 2..].chars().next()
+}
+
+fn wait_pid_gone_or_zombie(pid: i32, deadline: Instant) {
+    while Instant::now() < deadline {
+        if !pid_exists(pid) || process_state(pid) == Some('Z') {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!("pid {pid} still alive with state {:?}", process_state(pid));
+}
+
+fn read_pid_file(path: &Path) -> Option<i32> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+fn spawn_in_new_process_group(command: &mut Command) -> Child {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command.spawn().expect("spawn child in new process group")
+}
+
+fn kill_process_group_and_reap(child: Child) -> std::process::Output {
+    let pgid = child.id() as i32;
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+    child
+        .wait_with_output()
+        .expect("wait output after process group kill")
+}
+
+fn wait_child_with_timeout(mut child: Child, deadline: Instant) -> std::process::Output {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("wait output"),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let output = kill_process_group_and_reap(child);
+                panic!(
+                    "ai child timed out after {:?}, stderr={}",
+                    e2e_timeout(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(e) => panic!("wait child failed: {e}"),
+        }
+    }
+}
+
+fn accept_with_deadline(
+    listener: &UnixListener,
+    deadline: Instant,
+) -> (
+    std::os::unix::net::UnixStream,
+    std::os::unix::net::SocketAddr,
+) {
+    loop {
+        if Instant::now() >= deadline {
+            panic!("mock server accept deadline exceeded");
+        }
+        match listener.accept() {
+            Ok(conn) => return conn,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => panic!("mock server accept failed: {e}"),
+        }
+    }
+}
+
+fn read_line_with_deadline(
+    reader: &mut BufReader<std::os::unix::net::UnixStream>,
+    line: &mut String,
+    deadline: Instant,
+) -> std::io::Result<()> {
+    while Instant::now() < deadline {
+        reader.get_mut().set_nonblocking(true)?;
+        match reader.read_line(line) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "mock server connection closed by peer",
+                ));
+            }
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "mock server read_line deadline exceeded",
+    ))
+}
+
+fn join_with_deadline(handle: JoinHandle<()>, deadline: Instant) {
+    while Instant::now() < deadline {
+        if handle.is_finished() {
+            handle.join().expect("mock aibe server panicked");
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("mock server thread join deadline exceeded");
+}
+
+fn write_ai_config(home: &Path, socket_path: &Path, history_dir: &Path) -> PathBuf {
+    let path = home.join("ai.toml");
+    fs::write(
+        &path,
+        format!(
+            r#"
+socket_path = "{}"
+history_dir = "{}"
+history_max_entries = 0
+[ask]
+tools = "shell_exec"
+progress = false
+"#,
+            socket_path.display(),
+            history_dir.display(),
+        ),
+    )
+    .expect("write ai config");
+    path
+}
+
+fn write_aibe_config(home: &Path) -> PathBuf {
+    let path = home.join("aibe.toml");
+    fs::write(
+        &path,
+        r#"
+[tools.shell_exec]
+shell_exec_approval = "ask"
+"#,
+    )
+    .expect("write aibe config");
+    path
+}
+
+fn write_aish_config(home: &Path, log_dir: &Path) -> PathBuf {
+    let path = home.join("aish.toml");
+    fs::write(
+        &path,
+        format!(
+            "log_dir = \"{}\"\n",
+            log_dir.display().to_string().replace('\\', "\\\\")
+        ),
+    )
+    .expect("write aish config");
+    path
+}
+
+fn require_aish_binary() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_aish") {
+        let path = PathBuf::from(path);
+        assert!(
+            path.is_file(),
+            "CARGO_BIN_EXE_aish points to missing file: {}",
+            path.display()
+        );
+        return path;
+    }
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let sibling = ai_bin
+        .parent()
+        .map(|dir| dir.join("aish"))
+        .unwrap_or_else(|| PathBuf::from("aish"));
+    assert!(
+        sibling.is_file(),
+        "aish binary not found next to ai (set CARGO_BIN_EXE_aish or build aish): {}",
+        sibling.display()
+    );
+    sibling
+}
+
+/// mock aibe: AgentTurn → ShellExecApprovalPrompt →（timeout 後の）failed approval → Error。
+/// 同一 listener で cancel_turn 接続も受け、AgentTurn 以外は捨てる。
+struct TimeoutHandoffMock {
+    socket_path: PathBuf,
+    _dir: tempfile::TempDir,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl TimeoutHandoffMock {
+    fn spawn() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket_path = dir.path().join("aibe.sock");
+        let _ = fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("bind");
+        listener.set_nonblocking(true).expect("set_nonblocking");
+
+        let deadline = Instant::now() + e2e_timeout();
+        let handle = thread::spawn(move || {
+            let (stream, first_line) = loop {
+                if Instant::now() >= deadline {
+                    panic!("mock server did not receive agent_turn before deadline");
+                }
+                let (stream, _) = accept_with_deadline(&listener, deadline);
+                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                let mut line = String::new();
+                match read_line_with_deadline(&mut reader, &mut line, deadline) {
+                    Ok(()) => match serde_json::from_str::<ClientRequest>(line.trim()) {
+                        Ok(ClientRequest::AgentTurn { .. }) => {
+                            // clone 側で読んだので共有 socket から消費済み。clone の reader を使う。
+                            drop(stream);
+                            break (reader, line);
+                        }
+                        Ok(ClientRequest::CancelTurn { .. }) => {
+                            // best-effort cancel: 読み捨てて次の接続へ
+                            continue;
+                        }
+                        Ok(_) | Err(_) => continue,
+                    },
+                    Err(_) => continue,
+                }
+            };
+            let mut reader = stream;
+            let mut writer = reader.get_mut().try_clone().expect("clone writer");
+            let line = first_line;
+            let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse agent_turn");
+            let ClientRequest::AgentTurn {
+                id,
+                context,
+                messages,
+                ..
+            } = req
+            else {
+                panic!("expected agent_turn");
+            };
+            assert!(
+                context.collaborative_handoff,
+                "collaborative_handoff must be true"
+            );
+            assert!(
+                messages.iter().any(|m| m.role == "user"),
+                "user message required"
+            );
+
+            let prompt = ClientResponse::ShellExecApprovalPrompt {
+                id: "handoff-prompt-0057".into(),
+                turn_id: id.clone(),
+                tool_call_id: "call_handoff_0057".into(),
+                command: "true".into(),
+                args: vec![],
+            };
+            let prompt_json = serde_json::to_string(&prompt).expect("prompt json");
+            writeln!(writer, "{prompt_json}").expect("write prompt");
+            writer.flush().expect("flush");
+
+            // approval 待ち中も cancel 接続を受け付ける
+            let listener_cancel = listener.try_clone().expect("clone listener for cancel");
+            let stop_cancel = std::sync::Arc::new(AtomicBool::new(false));
+            let stop_cancel_thread = std::sync::Arc::clone(&stop_cancel);
+            let cancel_deadline = deadline;
+            let cancel_drain = thread::spawn(move || {
+                while Instant::now() < cancel_deadline && !stop_cancel_thread.load(Ordering::SeqCst)
+                {
+                    match listener_cancel.accept() {
+                        Ok((stream, _)) => drop(stream),
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+
+            let mut approval_line = String::new();
+            read_line_with_deadline(&mut reader, &mut approval_line, deadline)
+                .expect("read shell_exec_approval after timeout");
+            stop_cancel.store(true, Ordering::SeqCst);
+            let _ = cancel_drain.join();
+
+            let approval: ClientRequest =
+                serde_json::from_str(approval_line.trim()).expect("parse approval");
+            let ClientRequest::ShellExecApproval {
+                approved,
+                approval_origin,
+                handoff_result,
+                handoff_error,
+                ..
+            } = approval
+            else {
+                panic!(
+                    "expected shell_exec_approval, got: {}",
+                    approval_line.trim()
+                );
+            };
+            assert!(
+                !approved,
+                "timeout path must not approve handoff as success"
+            );
+            assert_eq!(
+                approval_origin,
+                ShellExecApprovalOrigin::CollaborativeHandoff
+            );
+            assert!(handoff_result.is_none());
+            assert!(
+                handoff_error.is_some(),
+                "timeout cancel must report handoff_error"
+            );
+
+            let final_resp = ClientResponse::Error {
+                id,
+                code: ErrorCode::ToolError,
+                message: handoff_error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "human_handoff_failed".into()),
+            };
+            let final_json = serde_json::to_string(&final_resp).expect("final json");
+            writeln!(writer, "{final_json}").expect("write final");
+            writer.flush().expect("flush");
+        });
+
+        Self {
+            socket_path,
+            _dir: dir,
+            handle: Some(handle),
+        }
+    }
+
+    fn join(mut self, deadline: Instant) {
+        if let Some(handle) = self.handle.take() {
+            join_with_deadline(handle, deadline);
+        }
+    }
+}
+
+/// launcher 単体: 既に立っている cancel flag で子を止められること。
 #[test]
-fn handoff_timeout_terminates_bounded() {
+fn launcher_cancel_flag_stops_child_bounded() {
     let home = tempfile::tempdir().unwrap();
     let runtime = home.path().join("aish").join("handoff-timeout");
     let fake = fake_aish_script(home.path(), "sleep 30");
     let launcher = AishHumanShellLauncher::new(fake);
-    let cancel = AtomicBool::new(true);
+    // 単体: cancel 済み flag を渡す（vertical E2E は --timeout 実経路を使う）
+    let cancel = AtomicBool::new(false);
+    cancel.store(true, Ordering::SeqCst);
     let started = Instant::now();
     let err = launcher
         .launch_and_wait(&request(home.path(), runtime), &cancel)
@@ -83,6 +462,124 @@ fn handoff_timeout_terminates_bounded() {
         "cancelled handoff must be bounded"
     );
     assert!(matches!(err, HumanShellLaunchError::Cancelled(_)));
+}
+
+/// AC: `ai --collaborative --timeout` の実経路で handoff 中でも有限時間 non-zero 終了する。
+#[test]
+fn handoff_timeout_terminates_bounded() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let aish_bin = require_aish_binary();
+    let home = tempfile::tempdir().expect("home");
+    let work = home.path().join("work");
+    fs::create_dir_all(&work).expect("work");
+    let history_dir = home.path().join("history");
+    fs::create_dir_all(&history_dir).expect("history");
+    let aish_log = home.path().join("aish-sessions");
+    fs::create_dir_all(&aish_log).expect("aish log");
+
+    let pty_pid_file = work.join("pty.pid");
+    let aish_pid_file = work.join("aish.pid");
+    let job_pid_file = work.join("job.pid");
+
+    let server = TimeoutHandoffMock::spawn();
+    let ai_cfg = write_ai_config(home.path(), &server.socket_path, &history_dir);
+    let aibe_cfg = write_aibe_config(home.path());
+    let aish_cfg = write_aish_config(home.path(), &aish_log);
+
+    let timeout_secs = ai_timeout_secs();
+    let deadline = Instant::now() + e2e_timeout();
+    let started = Instant::now();
+
+    let shell_input = format!(
+        "echo $$ > {}\necho $PPID > {}\nsleep 30 &\necho $! > {}\nsleep 30\n",
+        shell_quote(pty_pid_file.to_str().unwrap()),
+        shell_quote(aish_pid_file.to_str().unwrap()),
+        shell_quote(job_pid_file.to_str().unwrap()),
+    );
+
+    let mut child = {
+        let mut command = Command::new(&ai_bin);
+        command
+            .args([
+                "ask",
+                "--collaborative",
+                "--quiet",
+                "--no-start",
+                "--timeout",
+                &timeout_secs.to_string(),
+                "verify 0057 timeout handoff cleanup",
+            ])
+            .current_dir(&work)
+            .env("AI_CONFIG", &ai_cfg)
+            .env("AIBE_CONFIG", &aibe_cfg)
+            .env("AISH_CONFIG", &aish_cfg)
+            .env("HOME", home.path())
+            .env("AISH_BIN", &aish_bin)
+            .env("XDG_RUNTIME_DIR", home.path())
+            .env("SHELL", "/bin/bash")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        spawn_in_new_process_group(&mut command)
+    };
+
+    // stdin を閉じると shell が EOF で終わるため、timeout まで開いたままにする。
+    let mut stdin = child.stdin.take().expect("ai stdin");
+    stdin
+        .write_all(shell_input.as_bytes())
+        .expect("write shell input");
+    stdin.flush().expect("flush shell input");
+
+    let mut captured = None;
+    while Instant::now() < deadline {
+        if let (Some(pty), Some(aish_pid), Some(job)) = (
+            read_pid_file(&pty_pid_file),
+            read_pid_file(&aish_pid_file),
+            read_pid_file(&job_pid_file),
+        ) {
+            captured = Some((pty, aish_pid, job));
+            break;
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(e) => panic!("try_wait failed: {e}"),
+        }
+    }
+
+    let output = wait_child_with_timeout(child, deadline);
+    drop(stdin);
+    server.join(deadline);
+
+    let elapsed = started.elapsed();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        elapsed < e2e_timeout(),
+        "ai must finish before outer watchdog ({:?}); elapsed={elapsed:?}; stderr={stderr}",
+        e2e_timeout()
+    );
+    assert!(
+        elapsed < Duration::from_secs(timeout_secs + 8),
+        "ai should exit soon after --timeout {timeout_secs}s (plus cleanup); elapsed={elapsed:?}; stderr={stderr}"
+    );
+    assert!(
+        !output.status.success(),
+        "timeout during handoff must not be a normal success; code={:?}; stderr={stderr}",
+        output.status.code()
+    );
+
+    let (pty_pid, aish_pid, job_pid) = captured.unwrap_or_else(|| {
+        panic!(
+            "handoff shell never wrote pid files before ai exited; \
+             timeout may have fired before PTY was ready. stderr={stderr}"
+        );
+    });
+    wait_pid_gone_or_zombie(pty_pid, deadline);
+    wait_pid_gone_or_zombie(aish_pid, deadline);
+    wait_pid_gone_or_zombie(job_pid, deadline);
+
+    let runtime_root = home.path().join("aish");
+    assert_no_runtime_handoff_dirs(&runtime_root);
 }
 
 #[test]
@@ -219,12 +716,43 @@ fn cleanup_e2e_has_outer_watchdog() {
             .join("aish/tests/0057_pty_process_cleanup_hardening.rs"),
     )
     .expect("read aish test source");
-    assert!(ai_source.contains("Duration::from_secs(5)"));
+    assert!(
+        ai_source.contains("fn wait_child_with_timeout"),
+        "ai E2E must use outer wait_child_with_timeout"
+    );
+    assert!(
+        ai_source.contains("fn kill_process_group_and_reap"),
+        "ai E2E must SIGKILL process group on watchdog expiry"
+    );
+    assert!(ai_source.contains("libc::SIGKILL"));
+    assert!(ai_source.contains("fn e2e_timeout"));
+    assert!(
+        ai_source.contains("--timeout"),
+        "vertical E2E must exercise real ai --timeout"
+    );
+    assert!(
+        ai_source.contains("CARGO_BIN_EXE_ai"),
+        "vertical E2E must launch real ai binary"
+    );
+    assert!(
+        ai_source.contains("verify 0057 timeout handoff cleanup"),
+        "vertical E2E must run a real collaborative ask prompt"
+    );
+    // handoff_timeout_terminates_bounded 本体で cancel flag を事前に立てないこと
+    let e2e_fn = ai_source
+        .split("fn handoff_timeout_terminates_bounded()")
+        .nth(1)
+        .and_then(|rest| {
+            rest.split("fn external_sigint_sigterm_stops_handoff()")
+                .next()
+        })
+        .expect("locate handoff_timeout_terminates_bounded body");
+    assert!(
+        !e2e_fn.contains("cancel.store(true") && !e2e_fn.contains("AtomicBool::new(true)"),
+        "vertical AC must not pre-set cancel flag; use --timeout path"
+    );
     assert!(aish_source.contains("fn wait_child_with_timeout"));
     assert!(aish_source.contains("fn kill_process_group_and_reap"));
     assert!(aish_source.contains("libc::SIGKILL"));
     assert!(aish_source.contains("e2e_timeout()"));
-    assert!(
-        aish_source.contains(&shell_quote("watchdog marker")) || aish_source.contains("deadline")
-    );
 }
