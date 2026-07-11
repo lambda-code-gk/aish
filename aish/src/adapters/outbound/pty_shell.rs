@@ -1624,6 +1624,19 @@ mod tests {
         (fds[0], fds[1])
     }
 
+    /// cleanup 後に子が既に reap 済みであること。
+    /// `waitpid(..., WNOHANG)` の `0` は生存中なので成功にしない。
+    fn assert_child_already_reaped(child: libc::pid_t) {
+        let mut status: libc::c_int = 0;
+        let rc = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
+        assert_eq!(rc, -1, "child must already have been reaped (waitpid={rc})");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD),
+            "expected ECHILD after reaping child {child}"
+        );
+    }
+
     /// 親が TTY（aish shell 等）でも、非 TTY 前提の単体テストを CI 相当にする。
     struct NonTtyStdinGuard {
         saved: RawFd,
@@ -1702,9 +1715,7 @@ mod tests {
             InteractiveShellError::Failed("test abort".into()),
         );
 
-        let mut status: libc::c_int = 0;
-        let pid = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
-        assert!(pid <= 0, "child should be reaped (waitpid returned {pid})");
+        assert_child_already_reaped(child);
     }
 
     #[test]
@@ -1753,12 +1764,7 @@ mod tests {
         // 一般エラー経路相当: disarm せず Drop → terminate_pty_session。
         drop(PtyRelayCleanup::new(child, master_file));
 
-        let mut status: libc::c_int = 0;
-        let pid = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
-        assert!(
-            pid <= 0,
-            "child should be reaped by PtyRelayCleanup drop (waitpid returned {pid})"
-        );
+        assert_child_already_reaped(child);
     }
 
     #[test]
@@ -1835,12 +1841,7 @@ mod tests {
         assert_eq!(n, 1, "child must signal readiness");
 
         let _status = terminate_pty_session(child, master).expect("must reap, not fake -1");
-        let mut wait_status = 0;
-        let pid = unsafe { libc::waitpid(child, &mut wait_status, libc::WNOHANG) };
-        assert!(
-            pid <= 0,
-            "terminate_pty_session must have reaped child (waitpid={pid})"
-        );
+        assert_child_already_reaped(child);
     }
 
     #[test]
