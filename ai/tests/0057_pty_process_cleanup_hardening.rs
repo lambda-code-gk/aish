@@ -107,14 +107,18 @@ fn process_state(pid: i32) -> Option<char> {
     stat[rp + 2..].chars().next()
 }
 
-fn wait_pid_gone_or_zombie(pid: i32, deadline: Instant) {
+/// vertical E2E 用: zombie 残留は成功にせず、期限まで reap を待って PID 完全消滅を要求する。
+fn wait_pid_fully_gone(pid: i32, deadline: Instant) {
     while Instant::now() < deadline {
-        if !pid_exists(pid) || process_state(pid) == Some('Z') {
+        if !pid_exists(pid) {
             return;
         }
         thread::sleep(Duration::from_millis(50));
     }
-    panic!("pid {pid} still alive with state {:?}", process_state(pid));
+    panic!(
+        "pid {pid} was not fully reaped; final state={:?}",
+        process_state(pid)
+    );
 }
 
 fn read_pid_file(path: &Path) -> Option<i32> {
@@ -579,7 +583,7 @@ fn handoff_timeout_terminates_bounded() {
 
     let output = wait_child_with_timeout(child, deadline);
     drop(stdin);
-    let _ = server.join(deadline);
+    let saw_cancel = server.join(deadline);
 
     let elapsed = started.elapsed();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -597,6 +601,10 @@ fn handoff_timeout_terminates_bounded() {
         "timeout during handoff must not be a normal success; code={:?}; stderr={stderr}",
         output.status.code()
     );
+    assert!(
+        saw_cancel,
+        "timeout path must send cancel_turn to mock aibe"
+    );
 
     let (pty_pid, aish_pid, job_pid) = captured.unwrap_or_else(|| {
         panic!(
@@ -604,9 +612,9 @@ fn handoff_timeout_terminates_bounded() {
              timeout may have fired before PTY was ready. stderr={stderr}"
         );
     });
-    wait_pid_gone_or_zombie(pty_pid, deadline);
-    wait_pid_gone_or_zombie(aish_pid, deadline);
-    wait_pid_gone_or_zombie(job_pid, deadline);
+    wait_pid_fully_gone(pty_pid, deadline);
+    wait_pid_fully_gone(aish_pid, deadline);
+    wait_pid_fully_gone(job_pid, deadline);
 
     let runtime_root = home.path().join("aish");
     assert_no_runtime_handoff_dirs(&runtime_root);
@@ -749,9 +757,9 @@ fn external_sigint_sigterm_stops_handoff() {
             "{signal_name}: mock aibe must observe cancel_turn (or equivalent cancel connect)"
         );
 
-        wait_pid_gone_or_zombie(pty_pid, deadline);
-        wait_pid_gone_or_zombie(aish_pid, deadline);
-        wait_pid_gone_or_zombie(job_pid, deadline);
+        wait_pid_fully_gone(pty_pid, deadline);
+        wait_pid_fully_gone(aish_pid, deadline);
+        wait_pid_fully_gone(job_pid, deadline);
         assert_no_runtime_handoff_dirs(&home.path().join("aish"));
     }
 }
@@ -897,7 +905,11 @@ fn cleanup_e2e_has_outer_watchdog() {
     );
     assert!(
         ai_source.contains("saw_cancel"),
-        "signal E2E must observe cancel_turn on mock aibe"
+        "vertical E2E must observe cancel_turn on mock aibe"
+    );
+    assert!(
+        ai_source.contains("fn wait_pid_fully_gone"),
+        "vertical E2E must require fully reaped PIDs (not zombie-as-success)"
     );
 
     let timeout_e2e = ai_source
@@ -913,6 +925,15 @@ fn cleanup_e2e_has_outer_watchdog() {
             && !timeout_e2e.contains("AtomicBool::new(true)"),
         "timeout vertical AC must not pre-set cancel flag; use --timeout path"
     );
+    assert!(
+        timeout_e2e.contains("saw_cancel")
+            && timeout_e2e.contains("timeout path must send cancel_turn"),
+        "timeout E2E must assert CancelTurn on mock aibe"
+    );
+    assert!(
+        timeout_e2e.contains("wait_pid_fully_gone"),
+        "timeout E2E must require fully reaped descendant PIDs"
+    );
 
     let signal_e2e = ai_source
         .split("fn external_sigint_sigterm_stops_handoff()")
@@ -926,6 +947,10 @@ fn cleanup_e2e_has_outer_watchdog() {
     assert!(
         signal_e2e.contains("libc::SIGINT") && signal_e2e.contains("libc::SIGTERM"),
         "signal E2E must cover both SIGINT and SIGTERM"
+    );
+    assert!(
+        signal_e2e.contains("wait_pid_fully_gone"),
+        "signal E2E must require fully reaped descendant PIDs"
     );
 
     assert!(aish_source.contains("fn wait_child_with_timeout"));
