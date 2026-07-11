@@ -21,6 +21,8 @@ pub const SHELL_LOG_TAIL_MAX_BYTES: usize = 32 * 1024;
 const LAUNCHER_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CHILD_TERM_GRACE: Duration = Duration::from_secs(1);
 const CHILD_KILL_WAIT: Duration = Duration::from_secs(1);
+/// SIGKILL deadline 直後の zombie 取りこぼしを潰すための追加 reap 窓。
+const CHILD_FINAL_REAP: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub struct AishHumanShellLauncher {
@@ -152,9 +154,10 @@ fn wait_child_cancellable(
         if let Some(deadline) = kill_deadline {
             if Instant::now() >= deadline {
                 let _ = child.kill();
-                if let Some(status) = child
-                    .try_wait()
-                    .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?
+                // deadline 境界の race で zombie を取りこぼさないよう、短い追加窓で reap する。
+                // Child は Drop で wait しないため、ここで取れなければ Cancelled でも unreaped のまま残る。
+                if let Some(status) =
+                    try_reap_child_until(child, Instant::now() + CHILD_FINAL_REAP)?
                 {
                     return Ok(status);
                 }
@@ -165,6 +168,24 @@ fn wait_child_cancellable(
             }
         }
 
+        std::thread::sleep(LAUNCHER_POLL_INTERVAL);
+    }
+}
+
+fn try_reap_child_until(
+    child: &mut Child,
+    deadline: Instant,
+) -> Result<Option<std::process::ExitStatus>, HumanShellLaunchError> {
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?
+        {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
         std::thread::sleep(LAUNCHER_POLL_INTERVAL);
     }
 }
@@ -584,5 +605,33 @@ mod tests {
         let (tail, truncated) = reader.read_tail(&session, 0, None).expect("tail");
         assert!(truncated);
         assert!(tail.len() <= SHELL_LOG_TAIL_MAX_BYTES + 16);
+    }
+
+    #[test]
+    fn wait_child_cancellable_reaps_after_sigkill_escalation() {
+        let mut child = Command::new("bash")
+            .arg("-c")
+            // sleep は SIGTERM で中断されうるので、無視したうえでループする。
+            .arg("trap '' TERM HUP; while true; do sleep 1; done")
+            .spawn()
+            .expect("spawn stubborn child");
+        let pid = child.id() as i32;
+        // trap 設置前に SIGTERM が届く race を避ける。
+        std::thread::sleep(Duration::from_millis(200));
+        let cancel = AtomicBool::new(true);
+        let started = Instant::now();
+        let status = wait_child_cancellable(&mut child, &cancel)
+            .expect("SIGKILL path must reap instead of returning unreaped Cancelled");
+        assert!(
+            !status.success(),
+            "SIGKILL exit must not look like a normal success"
+        );
+        assert!(
+            started.elapsed() >= CHILD_TERM_GRACE,
+            "must wait through SIGTERM grace before SIGKILL reap"
+        );
+        let gone = unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        assert!(gone, "reaped child pid must not remain (zombie or alive)");
     }
 }

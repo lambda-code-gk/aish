@@ -21,6 +21,8 @@ static PTY_CANCEL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 
 const PTY_TERM_GRACE: Duration = Duration::from_secs(1);
 const PTY_KILL_WAIT: Duration = Duration::from_secs(1);
+/// SIGKILL 後の deadline 境界で zombie を取りこぼさない追加 reap 窓。
+const PTY_FINAL_REAP: Duration = Duration::from_millis(500);
 
 /// マスタ PTY と stdin/stdout を中継し、出力を `SessionLog` に追記する。
 pub struct PtyShell<'a, L: SessionLog> {
@@ -493,7 +495,27 @@ fn terminate_pty_session(
     if session > 0 {
         reap_session_zombies(session);
     }
-    Ok(status.unwrap_or(-1))
+    if let Some(code) = status {
+        return Ok(code);
+    }
+
+    // deadline 境界の race / 遅延 exit 向けに短い追加窓で最終 reap。
+    let final_deadline = Instant::now() + PTY_FINAL_REAP;
+    if let Some(code) = wait_with_deadline(shell_pid, final_deadline)? {
+        if session > 0 {
+            reap_session_zombies(session);
+        }
+        return Ok(code);
+    }
+    if session > 0 {
+        reap_session_zombies(session);
+    }
+    if let Some(code) = wait_nonblocking(shell_pid)? {
+        return Ok(code);
+    }
+    Err(InteractiveShellError::Failed(format!(
+        "pty child {shell_pid} not reaped after SIGKILL deadline"
+    )))
 }
 
 /// PTY master が EOF/EIO になったあとの回収。
@@ -639,6 +661,16 @@ fn kill_and_wait(child: libc::pid_t, grace: Duration, deadline: Instant) {
         libc::kill(child, libc::SIGKILL);
     }
     while Instant::now() < deadline {
+        let mut status: libc::c_int = 0;
+        match waitpid_loop(child, &mut status, libc::WNOHANG) {
+            Ok(pid) if pid > 0 => return,
+            Ok(_) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return,
+        }
+    }
+    // deadline 境界の zombie 取りこぼし防止。
+    let final_deadline = Instant::now() + PTY_FINAL_REAP;
+    while Instant::now() < final_deadline {
         let mut status: libc::c_int = 0;
         match waitpid_loop(child, &mut status, libc::WNOHANG) {
             Ok(pid) if pid > 0 => return,
@@ -1763,6 +1795,52 @@ mod tests {
             let mut status = 0;
             let _ = libc::waitpid(child, &mut status, 0);
         }
+    }
+
+    #[test]
+    fn terminate_pty_session_reaps_sigterm_ignored_child() {
+        let (master, slave) = open_pty_pair().expect("openpty");
+        let (ready_r, ready_w) = pipe_pair();
+        let child = match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => unsafe {
+                libc::close(master);
+                libc::close(ready_r);
+                assert!(libc::setsid() >= 0, "setsid");
+                let _ = libc::ioctl(slave, libc::TIOCSCTTY, 0);
+                for stdfd in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+                    let _ = libc::dup2(slave, stdfd);
+                }
+                libc::close(slave);
+                libc::signal(libc::SIGHUP, libc::SIG_IGN);
+                libc::signal(libc::SIGTERM, libc::SIG_IGN);
+                let byte = 1u8;
+                let _ = libc::write(ready_w, (&raw const byte).cast(), 1);
+                libc::close(ready_w);
+                loop {
+                    libc::sleep(1);
+                }
+            },
+            pid => pid,
+        };
+        unsafe {
+            libc::close(slave);
+            libc::close(ready_w);
+        }
+        let mut ready = [0u8; 1];
+        let n = unsafe { libc::read(ready_r, ready.as_mut_ptr().cast(), 1) };
+        unsafe {
+            libc::close(ready_r);
+        }
+        assert_eq!(n, 1, "child must signal readiness");
+
+        let _status = terminate_pty_session(child, master).expect("must reap, not fake -1");
+        let mut wait_status = 0;
+        let pid = unsafe { libc::waitpid(child, &mut wait_status, libc::WNOHANG) };
+        assert!(
+            pid <= 0,
+            "terminate_pty_session must have reaped child (waitpid={pid})"
+        );
     }
 
     #[test]
