@@ -65,8 +65,24 @@ pub struct AiPresetConfig {
 const DEFAULT_CONFIG: &str = ".config/ai/config.toml";
 const DEFAULT_HISTORY_DIR: &str = ".local/share/ai/history";
 
+/// Outcome of reading the on-disk ai config for diagnostics.
+///
+/// `AiConfig::load()` keeps fail-open defaults for normal commands. Doctor uses
+/// [`AiConfig::load_for_diagnostics`] so unreadable / unparsable config can be
+/// reported as a HealthCheck FAIL without changing status / ask behavior.
+#[derive(Debug, Clone)]
+pub struct AiConfigLoad {
+    pub config: AiConfig,
+    /// Present when the config file exists but could not be read or parsed safely.
+    pub load_error: Option<String>,
+}
+
 impl AiConfig {
     pub fn load() -> Self {
+        Self::load_for_diagnostics().config
+    }
+
+    pub fn load_for_diagnostics() -> AiConfigLoad {
         let path = Self::resolve_path();
         let mut cfg = Self {
             socket_path: default_socket_path(),
@@ -88,61 +104,70 @@ impl AiConfig {
             smart_preprocessor: None,
         };
         let config_dir = path.parent().map(|p| p.to_path_buf());
+        let mut load_error = None;
         if path.is_file() {
-            if let Ok(raw) = fs::read_to_string(&path) {
-                if let Ok(file) = toml::from_str::<FileConfig>(&raw) {
-                    if let Some(p) = file.socket_path {
-                        cfg.socket_path = expand_home(p);
-                    }
-                    if let Some(ctx) = file.context {
-                        cfg.context_current = ctx.current.filter(|s| !s.is_empty());
-                    }
-                    if let Some(memory) = file.memory {
-                        if let Some(enabled) = memory.enabled {
-                            cfg.memory_enabled = enabled;
+            match fs::read_to_string(&path) {
+                Ok(raw) => match toml::from_str::<FileConfig>(&raw) {
+                    Ok(file) => {
+                        if let Some(p) = file.socket_path {
+                            cfg.socket_path = expand_home(p);
+                        }
+                        if let Some(ctx) = file.context {
+                            cfg.context_current = ctx.current.filter(|s| !s.is_empty());
+                        }
+                        if let Some(memory) = file.memory {
+                            if let Some(enabled) = memory.enabled {
+                                cfg.memory_enabled = enabled;
+                            }
+                        }
+                        if let Some(ask) = file.ask {
+                            if let Some(tools) = ask.tools {
+                                cfg.ask_tools = tokens_from_config_value(match tools {
+                                    AskToolsToml::String(s) => AskToolsConfigRaw::String(s),
+                                    AskToolsToml::Array(a) => AskToolsConfigRaw::Array(a),
+                                });
+                            }
+                            cfg.ask_default_profile = ask.default_profile;
+                            cfg.ask_filter = ask.filter.filter(|s| !s.is_empty());
+                            cfg.ask_console_hints = ask.console_hints;
+                            cfg.ask_progress = ask.progress;
+                            if let Some(enabled) = ask.suggested_command_recall {
+                                cfg.suggested_command_recall = enabled;
+                            }
+                            if let Some(hint) = ask.suggested_command_recall_hint {
+                                cfg.suggested_command_recall_hint = hint;
+                            }
+                            if let Some(max_items) = ask.suggested_command_recall_max_items {
+                                cfg.suggested_command_recall_max_items = max_items;
+                            }
+                        }
+                        cfg.shell_log_mode = file.shell_log_mode.filter(|s| !s.is_empty());
+                        if let Some(history_dir) = file.history_dir {
+                            cfg.history_dir = expand_home(history_dir);
+                        }
+                        if let Some(max_entries) = file.history_max_entries {
+                            cfg.history_max_entries = max_entries;
+                        }
+                        cfg.log_tail_bytes = file.log_tail_bytes;
+                        if let Some(presets) = file.presets {
+                            cfg.presets = presets
+                                .into_iter()
+                                .map(|(name, preset)| (name, preset.into()))
+                                .collect();
+                        }
+                        if let Some(sp) = file.smart_preprocessor {
+                            cfg.smart_preprocessor = Some(SmartPreprocessorConfig::from_section(
+                                sp,
+                                config_dir.as_deref(),
+                            ));
                         }
                     }
-                    if let Some(ask) = file.ask {
-                        if let Some(tools) = ask.tools {
-                            cfg.ask_tools = tokens_from_config_value(match tools {
-                                AskToolsToml::String(s) => AskToolsConfigRaw::String(s),
-                                AskToolsToml::Array(a) => AskToolsConfigRaw::Array(a),
-                            });
-                        }
-                        cfg.ask_default_profile = ask.default_profile;
-                        cfg.ask_filter = ask.filter.filter(|s| !s.is_empty());
-                        cfg.ask_console_hints = ask.console_hints;
-                        cfg.ask_progress = ask.progress;
-                        if let Some(enabled) = ask.suggested_command_recall {
-                            cfg.suggested_command_recall = enabled;
-                        }
-                        if let Some(hint) = ask.suggested_command_recall_hint {
-                            cfg.suggested_command_recall_hint = hint;
-                        }
-                        if let Some(max_items) = ask.suggested_command_recall_max_items {
-                            cfg.suggested_command_recall_max_items = max_items;
-                        }
+                    Err(err) => {
+                        load_error = Some(format!("config file could not be parsed: {err}"));
                     }
-                    cfg.shell_log_mode = file.shell_log_mode.filter(|s| !s.is_empty());
-                    if let Some(history_dir) = file.history_dir {
-                        cfg.history_dir = expand_home(history_dir);
-                    }
-                    if let Some(max_entries) = file.history_max_entries {
-                        cfg.history_max_entries = max_entries;
-                    }
-                    cfg.log_tail_bytes = file.log_tail_bytes;
-                    if let Some(presets) = file.presets {
-                        cfg.presets = presets
-                            .into_iter()
-                            .map(|(name, preset)| (name, preset.into()))
-                            .collect();
-                    }
-                    if let Some(sp) = file.smart_preprocessor {
-                        cfg.smart_preprocessor = Some(SmartPreprocessorConfig::from_section(
-                            sp,
-                            config_dir.as_deref(),
-                        ));
-                    }
+                },
+                Err(err) => {
+                    load_error = Some(format!("config file could not be read: {err}"));
                 }
             }
         }
@@ -154,7 +179,10 @@ impl AiConfig {
                 cfg.memory_enabled = enabled;
             }
         }
-        cfg
+        AiConfigLoad {
+            config: cfg,
+            load_error,
+        }
     }
 
     pub fn ensure_memory_enabled(&self) -> Result<(), String> {
@@ -472,6 +500,42 @@ filter = "cat -n"
             resolve_output_filter(None, cfg.ask_filter.as_deref()),
             Some("cat -n".into())
         );
+    }
+
+    #[test]
+    fn load_for_diagnostics_reports_parse_error() {
+        let _guard = env_lock().lock().expect("env lock");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&path).expect("create");
+        writeln!(
+            f,
+            r#"
+[ask]
+filter = ["not", "a", "string"]
+"#
+        )
+        .expect("write");
+
+        unsafe {
+            std::env::set_var("AI_CONFIG", &path);
+        }
+        let loaded = AiConfig::load_for_diagnostics();
+        let silent = AiConfig::load();
+        unsafe {
+            std::env::remove_var("AI_CONFIG");
+        }
+
+        assert!(
+            loaded
+                .load_error
+                .as_deref()
+                .is_some_and(|e| e.contains("could not be parsed")),
+            "expected parse error, got {:?}",
+            loaded.load_error
+        );
+        assert!(silent.ask_filter.is_none());
+        assert!(loaded.config.ask_filter.is_none());
     }
 
     #[test]

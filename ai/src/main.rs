@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 
 use ai::adapters::inbound::reedline_prompt::acquire_prompt_via_reedline;
-use ai::adapters::outbound::toml_config::{AiConfig, SmartPreprocessorConfig};
+use ai::adapters::outbound::toml_config::{AiConfig, AiConfigLoad, SmartPreprocessorConfig};
 use ai::adapters::outbound::{
     acquire_prompt_via_external_editor, create_prompt_temp_file, detect_terminal_size,
     external_command_names, finalize_preprocessor_observation, load_bundled_preprocessor_model,
@@ -3044,12 +3044,36 @@ fn observe_ping(socket_path: &Path) -> PingObservation {
     }
 }
 
+fn filter_configuration_check(load_error: Option<&str>, filter: &FilterMetadata) -> HealthCheck {
+    if load_error.is_some() {
+        return HealthCheck::new(
+            "output_filter_configuration",
+            CheckStatus::Fail,
+            "output filter configuration could not be resolved safely",
+            Some("Fix the ai config file syntax or permissions and rerun ai doctor"),
+        );
+    }
+    HealthCheck::new(
+        "output_filter_configuration",
+        CheckStatus::Ok,
+        if filter.enabled {
+            "output filter is configured and masked"
+        } else {
+            "output filter is not configured"
+        },
+        None,
+    )
+}
+
 fn run_doctor_command(
     quiet: bool,
     format: Option<OutputFormat>,
     socket_override: Option<PathBuf>,
 ) -> anyhow::Result<ExitCode> {
-    let cfg = AiConfig::load();
+    let AiConfigLoad {
+        config: cfg,
+        load_error,
+    } = AiConfig::load_for_diagnostics();
     let socket_path = socket_override.unwrap_or(cfg.socket_path.clone());
     let ping = observe_ping(&socket_path);
     let shell_log = resolve_shell_log_info();
@@ -3198,16 +3222,7 @@ fn run_doctor_command(
         session_check,
         shell_check,
         tools_check,
-        HealthCheck::new(
-            "output_filter_configuration",
-            CheckStatus::Ok,
-            if filter.enabled {
-                "output filter is configured and masked"
-            } else {
-                "output filter is not configured"
-            },
-            None,
-        ),
+        filter_configuration_check(load_error.as_deref(), &filter),
         protocol_check,
     ]);
     if !quiet {

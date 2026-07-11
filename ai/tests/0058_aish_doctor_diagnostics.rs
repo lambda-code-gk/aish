@@ -156,10 +156,12 @@ fn doctor_preflight_covers_locked_checks() {
 
 #[test]
 fn doctor_fail_exit_and_warn_success() {
-    let f = Fixture::pong();
-    assert!(run(&f.socket, &["--format", "json"], false, "")
-        .status
-        .success());
+    {
+        let f = Fixture::pong();
+        assert!(run(&f.socket, &["--format", "json"], false, "")
+            .status
+            .success());
+    }
     let home = tempfile::tempdir().unwrap();
     let missing = home.path().join("missing.sock");
     assert_eq!(
@@ -168,6 +170,29 @@ fn doctor_fail_exit_and_warn_success() {
             .code(),
         Some(1)
     );
+    let f = Fixture::pong();
+    let home = tempfile::tempdir().unwrap();
+    let cfg = home.path().join("bad.toml");
+    fs::write(&cfg, "[ask]\nfilter = [\"broken\"]\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("HOME", home.path())
+        .env("AI_CONFIG", &cfg)
+        .env_remove("AI_FILTER")
+        .args([
+            "doctor",
+            "--quiet",
+            "--format",
+            "json",
+            "--socket",
+            f.socket.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = json(&out);
+    assert_eq!(v["checks"][4]["id"], "output_filter_configuration");
+    assert_eq!(v["checks"][4]["status"], "fail");
+    assert!(v["checks"][4]["suggestion"].is_string());
 }
 
 #[test]
