@@ -618,3 +618,8 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
 4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`、`shell_exec` 実行前承認（0020）
 5. **次**: ログ context の構造化（P4-4）、ログマスクの拡張
+# Collaborative Mode Outcome
+
+Collaborative handoff の正常終了結果は、`ai` domain の `CollabOutcome`、terminal adapter の対話収集、application mapper、`aibe-protocol` wire DTO を分離する。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → outcome collect → wire map` であり、起動・return marker・再観測の失敗時は collector を呼ばない。
+
+`HumanHandoffResult.collab_outcome` は必須で、`status` は `done` / `blocked` / `cancelled` のみ（summary フィールドなし）。`human_shell_exit_code` と status は独立し、exit code から status を推定しない。有効な status 選択後は追加入力なく親へ戻る。非対話 stdin、EOF、I/O failure は既存 `human_handoff_failed` となり、success result と同時には返らない。

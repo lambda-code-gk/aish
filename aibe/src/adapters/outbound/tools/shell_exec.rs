@@ -762,8 +762,8 @@ mod tests {
         use crate::ports::outbound::ShellExecApprovalGate;
         use aibe_client::ShellExecApprovalDecision;
         use aibe_protocol::{
-            HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion,
-            ShellExecApprovalOrigin,
+            CollabOutcome, CollabOutcomeStatus, HandoffExecutionOutcome, HumanHandoffResult,
+            RequestedCommandCompletion, ShellExecApprovalOrigin,
         };
 
         struct HandoffGate {
@@ -782,6 +782,9 @@ mod tests {
                     approved: true,
                     approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
                     handoff_result: Some(HumanHandoffResult {
+                        collab_outcome: CollabOutcome {
+                            status: CollabOutcomeStatus::Done,
+                        },
                         execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
                         requested_command: Some("'echo' 'hi'".into()),
                         requested_command_completion: RequestedCommandCompletion::Unknown,
@@ -993,8 +996,8 @@ mod tests {
         use crate::ports::outbound::ShellExecApprovalGate;
         use aibe_client::ShellExecApprovalDecision;
         use aibe_protocol::{
-            HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult,
-            RequestedCommandCompletion, ShellExecApprovalOrigin,
+            CollabOutcome, CollabOutcomeStatus, HandoffExecutionOutcome, HumanHandoffFailure,
+            HumanHandoffResult, RequestedCommandCompletion, ShellExecApprovalOrigin,
         };
 
         struct InvalidGate;
@@ -1011,6 +1014,9 @@ mod tests {
                     approved: true,
                     approval_origin: ShellExecApprovalOrigin::UiYes,
                     handoff_result: Some(HumanHandoffResult {
+                        collab_outcome: CollabOutcome {
+                            status: CollabOutcomeStatus::Blocked,
+                        },
                         execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
                         requested_command: None,
                         requested_command_completion: RequestedCommandCompletion::Unknown,

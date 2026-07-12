@@ -8,6 +8,7 @@
 
 | ファイル | 内容 |
 |----------|------|
+| [0059_collab-outcome-status.md](0059_collab-outcome-status.md) | Collaborative Mode 終了後の done / blocked / cancelled と summary |
 | [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（`openai_compatible`: 公式 OpenAI API / ローカル互換）1 ターン |
 | [gemini-provider.md](gemini-provider.md) | Gemini プロバイダ（Google AI Studio / `generateContent`） |
 | [llm-profiles.md](llm-profiles.md) | LLM 接続 + プロファイル（`--profile` / 2 段 config） |

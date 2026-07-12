@@ -16,6 +16,49 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0059"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 3
+scope_change_reason = "remove summary input from stage-1 collab outcome; status-only selection; drop AC collab_outcome_summary_rules_are_enforced"
+
+core_outcome = "Collaborative Mode の Human Shell 終了後に done/blocked/cancelled を明示選択し、同じ親 agent へ構造化して返す"
+
+actors = 1
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 1
+
+novel_mechanisms = []
+integrations = ["0055-collaborative-human-handoff"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "Human Task tool, persistence/resume, multiple-task coordination, side agents, lease, auto log/outcome collection (stage 3), history collection, and completion verification are deferred"
+
+vertical_slice_ac_id = "collab_outcome_returns_structured_to_parent"
+
+locked_ac_ids = [
+  "collab_outcome_returns_structured_to_parent",
+  "collab_outcome_status_accepts_documented_forms",
+  "collab_outcome_status_rejects_invalid_forms",
+  "collab_outcome_domain_creation_preserves_invariants",
+  "collab_outcome_serializes_all_statuses",
+  "collab_outcome_is_independent_from_shell_exit_code",
+  "collab_outcome_launch_failure_skips_prompt",
+  "collab_outcome_noninteractive_stdin_fails_explicitly",
+  "collab_outcome_io_is_unit_testable",
+  "non_collaborative_shell_exec_remains_unchanged",
+]
+
+[[features]]
 spec = "0058"
 status = "done"
 scope_class = "feature"

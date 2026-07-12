@@ -16,6 +16,19 @@ pub enum RequestedCommandCompletion {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollabOutcomeStatus {
+    Done,
+    Blocked,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollabOutcome {
+    pub status: CollabOutcomeStatus,
+}
+
 /// shell log 参照範囲。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellLogRange {
@@ -53,6 +66,7 @@ pub struct PostHandoffObservation {
 /// 親 `shell_exec` handoff 完了時の synthetic tool result 本文。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanHandoffResult {
+    pub collab_outcome: CollabOutcome,
     pub execution_outcome: HandoffExecutionOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_command: Option<String>,

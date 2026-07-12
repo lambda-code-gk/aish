@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -14,7 +15,8 @@ use std::time::{Duration, Instant};
 
 use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, ErrorCode, HandoffExecutionOutcome,
-    ProtocolMessageOut, RequestedCommandCompletion, ShellExecApprovalOrigin,
+    ProtocolMessageOut, RequestedCommandCompletion, RouteKind, RoutePlan, RouteTurnStatus,
+    ShellExecApprovalOrigin,
 };
 
 fn e2e_timeout() -> Duration {
@@ -107,7 +109,35 @@ impl CollaborativeMockServer {
                 .expect("log")
                 .mock_requests
                 .push(line.clone());
-            let req: ClientRequest = serde_json::from_str(line.trim()).expect("parse agent_turn");
+            let mut req: ClientRequest = serde_json::from_str(line.trim()).expect("parse request");
+            if matches!(req, ClientRequest::RouteTurn { .. }) {
+                let response = ClientResponse::RouteTurnResult {
+                    id: "route-0055".into(),
+                    status: RouteTurnStatus::Ok,
+                    plan: RoutePlan {
+                        conversation_id: "collab-e2e".into(),
+                        new_conversation: true,
+                        route_kind: RouteKind::ToolAssisted,
+                        recommended_preset: None,
+                        recommended_tools: None,
+                        log_tail_bytes: None,
+                        feature_actions: vec![],
+                        require_shell_approval: true,
+                        log_tail_escalation: false,
+                        route_reason: "collaborative E2E".into(),
+                        confidence: None,
+                    },
+                };
+                writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).unwrap();
+                writer.flush().unwrap();
+                let (next_stream, _) = accept_with_deadline(&listener, deadline);
+                writer = next_stream.try_clone().expect("clone agent stream");
+                reader = BufReader::new(next_stream);
+                line.clear();
+                read_line_with_deadline(&mut reader, &mut line, deadline)
+                    .expect("read agent_turn after route");
+                req = serde_json::from_str(line.trim()).expect("parse agent_turn");
+            }
             let ClientRequest::AgentTurn {
                 id,
                 context,
@@ -180,6 +210,10 @@ impl CollaborativeMockServer {
                     assert_eq!(
                         handoff.requested_command_completion,
                         RequestedCommandCompletion::Unknown
+                    );
+                    assert_eq!(
+                        handoff.collab_outcome.status,
+                        aibe_protocol::CollabOutcomeStatus::Done
                     );
                     log_thread.lock().expect("log").handoff_result_json =
                         Some(serde_json::to_string(&handoff).expect("handoff json"));
@@ -585,6 +619,22 @@ fn run_collaborative_handoff_with_expected(
     let aish_log = home.join("aish-sessions");
     let aish_cfg = write_aish_config(home, &aish_log);
 
+    let mut master = -1;
+    let mut slave = -1;
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0,
+        "openpty"
+    );
+    let slave_file = unsafe { fs::File::from_raw_fd(slave) };
     let mut child = {
         let mut command = Command::new(ai_bin);
         command
@@ -602,17 +652,49 @@ fn run_collaborative_handoff_with_expected(
             .env("HOME", home)
             .env("AISH_BIN", aish_bin)
             .env("XDG_RUNTIME_DIR", home)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::from(slave_file))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        spawn_in_new_process_group(&mut command)
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY, 0) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        command.spawn().expect("spawn ai with controlling PTY")
     };
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(shell_input)
-            .expect("write shell input to ai stdin");
-    }
-    let output = wait_child_with_timeout(child, deadline);
+    let mut master_file = unsafe { fs::File::from_raw_fd(master) };
+    let mut stderr = child.stderr.take().expect("ai stderr");
+    let shell_input = shell_input.to_vec();
+    let input_driver = thread::spawn(move || {
+        let mut transcript = Vec::new();
+        let mut byte = [0_u8; 1];
+        let mut shell_sent = false;
+        let mut outcome_sent = false;
+        while stderr.read(&mut byte).unwrap_or(0) != 0 {
+            transcript.push(byte[0]);
+            let text = String::from_utf8_lossy(&transcript);
+            if !shell_sent && text.contains("Press Ctrl+D or run `exit` to return control.") {
+                thread::sleep(Duration::from_millis(200));
+                master_file
+                    .write_all(&shell_input)
+                    .expect("write shell input to ai PTY");
+                shell_sent = true;
+            }
+            if !outcome_sent && text.contains("作業結果を選択してください") {
+                master_file
+                    .write_all(b"d\n")
+                    .expect("write outcome to ai PTY");
+                outcome_sent = true;
+            }
+        }
+        transcript
+    });
+    let mut output = wait_child_with_timeout(child, deadline);
+    output.stderr = input_driver.join().expect("join PTY input driver");
     HandoffRun {
         output,
         server,
@@ -759,6 +841,11 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
         stdout.contains("handoff complete"),
         "unexpected stdout: {stdout}"
     );
+}
+
+#[test]
+fn collab_outcome_returns_structured_to_parent() {
+    ai_to_aish_handoff_transport_pty_e2e();
 }
 
 #[test]

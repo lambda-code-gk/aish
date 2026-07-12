@@ -265,3 +265,8 @@ shell_exec_approval = "ask"
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn non_collaborative_shell_exec_remains_unchanged() {
+    non_collaborative_ai_uses_normal_approval_protocol();
+}

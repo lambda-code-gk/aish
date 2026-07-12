@@ -2880,3 +2880,93 @@ description = "zsh human shell return marker が CI で検証される"
 test = "zsh_human_return_marker"
 file_glob = "aish/tests/0055_minimal_human_handoff.rs"
 pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_returns_structured_to_parent"
+description = "Human Shell 終了後に親 termios を復元し、明示 outcome が structured synthetic tool result として親へ返る"
+test = "collab_outcome_returns_structured_to_parent"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_status_accepts_documented_forms"
+description = "documented status forms を大文字小文字無視で受理する"
+test = "collab_outcome_status_accepts_documented_forms"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_status_rejects_invalid_forms"
+description = "空・未定義・failed status 入力を拒否する"
+test = "collab_outcome_status_rejects_invalid_forms"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_domain_creation_preserves_invariants"
+description = "CollabOutcome domain が status のみを I/O なしで表現する"
+test = "collab_outcome_domain_creation_preserves_invariants"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_serializes_all_statuses"
+description = "全 status を安定した structured JSON に serialize する（summary フィールドなし）"
+test = "collab_outcome_serializes_all_statuses"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_is_independent_from_shell_exit_code"
+description = "shell exit code から outcome status を自動決定しない"
+test = "collab_outcome_is_independent_from_shell_exit_code"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_launch_failure_skips_prompt"
+description = "Human Shell 起動失敗または正常 return marker 不足時は outcome prompt を出さず既存エラーを返す"
+test = "collab_outcome_launch_failure_skips_prompt"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_noninteractive_stdin_fails_explicitly"
+description = "非対話 stdin では暗黙 outcome を作らず明示エラーにする"
+test = "collab_outcome_noninteractive_stdin_fails_explicitly"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "collab_outcome_io_is_unit_testable"
+description = "差し替え可能な入出力で status prompt・再入力を単体検証できる（summary 入力なし）"
+test = "collab_outcome_io_is_unit_testable"
+file_glob = "ai/tests/0059_collab_outcome_status.rs"
+pending = false
+
+[[cases]]
+spec = "0059"
+phase = 1
+id = "non_collaborative_shell_exec_remains_unchanged"
+description = "通常 shell_exec と非 Collaborative Mode の挙動が変わらない"
+test = "non_collaborative_shell_exec_remains_unchanged"
+file_glob = "ai/tests/normal_shell_exec_regression.rs"
+pending = false

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use aibe_protocol::{
-    HandoffExecutionOutcome, HumanHandoffResult, RequestedCommandCompletion, ShellLogRange,
+    HandoffExecutionOutcome, PostHandoffObservation, RequestedCommandCompletion, ShellLogRange,
 };
 
 use crate::domain::build_suggested_command;
@@ -19,6 +19,17 @@ pub struct HumanHandoffRequest {
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub runtime_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HumanHandoffExecutionResult {
+    pub execution_outcome: HandoffExecutionOutcome,
+    pub requested_command: Option<String>,
+    pub requested_command_completion: RequestedCommandCompletion,
+    pub human_shell_exit_code: Option<i32>,
+    pub final_shell_cwd: Option<String>,
+    pub shell_log_range: Option<ShellLogRange>,
+    pub observation: Option<PostHandoffObservation>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -51,7 +62,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
         &self,
         request: HumanHandoffRequest,
         cancel_requested: &AtomicBool,
-    ) -> Result<HumanHandoffResult, HumanHandoffError> {
+    ) -> Result<HumanHandoffExecutionResult, HumanHandoffError> {
         if !request.cwd.is_dir() {
             return Err(HumanHandoffError::MissingCwd(
                 request.cwd.display().to_string(),
@@ -82,7 +93,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
                 Some(shell_return.shell_session_dir.as_path())
             },
         );
-        Ok(HumanHandoffResult {
+        Ok(HumanHandoffExecutionResult {
             execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
             requested_command: Some(suggested_command),
             requested_command_completion: RequestedCommandCompletion::Unknown,

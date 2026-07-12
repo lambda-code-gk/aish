@@ -591,8 +591,8 @@ mod tests {
     #[test]
     fn approval_decision_invariant_rejects_contradictions() {
         use aibe_protocol::{
-            HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult,
-            RequestedCommandCompletion, ShellExecApprovalOrigin,
+            CollabOutcome, CollabOutcomeStatus, HandoffExecutionOutcome, HumanHandoffFailure,
+            HumanHandoffResult, RequestedCommandCompletion, ShellExecApprovalOrigin,
         };
 
         let valid_normal = ShellExecApprovalDecision {
@@ -604,6 +604,9 @@ mod tests {
         validate_shell_exec_approval_decision(&valid_normal).expect("normal approval");
 
         let sample_handoff_result = HumanHandoffResult {
+            collab_outcome: CollabOutcome {
+                status: CollabOutcomeStatus::Done,
+            },
             execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
             requested_command: None,
             requested_command_completion: RequestedCommandCompletion::Unknown,

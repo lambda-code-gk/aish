@@ -1,4 +1,5 @@
 mod agent_client;
+mod collab_outcome;
 mod history_store;
 mod human_handoff;
 mod memory_client;
@@ -8,6 +9,7 @@ mod suggested_command_recall_store;
 mod work_client;
 
 pub use agent_client::{AgentClient, AgentError};
+pub use collab_outcome::{CollabOutcomeCollectionError, CollabOutcomeCollector};
 pub use history_store::{HistoryStore, HistoryStoreError};
 pub use human_handoff::{
     EnvironmentObserver, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
