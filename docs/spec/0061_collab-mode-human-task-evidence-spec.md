@@ -91,8 +91,8 @@ Evidence 専用エラーで既存 `observation_errors` を消さず、同じ cod
 
 1. bash `PROMPT_COMMAND` で `_aish_replay_precmd` を `_aish_replay_install_hooks` より先に実行し、`$?` を潰さない
 2. zsh で `_aish_replay_precmd` を precmd 先頭へ置き、install hook 自身を外す
-3. control FIFO への end 書き込みを、完了待ちつき background write の fast-path（sleep なし spin）と、停滞時のみ sleep 付き watchdog（約 0.5s）にする。`timeout` コマンドへの依存は置かない。新 FIFO / 新 control channel は作らない。
-4. `pty_shell::handle_control_line` で `pending_end` 付き active span への次 `start` を `queued_start` へ格納し、高速連続入力でも command span を欠落させない。
+3. control FIFO への end 書き込みを、通常は `wait`、停滞時のみ別 watchdog（`sleep 0.5` 後に writer kill）で打ち切る。busy spin は置かない。`timeout` コマンドへの依存は置かない。新 FIFO / 新 control channel は作らない。
+4. `pty_shell::handle_control_line` で active 中に届いた後続 start/end を `VecDeque` 相当の queue に保持し、上書きせず高速連続入力でも command span を欠落させない。
 
 0060 で禁止した `collab_outcome` および outcome/status/summary 入力を再導入しない。
 
@@ -206,3 +206,4 @@ Evidence 専用エラーで既存 `observation_errors` を消さず、同じ cod
 | 1 | INITIAL | command span から bounded structured Human Task Evidence を自動収集する設計を draft 登録 | 0049 / 0055 / 0060 の既存契約を再利用し、追加入力と完了推定なしに親へ観測事実を返すため |
 | 6 | CONTRACT | 既存 0049 replay hook の exit_code 捕捉と bounded wait FIFO emit 修正を §1.5 で明示許可 | Evidence AC が正しい command_end.exit_code に依存するため。新 hook / 新 FIFO / 新 event は追加しない。`timeout` 非依存で読み手不在時も無限ブロックしない |
 | 7 | CONTRACT | FIFO emit を fast-path + stall watchdog に分離。`pending_end` 中の次 start を `queued_start` へ格納 | 通常 `aish shell` の遅延を避け、高速連続入力での span 欠落を防ぐ。実装指示書も同契約へ同期 |
+| 8 | CONTRACT | 後続 start/end を `VecDeque` queue で保持（上書き禁止）。FIFO emit を `wait` + 別 watchdog に変更 | control 連続 drain 時の 3 コマンド以上欠落を防ぎ、busy spin を通常 `aish shell` 経路から除去する |

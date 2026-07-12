@@ -801,7 +801,7 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     assert!(!verdict_file.exists());
 
     let shell_input = format!(
-        "printf 'evidence-ok\\n'\nfalse\nif test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
+        "printf 'one\\n'\nfalse\ntrue\nif test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
         shell_quote(candidate_marker.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
@@ -842,15 +842,45 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     let commands = handoff["observation"]["human_task_evidence"]["commands"]
         .as_array()
         .expect("0061 structured Evidence commands");
-    assert!(commands.iter().any(|command| {
-        command["command"]
-            .as_str()
-            .is_some_and(|text| text.contains("printf 'evidence-ok"))
-            && command["exit_code"] == 0
-    }));
-    assert!(commands
+    let evidence_cmds: Vec<(&str, i64)> = commands
         .iter()
-        .any(|command| command["command"] == "false" && command["exit_code"] == 1));
+        .filter_map(|command| Some((command["command"].as_str()?, command["exit_code"].as_i64()?)))
+        .collect();
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| cmd.contains("printf 'one") && *code == 0),
+        "missing printf one: {commands:?}"
+    );
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| *cmd == "false" && *code == 1),
+        "missing false: {commands:?}"
+    );
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| *cmd == "true" && *code == 0),
+        "missing true: {commands:?}"
+    );
+    // 高速一括入力でも exit_code の対応が崩れないこと
+    let printf_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| cmd.contains("printf 'one"))
+        .expect("printf");
+    let false_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| *cmd == "false")
+        .expect("false");
+    let true_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| *cmd == "true")
+        .expect("true");
+    assert!(
+        printf_i < false_i && false_i < true_i,
+        "command order must be preserved: {evidence_cmds:?}"
+    );
     assert_eq!(handoff["requested_command_completion"], "unknown");
     let stdout = String::from_utf8_lossy(&run.output.stdout);
     assert!(

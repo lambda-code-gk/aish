@@ -1,5 +1,6 @@
 //! PTY 対話シェルアダプタ（`libc::openpty`）。
 
+use std::collections::VecDeque;
 use std::ffi::CString;
 use std::io::{Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
@@ -45,8 +46,10 @@ struct CommandSpanState {
     pending_stdout: String,
     /// span 先頭の「プロンプト + 入力行」echo を replay 記録から除く（hook の command 文字列）
     strip_echo_line: Option<String>,
+    /// active span 向けの end（PTY echo 境界まで finish を遅延）
     pending_end: Option<PendingCommandEnd>,
-    queued_start: Option<QueuedCommandStart>,
+    /// active 中に届いた後続 start/end。上書きせず FIFO で保持する。
+    queued_starts: VecDeque<QueuedCommandStart>,
 }
 
 #[derive(Debug)]
@@ -60,6 +63,7 @@ struct QueuedCommandStart {
     index: u32,
     started_at: String,
     command: String,
+    pending_end: Option<PendingCommandEnd>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -138,7 +142,7 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
         let Some(index) = span.active_index else {
             return Ok((data.to_string(), 0));
         };
-        let Some(queued) = span.queued_start.as_ref() else {
+        let Some(queued) = span.queued_starts.front() else {
             if span.pending_end.is_some() {
                 if let Some((before, after)) = split_before_any_prompt_echo(data) {
                     self.append_stdout_to_active(&before, span)?;
@@ -154,16 +158,27 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
             let data = strip_shell_echo_from_span_output(span, data);
             return Ok((data, index));
         };
+        if span.pending_end.is_none() {
+            // 前 span の end が来るまで promote しない。
+            let data = strip_shell_echo_from_span_output(span, data);
+            return Ok((data, index));
+        }
 
         self.append_stdout_to_active(&before, span)?;
         self.finish_active_span(span)?;
-        let queued = span.queued_start.take().expect("queued start");
+        let queued = span
+            .queued_starts
+            .pop_front()
+            .expect("queued start present after front()");
         self.start_span(span, queued.index, queued.started_at, queued.command)?;
+        span.pending_end = queued.pending_end;
         span.strip_echo_line = None;
         let Some(index) = span.active_index else {
             return Ok((String::new(), 0));
         };
-        Ok((after, index))
+        // 連続 echo が同じ chunk に続く場合に備え、残りを再処理する。
+        let _ = index;
+        self.advance_queued_start_on_echo(&after, span)
     }
 
     fn flush_pending_stdout_after_echo(
@@ -224,6 +239,24 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))
     }
 
+    /// session 終了時など、echo 境界を待たずに pending_end 付き queue を吐き出す。
+    fn finish_active_span_draining_queue(
+        &mut self,
+        span: &mut CommandSpanState,
+    ) -> Result<(), InteractiveShellError> {
+        loop {
+            if span.active_index.is_none() || span.pending_end.is_none() {
+                return Ok(());
+            }
+            self.finish_active_span(span)?;
+            let Some(queued) = span.queued_starts.pop_front() else {
+                return Ok(());
+            };
+            self.start_span(span, queued.index, queued.started_at, queued.command)?;
+            span.pending_end = queued.pending_end;
+        }
+    }
+
     fn handle_control_line(
         &mut self,
         line: &str,
@@ -241,19 +274,17 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
                 let Some(command) = msg.command.filter(|c| !c.is_empty()) else {
                     return Ok(());
                 };
-                // 前コマンドの end 待ち中に次の start が来たら queue する。
-                // active のみ（pending_end なし）の重複 start は無視する。
+                // active 中の後続 start は上書きせず queue へ積む。
                 if span.active_index.is_some() {
-                    if span.pending_end.is_some() {
-                        span.next_index = span.next_index.saturating_add(1);
-                        let index = span.next_index;
-                        let started_at = rfc3339_now();
-                        span.queued_start = Some(QueuedCommandStart {
-                            index,
-                            started_at,
-                            command,
-                        });
-                    }
+                    span.next_index = span.next_index.saturating_add(1);
+                    let index = span.next_index;
+                    let started_at = rfc3339_now();
+                    span.queued_starts.push_back(QueuedCommandStart {
+                        index,
+                        started_at,
+                        command,
+                        pending_end: None,
+                    });
                     return Ok(());
                 }
                 span.next_index = span.next_index.saturating_add(1);
@@ -266,10 +297,19 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
                 if span.active_index.is_none() {
                     return Ok(());
                 }
-                span.pending_end = Some(PendingCommandEnd {
+                let end = PendingCommandEnd {
                     exit_code: msg.exit_code,
                     finished_at: rfc3339_now(),
-                });
+                };
+                if span.pending_end.is_none() {
+                    span.pending_end = Some(end);
+                } else if let Some(queued) = span
+                    .queued_starts
+                    .iter_mut()
+                    .find(|queued| queued.pending_end.is_none())
+                {
+                    queued.pending_end = Some(end);
+                }
             }
             "human_return" => {
                 if let Some(cwd) = msg.cwd.filter(|cwd| !cwd.is_empty()) {
@@ -1332,7 +1372,7 @@ fn relay_master_fd<L: SessionLog>(
             )?;
             flush_line(pty, &mut line_buf, &mut span)?;
             drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
-            pty.finish_active_span(&mut span)?;
+            pty.finish_active_span_draining_queue(&mut span)?;
             return Ok(status);
         }
 
@@ -1421,7 +1461,7 @@ fn relay_master_fd<L: SessionLog>(
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 flush_line(pty, &mut line_buf, &mut span)?;
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
-                pty.finish_active_span(&mut span)?;
+                pty.finish_active_span_draining_queue(&mut span)?;
                 let (child, master_file) = cleanup.into_master();
                 return reap_after_master_eof(child, master_file);
             }
@@ -1432,7 +1472,7 @@ fn relay_master_fd<L: SessionLog>(
                 drain_control_input(pty, control_fd, &mut control_buf, &mut span)?;
                 flush_line(pty, &mut line_buf, &mut span)?;
                 if e.raw_os_error() == Some(libc::EIO) {
-                    pty.finish_active_span(&mut span)?;
+                    pty.finish_active_span_draining_queue(&mut span)?;
                     let (child, master_file) = cleanup.into_master();
                     return reap_after_master_eof(child, master_file);
                 }
@@ -2059,15 +2099,12 @@ mod tests {
         // 高速連続入力: pending_end 中の次 start は破棄せず queue する
         pty.handle_control_line(r#"{"event":"start","command":"false"}"#, &mut span)
             .expect("start2");
-        assert!(
-            span.queued_start.is_some(),
-            "next start must be queued while pending_end is set"
-        );
-        assert_eq!(span.queued_start.as_ref().unwrap().command, "false");
+        assert_eq!(span.queued_starts.len(), 1);
+        assert_eq!(span.queued_starts[0].command, "false");
         // echo 区切りで前 span を閉じ、queue した start を開始
         pty.append_stdout("$ false\n", &mut span).expect("echo");
         assert_eq!(span.active_index, Some(2));
-        assert!(span.queued_start.is_none());
+        assert!(span.queued_starts.is_empty());
         pty.handle_control_line(r#"{"event":"end","exit_code":1}"#, &mut span)
             .expect("end2");
         pty.finish_active_span(&mut span).expect("finish2");
@@ -2076,6 +2113,122 @@ mod tests {
         assert!(content.contains(r#""command":"printf ok""#), "{content}");
         assert!(content.contains(r#""command":"false""#), "{content}");
         assert!(content.contains(r#""exit_code":1"#), "{content}");
+    }
+
+    #[test]
+    fn shell_command_span_queues_burst_control_messages_without_overwrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut span = CommandSpanState {
+            next_index: 0,
+            active_index: None,
+            replay_enabled: true,
+            ..CommandSpanState::default()
+        };
+        // drain_control_input が PTY に戻る前に連続処理するケース
+        for line in [
+            r#"{"event":"start","command":"printf one"}"#,
+            r#"{"event":"end","exit_code":0}"#,
+            r#"{"event":"start","command":"false"}"#,
+            r#"{"event":"end","exit_code":1}"#,
+            r#"{"event":"start","command":"true"}"#,
+            r#"{"event":"end","exit_code":0}"#,
+        ] {
+            pty.handle_control_line(line, &mut span).expect(line);
+        }
+        assert_eq!(span.active_index, Some(1));
+        assert!(span.pending_end.is_some());
+        assert_eq!(span.queued_starts.len(), 2);
+        assert_eq!(span.queued_starts[0].command, "false");
+        assert_eq!(
+            span.queued_starts[0]
+                .pending_end
+                .as_ref()
+                .unwrap()
+                .exit_code,
+            Some(1)
+        );
+        assert_eq!(span.queued_starts[1].command, "true");
+        assert_eq!(
+            span.queued_starts[1]
+                .pending_end
+                .as_ref()
+                .unwrap()
+                .exit_code,
+            Some(0)
+        );
+
+        pty.append_stdout("$ false\n", &mut span).expect("echo2");
+        assert_eq!(span.active_index, Some(2));
+        assert_eq!(span.pending_end.as_ref().unwrap().exit_code, Some(1));
+        assert_eq!(span.queued_starts.len(), 1);
+
+        pty.append_stdout("$ true\n", &mut span).expect("echo3");
+        assert_eq!(span.active_index, Some(3));
+        assert_eq!(span.pending_end.as_ref().unwrap().exit_code, Some(0));
+        assert!(span.queued_starts.is_empty());
+        pty.finish_active_span(&mut span).expect("finish3");
+
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(content.contains(r#""command":"printf one""#), "{content}");
+        assert!(content.contains(r#""command":"false""#), "{content}");
+        assert!(content.contains(r#""command":"true""#), "{content}");
+        // exit codes must stay paired with their commands
+        let events: Vec<serde_json::Value> = content
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        let starts: Vec<_> = events
+            .iter()
+            .filter(|e| e["event"] == "command_start")
+            .collect();
+        let ends: Vec<_> = events
+            .iter()
+            .filter(|e| e["event"] == "command_end")
+            .collect();
+        assert_eq!(starts.len(), 3, "{content}");
+        assert_eq!(ends.len(), 3, "{content}");
+        assert_eq!(starts[0]["command"], "printf one");
+        assert_eq!(ends[0]["exit_code"], 0);
+        assert_eq!(starts[1]["command"], "false");
+        assert_eq!(ends[1]["exit_code"], 1);
+        assert_eq!(starts[2]["command"], "true");
+        assert_eq!(ends[2]["exit_code"], 0);
+    }
+
+    #[test]
+    fn shell_command_span_drains_queued_spans_at_session_end() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut span = CommandSpanState {
+            next_index: 0,
+            active_index: None,
+            replay_enabled: true,
+            ..CommandSpanState::default()
+        };
+        for line in [
+            r#"{"event":"start","command":"one"}"#,
+            r#"{"event":"end","exit_code":0}"#,
+            r#"{"event":"start","command":"two"}"#,
+            r#"{"event":"end","exit_code":1}"#,
+            r#"{"event":"start","command":"three"}"#,
+            r#"{"event":"end","exit_code":0}"#,
+        ] {
+            pty.handle_control_line(line, &mut span).expect(line);
+        }
+        pty.finish_active_span_draining_queue(&mut span)
+            .expect("drain");
+        assert!(span.active_index.is_none());
+        assert!(span.queued_starts.is_empty());
+
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(content.contains(r#""command":"one""#), "{content}");
+        assert!(content.contains(r#""command":"two""#), "{content}");
+        assert!(content.contains(r#""command":"three""#), "{content}");
     }
 
     #[test]

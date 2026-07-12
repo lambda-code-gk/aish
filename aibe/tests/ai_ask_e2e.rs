@@ -44,7 +44,13 @@ fn ai_ask_reaches_mock_aibe() {
         });
     });
 
-    thread::sleep(Duration::from_millis(80));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !socket_path.exists() {
+        if std::time::Instant::now() >= deadline {
+            panic!("mock aibe socket did not appear: {}", socket_path.display());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 
     let client = AibeUnixClient::new(&socket_path);
     let presenter = StdoutPresenter::new(None);

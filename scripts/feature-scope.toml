@@ -20,8 +20,8 @@ spec = "0061"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 8
-scope_change_reason = "review: queue start while pending_end; FIFO fast-path+watchdog; total-budget break; sync implementation spec"
+scope_revision = 9
+scope_change_reason = "review: VecDeque lifecycle queue; wait+watchdog FIFO emit; production-snippet emit test"
 scope_review = "approved"
 
 core_outcome = "Human Shell内で記録されたcommand spanをユーザー入力なしで構造化Evidenceとして親へ返す"
