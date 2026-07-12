@@ -25,6 +25,8 @@ jobs:
         with:
           shared-key: "ci"
           cache-on-failure: true
+      - name: Install zsh (0055 zsh_supported_in_ci)
+        run: sudo apt-get update && sudo apt-get install -y zsh
       - run: cargo metadata --locked --format-version 1 > /dev/null
       - run: ./scripts/verify.sh
         env:
