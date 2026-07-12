@@ -2,7 +2,6 @@ mod aibe_client;
 mod aibe_config;
 mod aibe_external_commands;
 mod chat_line_editor;
-mod collab_outcome;
 mod dynamic_completion;
 mod external_editor;
 mod file_log;
@@ -34,7 +33,6 @@ pub use aibe_client::AibeUnixClient;
 pub use aibe_config::{load_shell_exec_approval, AibeShellExecApproval};
 pub use aibe_external_commands::external_command_names;
 pub use chat_line_editor::{read_chat_line, ChatReadLineResult};
-pub use collab_outcome::{collect_collab_outcome_from_streams, TerminalCollabOutcomeCollector};
 pub use dynamic_completion::{
     complete_preset, complete_profile, complete_session, complete_tools_token, list_profile_names,
     list_session_ids,

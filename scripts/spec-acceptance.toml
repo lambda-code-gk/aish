@@ -2884,89 +2884,170 @@ pending = false
 [[cases]]
 spec = "0059"
 phase = 1
-id = "collab_outcome_returns_structured_to_parent"
-description = "Human Shell 終了後に親 termios を復元し、明示 outcome が structured synthetic tool result として親へ返る"
-test = "collab_outcome_returns_structured_to_parent"
-file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_status_accepts_documented_forms"
-description = "documented status forms を大文字小文字無視で受理する"
-test = "collab_outcome_status_accepts_documented_forms"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_status_rejects_invalid_forms"
-description = "空・未定義・failed status 入力を拒否する"
-test = "collab_outcome_status_rejects_invalid_forms"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_domain_creation_preserves_invariants"
-description = "CollabOutcome domain が status のみを I/O なしで表現する"
-test = "collab_outcome_domain_creation_preserves_invariants"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_serializes_all_statuses"
-description = "全 status を安定した structured JSON に serialize する（summary フィールドなし）"
-test = "collab_outcome_serializes_all_statuses"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_is_independent_from_shell_exit_code"
-description = "shell exit code から outcome status を自動決定しない"
-test = "collab_outcome_is_independent_from_shell_exit_code"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_launch_failure_skips_prompt"
-description = "Human Shell 起動失敗または正常 return marker 不足時は outcome prompt を出さず既存エラーを返す"
-test = "collab_outcome_launch_failure_skips_prompt"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_noninteractive_stdin_fails_explicitly"
-description = "非対話 stdin では暗黙 outcome を作らず明示エラーにする"
-test = "collab_outcome_noninteractive_stdin_fails_explicitly"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
-id = "collab_outcome_io_is_unit_testable"
-description = "差し替え可能な入出力で status prompt・再入力を単体検証できる（summary 入力なし）"
-test = "collab_outcome_io_is_unit_testable"
-file_glob = "ai/tests/0059_collab_outcome_status.rs"
-pending = false
-
-[[cases]]
-spec = "0059"
-phase = 1
 id = "non_collaborative_shell_exec_remains_unchanged"
 description = "通常 shell_exec と非 Collaborative Mode の挙動が変わらない"
 test = "non_collaborative_shell_exec_remains_unchanged"
 file_glob = "ai/tests/normal_shell_exec_regression.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_collaborative_mode_header"
+description = "Collaborative Mode / Human Task header を厳密に表示する"
+test = "human_task_briefing_renders_collaborative_mode_header"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_objective"
+description = "Objective と trim 後空時 fallback を表示する"
+test = "human_task_briefing_renders_objective"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_uses_fixed_reason"
+description = "固定された Human Task 理由だけを表示する"
+test = "human_task_briefing_uses_fixed_reason"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_suggested_first_action"
+description = "Suggested first action と trim 後空時 fallback を表示する"
+test = "human_task_briefing_renders_suggested_first_action"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_states_command_not_executed"
+description = "候補コマンドが未実行であることを明示する"
+test = "human_task_briefing_states_command_not_executed"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_preserves_user_control"
+description = "edit/run/replace/ignore と候補挿入操作を表示する"
+test = "human_task_briefing_preserves_user_control"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_done_when"
+description = "親へ返すタイミングを Done when として表示する"
+test = "human_task_briefing_renders_done_when"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_returns_with_ctrl_d_or_exit"
+description = "Ctrl+D または exit で追加入力なく親へ戻る"
+test = "human_task_briefing_returns_with_ctrl_d_or_exit"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_indents_multiline_objective"
+description = "複数行 Objective と Suggested first action を論理行ごとにインデントし改行構造を保持する"
+test = "human_task_briefing_indents_multiline_objective"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_sanitizes_ansi_and_c0"
+description = "両 field の各論理行で ESC/OSC/CR/TAB/C0 制御文字を無害化する"
+test = "human_task_briefing_sanitizes_ansi_and_c0"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renderer_is_pure"
+description = "briefing renderer が純粋関数である"
+test = "human_task_briefing_renderer_is_pure"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_printer_only_reads_env_and_stderr"
+description = "printer の責務を既存 env 読取と stderr 出力に限定する"
+test = "human_task_briefing_printer_only_reads_env_and_stderr"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_has_no_outcome_selection"
+description = "Human Shell 終了後の outcome 選択を要求しない"
+test = "human_task_briefing_has_no_outcome_selection"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_has_no_summary_input"
+description = "summary または理由の手入力を要求しない"
+test = "human_task_briefing_has_no_summary_input"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_adds_no_protocol_schema"
+description = "新規 protocol schema を追加せず既存 collab_outcome を optional 化し成功時は省略する"
+test = "human_task_briefing_adds_no_protocol_schema"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_uses_only_existing_env"
+description = "既存4 handoff env 以外を追加しない"
+test = "human_task_briefing_uses_only_existing_env"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_creates_no_persistent_state"
+description = "永続 task state を作成しない"
+test = "human_task_briefing_creates_no_persistent_state"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_normal_shell_exec_regression"
+description = "通常 shell_exec と非 Collaborative Mode に回帰がない"
+test = "human_task_briefing_normal_shell_exec_regression"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
 pending = false

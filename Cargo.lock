@@ -86,6 +86,7 @@ dependencies = [
 name = "aish"
 version = "0.1.0"
 dependencies = [
+ "aibe-protocol",
  "aish-replay",
  "anyhow",
  "clap",

@@ -618,8 +618,10 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
 4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`、`shell_exec` 実行前承認（0020）
 5. **次**: ログ context の構造化（P4-4）、ログマスクの拡張
-# Collaborative Mode Outcome
+# Collaborative Mode Human Task Briefing / Handoff Result
 
-Collaborative handoff の正常終了結果は、`ai` domain の `CollabOutcome`、terminal adapter の対話収集、application mapper、`aibe-protocol` wire DTO を分離する。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → outcome collect → wire map` であり、起動・return marker・再観測の失敗時は collector を呼ばない。
+Human Shell 開始時の briefing は `aish` の純粋関数 `render_human_task_briefing` が生成し、`print_handoff_briefing` が既存 `AISH_HANDOFF_PARENT_REQUEST` / `AISH_HANDOFF_SUGGESTED_COMMAND` を読んで stderr へ出力するだけを担う。表示は Collaborative Mode / Human Task / Objective / 固定理由 / Suggested first action / Done when / You remain in control の固定形式。複数行は論理行ごとに escape してインデントし、ANSI / C0 を無害化する。
 
-`HumanHandoffResult.collab_outcome` は必須で、`status` は `done` / `blocked` / `cancelled` のみ（summary フィールドなし）。`human_shell_exit_code` と status は独立し、exit code から status を推定しない。有効な status 選択後は追加入力なく親へ戻る。非対話 stdin、EOF、I/O failure は既存 `human_handoff_failed` となり、success result と同時には返らない。
+Ctrl+D または `exit` の後、追加入力（outcome 選択・summary）なく親へ制御を返す。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → HumanHandoffResult` であり、対話 collector は呼ばない。
+
+`HumanHandoffResult.collab_outcome` は optional（`None` は serialize 時に省略）。成功 handoff では付与せず、exit code / return marker から status を推定しない。旧 payload の `Some` は decode 互換のため wire 型 `CollabOutcome` / `CollabOutcomeStatus` を残す。

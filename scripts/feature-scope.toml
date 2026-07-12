@@ -16,14 +16,65 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
-spec = "0059"
+spec = "0060"
 status = "done"
 scope_class = "feature"
 
 scope_revision = 3
-scope_change_reason = "remove summary input from stage-1 collab outcome; status-only selection; drop AC collab_outcome_summary_rules_are_enforced"
+scope_change_reason = "mark 0060 done after all acceptance criteria green and implementation spec moved to docs/done/"
 
-core_outcome = "Collaborative Mode の Human Shell 終了後に done/blocked/cancelled を明示選択し、同じ親 agent へ構造化して返す"
+core_outcome = "Collaborative Mode の Human Shell 開始時に目的・固定理由・候補操作・親へ戻るタイミングを安全な briefing で即座に理解できる"
+
+actors = 1
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 1
+
+novel_mechanisms = []
+integrations = ["0055-0057-handoff-and-0059-outcome-removal"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "human_task tool, persistence/resume, side agents, manual or automatic work-result collection, multiple-task coordination, and protocol/env expansion are deferred"
+
+vertical_slice_ac_id = "human_task_briefing_renders_collaborative_mode_header"
+
+locked_ac_ids = [
+  "human_task_briefing_renders_collaborative_mode_header",
+  "human_task_briefing_renders_objective",
+  "human_task_briefing_uses_fixed_reason",
+  "human_task_briefing_renders_suggested_first_action",
+  "human_task_briefing_states_command_not_executed",
+  "human_task_briefing_preserves_user_control",
+  "human_task_briefing_renders_done_when",
+  "human_task_briefing_returns_with_ctrl_d_or_exit",
+  "human_task_briefing_indents_multiline_objective",
+  "human_task_briefing_sanitizes_ansi_and_c0",
+  "human_task_briefing_renderer_is_pure",
+  "human_task_briefing_printer_only_reads_env_and_stderr",
+  "human_task_briefing_has_no_outcome_selection",
+  "human_task_briefing_has_no_summary_input",
+  "human_task_briefing_adds_no_protocol_schema",
+  "human_task_briefing_uses_only_existing_env",
+  "human_task_briefing_creates_no_persistent_state",
+  "human_task_briefing_normal_shell_exec_regression",
+]
+
+[[features]]
+spec = "0059"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 4
+scope_change_reason = "0060 supersedes interactive outcome collection; retain only non-collaborative regression AC"
+
+core_outcome = "0059 interactive outcome UX is superseded by 0060; keep non-collaborative shell_exec regression"
 
 actors = 1
 state_machines = 0
@@ -43,18 +94,9 @@ exactly_once = false
 
 split_decision = "Human Task tool, persistence/resume, multiple-task coordination, side agents, lease, auto log/outcome collection (stage 3), history collection, and completion verification are deferred"
 
-vertical_slice_ac_id = "collab_outcome_returns_structured_to_parent"
+vertical_slice_ac_id = "non_collaborative_shell_exec_remains_unchanged"
 
 locked_ac_ids = [
-  "collab_outcome_returns_structured_to_parent",
-  "collab_outcome_status_accepts_documented_forms",
-  "collab_outcome_status_rejects_invalid_forms",
-  "collab_outcome_domain_creation_preserves_invariants",
-  "collab_outcome_serializes_all_statuses",
-  "collab_outcome_is_independent_from_shell_exit_code",
-  "collab_outcome_launch_failure_skips_prompt",
-  "collab_outcome_noninteractive_stdin_fails_explicitly",
-  "collab_outcome_io_is_unit_testable",
   "non_collaborative_shell_exec_remains_unchanged",
 ]
 

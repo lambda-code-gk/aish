@@ -211,9 +211,9 @@ impl CollaborativeMockServer {
                         handoff.requested_command_completion,
                         RequestedCommandCompletion::Unknown
                     );
-                    assert_eq!(
-                        handoff.collab_outcome.status,
-                        aibe_protocol::CollabOutcomeStatus::Done
+                    assert!(
+                        handoff.collab_outcome.is_none(),
+                        "0060: success handoff must omit collab_outcome"
                     );
                     log_thread.lock().expect("log").handoff_result_json =
                         Some(serde_json::to_string(&handoff).expect("handoff json"));
@@ -673,23 +673,27 @@ fn run_collaborative_handoff_with_expected(
         let mut transcript = Vec::new();
         let mut byte = [0_u8; 1];
         let mut shell_sent = false;
-        let mut outcome_sent = false;
         while stderr.read(&mut byte).unwrap_or(0) != 0 {
             transcript.push(byte[0]);
             let text = String::from_utf8_lossy(&transcript);
-            if !shell_sent && text.contains("Press Ctrl+D or run `exit` to return control.") {
+            if !shell_sent
+                && (text.contains("Press Ctrl+D or run `exit` to return control.")
+                    || text.contains("AISH Collaborative Mode"))
+            {
                 thread::sleep(Duration::from_millis(200));
                 master_file
                     .write_all(&shell_input)
                     .expect("write shell input to ai PTY");
                 shell_sent = true;
             }
-            if !outcome_sent && text.contains("作業結果を選択してください") {
-                master_file
-                    .write_all(b"d\n")
-                    .expect("write outcome to ai PTY");
-                outcome_sent = true;
-            }
+            assert!(
+                !text.contains("作業結果を選択してください"),
+                "0060 must not show outcome selection prompt"
+            );
+            assert!(
+                !text.contains("サマリを入力"),
+                "0060 must not show summary input prompt"
+            );
         }
         transcript
     });
@@ -841,11 +845,6 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
         stdout.contains("handoff complete"),
         "unexpected stdout: {stdout}"
     );
-}
-
-#[test]
-fn collab_outcome_returns_structured_to_parent() {
-    ai_to_aish_handoff_transport_pty_e2e();
 }
 
 #[test]

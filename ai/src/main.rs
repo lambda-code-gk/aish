@@ -1143,7 +1143,6 @@ fn run_agent_turn_core(
             &human_shell_launcher,
             &environment_observer,
         );
-        let outcome_collector = ai::adapters::outbound::TerminalCollabOutcomeCollector;
         let mut yes_exec_cache = if yes_exec {
             Some(YesExecCache::load(
                 &history_dir_thread,
@@ -1198,28 +1197,12 @@ fn run_agent_turn_core(
                         // Drop restores termios even if aish was SIGKILL'd.
                         drop(_termios_guard);
                         return match result {
-                            Ok(handoff_result) => match ai::ports::outbound::CollabOutcomeCollector::collect(&outcome_collector) {
-                                Ok(outcome) => ShellExecApprovalDecision {
-                                    approved: true,
-                                    approval_origin: aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
-                                    handoff_result: Some(ai::application::map_collab_handoff_result(handoff_result, outcome)),
-                                    handoff_error: None,
-                                },
-                                Err(error) => {
-                                    eprintln!("ai: collaborative handoff outcome collection failed: {error}");
-                                    let failure = aibe_protocol::HumanHandoffFailure {
-                                        code: "human_handoff_failed".into(),
-                                        message: error.to_string(),
-                                    };
-                                    *handoff_failure_thread.lock().expect("handoff failure mutex") = Some(failure.clone());
-                                    let _ = handoff_failure_tx_thread.send(failure.clone());
-                                    ShellExecApprovalDecision {
-                                        approved: false,
-                                        approval_origin: aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
-                                        handoff_result: None,
-                                        handoff_error: Some(failure),
-                                    }
-                                }
+                            Ok(handoff_result) => ShellExecApprovalDecision {
+                                approved: true,
+                                approval_origin:
+                                    aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
+                                handoff_result: Some(handoff_result.into_protocol_result()),
+                                handoff_error: None,
                             },
                             Err(error) => {
                                 eprintln!("ai: collaborative handoff failed: {error}");

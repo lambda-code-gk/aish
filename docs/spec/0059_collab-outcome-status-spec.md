@@ -4,6 +4,8 @@
 > **状態**: 設計確定  
 > **関連**: [`docs/feature-development-policy.md`](../feature-development-policy.md)、[`0045_pack-composition-spec.md`](0045_pack-composition-spec.md)、[`0055_minimal-human-handoff-spec.md`](0055_minimal-human-handoff-spec.md)、[`0057_pty-process-cleanup-hardening-spec.md`](0057_pty-process-cleanup-hardening-spec.md)
 
+> **0060 による置換**: 本書は 0059 実装時点の契約を記録する。0060 は終了後の対話収集 UX を撤回し、既存 `HumanHandoffResult.collab_outcome` を optional 化して成功 handoff では省略する。新規 field や推定 status は追加しない。対話収集・必須 DTO 前提の AC は 0060 実装時に pending 化、削除、または 0060 AC へ差し替える。
+
 ## 0. Core outcome
 
 Collaborative Mode の Human Shell 終了後に、ユーザーが `done` / `blocked` / `cancelled` を明示選択し、親エージェントが構造化された Collab Outcome（status のみ）として受け取れる。
@@ -170,3 +172,4 @@ status は `d` / `done`、`b` / `blocked`、`c` / `cancelled` を大文字小文
 |----------|------|------|------|
 | 1 | INITIAL | 0055 の Human Shell 正常終了後に明示 outcome を収集し、既存 structured handoff result で親へ返す第1段階を設計確定 | Collaborative Mode 全体を再設計せず、ユーザー申告結果だけを最小 vertical slice として追加するため |
 | 3 | REDUCE | `summary` フィールドと終了後の手入力経路を削除し、status 選択のみに縮小。AC `collab_outcome_summary_rules_are_enforced` を削除 | 将来の自動ログ収集追加時に手入力 UX が固定化・互換維持で残り続けるのを防ぐ。第1段階の責務はシェル終了と作業完了の分離のみ |
+| 4 | SUPERSEDED | 0060 により終了後の対話 outcome 収集と必須 `collab_outcome` 契約を撤回する方針を記録 | Human Task briefing から追加入力なしで親へ戻る UX を正とし、推定 status を返さないため |

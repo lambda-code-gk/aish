@@ -140,10 +140,13 @@ fn human_shell_startup_prints_parent_request_and_suggested_command() {
     let suggested = format!("touch {}", shell_quote(marker.to_str().unwrap()));
     let (output, _) = run_human_shell_with(b"exit\n", home.path(), &suggested, &[]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Human control requested by the parent agent."));
+    assert!(stderr.contains("AISH Collaborative Mode"));
+    assert!(stderr.contains("Human Task"));
     assert!(stderr.contains("create marker file"));
     assert!(stderr.contains(&aish::human_shell::escape_for_handoff_display(&suggested)));
     assert!(stderr.contains("Alt+. or Alt+,"));
+    assert!(stderr.contains("Suggested first action:"));
+    assert!(!stderr.contains("Human control requested by the parent agent."));
 }
 
 #[test]

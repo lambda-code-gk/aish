@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use aibe_protocol::{
-    HandoffExecutionOutcome, PostHandoffObservation, RequestedCommandCompletion, ShellLogRange,
+    HandoffExecutionOutcome, HumanHandoffResult, PostHandoffObservation,
+    RequestedCommandCompletion, ShellLogRange,
 };
 
 use crate::domain::build_suggested_command;
@@ -110,4 +111,20 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
 
 pub fn handoff_tool_result_message() -> &'static str {
     "Control returned from the human shell.\n\nAISH did not automatically execute the requested command.\nThe shell exit code does not prove that the requested command ran or succeeded.\nInspect the current environment and verify the task state before continuing."
+}
+
+impl HumanHandoffExecutionResult {
+    /// protocol DTO へ変換する。0060 では `collab_outcome` を付与しない。
+    pub fn into_protocol_result(self) -> HumanHandoffResult {
+        HumanHandoffResult {
+            collab_outcome: None,
+            execution_outcome: self.execution_outcome,
+            requested_command: self.requested_command,
+            requested_command_completion: self.requested_command_completion,
+            human_shell_exit_code: self.human_shell_exit_code,
+            final_shell_cwd: self.final_shell_cwd,
+            shell_log_range: self.shell_log_range,
+            observation: self.observation,
+        }
+    }
 }

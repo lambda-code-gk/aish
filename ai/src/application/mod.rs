@@ -2,7 +2,6 @@ mod ask;
 mod ask_launch;
 mod ask_prompt_input;
 pub mod client_tools;
-mod collab_outcome;
 mod feature_executor;
 mod history;
 mod human_handoff;
@@ -23,7 +22,6 @@ pub use ask_launch::{ensure_aibe_if_needed, plan_ask_launch, AskLaunchPlan};
 pub use ask_prompt_input::{
     classify_from_raw_args, plan_interactive_prompt_route, InteractivePromptRoute,
 };
-pub use collab_outcome::map_collab_handoff_result;
 pub use history::{
     build_response_summary, build_summary, current_time_ms, list_history, next_history_id,
     record_turn, HistoryRecordInput, HistoryReplayInput,

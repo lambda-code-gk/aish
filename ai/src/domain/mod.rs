@@ -2,7 +2,6 @@ mod ask;
 mod ask_arg_order;
 mod ask_invocation;
 pub mod client_tools;
-mod collab_outcome;
 mod console_context;
 mod console_hint;
 mod history;
@@ -30,9 +29,6 @@ pub use ask_arg_order::{validate_ask_arg_order, AskArgOrderError};
 pub use ask_invocation::{
     classify_ask_invocation, is_known_cli_head, should_enter_interactive_prompt_mode,
     AskInvocationSource,
-};
-pub use collab_outcome::{
-    parse_collab_outcome_status, CollabOutcome, CollabOutcomeStatus, ParseCollabOutcomeStatusError,
 };
 pub use console_hint::{
     resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,
