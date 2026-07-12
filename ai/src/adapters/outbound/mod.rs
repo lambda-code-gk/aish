@@ -57,7 +57,10 @@ pub use memory_recipe_approval_ui::{
     stdin_ready_for_memory_recipe_apply,
 };
 pub use output_filter::{apply_output_filter, format_filter_exit_status, FilterRunOutcome};
-pub use replay_source::{load_replay_events, ReplaySourceError};
+pub use replay_source::{
+    load_replay_events, load_replay_events_in_range, RangedReplayEvents, ReplaySourceError,
+    MAX_EVIDENCE_SCAN_BYTES,
+};
 pub use shell_completion::{
     recall_env_snippet_for_shell, recall_hook_for_shell, BASH_RECALL_ENV_SNIPPET, BASH_RECALL_HOOK,
     ZSH_RECALL_ENV_SNIPPET, ZSH_RECALL_HOOK,

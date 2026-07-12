@@ -16,6 +16,55 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0061"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 7
+scope_change_reason = "bounded wait FIFO emit without timeout binary dependency; keep exit_code capture fix"
+scope_review = "approved"
+
+core_outcome = "Human Shell内で記録されたcommand spanをユーザー入力なしで構造化Evidenceとして親へ返す"
+
+actors = 1
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 1
+
+novel_mechanisms = []
+integrations = ["0049-command-span", "0055-human-handoff", "0060-human-task-briefing"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "completion status, manual summary, LLM summarization, persistence, resume, side agent, output previews, and multiple Human Tasks are deferred"
+
+vertical_slice_ac_id = "human_task_evidence_vertical_e2e"
+
+locked_ac_ids = [
+  "human_task_evidence_is_collected_automatically",
+  "human_task_evidence_contains_commands_and_exit_codes",
+  "human_task_evidence_uses_handoff_log_range",
+  "human_task_evidence_reuses_replay_spans",
+  "human_task_evidence_excludes_non_shell_spans",
+  "human_task_evidence_is_bounded",
+  "human_task_evidence_keeps_recent_commands",
+  "human_task_evidence_preserves_redaction",
+  "human_task_evidence_distinguishes_empty_from_unavailable",
+  "human_task_evidence_failure_is_nonfatal",
+  "human_task_evidence_requires_no_manual_summary",
+  "human_task_evidence_does_not_infer_completion",
+  "human_task_evidence_protocol_is_backward_compatible",
+  "human_task_evidence_normal_mode_regression",
+  "human_task_evidence_vertical_e2e",
+]
+
+[[features]]
 spec = "0060"
 status = "done"
 scope_class = "feature"

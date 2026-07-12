@@ -6,6 +6,7 @@ mod console_context;
 mod console_hint;
 mod history;
 mod human_handoff;
+pub mod human_task_evidence;
 mod llm_profile;
 mod log_tail;
 mod output_filter;

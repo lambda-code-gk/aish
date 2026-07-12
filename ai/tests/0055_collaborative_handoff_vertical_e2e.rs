@@ -677,9 +677,14 @@ fn run_collaborative_handoff_with_expected(
                     || text.contains("AISH Collaborative Mode"))
             {
                 thread::sleep(Duration::from_millis(200));
-                master_file
-                    .write_all(&shell_input)
-                    .expect("write shell input to ai PTY");
+                // 一括書き込みだと bash DEBUG/precmd が追いつかず span 欠落が起きるため行単位で送る。
+                for line in shell_input.split_inclusive(|b| *b == b'\n') {
+                    master_file
+                        .write_all(line)
+                        .expect("write shell input line to ai PTY");
+                    let _ = master_file.flush();
+                    thread::sleep(Duration::from_millis(80));
+                }
                 shell_sent = true;
             }
             assert!(
@@ -800,7 +805,7 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     assert!(!verdict_file.exists());
 
     let shell_input = format!(
-        "if test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
+        "printf 'evidence-ok\\n'\nfalse\nif test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n sleep 0.2\n exit\n",
         shell_quote(candidate_marker.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
@@ -836,6 +841,21 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     if log.handoff_result_json.is_none() {
         fail_with_diagnostics("mock aibe never received handoff_result", log);
     }
+    let handoff: serde_json::Value =
+        serde_json::from_str(log.handoff_result_json.as_deref().unwrap()).unwrap();
+    let commands = handoff["observation"]["human_task_evidence"]["commands"]
+        .as_array()
+        .expect("0061 structured Evidence commands");
+    assert!(commands.iter().any(|command| {
+        command["command"]
+            .as_str()
+            .is_some_and(|text| text.contains("printf 'evidence-ok"))
+            && command["exit_code"] == 0
+    }));
+    assert!(commands
+        .iter()
+        .any(|command| command["command"] == "false" && command["exit_code"] == 1));
+    assert_eq!(handoff["requested_command_completion"], "unknown");
     let stdout = String::from_utf8_lossy(&run.output.stdout);
     assert!(
         stdout.contains("handoff complete"),
