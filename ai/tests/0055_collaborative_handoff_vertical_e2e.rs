@@ -677,6 +677,7 @@ fn run_collaborative_handoff_with_expected(
                     || text.contains("AISH Collaborative Mode"))
             {
                 thread::sleep(Duration::from_millis(200));
+                // 一括書き込みでも span が欠落しないこと（queued_start 修正の回帰防止）
                 master_file
                     .write_all(&shell_input)
                     .expect("write shell input to ai PTY");
@@ -800,7 +801,7 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     assert!(!verdict_file.exists());
 
     let shell_input = format!(
-        "if test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
+        "printf 'one\\n'\nfalse\ntrue\nif test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
         shell_quote(candidate_marker.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
@@ -836,6 +837,51 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     if log.handoff_result_json.is_none() {
         fail_with_diagnostics("mock aibe never received handoff_result", log);
     }
+    let handoff: serde_json::Value =
+        serde_json::from_str(log.handoff_result_json.as_deref().unwrap()).unwrap();
+    let commands = handoff["observation"]["human_task_evidence"]["commands"]
+        .as_array()
+        .expect("0061 structured Evidence commands");
+    let evidence_cmds: Vec<(&str, i64)> = commands
+        .iter()
+        .filter_map(|command| Some((command["command"].as_str()?, command["exit_code"].as_i64()?)))
+        .collect();
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| cmd.contains("printf 'one") && *code == 0),
+        "missing printf one: {commands:?}"
+    );
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| *cmd == "false" && *code == 1),
+        "missing false: {commands:?}"
+    );
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| *cmd == "true" && *code == 0),
+        "missing true: {commands:?}"
+    );
+    // 高速一括入力でも exit_code の対応が崩れないこと
+    let printf_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| cmd.contains("printf 'one"))
+        .expect("printf");
+    let false_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| *cmd == "false")
+        .expect("false");
+    let true_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| *cmd == "true")
+        .expect("true");
+    assert!(
+        printf_i < false_i && false_i < true_i,
+        "command order must be preserved: {evidence_cmds:?}"
+    );
+    assert_eq!(handoff["requested_command_completion"], "unknown");
     let stdout = String::from_utf8_lossy(&run.output.stdout);
     assert!(
         stdout.contains("handoff complete"),

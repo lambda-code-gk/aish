@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 
 use aibe_protocol::PostHandoffObservation;
 
+use crate::adapters::outbound::replay_source::{
+    load_replay_events_in_range, ReplaySourceError, MAX_EVIDENCE_SCAN_BYTES,
+};
+use crate::domain::human_task_evidence::build_human_task_evidence;
 use crate::domain::HANDOFF_ENV_KEYS;
 use crate::ports::outbound::{
     EnvironmentObserver, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
@@ -17,6 +21,10 @@ use crate::ports::outbound::{
 
 /// shell log tail の最大読み込みサイズ。
 pub const SHELL_LOG_TAIL_MAX_BYTES: usize = 32 * 1024;
+
+pub const HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE: &str = "human_task_evidence_log_unavailable";
+pub const HUMAN_TASK_EVIDENCE_INVALID_LOG: &str = "human_task_evidence_invalid_log";
+pub const HUMAN_TASK_EVIDENCE_INVALID_RANGE: &str = "human_task_evidence_invalid_range";
 
 const LAUNCHER_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CHILD_TERM_GRACE: Duration = Duration::from_secs(1);
@@ -317,6 +325,19 @@ impl EnvironmentObserver for ProcessEnvironmentObserver {
         } else {
             None
         };
+        let human_task_evidence = match shell_session_dir {
+            Some(dir) => match collect_human_task_evidence(dir, shell_log_start, shell_log_end) {
+                Ok(evidence) => Some(evidence),
+                Err(code) => {
+                    push_unique_error(&mut observation_errors, code);
+                    None
+                }
+            },
+            None => {
+                push_unique_error(&mut observation_errors, HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE);
+                None
+            }
+        };
         PostHandoffObservation {
             cwd_exists,
             cwd: cwd.display().to_string(),
@@ -328,8 +349,45 @@ impl EnvironmentObserver for ProcessEnvironmentObserver {
             shell_log_tail,
             shell_log_truncated,
             observation_errors,
+            human_task_evidence,
         }
     }
+}
+
+fn push_unique_error(errors: &mut Vec<String>, code: &str) {
+    if !errors.iter().any(|existing| existing == code) {
+        errors.push(code.to_string());
+    }
+}
+
+fn collect_human_task_evidence(
+    session_dir: &Path,
+    shell_log_start: u64,
+    shell_log_end: Option<u64>,
+) -> Result<aibe_protocol::HumanTaskEvidence, &'static str> {
+    let path = session_dir.join("log.jsonl");
+    // `log.jsonl` が symlink で session directory 外へ逸脱するケースを拒否する。
+    // canonicalize 後の親比較により、途中要素の symlink も含めて検証する。
+    let canonical_session =
+        std::fs::canonicalize(session_dir).map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
+    let canonical_log =
+        std::fs::canonicalize(&path).map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
+    if canonical_log.parent() != Some(canonical_session.as_path()) {
+        return Err(HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE);
+    }
+    let loaded = load_replay_events_in_range(
+        &path,
+        shell_log_start,
+        shell_log_end,
+        MAX_EVIDENCE_SCAN_BYTES,
+    )
+    .map_err(|err| match err {
+        ReplaySourceError::InvalidRange => HUMAN_TASK_EVIDENCE_INVALID_RANGE,
+        ReplaySourceError::InvalidLine(_) => HUMAN_TASK_EVIDENCE_INVALID_LOG,
+        ReplaySourceError::LogRead(_) => HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE,
+    })?;
+    build_human_task_evidence(&loaded.events, loaded.truncated)
+        .map_err(|_| HUMAN_TASK_EVIDENCE_INVALID_LOG)
 }
 
 #[derive(Debug, Default)]
@@ -591,6 +649,114 @@ mod tests {
             expected_root.display()
         );
         cleanup_runtime_handoff_dir(&handoff);
+    }
+
+    #[test]
+    fn observe_collects_human_task_evidence_from_shell_spans() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session");
+        std::fs::create_dir_all(&session).unwrap();
+        let log = session.join("log.jsonl");
+        let events = [
+            aish_replay::LogEvent::shell_command_start(1, "t1", "printf ok"),
+            aish_replay::LogEvent::command_end(1, Some(0), "f1"),
+            aish_replay::LogEvent::shell_command_start(2, "t2", "false"),
+            aish_replay::LogEvent::command_end(2, Some(1), "f2"),
+        ];
+        let mut body = String::new();
+        for event in &events {
+            body.push_str(&serde_json::to_string(event).unwrap());
+            body.push('\n');
+        }
+        std::fs::write(&log, body.as_bytes()).unwrap();
+        let end = std::fs::metadata(&log).unwrap().len();
+        let observer = ProcessEnvironmentObserver::default();
+        let observation = observer.observe(dir.path(), 0, Some(end), Some(&session));
+        let evidence = observation
+            .human_task_evidence
+            .expect("evidence should be collected");
+        assert_eq!(evidence.commands.len(), 2);
+        assert_eq!(evidence.commands[0].command, "printf ok");
+        assert_eq!(evidence.commands[0].exit_code, Some(0));
+        assert_eq!(evidence.commands[1].command, "false");
+        assert_eq!(evidence.commands[1].exit_code, Some(1));
+        assert!(observation
+            .observation_errors
+            .iter()
+            .all(|e| !e.starts_with("human_task_evidence_")));
+    }
+
+    #[test]
+    fn observe_evidence_unavailable_is_nonfatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing-session");
+        let observer = ProcessEnvironmentObserver::default();
+        let observation = observer.observe(dir.path(), 0, Some(10), Some(&missing));
+        assert!(observation.human_task_evidence.is_none());
+        assert!(observation
+            .observation_errors
+            .iter()
+            .any(|e| e == HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE));
+        assert!(observation.cwd_exists);
+        assert!(!observation
+            .observation_errors
+            .iter()
+            .any(|e| e.contains('/')));
+    }
+
+    #[test]
+    fn observe_empty_log_yields_empty_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session");
+        std::fs::create_dir_all(&session).unwrap();
+        let log = session.join("log.jsonl");
+        std::fs::write(&log, b"").unwrap();
+        let observer = ProcessEnvironmentObserver::default();
+        let observation = observer.observe(dir.path(), 0, Some(0), Some(&session));
+        let evidence = observation
+            .human_task_evidence
+            .expect("empty success must be Some");
+        assert!(evidence.commands.is_empty());
+    }
+
+    #[test]
+    fn observe_invalid_log_sets_stable_error_without_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session");
+        std::fs::create_dir_all(&session).unwrap();
+        let log = session.join("log.jsonl");
+        std::fs::write(&log, b"{not-json}\n").unwrap();
+        let end = std::fs::metadata(&log).unwrap().len();
+        let observer = ProcessEnvironmentObserver::default();
+        let observation = observer.observe(dir.path(), 0, Some(end), Some(&session));
+        assert!(observation.human_task_evidence.is_none());
+        assert!(observation
+            .observation_errors
+            .iter()
+            .any(|e| e == HUMAN_TASK_EVIDENCE_INVALID_LOG));
+        let joined = observation.observation_errors.join(",");
+        assert!(!joined.contains(session.to_str().unwrap_or("___")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observe_rejects_log_symlink_outside_session_dir() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session");
+        std::fs::create_dir_all(&session).unwrap();
+        let outside = dir.path().join("outside.jsonl");
+        std::fs::write(&outside, b"").unwrap();
+        symlink(&outside, session.join("log.jsonl")).unwrap();
+
+        let observation =
+            ProcessEnvironmentObserver::default().observe(dir.path(), 0, Some(0), Some(&session));
+        assert!(observation.human_task_evidence.is_none());
+        assert!(observation
+            .observation_errors
+            .iter()
+            .any(|error| error == HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE));
     }
 
     #[test]

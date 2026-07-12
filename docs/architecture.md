@@ -622,6 +622,14 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 
 Human Shell 開始時の briefing は `aish` の純粋関数 `render_human_task_briefing` が生成し、`print_handoff_briefing` が既存 `AISH_HANDOFF_PARENT_REQUEST` / `AISH_HANDOFF_SUGGESTED_COMMAND` を読んで stderr へ出力するだけを担う。表示は Collaborative Mode / Human Task / Objective / 固定理由 / Suggested first action / Done when / You remain in control の固定形式。複数行は論理行ごとに escape してインデントし、ANSI / C0 を無害化する。
 
+## Human Task Evidence
+
+Human Shell から制御が戻ると、`ai` の outbound adapter は `shell_session_dir/log.jsonl` の `shell_log_start..shell_log_end` だけを読む。`end = None` は観測開始時の EOF に固定し、最大 8 MiB の末尾 scan に制限する。I/O と JSONL decode は `adapters/outbound/replay_source.rs`、parse 済み event からの純粋変換は `domain/human_task_evidence.rs` が担当し、adapter から application 層へ依存しない。domain builder は `aish_replay::replay_span_views` を再利用して、完了済み Shell span の sanitized / redacted command と観測済み exit code だけを選ぶ。
+
+`PostHandoffObservation.human_task_evidence` は、収集成功かつ command ありを `Some(commands)`、正常に対象 command がなかった場合を `Some(empty)`、収集失敗を `None` で表す。失敗時は `human_task_evidence_log_unavailable`、`human_task_evidence_invalid_log`、`human_task_evidence_invalid_range` のいずれかを `observation_errors` に重複なく追加するが、cwd・git・shell tail の観測と handoff 自体は継続する。
+
+Evidence は最大 50 commands、2 KiB/command、command 合計 16 KiB に制限され、上限超過時は直近 command を時系列順で返して `truncated = true` とする。これは command span の観測事実であり、Human Task の完了判定ではない。成功・非zero exit codeのいずれが含まれても synthetic result の `requested_command_completion` は `unknown` のままで、終了後の summary / status / outcome 入力は要求しない。
+
 Ctrl+D または `exit` の後、追加入力（outcome 選択・summary）なく親へ制御を返す。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → HumanHandoffResult` であり、対話 collector は呼ばない。
 
 `HumanHandoffResult` は origin/main の既存 schema を維持し、`collab_outcome` を含む結果 field や status schema は追加しない。終了コードや return marker から作業 outcome を推定する処理も持たない。

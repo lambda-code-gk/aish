@@ -34,10 +34,17 @@ _aish_json_escape() {
 _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
-  # FIFO 読み手がいないとブロックするため、shell 本体は待たない。
-  # job control に載せると `jobs` / 終了通知がユーザーに見えるので disown する。
   ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
-  disown "$!" 2>/dev/null || true
+  local wpid=$!
+  # 通常は wait。停滞時のみ別 watchdog が writer を打ち切る（busy spin しない）。
+  (
+    sleep 0.5
+    kill "$wpid" 2>/dev/null || true
+  ) >/dev/null 2>&1 &
+  local wdog=$!
+  wait "$wpid" 2>/dev/null || true
+  kill "$wdog" 2>/dev/null || true
+  wait "$wdog" 2>/dev/null || true
 }
 _aish_replay_debug() {
   [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return 0
@@ -69,7 +76,8 @@ _aish_handoff_return() {
 if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
   # rcfile 評価中に DEBUG が有効だと直後の PROMPT_COMMAND 代入自体が span 化され control pipe が詰まる。
   trap - DEBUG 2>/dev/null || true
-  PROMPT_COMMAND="_aish_replay_install_hooks;_aish_replay_precmd${PROMPT_COMMAND:+;}$PROMPT_COMMAND"
+  # exit_code を壊さないよう、$? を読む precmd を install_hooks より先に置く。
+  PROMPT_COMMAND="_aish_replay_precmd;_aish_replay_install_hooks${PROMPT_COMMAND:+;}$PROMPT_COMMAND"
   trap '_aish_handoff_return' EXIT
 fi
 "#;
@@ -136,10 +144,17 @@ _aish_json_escape() {
 _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
-  # FIFO 読み手がいないとブロックするため、shell 本体は待たない。
-  # job control に載せると `jobs` / 終了通知がユーザーに見えるので disown する。
   ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
-  disown "$!" 2>/dev/null || true
+  local wpid=$!
+  # 通常は wait。停滞時のみ別 watchdog が writer を打ち切る（busy spin しない）。
+  (
+    sleep 0.5
+    kill "$wpid" 2>/dev/null || true
+  ) >/dev/null 2>&1 &
+  local wdog=$!
+  wait "$wpid" 2>/dev/null || true
+  kill "$wdog" 2>/dev/null || true
+  wait "$wdog" 2>/dev/null || true
 }
 _aish_replay_preexec() {
   emulate -L zsh
@@ -157,7 +172,8 @@ _aish_replay_install_hooks() {
   [[ -n "${_AISH_REPLAY_READY:-}" ]] && return
   _AISH_REPLAY_READY=1
   preexec_functions+=(_aish_replay_preexec)
-  precmd_functions+=(_aish_replay_precmd)
+  # $? を壊さないよう、precmd を先頭へ入れ、install 自身は外す。
+  precmd_functions=(_aish_replay_precmd ${precmd_functions:#_aish_replay_install_hooks})
 }
 _aish_handoff_return() {
   local code=$?
@@ -439,10 +455,14 @@ mod tests {
             !before_install.contains("trap '_aish_replay_debug' DEBUG"),
             "DEBUG trap must not be set before deferred install"
         );
+        assert!(
+            content.contains(r#"PROMPT_COMMAND="_aish_replay_precmd;_aish_replay_install_hooks"#),
+            "precmd must run before install_hooks so exit_code is preserved"
+        );
     }
 
     #[test]
-    fn replay_emit_disowns_background_fifo_writer() {
+    fn replay_emit_writes_control_fifo_with_wait_and_watchdog() {
         let dir = tempfile::tempdir().expect("tempdir");
         let bash_rc = dir.path().join("bashrc");
         let zsh_rc = dir.path().join("zshrc");
@@ -450,13 +470,96 @@ mod tests {
         write_zsh_wrapper(&zsh_rc, Path::new("/nonexistent/.zshrc")).expect("zsh");
         let bash = fs::read_to_string(bash_rc).expect("read bash");
         let zsh = fs::read_to_string(zsh_rc).expect("read zsh");
-        assert!(
-            bash.contains(r#"disown "$!""#),
-            "bash replay emit must disown fifo writer"
+        for content in [&bash, &zsh] {
+            assert!(
+                content.contains(r#"( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &"#),
+                "replay emit must background the fifo write"
+            );
+            assert!(
+                content.contains(r#"wait "$wpid""#),
+                "replay emit must wait on the writer (no busy spin)"
+            );
+            assert!(
+                content.contains(r#"sleep 0.5"#),
+                "replay emit must use a separate watchdog sleep"
+            );
+            assert!(
+                content.contains(r#"kill "$wpid""#),
+                "replay emit watchdog must kill a stalled writer"
+            );
+            assert!(
+                !content.contains(r#"-lt 1000"#),
+                "replay emit must not busy-spin on kill -0"
+            );
+            assert!(
+                !content.contains(r#"disown "$!""#),
+                "replay emit must not disown without waiting"
+            );
+        }
+    }
+
+    #[test]
+    fn replay_emit_completes_quickly_when_reader_is_alive() {
+        use std::ffi::CString;
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fifo = dir.path().join("control.fifo");
+        let path_c = CString::new(fifo.as_os_str().as_bytes()).expect("cpath");
+        assert_eq!(
+            unsafe { libc::mkfifo(path_c.as_ptr(), 0o600) },
+            0,
+            "mkfifo failed"
         );
+
+        let fifo_reader = fifo.clone();
+        let reader = std::thread::spawn(move || {
+            let file = std::fs::File::open(&fifo_reader).expect("open reader");
+            let mut reader = BufReader::new(file);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+        });
+
+        // reader が open するまで少し待つ
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let bash_rc = dir.path().join("bashrc");
+        write_bash_wrapper(&bash_rc, Path::new("/nonexistent/.bashrc")).expect("bash rc");
+        // 本番生成 snippet から _aish_replay_emit を抜き出して実行する（コピー禁止）。
+        let script = format!(
+            r#"
+set -euo pipefail
+eval "$(sed -n '/^_aish_replay_emit()/,/^}}/p' {rc})"
+AISH_CONTROL_FIFO={fifo}
+start=$(date +%s%N)
+_aish_replay_emit '{{"event":"end","exit_code":0}}'
+end=$(date +%s%N)
+elapsed_ms=$(( (end - start) / 1000000 ))
+echo "$elapsed_ms"
+"#,
+            rc = shell_quote(&bash_rc),
+            fifo = shell_quote(&fifo)
+        );
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("run emit timing");
         assert!(
-            zsh.contains(r#"disown "$!""#),
-            "zsh replay emit must disown fifo writer"
+            output.status.success(),
+            "stderr={} stdout={}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        reader.join().expect("reader");
+        let elapsed_ms: u64 = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .expect("parse elapsed");
+        assert!(
+            elapsed_ms < 50,
+            "healthy-reader emit must finish quickly, took {elapsed_ms}ms"
         );
     }
 

@@ -3042,3 +3042,138 @@ description = "通常 shell_exec と非 Collaborative Mode に回帰がない"
 test = "human_task_briefing_normal_shell_exec_regression"
 file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
 pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_is_collected_automatically"
+description = "Human Shell 終了後に追加入力なしで command span Evidence を自動収集する"
+test = "human_task_evidence_is_collected_automatically"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_contains_commands_and_exit_codes"
+description = "記録済み command と exit code を推定せず構造化する"
+test = "human_task_evidence_contains_commands_and_exit_codes"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_uses_handoff_log_range"
+description = "shell_session_dir/log.jsonl の handoff range だけを読む"
+test = "human_task_evidence_uses_handoff_log_range"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_reuses_replay_spans"
+description = "aish_replay::replay_span_views を再利用して完了 span を構造化する"
+test = "human_task_evidence_reuses_replay_spans"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_excludes_non_shell_spans"
+description = "非 Shell span と未完了 span を Evidence から除外する"
+test = "human_task_evidence_excludes_non_shell_spans"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_is_bounded"
+description = "50 commands、2 KiB/command、16 KiB total、8 MiB scan の上限を守る"
+test = "human_task_evidence_is_bounded"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_keeps_recent_commands"
+description = "上限超過時に直近 command を優先し時系列順で返す"
+test = "human_task_evidence_keeps_recent_commands"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_preserves_redaction"
+description = "記録済み sanitized/redacted command だけを使い元値を復元しない"
+test = "human_task_evidence_preserves_redaction"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_distinguishes_empty_from_unavailable"
+description = "Some(commands)、Some(empty)、None の意味を区別する"
+test = "human_task_evidence_distinguishes_empty_from_unavailable"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_failure_is_nonfatal"
+description = "収集失敗を安定 error code で記録し handoff と他観測を継続する"
+test = "human_task_evidence_failure_is_nonfatal"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_requires_no_manual_summary"
+description = "summary、理由、status、outcome の手入力を要求しない"
+test = "human_task_evidence_requires_no_manual_summary"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_does_not_infer_completion"
+description = "command と exit code から Human Task の完了状態を推定しない"
+test = "human_task_evidence_does_not_infer_completion"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_protocol_is_backward_compatible"
+description = "optional Evidence field の欠落を許容し既存 wire 表現を維持する"
+test = "human_task_evidence_protocol_is_backward_compatible"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_normal_mode_regression"
+description = "通常 shell_exec、非 Collaborative Mode、既存 observation に回帰がない"
+test = "human_task_evidence_normal_mode_regression"
+file_glob = "ai/tests/0061_collab_mode_human_task_evidence.rs"
+pending = false
+
+[[cases]]
+spec = "0061"
+phase = 1
+id = "human_task_evidence_vertical_e2e"
+description = "Human Shell command 実行から structured Evidence の親返却まで追加入力なしに通る"
+test = "ai_to_aish_handoff_transport_pty_e2e"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
