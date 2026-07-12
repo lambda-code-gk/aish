@@ -308,6 +308,8 @@ fn write_bash_wrapper(dst: &Path, user_rc: &Path) -> io::Result<()> {
 fn write_zsh_wrapper(dst: &Path, user_zshrc: &Path) -> io::Result<()> {
     let mut body = String::new();
     body.push_str(ZSH_HANDOFF_ENV_STRIP_SNIPPET);
+    // /etc/zsh/zshrc 処理後・ユーザー ~/.zshrc の前にクリアし、補完初期化スキップが漏れないようにする。
+    body.push_str("unset skip_global_compinit\n");
     if user_zshrc.is_file() {
         body.push_str(&format!(
             "if [ -f {} ]; then . {}; fi\n",
@@ -370,6 +372,33 @@ mod tests {
         assert!(zshenv.contains("skip_global_compinit=1"));
         assert!(zshenv.contains("AISH_CONTROL_MODE"));
         assert!(zdot.join(".zshrc").is_file());
+    }
+
+    #[test]
+    fn zsh_wrapper_unsets_skip_global_compinit_before_user_zshrc() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = dir.path().join("user.zshrc");
+        fs::write(&user, "# user rc\n").expect("write user");
+        let zshrc = dir.path().join(".zshrc");
+        write_zsh_wrapper(&zshrc, &user).expect("write wrapper");
+        let content = fs::read_to_string(zshrc).expect("read");
+        let unset_at = content
+            .find("unset skip_global_compinit")
+            .expect("must unset skip_global_compinit");
+        let user_at = content
+            .find(&shell_quote(&user))
+            .expect("must source user zshrc");
+        assert!(
+            unset_at < user_at,
+            "unset skip_global_compinit must precede user .zshrc source"
+        );
+        let strip_at = content
+            .find("unset AISH_CONTROL_MODE")
+            .expect("handoff env strip");
+        assert!(
+            strip_at < unset_at,
+            "unset skip_global_compinit must follow handoff env strip"
+        );
     }
 
     #[test]

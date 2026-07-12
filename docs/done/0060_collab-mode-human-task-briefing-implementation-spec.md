@@ -49,7 +49,7 @@ Collaborative Mode の Human Shell が開いた直後、既存の親要求と候
 | 実 PTY回帰 | `aish/tests/0055_minimal_human_handoff.rs` および既存0055/0057 PTY test | briefing の表示、Ctrl+D / `exit` 後の正常 return、cleanup の非回帰を既存 fixture / timeout で検証する。重複 E2E は増やさない |
 | composition root | `ai/src/main.rs` | 終了後 collector や mapper を追加せず、termios 復元後の `HumanHandoffResult` を既存 approval result に直接載せる |
 | 0059 専用実装 | `ai/src/adapters/outbound/collab_outcome.rs`、`ai/src/ports/outbound/collab_outcome.rs`、`ai/src/domain/collab_outcome.rs`、`ai/src/application/collab_outcome.rs` と各 `mod.rs` | production 参照がなくなることを確認して collector / parse / mapper と re-export を除去する。別用途が実在する場合は STOP-THE-LINE し、推測で残さない |
-| Protocol DTO | `aibe-protocol/src/collaborative_handoff.rs` と関連 unit test | origin/main の `HumanHandoffResult` schema を維持し、serialize JSON に `collab_outcome` key がないことを検証する |
+| Protocol DTO | `aibe-protocol/src/collaborative_handoff.rs` と関連 unit test | origin/main の `HumanHandoffResult` schema を維持し、`CollabOutcome` / `collab_outcome` が source に無いことを静的検査する |
 | Protocol consumers | `ai`、`aibe`、`aibe-client` 内の `HumanHandoffResult` literal / assertion | wrapper や新規 field を足さず、既存 DTO を直接返す |
 | 0059 tests / registry | `ai/tests/0059_collab_outcome_status.rs`、`ai/tests/0055_collaborative_handoff_vertical_e2e.rs`、`ai/tests/normal_shell_exec_regression.rs`、`scripts/spec-acceptance.toml` | §7 の撤回・差し替え手順に従い、collector 必須契約を成功条件として残さない |
 | Scope registry | `scripts/feature-scope.toml` | 0060 revision 2 / locked18 AC を維持する。実装中の勝手な追加・削除をしない。0059 registry を変更する場合は scope checker と履歴整合を同時確認する |
@@ -90,7 +90,7 @@ Collaborative Mode の Human Shell が開いた直後、既存の親要求と候
 - Objective / Suggested の通常値、未設定相当、空白のみ、複数行、空行、末尾改行、日本語を検証する。
 - 両 field の各行へ ESC / CSI / OSC、BEL、CR、TAB、NUL、その他 C0 を混ぜ、実制御列が残らず論理改行だけが残ることを検証する。
 - env を設定した `aish human-shell` 子プロセスまたは stderr 差し替え可能な境界で、printer が既存 env のみを読み renderer 出力を stderr に出すことを検証する。並列 test の global env 競合を避ける。
-- protocol test で `HumanHandoffResult` の serialize JSON に `collab_outcome` key がないことを確認する。
+- protocol test で `CollabOutcome` / `CollabOutcomeStatus` / `collab_outcome` が collaborative_handoff.rs の本番定義に無いことを静的確認する。
 
 ### 5.2 実 PTY回帰
 
@@ -130,7 +130,7 @@ Collaborative Mode の Human Shell が開いた直後、既存の親要求と候
 | `human_task_briefing_printer_only_reads_env_and_stderr` | 既存2 env→renderer→stderr | pending→false |
 | `human_task_briefing_has_no_outcome_selection` | 終了後 status prompt なし | pending→false |
 | `human_task_briefing_has_no_summary_input` | summary / 理由入力なし | pending→false |
-| `human_task_briefing_adds_no_protocol_schema` | 既存 DTO の JSON に `collab_outcome` key がない | pending→false |
+| `human_task_briefing_adds_no_protocol_schema` | protocol source に `CollabOutcome*` / `collab_outcome` が無い | pending→false |
 | `human_task_briefing_uses_only_existing_env` | `HANDOFF_ENV_KEYS` 4個のまま | pending→false |
 | `human_task_briefing_creates_no_persistent_state` | task / briefing / outcome stateなし | pending→false |
 | `human_task_briefing_normal_shell_exec_regression` | 通常・非collab不変 | pending→false |

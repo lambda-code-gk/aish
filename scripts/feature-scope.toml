@@ -20,8 +20,8 @@ spec = "0060"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 4
-scope_change_reason = "review correction: remove unmerged 0059 protocol schema and narrow Ctrl+D AC to guidance plus exit return"
+scope_revision = 5
+scope_change_reason = "review: static forbid collab_outcome schema; unset skip_global_compinit before user zshrc"
 
 core_outcome = "Collaborative Mode の Human Shell 開始時に目的・固定理由・候補操作・親へ戻るタイミングを安全な briefing で即座に理解できる"
 

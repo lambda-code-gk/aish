@@ -69,20 +69,21 @@ pub struct HumanHandoffResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    /// 0060: `collab_outcome` 系 wire 型の再導入を静的に禁止する。
+    /// serde の skip だけでは `Option` field 追加を検出できないため、source を検査する。
     #[test]
     fn human_task_briefing_adds_no_protocol_schema() {
-        let without = HumanHandoffResult {
-            execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
-            requested_command: None,
-            requested_command_completion: RequestedCommandCompletion::Unknown,
-            human_shell_exit_code: Some(0),
-            final_shell_cwd: None,
-            shell_log_range: None,
-            observation: None,
-        };
-        let json = serde_json::to_value(&without).unwrap();
-        assert!(json.get("collab_outcome").is_none());
+        let src = include_str!("collaborative_handoff.rs");
+        // このテスト関数より前の本番定義だけを対象にする（本テスト文面の言及を除外）。
+        let production = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source before cfg(test)");
+        for token in ["CollabOutcomeStatus", "CollabOutcome", "collab_outcome"] {
+            assert!(
+                !production.contains(token),
+                "0060 forbids reintroducing `{token}` into aibe-protocol collaborative_handoff.rs"
+            );
+        }
     }
 }
