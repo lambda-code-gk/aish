@@ -34,11 +34,19 @@ _aish_json_escape() {
 _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
-  # end/exit_code 欠落を避けるため書き込み完了を待つが、読み手不在時は短時間で打ち切る。
-  # `timeout` に依存せず、両環境で bounded にする。
   ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
   local wpid=$!
+  # 正常時は即完了するので sleep なしで短く spin する。
   local i=0
+  while kill -0 "$wpid" 2>/dev/null && [[ "$i" -lt 1000 ]]; do
+    i=$((i + 1))
+  done
+  if ! kill -0 "$wpid" 2>/dev/null; then
+    wait "$wpid" 2>/dev/null || true
+    return 0
+  fi
+  # 停滞時のみ sleep 付き watchdog（最大約 0.5s）で打ち切る。
+  i=0
   while kill -0 "$wpid" 2>/dev/null; do
     i=$((i + 1))
     if [[ "$i" -ge 10 ]]; then
@@ -148,11 +156,19 @@ _aish_json_escape() {
 _aish_replay_emit() {
   local fifo="${AISH_CONTROL_FIFO:-}"
   [[ -n "$fifo" && -p "$fifo" ]] || return 0
-  # end/exit_code 欠落を避けるため書き込み完了を待つが、読み手不在時は短時間で打ち切る。
-  # `timeout` に依存せず、両環境で bounded にする。
   ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
   local wpid=$!
+  # 正常時は即完了するので sleep なしで短く spin する。
   local i=0
+  while kill -0 "$wpid" 2>/dev/null && [[ "$i" -lt 1000 ]]; do
+    i=$((i + 1))
+  done
+  if ! kill -0 "$wpid" 2>/dev/null; then
+    wait "$wpid" 2>/dev/null || true
+    return 0
+  fi
+  # 停滞時のみ sleep 付き watchdog（最大約 0.5s）で打ち切る。
+  i=0
   while kill -0 "$wpid" 2>/dev/null; do
     i=$((i + 1))
     if [[ "$i" -ge 10 ]]; then
@@ -470,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_emit_writes_control_fifo_with_bounded_wait() {
+    fn replay_emit_writes_control_fifo_with_fast_path_and_stall_watchdog() {
         let dir = tempfile::tempdir().expect("tempdir");
         let bash_rc = dir.path().join("bashrc");
         let zsh_rc = dir.path().join("zshrc");
@@ -484,18 +500,106 @@ mod tests {
                 "replay emit must background the fifo write"
             );
             assert!(
-                content.contains(r#"kill -0 "$wpid""#),
-                "replay emit must wait/poll the writer"
+                content.contains(r#"-lt 1000"#),
+                "replay emit must spin without sleep on the fast path"
+            );
+            assert!(
+                content.contains(r#"sleep 0.05"#),
+                "replay emit must sleep only on the stall watchdog path"
             );
             assert!(
                 content.contains(r#"-ge 10"#),
-                "replay emit must bound the wait loop"
+                "replay emit must bound the stall watchdog"
             );
             assert!(
                 !content.contains(r#"disown "$!""#),
                 "replay emit must not disown without waiting"
             );
         }
+    }
+
+    #[test]
+    fn replay_emit_completes_quickly_when_reader_is_alive() {
+        use std::ffi::CString;
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fifo = dir.path().join("control.fifo");
+        let path_c = CString::new(fifo.as_os_str().as_bytes()).expect("cpath");
+        assert_eq!(
+            unsafe { libc::mkfifo(path_c.as_ptr(), 0o600) },
+            0,
+            "mkfifo failed"
+        );
+
+        let fifo_reader = fifo.clone();
+        let reader = std::thread::spawn(move || {
+            let file = std::fs::File::open(&fifo_reader).expect("open reader");
+            let mut reader = BufReader::new(file);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+        });
+
+        // reader が open するまで少し待つ
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let script = format!(
+            r#"
+set -euo pipefail
+AISH_CONTROL_FIFO={fifo}
+_aish_replay_emit() {{
+  local fifo="${{AISH_CONTROL_FIFO:-}}"
+  [[ -n "$fifo" && -p "$fifo" ]] || return 0
+  ( printf '%s\n' "$1" >"$fifo" ) >/dev/null 2>&1 &
+  local wpid=$!
+  local i=0
+  while kill -0 "$wpid" 2>/dev/null && [[ "$i" -lt 1000 ]]; do
+    i=$((i + 1))
+  done
+  if ! kill -0 "$wpid" 2>/dev/null; then
+    wait "$wpid" 2>/dev/null || true
+    return 0
+  fi
+  i=0
+  while kill -0 "$wpid" 2>/dev/null; do
+    i=$((i + 1))
+    if [[ "$i" -ge 10 ]]; then
+      kill "$wpid" 2>/dev/null || true
+      wait "$wpid" 2>/dev/null || true
+      return 0
+    fi
+    sleep 0.05
+  done
+  wait "$wpid" 2>/dev/null || true
+}}
+start=$(date +%s%N)
+_aish_replay_emit '{{"event":"end","exit_code":0}}'
+end=$(date +%s%N)
+elapsed_ms=$(( (end - start) / 1000000 ))
+echo "$elapsed_ms"
+"#,
+            fifo = shell_quote(&fifo)
+        );
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("run emit timing");
+        assert!(
+            output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        reader.join().expect("reader");
+        let elapsed_ms: u64 = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .expect("parse elapsed");
+        assert!(
+            elapsed_ms < 50,
+            "healthy-reader emit must finish quickly, took {elapsed_ms}ms"
+        );
     }
 
     #[test]

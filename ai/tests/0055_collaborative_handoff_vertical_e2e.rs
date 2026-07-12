@@ -677,14 +677,10 @@ fn run_collaborative_handoff_with_expected(
                     || text.contains("AISH Collaborative Mode"))
             {
                 thread::sleep(Duration::from_millis(200));
-                // 一括書き込みだと bash DEBUG/precmd が追いつかず span 欠落が起きるため行単位で送る。
-                for line in shell_input.split_inclusive(|b| *b == b'\n') {
-                    master_file
-                        .write_all(line)
-                        .expect("write shell input line to ai PTY");
-                    let _ = master_file.flush();
-                    thread::sleep(Duration::from_millis(80));
-                }
+                // 一括書き込みでも span が欠落しないこと（queued_start 修正の回帰防止）
+                master_file
+                    .write_all(&shell_input)
+                    .expect("write shell input to ai PTY");
                 shell_sent = true;
             }
             assert!(
@@ -805,7 +801,7 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     assert!(!verdict_file.exists());
 
     let shell_input = format!(
-        "printf 'evidence-ok\\n'\nfalse\nif test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n sleep 0.2\n exit\n",
+        "printf 'evidence-ok\\n'\nfalse\nif test -e {}; then\n  printf auto_executed > {}\nelse\n  printf not_auto_executed > {}\nfi\n touch {}\n exit\n",
         shell_quote(candidate_marker.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),
         shell_quote(verdict_file.to_str().unwrap()),

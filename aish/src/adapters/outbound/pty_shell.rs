@@ -238,25 +238,29 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
         };
         match msg.event.as_str() {
             "start" => {
-                if span.active_index.is_some() {
-                    return Ok(());
-                }
                 let Some(command) = msg.command.filter(|c| !c.is_empty()) else {
                     return Ok(());
                 };
+                // 前コマンドの end 待ち中に次の start が来たら queue する。
+                // active のみ（pending_end なし）の重複 start は無視する。
+                if span.active_index.is_some() {
+                    if span.pending_end.is_some() {
+                        span.next_index = span.next_index.saturating_add(1);
+                        let index = span.next_index;
+                        let started_at = rfc3339_now();
+                        span.queued_start = Some(QueuedCommandStart {
+                            index,
+                            started_at,
+                            command,
+                        });
+                    }
+                    return Ok(());
+                }
                 span.next_index = span.next_index.saturating_add(1);
                 let index = span.next_index;
                 let started_at = rfc3339_now();
-                if span.active_index.is_some() && span.pending_end.is_some() {
-                    span.queued_start = Some(QueuedCommandStart {
-                        index,
-                        started_at,
-                        command,
-                    });
-                } else {
-                    self.start_span(span, index, started_at, command.clone())?;
-                    self.flush_pending_stdout_after_echo(span, &command)?;
-                }
+                self.start_span(span, index, started_at, command.clone())?;
+                self.flush_pending_stdout_after_echo(span, &command)?;
             }
             "end" => {
                 if span.active_index.is_none() {
@@ -2032,6 +2036,46 @@ mod tests {
         assert!(content.contains(r#""command_index":1"#));
         assert!(content.contains(r#""event":"command_end""#));
         assert!(content.contains("hi"));
+    }
+
+    #[test]
+    fn shell_command_span_queues_start_while_pending_end() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("shell.jsonl");
+        let mut log = crate::adapters::outbound::JsonlFileLog::new(log_path.clone());
+        let mut pty = PtyShell::new(&mut log);
+        let mut span = CommandSpanState {
+            next_index: 0,
+            active_index: None,
+            replay_enabled: true,
+            ..CommandSpanState::default()
+        };
+        pty.handle_control_line(r#"{"event":"start","command":"printf ok"}"#, &mut span)
+            .expect("start1");
+        assert_eq!(span.active_index, Some(1));
+        pty.handle_control_line(r#"{"event":"end","exit_code":0}"#, &mut span)
+            .expect("end1");
+        assert!(span.pending_end.is_some());
+        // 高速連続入力: pending_end 中の次 start は破棄せず queue する
+        pty.handle_control_line(r#"{"event":"start","command":"false"}"#, &mut span)
+            .expect("start2");
+        assert!(
+            span.queued_start.is_some(),
+            "next start must be queued while pending_end is set"
+        );
+        assert_eq!(span.queued_start.as_ref().unwrap().command, "false");
+        // echo 区切りで前 span を閉じ、queue した start を開始
+        pty.append_stdout("$ false\n", &mut span).expect("echo");
+        assert_eq!(span.active_index, Some(2));
+        assert!(span.queued_start.is_none());
+        pty.handle_control_line(r#"{"event":"end","exit_code":1}"#, &mut span)
+            .expect("end2");
+        pty.finish_active_span(&mut span).expect("finish2");
+
+        let content = std::fs::read_to_string(log_path).expect("read");
+        assert!(content.contains(r#""command":"printf ok""#), "{content}");
+        assert!(content.contains(r#""command":"false""#), "{content}");
+        assert!(content.contains(r#""exit_code":1"#), "{content}");
     }
 
     #[test]

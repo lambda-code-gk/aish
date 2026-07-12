@@ -20,8 +20,8 @@ spec = "0061"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 7
-scope_change_reason = "bounded wait FIFO emit without timeout binary dependency; keep exit_code capture fix"
+scope_revision = 8
+scope_change_reason = "review: queue start while pending_end; FIFO fast-path+watchdog; total-budget break; sync implementation spec"
 scope_review = "approved"
 
 core_outcome = "Human Shell内で記録されたcommand spanをユーザー入力なしで構造化Evidenceとして親へ返す"

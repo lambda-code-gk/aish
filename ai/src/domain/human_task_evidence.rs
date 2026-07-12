@@ -63,7 +63,7 @@ pub fn build_human_task_evidence(
         let cmd_bytes = command.len();
         if total_bytes + cmd_bytes > MAX_EVIDENCE_TOTAL_COMMAND_BYTES {
             truncated = true;
-            continue;
+            break;
         }
         total_bytes += cmd_bytes;
         if cmd_truncated {
@@ -202,6 +202,32 @@ mod tests {
         let total: usize = evidence.commands.iter().map(|c| c.command.len()).sum();
         assert!(total <= MAX_EVIDENCE_TOTAL_COMMAND_BYTES);
         assert!(evidence.commands.last().unwrap().command.starts_with("11-"));
+    }
+
+    #[test]
+    fn build_stops_at_first_total_budget_miss_keeping_recent_only() {
+        // 1 command 上限で truncate されるため、合計予算を満たすフルサイズ列で検証する。
+        let full = "x".repeat(MAX_EVIDENCE_COMMAND_BYTES);
+        let n_full = MAX_EVIDENCE_TOTAL_COMMAND_BYTES / MAX_EVIDENCE_COMMAND_BYTES;
+        let old_short = "old-short";
+        let mut events = Vec::new();
+        events.extend(shell_pair(0, old_short, 0));
+        events.extend(shell_pair(1, &format!("m{full}"), 0)); // middle: 予算超過で弾かれる
+        for i in 0..n_full as u32 {
+            events.extend(shell_pair(2 + i, &format!("r{i}-{full}"), 0));
+        }
+        let evidence = build_human_task_evidence(&events, false).unwrap();
+        assert!(evidence.truncated);
+        assert_eq!(evidence.commands.len(), n_full);
+        assert!(evidence.commands.iter().all(|c| c.command.starts_with('r')));
+        assert!(
+            !evidence.commands.iter().any(|c| c.command == old_short),
+            "must not keep older short command after skipping a newer one: {evidence:?}"
+        );
+        assert!(
+            !evidence.commands.iter().any(|c| c.command.starts_with('m')),
+            "middle full command must be dropped when total budget is exhausted: {evidence:?}"
+        );
     }
 
     #[test]
