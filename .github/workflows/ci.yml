@@ -13,7 +13,7 @@ jobs:
   verify:
     name: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +25,8 @@ jobs:
         with:
           shared-key: "ci"
           cache-on-failure: true
+      - name: Install CI tools (zsh, ripgrep)
+        run: sudo apt-get update && sudo apt-get install -y zsh ripgrep
       - run: cargo metadata --locked --format-version 1 > /dev/null
       - run: ./scripts/verify.sh
         env:

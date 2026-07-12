@@ -16,6 +16,57 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0060"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 5
+scope_change_reason = "review: static forbid collab_outcome schema; unset skip_global_compinit before user zshrc"
+
+core_outcome = "Collaborative Mode の Human Shell 開始時に目的・固定理由・候補操作・親へ戻るタイミングを安全な briefing で即座に理解できる"
+
+actors = 1
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 1
+
+novel_mechanisms = []
+integrations = ["0055-0057-handoff"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "human_task tool, persistence/resume, side agents, manual or automatic work-result collection, multiple-task coordination, and protocol/env expansion are deferred"
+
+vertical_slice_ac_id = "human_task_briefing_renders_collaborative_mode_header"
+
+locked_ac_ids = [
+  "human_task_briefing_renders_collaborative_mode_header",
+  "human_task_briefing_renders_objective",
+  "human_task_briefing_uses_fixed_reason",
+  "human_task_briefing_renders_suggested_first_action",
+  "human_task_briefing_states_command_not_executed",
+  "human_task_briefing_preserves_user_control",
+  "human_task_briefing_renders_done_when",
+  "human_task_briefing_returns_with_ctrl_d_or_exit",
+  "human_task_briefing_indents_multiline_objective",
+  "human_task_briefing_sanitizes_ansi_and_c0",
+  "human_task_briefing_renderer_is_pure",
+  "human_task_briefing_printer_only_reads_env_and_stderr",
+  "human_task_briefing_has_no_outcome_selection",
+  "human_task_briefing_has_no_summary_input",
+  "human_task_briefing_adds_no_protocol_schema",
+  "human_task_briefing_uses_only_existing_env",
+  "human_task_briefing_creates_no_persistent_state",
+  "human_task_briefing_normal_shell_exec_regression",
+]
+
+[[features]]
 spec = "0058"
 status = "done"
 scope_class = "feature"

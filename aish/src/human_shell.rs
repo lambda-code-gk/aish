@@ -66,13 +66,57 @@ pub fn escape_for_handoff_display(s: &str) -> String {
     out
 }
 
-fn format_indented_parent_request(parent_request: &str) -> String {
-    let escaped = escape_for_handoff_display(parent_request);
-    escaped
-        .lines()
-        .map(|line| format!("  {line}"))
+/// 複数行文字列を論理行ごとに escape し、先頭2空白でインデントする。
+/// 文字列全体を先に escape して改行を `\\n` に潰さない。
+pub fn format_indented_block(value: &str) -> String {
+    value
+        .split('\n')
+        .map(|line| format!("  {}", escape_for_handoff_display(line)))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Human Task briefing を引数だけから生成する純粋関数。
+pub fn render_human_task_briefing(parent_request: &str, suggested_command: &str) -> String {
+    let objective = if parent_request.trim().is_empty() {
+        format_indented_block("No parent request summary is available.")
+    } else {
+        format_indented_block(parent_request)
+    };
+    let suggested = if suggested_command.trim().is_empty() {
+        format_indented_block("No command was provided.")
+    } else {
+        format_indented_block(suggested_command)
+    };
+
+    let mut out = String::new();
+    out.push_str("AISH Collaborative Mode\n");
+    out.push_str("=======================\n");
+    out.push('\n');
+    out.push_str("Human Task\n");
+    out.push('\n');
+    out.push_str("Objective:\n");
+    out.push_str(&objective);
+    out.push('\n');
+    out.push('\n');
+    out.push_str("Why this is a Human Task:\n");
+    out.push_str("  The parent agent requested a shell operation in Collab Mode.\n");
+    out.push_str("  AISH has not automatically executed the requested command.\n");
+    out.push('\n');
+    out.push_str("Suggested first action:\n");
+    out.push_str(&suggested);
+    out.push('\n');
+    out.push('\n');
+    out.push_str("Done when:\n");
+    out.push_str("  Return control after you have completed the necessary work,\n");
+    out.push_str("  or when the parent agent should re-observe the environment\n");
+    out.push_str("  and decide the next step.\n");
+    out.push('\n');
+    out.push_str("You remain in control:\n");
+    out.push_str("  Edit, run, replace, or ignore the suggested command.\n");
+    out.push_str("  Alt+. or Alt+, inserts the suggested command.\n");
+    out.push_str("  Press Ctrl+D or run `exit` to return control.\n");
+    out
 }
 
 pub fn human_shell_result_from_marker(
@@ -109,19 +153,8 @@ pub fn validate_handoff_shell(shell: &str) -> anyhow::Result<()> {
 pub fn print_handoff_briefing() {
     let parent_request = std::env::var("AISH_HANDOFF_PARENT_REQUEST").unwrap_or_default();
     let suggested = std::env::var("AISH_HANDOFF_SUGGESTED_COMMAND").unwrap_or_default();
-    let mut out = std::io::stderr().lock();
-    let _ = writeln!(out, "Human control requested by the parent agent.");
-    let _ = writeln!(out);
-    let _ = writeln!(out, "Parent request:");
-    let _ = writeln!(out, "{}", format_indented_parent_request(&parent_request));
-    let _ = writeln!(out);
-    let _ = writeln!(out, "Suggested command:");
-    let _ = writeln!(out, "  {}", escape_for_handoff_display(&suggested));
-    let _ = writeln!(out);
-    let _ = writeln!(
-        out,
-        "Edit, run, replace, or ignore the command as needed.\nAlt+. or Alt+, inserts the suggested command.\nPress Ctrl+D or run `exit` to return control."
-    );
+    let rendered = render_human_task_briefing(&parent_request, &suggested);
+    let _ = write!(std::io::stderr(), "{rendered}");
 }
 
 pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
@@ -344,7 +377,7 @@ mod tests {
         let raw = "shell_exec でファイルのリストを取得";
         let escaped = escape_for_handoff_display(raw);
         assert_eq!(escaped, raw);
-        let displayed = format_indented_parent_request(raw);
+        let displayed = format_indented_block(raw);
         assert!(displayed.contains("ファイル"));
         assert!(!displayed.contains("\\xe3"));
     }
@@ -357,6 +390,9 @@ mod tests {
         assert!(!escaped.contains('\x07'));
         assert!(!escaped.contains('\t'));
         assert!(escaped.contains("\\x1b"));
+        let displayed = format_indented_block(raw);
+        assert!(!displayed.contains('\x1b'));
+        assert!(displayed.contains("\\x1b"));
     }
 
     #[test]
@@ -365,7 +401,15 @@ mod tests {
         let escaped = escape_for_handoff_display(osc);
         assert!(!escaped.contains('\x1b'));
         assert!(!escaped.contains('\x07'));
-        let displayed = format_indented_parent_request(osc);
+        let displayed = format_indented_block(osc);
         assert!(!displayed.contains('\x1b'));
+        assert!(!displayed.contains('\x07'));
+    }
+
+    #[test]
+    fn format_indented_block_preserves_logical_newlines() {
+        let displayed = format_indented_block("line one\nline two");
+        assert_eq!(displayed, "  line one\n  line two");
+        assert!(!displayed.contains("\\n"));
     }
 }

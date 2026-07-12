@@ -2880,3 +2880,165 @@ description = "zsh human shell return marker が CI で検証される"
 test = "zsh_human_return_marker"
 file_glob = "aish/tests/0055_minimal_human_handoff.rs"
 pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_collaborative_mode_header"
+description = "Collaborative Mode / Human Task header を厳密に表示する"
+test = "human_task_briefing_renders_collaborative_mode_header"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_objective"
+description = "Objective と trim 後空時 fallback を表示する"
+test = "human_task_briefing_renders_objective"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_uses_fixed_reason"
+description = "固定された Human Task 理由だけを表示する"
+test = "human_task_briefing_uses_fixed_reason"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_suggested_first_action"
+description = "Suggested first action と trim 後空時 fallback を表示する"
+test = "human_task_briefing_renders_suggested_first_action"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_states_command_not_executed"
+description = "候補コマンドが未実行であることを明示する"
+test = "human_task_briefing_states_command_not_executed"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_preserves_user_control"
+description = "edit/run/replace/ignore と候補挿入操作を表示する"
+test = "human_task_briefing_preserves_user_control"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renders_done_when"
+description = "親へ返すタイミングを Done when として表示する"
+test = "human_task_briefing_renders_done_when"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_returns_with_ctrl_d_or_exit"
+description = "briefing が Ctrl+D / exit を案内し、exit 後は追加入力なく親へ戻る"
+test = "human_task_briefing_returns_with_ctrl_d_or_exit"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_indents_multiline_objective"
+description = "複数行 Objective と Suggested first action を論理行ごとにインデントし改行構造を保持する"
+test = "human_task_briefing_indents_multiline_objective"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_sanitizes_ansi_and_c0"
+description = "両 field の各論理行で ESC/OSC/CR/TAB/C0 制御文字を無害化する"
+test = "human_task_briefing_sanitizes_ansi_and_c0"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_renderer_is_pure"
+description = "briefing renderer が純粋関数である"
+test = "human_task_briefing_renderer_is_pure"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_printer_only_reads_env_and_stderr"
+description = "printer の責務を既存 env 読取と stderr 出力に限定する"
+test = "human_task_briefing_printer_only_reads_env_and_stderr"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_has_no_outcome_selection"
+description = "Human Shell 終了後の outcome 選択を要求しない"
+test = "human_task_briefing_has_no_outcome_selection"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_has_no_summary_input"
+description = "summary または理由の手入力を要求しない"
+test = "human_task_briefing_has_no_summary_input"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_adds_no_protocol_schema"
+description = "protocol source に CollabOutcome / collab_outcome を再導入しない（静的検査）"
+test = "human_task_briefing_adds_no_protocol_schema"
+file_glob = "aibe-protocol/src/collaborative_handoff.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_uses_only_existing_env"
+description = "既存4 handoff env 以外を追加しない"
+test = "human_task_briefing_uses_only_existing_env"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_creates_no_persistent_state"
+description = "永続 task state を作成しない"
+test = "human_task_briefing_creates_no_persistent_state"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false
+
+[[cases]]
+spec = "0060"
+phase = 1
+id = "human_task_briefing_normal_shell_exec_regression"
+description = "通常 shell_exec と非 Collaborative Mode に回帰がない"
+test = "human_task_briefing_normal_shell_exec_regression"
+file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+pending = false

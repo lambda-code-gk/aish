@@ -140,10 +140,13 @@ fn human_shell_startup_prints_parent_request_and_suggested_command() {
     let suggested = format!("touch {}", shell_quote(marker.to_str().unwrap()));
     let (output, _) = run_human_shell_with(b"exit\n", home.path(), &suggested, &[]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Human control requested by the parent agent."));
+    assert!(stderr.contains("AISH Collaborative Mode"));
+    assert!(stderr.contains("Human Task"));
     assert!(stderr.contains("create marker file"));
     assert!(stderr.contains(&aish::human_shell::escape_for_handoff_display(&suggested)));
     assert!(stderr.contains("Alt+. or Alt+,"));
+    assert!(stderr.contains("Suggested first action:"));
+    assert!(!stderr.contains("Human control requested by the parent agent."));
 }
 
 #[test]
@@ -155,14 +158,15 @@ fn bash_human_return_marker() {
 
 #[test]
 fn zsh_human_return_marker() {
-    let require_zsh = std::env::var("AISH_0055_ZSH").is_ok();
-    let Some(zsh) = resolve_zsh_binary() else {
-        if require_zsh {
-            panic!("AISH_0055_ZSH=1 but zsh binary not found");
-        }
+    // verify.sh が AISH_0055_ZSH=1 で明示実行する。通常の cargo test では
+    // zsh があっても skip し、ハング耐性のない二重実行を避ける。
+    if std::env::var("AISH_0055_ZSH").is_err() {
         eprintln!("skipping zsh_human_return_marker: not under verify (set AISH_0055_ZSH=1)");
         return;
-    };
+    }
+    let zsh = resolve_zsh_binary().unwrap_or_else(|| {
+        panic!("AISH_0055_ZSH=1 but zsh binary not found");
+    });
     let home = private_temp_home();
     let result_file = home.path().join("result.json");
     let mut child = Command::new(env!("CARGO_BIN_EXE_aish"))
@@ -180,8 +184,21 @@ fn zsh_human_return_marker() {
         .unwrap();
     std::thread::sleep(Duration::from_millis(400));
     let _ = child.stdin.take().unwrap().write_all(b"exit\n");
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(12))
+        .expect("zsh human shell hung")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "status={:?} stderr={} stdout={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
     let actual: aish::human_shell::HumanShellResult =
         serde_json::from_str(&std::fs::read_to_string(result_file).unwrap()).unwrap();
     assert!(actual.normal_return);

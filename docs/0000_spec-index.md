@@ -53,6 +53,7 @@
 | 0056 | [0056_feature-scope-governance-spec.md](spec/0056_feature-scope-governance-spec.md) | 設計確定（実装済み） | Feature Scope Governance / Complexity Gate（scope lock・CI 検査） |
 | 0057 | [0057_pty-process-cleanup-hardening-spec.md](spec/0057_pty-process-cleanup-hardening-spec.md) | 設計確定（実装済み） | PTY Process Cleanup Hardening（0055 human handoff の timeout / signal / 異常終了 cleanup） |
 | 0058 | [0058_aish-doctor-diagnostics-spec.md](spec/0058_aish-doctor-diagnostics-spec.md) | 設計確定（実装済み） | AISH Doctor / 常用診断導線（`ai doctor` HealthCheck、日常 preflight、human / JSON 出力） |
+| 0060 | [0060_collab-mode-human-task-briefing-spec.md](spec/0060_collab-mode-human-task-briefing-spec.md) | 設計確定（実装済み） | Collab Mode Human Task Briefing（目的・固定理由・候補操作・親へ戻るタイミングの開始時表示） |
 
 ### 状態ラベルの意味
 
@@ -72,6 +73,7 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0060 | [0060_collab-mode-human-task-briefing-implementation-spec.md](done/0060_collab-mode-human-task-briefing-implementation-spec.md) | 実装済み | Collab Mode Human Task Briefing（開始時の安全な固定表示と終了後 outcome 入力の除去） |
 | 0058 | [0058_aish-doctor-diagnostics-implementation-spec.md](done/0058_aish-doctor-diagnostics-implementation-spec.md) | 実装済み | `ai doctor` の 6 HealthCheck、human / structured 出力、exit code、`status` 互換 |
 | 0057 | [0057_pty-process-cleanup-hardening-implementation-spec.md](done/0057_pty-process-cleanup-hardening-implementation-spec.md) | 実装済み | PTY Process Cleanup Hardening（0055 human handoff の timeout / signal / 異常終了 cleanup） |
 | 0001 | [0001_aibe-tool-agent-loop-spec.md](done/0001_aibe-tool-agent-loop-spec.md) | 実装済み | aibe ツール付きエージェントループ |

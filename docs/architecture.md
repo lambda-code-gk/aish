@@ -618,3 +618,10 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 3. **ai**（済）: `ai ask` と aibe 接続 + 任意で `--log`
 4. **済**: OpenAI 互換 LLM、Gemini LLM、`config.toml`、aibe シングルトン（ping）、PTY `aish shell`、ログマスク、`shell_exec` / `read_file`、`shell_exec` 実行前承認（0020）
 5. **次**: ログ context の構造化（P4-4）、ログマスクの拡張
+# Collaborative Mode Human Task Briefing / Handoff Result
+
+Human Shell 開始時の briefing は `aish` の純粋関数 `render_human_task_briefing` が生成し、`print_handoff_briefing` が既存 `AISH_HANDOFF_PARENT_REQUEST` / `AISH_HANDOFF_SUGGESTED_COMMAND` を読んで stderr へ出力するだけを担う。表示は Collaborative Mode / Human Task / Objective / 固定理由 / Suggested first action / Done when / You remain in control の固定形式。複数行は論理行ごとに escape してインデントし、ANSI / C0 を無害化する。
+
+Ctrl+D または `exit` の後、追加入力（outcome 選択・summary）なく親へ制御を返す。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → HumanHandoffResult` であり、対話 collector は呼ばない。
+
+`HumanHandoffResult` は origin/main の既存 schema を維持し、`collab_outcome` を含む結果 field や status schema は追加しない。終了コードや return marker から作業 outcome を推定する処理も持たない。
