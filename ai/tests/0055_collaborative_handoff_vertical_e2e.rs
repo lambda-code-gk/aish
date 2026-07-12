@@ -782,6 +782,60 @@ fn no_persistent_handoff_state_is_created() {
 
 #[test]
 fn ai_to_aish_handoff_transport_pty_e2e() {
+    let handoff = run_pty_handoff_with_burst_commands();
+    assert_eq!(handoff["requested_command_completion"], "unknown");
+}
+
+/// 0061 vertical-slice AC 専用（受け入れレジストリと 1:1）。
+#[test]
+fn human_task_evidence_vertical_e2e() {
+    let handoff = run_pty_handoff_with_burst_commands();
+    let commands = handoff["observation"]["human_task_evidence"]["commands"]
+        .as_array()
+        .expect("0061 structured Evidence commands");
+    let evidence_cmds: Vec<(&str, i64)> = commands
+        .iter()
+        .filter_map(|command| Some((command["command"].as_str()?, command["exit_code"].as_i64()?)))
+        .collect();
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| cmd.contains("printf 'one") && *code == 0),
+        "missing printf one: {commands:?}"
+    );
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| *cmd == "false" && *code == 1),
+        "missing false: {commands:?}"
+    );
+    assert!(
+        evidence_cmds
+            .iter()
+            .any(|(cmd, code)| *cmd == "true" && *code == 0),
+        "missing true: {commands:?}"
+    );
+    let printf_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| cmd.contains("printf 'one"))
+        .expect("printf");
+    let false_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| *cmd == "false")
+        .expect("false");
+    let true_i = evidence_cmds
+        .iter()
+        .position(|(cmd, _)| *cmd == "true")
+        .expect("true");
+    assert!(
+        printf_i < false_i && false_i < true_i,
+        "command order must be preserved: {evidence_cmds:?}"
+    );
+    assert_eq!(handoff["requested_command_completion"], "unknown");
+}
+
+/// 実 PTY Human Shell で高速一括入力し、handoff_result JSON を返す共通ヘルパー。
+fn run_pty_handoff_with_burst_commands() -> serde_json::Value {
     let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
     let aish_bin = require_test_binary("CARGO_BIN_EXE_aish", "aish");
     assert!(
@@ -839,54 +893,12 @@ fn ai_to_aish_handoff_transport_pty_e2e() {
     }
     let handoff: serde_json::Value =
         serde_json::from_str(log.handoff_result_json.as_deref().unwrap()).unwrap();
-    let commands = handoff["observation"]["human_task_evidence"]["commands"]
-        .as_array()
-        .expect("0061 structured Evidence commands");
-    let evidence_cmds: Vec<(&str, i64)> = commands
-        .iter()
-        .filter_map(|command| Some((command["command"].as_str()?, command["exit_code"].as_i64()?)))
-        .collect();
-    assert!(
-        evidence_cmds
-            .iter()
-            .any(|(cmd, code)| cmd.contains("printf 'one") && *code == 0),
-        "missing printf one: {commands:?}"
-    );
-    assert!(
-        evidence_cmds
-            .iter()
-            .any(|(cmd, code)| *cmd == "false" && *code == 1),
-        "missing false: {commands:?}"
-    );
-    assert!(
-        evidence_cmds
-            .iter()
-            .any(|(cmd, code)| *cmd == "true" && *code == 0),
-        "missing true: {commands:?}"
-    );
-    // 高速一括入力でも exit_code の対応が崩れないこと
-    let printf_i = evidence_cmds
-        .iter()
-        .position(|(cmd, _)| cmd.contains("printf 'one"))
-        .expect("printf");
-    let false_i = evidence_cmds
-        .iter()
-        .position(|(cmd, _)| *cmd == "false")
-        .expect("false");
-    let true_i = evidence_cmds
-        .iter()
-        .position(|(cmd, _)| *cmd == "true")
-        .expect("true");
-    assert!(
-        printf_i < false_i && false_i < true_i,
-        "command order must be preserved: {evidence_cmds:?}"
-    );
-    assert_eq!(handoff["requested_command_completion"], "unknown");
     let stdout = String::from_utf8_lossy(&run.output.stdout);
     assert!(
         stdout.contains("handoff complete"),
         "unexpected stdout: {stdout}"
     );
+    handoff
 }
 
 #[test]

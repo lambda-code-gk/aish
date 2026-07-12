@@ -485,7 +485,9 @@ shell_exec_approval = "ask"
 }
 
 #[test]
-fn human_task_evidence_vertical_e2e() {
+fn human_task_evidence_handoff_result_wire_includes_commands() {
+    // 縦断 AC `human_task_evidence_vertical_e2e` は実 PTY E2E
+    // (`ai_to_aish_handoff_transport_pty_e2e`) が正本。ここは wire shape の補助確認。
     let dir = tempfile::tempdir().unwrap();
     let end = write_events(&dir, &standard_events());
     let result = HumanHandoffResult {

@@ -51,8 +51,17 @@ pub fn load_replay_events_in_range(
     end: Option<u64>,
     max_bytes: usize,
 ) -> Result<RangedReplayEvents, ReplaySourceError> {
-    let mut file =
-        File::open(path).map_err(|e| ReplaySourceError::LogRead(stable_io_message(&e)))?;
+    let file = File::open(path).map_err(|e| ReplaySourceError::LogRead(stable_io_message(&e)))?;
+    load_replay_events_in_range_from_file(file, start, end, max_bytes)
+}
+
+/// 既に開いた `File` から ranged scan する（検査と open の TOCTOU を避ける呼び出し向け）。
+pub fn load_replay_events_in_range_from_file(
+    mut file: File,
+    start: u64,
+    end: Option<u64>,
+    max_bytes: usize,
+) -> Result<RangedReplayEvents, ReplaySourceError> {
     let file_len = file
         .metadata()
         .map_err(|e| ReplaySourceError::LogRead(stable_io_message(&e)))?

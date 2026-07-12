@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use aibe_protocol::PostHandoffObservation;
 
 use crate::adapters::outbound::replay_source::{
-    load_replay_events_in_range, ReplaySourceError, MAX_EVIDENCE_SCAN_BYTES,
+    load_replay_events_in_range_from_file, ReplaySourceError, MAX_EVIDENCE_SCAN_BYTES,
 };
 use crate::domain::human_task_evidence::build_human_task_evidence;
 use crate::domain::HANDOFF_ENV_KEYS;
@@ -365,18 +365,11 @@ fn collect_human_task_evidence(
     shell_log_start: u64,
     shell_log_end: Option<u64>,
 ) -> Result<aibe_protocol::HumanTaskEvidence, &'static str> {
-    let path = session_dir.join("log.jsonl");
-    // `log.jsonl` が symlink で session directory 外へ逸脱するケースを拒否する。
-    // canonicalize 後の親比較により、途中要素の symlink も含めて検証する。
-    let canonical_session =
-        std::fs::canonicalize(session_dir).map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
-    let canonical_log =
-        std::fs::canonicalize(&path).map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
-    if canonical_log.parent() != Some(canonical_session.as_path()) {
-        return Err(HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE);
-    }
-    let loaded = load_replay_events_in_range(
-        &path,
+    // session directory 相対で O_NOFOLLOW により一度だけ開き、同じ File を ranged reader へ渡す。
+    // canonicalize → 再 open だと検査と読取の間に symlink 差し替え (TOCTOU) が可能になる。
+    let file = open_session_log_jsonl(session_dir)?;
+    let loaded = load_replay_events_in_range_from_file(
+        file,
         shell_log_start,
         shell_log_end,
         MAX_EVIDENCE_SCAN_BYTES,
@@ -388,6 +381,47 @@ fn collect_human_task_evidence(
     })?;
     build_human_task_evidence(&loaded.events, loaded.truncated)
         .map_err(|_| HUMAN_TASK_EVIDENCE_INVALID_LOG)
+}
+
+/// `session_dir/log.jsonl` を directory-relative + `O_NOFOLLOW` で開く。
+fn open_session_log_jsonl(session_dir: &Path) -> Result<std::fs::File, &'static str> {
+    use std::ffi::CString;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+
+    let dir_c = CString::new(session_dir.as_os_str().as_bytes())
+        .map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
+    let dir_fd = unsafe {
+        libc::open(
+            dir_c.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dir_fd < 0 {
+        return Err(HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE);
+    }
+    let dir = unsafe { OwnedFd::from_raw_fd(dir_fd) };
+    let name = CString::new("log.jsonl").map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    drop(dir);
+    if fd < 0 {
+        return Err(HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE);
+    }
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let meta = file
+        .metadata()
+        .map_err(|_| HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE)?;
+    if !meta.is_file() {
+        return Err(HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE);
+    }
+    Ok(file)
 }
 
 #[derive(Debug, Default)]
@@ -757,6 +791,51 @@ mod tests {
             .observation_errors
             .iter()
             .any(|error| error == HUMAN_TASK_EVIDENCE_LOG_UNAVAILABLE));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observe_uses_opened_log_file_even_if_path_replaced_with_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session");
+        std::fs::create_dir_all(&session).unwrap();
+        let log = session.join("log.jsonl");
+        let good = aish_replay::LogEvent::shell_command_start(1, "t1", "kept-command");
+        let good_end = aish_replay::LogEvent::command_end(1, Some(0), "f1");
+        let mut body = String::new();
+        body.push_str(&serde_json::to_string(&good).unwrap());
+        body.push('\n');
+        body.push_str(&serde_json::to_string(&good_end).unwrap());
+        body.push('\n');
+        std::fs::write(&log, body.as_bytes()).unwrap();
+        let end = std::fs::metadata(&log).unwrap().len();
+
+        // open 後に path を差し替えても、既に開いた File を読むこと（再 open しない）を検証する。
+        let file = open_session_log_jsonl(&session).expect("open log");
+        std::fs::remove_file(&log).unwrap();
+        let outside = dir.path().join("outside.jsonl");
+        let evil = aish_replay::LogEvent::shell_command_start(9, "t9", "evil-command");
+        let evil_end = aish_replay::LogEvent::command_end(9, Some(1), "f9");
+        let mut evil_body = String::new();
+        evil_body.push_str(&serde_json::to_string(&evil).unwrap());
+        evil_body.push('\n');
+        evil_body.push_str(&serde_json::to_string(&evil_end).unwrap());
+        evil_body.push('\n');
+        std::fs::write(&outside, evil_body.as_bytes()).unwrap();
+        symlink(&outside, &log).unwrap();
+
+        let loaded =
+            load_replay_events_in_range_from_file(file, 0, Some(end), MAX_EVIDENCE_SCAN_BYTES)
+                .expect("read opened file");
+        let evidence = build_human_task_evidence(&loaded.events, loaded.truncated).unwrap();
+        assert_eq!(evidence.commands.len(), 1);
+        assert_eq!(evidence.commands[0].command, "kept-command");
+        assert!(
+            !evidence.commands.iter().any(|c| c.command.contains("evil")),
+            "must not re-open replaced symlink path: {evidence:?}"
+        );
     }
 
     #[test]

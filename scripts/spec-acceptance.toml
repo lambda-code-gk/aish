@@ -3174,6 +3174,6 @@ spec = "0061"
 phase = 1
 id = "human_task_evidence_vertical_e2e"
 description = "Human Shell command 実行から structured Evidence の親返却まで追加入力なしに通る"
-test = "ai_to_aish_handoff_transport_pty_e2e"
+test = "human_task_evidence_vertical_e2e"
 file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
