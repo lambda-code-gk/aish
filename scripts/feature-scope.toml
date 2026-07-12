@@ -20,8 +20,8 @@ spec = "0060"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 3
-scope_change_reason = "mark 0060 done after all acceptance criteria green and implementation spec moved to docs/done/"
+scope_revision = 4
+scope_change_reason = "review correction: remove unmerged 0059 protocol schema and narrow Ctrl+D AC to guidance plus exit return"
 
 core_outcome = "Collaborative Mode の Human Shell 開始時に目的・固定理由・候補操作・親へ戻るタイミングを安全な briefing で即座に理解できる"
 
@@ -32,7 +32,7 @@ external_effects = 1
 process_boundaries = 1
 
 novel_mechanisms = []
-integrations = ["0055-0057-handoff-and-0059-outcome-removal"]
+integrations = ["0055-0057-handoff"]
 
 crash_recovery = false
 schema_migration = false
@@ -64,40 +64,6 @@ locked_ac_ids = [
   "human_task_briefing_uses_only_existing_env",
   "human_task_briefing_creates_no_persistent_state",
   "human_task_briefing_normal_shell_exec_regression",
-]
-
-[[features]]
-spec = "0059"
-status = "done"
-scope_class = "feature"
-
-scope_revision = 4
-scope_change_reason = "0060 supersedes interactive outcome collection; retain only non-collaborative regression AC"
-
-core_outcome = "0059 interactive outcome UX is superseded by 0060; keep non-collaborative shell_exec regression"
-
-actors = 1
-state_machines = 0
-persistent_aggregates = 0
-external_effects = 1
-process_boundaries = 1
-
-novel_mechanisms = []
-integrations = ["0055-collaborative-human-handoff"]
-
-crash_recovery = false
-schema_migration = false
-secondary_agent_loop = false
-lease_or_heartbeat = false
-reconciler = false
-exactly_once = false
-
-split_decision = "Human Task tool, persistence/resume, multiple-task coordination, side agents, lease, auto log/outcome collection (stage 3), history collection, and completion verification are deferred"
-
-vertical_slice_ac_id = "non_collaborative_shell_exec_remains_unchanged"
-
-locked_ac_ids = [
-  "non_collaborative_shell_exec_remains_unchanged",
 ]
 
 [[features]]

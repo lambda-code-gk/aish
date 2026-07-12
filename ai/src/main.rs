@@ -1201,7 +1201,7 @@ fn run_agent_turn_core(
                                 approved: true,
                                 approval_origin:
                                     aibe_protocol::ShellExecApprovalOrigin::CollaborativeHandoff,
-                                handoff_result: Some(handoff_result.into_protocol_result()),
+                                handoff_result: Some(handoff_result),
                                 handoff_error: None,
                             },
                             Err(error) => {

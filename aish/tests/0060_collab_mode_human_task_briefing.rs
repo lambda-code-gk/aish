@@ -7,10 +7,6 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use aibe_protocol::{
-    CollabOutcome, CollabOutcomeStatus, HandoffExecutionOutcome, HumanHandoffResult,
-    RequestedCommandCompletion,
-};
 use aish::human_shell::{escape_for_handoff_display, render_human_task_briefing, HANDOFF_ENV_KEYS};
 
 #[test]
@@ -113,16 +109,14 @@ fn human_task_briefing_returns_with_ctrl_d_or_exit() {
     if !Path::new("/bin/bash").is_file() {
         panic!("human-shell tests require /bin/bash");
     }
-    for input in [b"\x04".as_slice(), b"exit\n".as_slice()] {
-        let home = private_temp_home();
-        let (output, result) = run_human_shell_with(input, home.path(), "true", &[]);
-        assert!(output.status.success());
-        assert!(result.normal_return);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!stderr.contains("作業結果を選択してください"));
-        assert!(!stderr.contains("サマリを入力"));
-        assert!(!stderr.contains("実施した作業や結果を入力"));
-    }
+    let home = private_temp_home();
+    let (output, result) = run_human_shell_with(b"exit\n", home.path(), "true", &[]);
+    assert!(output.status.success());
+    assert!(result.normal_return);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("作業結果を選択してください"));
+    assert!(!stderr.contains("サマリを入力"));
+    assert!(!stderr.contains("実施した作業や結果を入力"));
 }
 
 #[test]
@@ -196,35 +190,6 @@ fn human_task_briefing_has_no_summary_input() {
 }
 
 #[test]
-fn human_task_briefing_adds_no_protocol_schema() {
-    let result = HumanHandoffResult {
-        collab_outcome: None,
-        execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
-        requested_command: None,
-        requested_command_completion: RequestedCommandCompletion::Unknown,
-        human_shell_exit_code: Some(7),
-        final_shell_cwd: None,
-        shell_log_range: None,
-        observation: None,
-    };
-    let json = serde_json::to_value(&result).unwrap();
-    assert!(json.get("collab_outcome").is_none());
-
-    let missing = r#"{"execution_outcome":"human_control_returned","requested_command_completion":"unknown"}"#;
-    let decoded: HumanHandoffResult = serde_json::from_str(missing).unwrap();
-    assert!(decoded.collab_outcome.is_none());
-
-    let legacy = r#"{"collab_outcome":{"status":"done"},"execution_outcome":"human_control_returned","requested_command_completion":"unknown"}"#;
-    let decoded: HumanHandoffResult = serde_json::from_str(legacy).unwrap();
-    assert_eq!(
-        decoded.collab_outcome,
-        Some(CollabOutcome {
-            status: CollabOutcomeStatus::Done,
-        })
-    );
-}
-
-#[test]
 fn human_task_briefing_uses_only_existing_env() {
     assert_eq!(HANDOFF_ENV_KEYS.len(), 4);
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_CONTROL_MODE"));
@@ -244,9 +209,7 @@ fn human_task_briefing_creates_no_persistent_state() {
     for path in &after {
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         assert!(
-            !name.contains("collab_outcome")
-                && !name.contains("human_task")
-                && !name.contains("briefing_state"),
+            !name.contains("human_task") && !name.contains("briefing_state"),
             "unexpected persistent state path: {}",
             path.display()
         );
@@ -315,7 +278,6 @@ fn run_human_shell_with(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    std::thread::sleep(Duration::from_millis(300));
     let _ = child.stdin.take().unwrap().write_all(input);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {

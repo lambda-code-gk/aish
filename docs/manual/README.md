@@ -9,7 +9,6 @@
 | ファイル | 内容 |
 |----------|------|
 | [0060_collab-mode-human-task-briefing.md](0060_collab-mode-human-task-briefing.md) | Collab Mode Human Task briefing と終了後の即時 return |
-| [0059_collab-outcome-status.md](0059_collab-outcome-status.md) | （履歴）0059 outcome 選択は 0060 で撤回 |
 | [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（`openai_compatible`: 公式 OpenAI API / ローカル互換）1 ターン |
 | [gemini-provider.md](gemini-provider.md) | Gemini プロバイダ（Google AI Studio / `generateContent`） |
 | [llm-profiles.md](llm-profiles.md) | LLM 接続 + プロファイル（`--profile` / 2 段 config） |

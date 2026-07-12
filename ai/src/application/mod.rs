@@ -27,8 +27,7 @@ pub use history::{
     record_turn, HistoryRecordInput, HistoryReplayInput,
 };
 pub use human_handoff::{
-    handoff_tool_result_message, HumanHandoffError, HumanHandoffExecutionResult,
-    HumanHandoffRequest, RunSynchronousHumanHandoff,
+    handoff_tool_result_message, HumanHandoffError, HumanHandoffRequest, RunSynchronousHumanHandoff,
 };
 
 pub use feature_executor::{execute_feature_actions_mvp, FeatureExecutionOutcome};

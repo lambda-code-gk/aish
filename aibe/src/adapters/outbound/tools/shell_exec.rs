@@ -782,7 +782,6 @@ mod tests {
                     approved: true,
                     approval_origin: ShellExecApprovalOrigin::CollaborativeHandoff,
                     handoff_result: Some(HumanHandoffResult {
-                        collab_outcome: None,
                         execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
                         requested_command: Some("'echo' 'hi'".into()),
                         requested_command_completion: RequestedCommandCompletion::Unknown,
@@ -1012,7 +1011,6 @@ mod tests {
                     approved: true,
                     approval_origin: ShellExecApprovalOrigin::UiYes,
                     handoff_result: Some(HumanHandoffResult {
-                        collab_outcome: None,
                         execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
                         requested_command: None,
                         requested_command_completion: RequestedCommandCompletion::Unknown,

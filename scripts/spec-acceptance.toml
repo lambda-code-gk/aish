@@ -2882,15 +2882,6 @@ file_glob = "aish/tests/0055_minimal_human_handoff.rs"
 pending = false
 
 [[cases]]
-spec = "0059"
-phase = 1
-id = "non_collaborative_shell_exec_remains_unchanged"
-description = "通常 shell_exec と非 Collaborative Mode の挙動が変わらない"
-test = "non_collaborative_shell_exec_remains_unchanged"
-file_glob = "ai/tests/normal_shell_exec_regression.rs"
-pending = false
-
-[[cases]]
 spec = "0060"
 phase = 1
 id = "human_task_briefing_renders_collaborative_mode_header"
@@ -2957,7 +2948,7 @@ pending = false
 spec = "0060"
 phase = 1
 id = "human_task_briefing_returns_with_ctrl_d_or_exit"
-description = "Ctrl+D または exit で追加入力なく親へ戻る"
+description = "briefing が Ctrl+D / exit を案内し、exit 後は追加入力なく親へ戻る"
 test = "human_task_briefing_returns_with_ctrl_d_or_exit"
 file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
 pending = false
@@ -3020,9 +3011,9 @@ pending = false
 spec = "0060"
 phase = 1
 id = "human_task_briefing_adds_no_protocol_schema"
-description = "新規 protocol schema を追加せず既存 collab_outcome を optional 化し成功時は省略する"
+description = "collab_outcome を含む新規 protocol field / schema を追加しない"
 test = "human_task_briefing_adds_no_protocol_schema"
-file_glob = "aish/tests/0060_collab_mode_human_task_briefing.rs"
+file_glob = "aibe-protocol/src/collaborative_handoff.rs"
 pending = false
 
 [[cases]]

@@ -211,10 +211,6 @@ impl CollaborativeMockServer {
                         handoff.requested_command_completion,
                         RequestedCommandCompletion::Unknown
                     );
-                    assert!(
-                        handoff.collab_outcome.is_none(),
-                        "0060: success handoff must omit collab_outcome"
-                    );
                     log_thread.lock().expect("log").handoff_result_json =
                         Some(serde_json::to_string(&handoff).expect("handoff json"));
 

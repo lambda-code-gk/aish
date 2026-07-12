@@ -604,7 +604,6 @@ mod tests {
         validate_shell_exec_approval_decision(&valid_normal).expect("normal approval");
 
         let sample_handoff_result = HumanHandoffResult {
-            collab_outcome: None,
             execution_outcome: HandoffExecutionOutcome::HumanControlReturned,
             requested_command: None,
             requested_command_completion: RequestedCommandCompletion::Unknown,

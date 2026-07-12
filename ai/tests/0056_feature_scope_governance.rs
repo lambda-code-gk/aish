@@ -27,7 +27,8 @@ fn run_checker(fixture_root: &Path, extra_args: &[&str]) -> (i32, String) {
     cmd.arg(checker())
         .arg("--root")
         .arg(fixture_root)
-        .arg("--skip-template");
+        .arg("--skip-template")
+        .env_remove("FEATURE_SCOPE_BASE_REF");
     for arg in extra_args {
         cmd.arg(arg);
     }
