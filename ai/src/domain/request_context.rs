@@ -1,5 +1,6 @@
 //! `agent_turn` 用 `RequestContext` の組み立て。
 
+use crate::domain::ExecutionMode;
 use aibe_protocol::{RequestContext, SYSTEM_INSTRUCTION_MAX_BYTES};
 
 #[derive(Debug, Clone, Default)]
@@ -13,6 +14,7 @@ pub struct RequestContextInput {
     /// 解決済みの contextual memory space（0035。注入の解決順 1 位として aibe へ渡す）。
     pub memory_space_id: Option<String>,
     pub collaborative_handoff: bool,
+    pub execution_mode: ExecutionMode,
 }
 
 impl RequestContextInput {
@@ -25,6 +27,7 @@ impl RequestContextInput {
             system_instruction: normalize_system_instruction(self.system_instruction),
             memory_space_id: self.memory_space_id,
             collaborative_handoff: self.collaborative_handoff,
+            execution_mode: self.execution_mode.into(),
         }
     }
 }

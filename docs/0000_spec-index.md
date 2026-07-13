@@ -55,6 +55,7 @@
 | 0058 | [0058_aish-doctor-diagnostics-spec.md](spec/0058_aish-doctor-diagnostics-spec.md) | 設計確定（実装済み） | AISH Doctor / 常用診断導線（`ai doctor` HealthCheck、日常 preflight、human / JSON 出力） |
 | 0060 | [0060_collab-mode-human-task-briefing-spec.md](spec/0060_collab-mode-human-task-briefing-spec.md) | 設計確定（実装済み） | Collab Mode Human Task Briefing（目的・固定理由・候補操作・親へ戻るタイミングの開始時表示） |
 | 0061 | [0061_collab-mode-human-task-evidence-spec.md](spec/0061_collab-mode-human-task-evidence-spec.md) | 設計確定（実装済み） | Collab Mode Human Task Evidence（command span から追加入力なしに構造化 Evidence を返却） |
+| 0062 | [0062_collab-mode-human-task-tool-spec.md](spec/0062_collab-mode-human-task-tool-spec.md) | 設計確定（実装済み） | Collaborative Mode Human Task Tool（`ai collab` 正式導線・独立 `human_task`・既存 Human Shell / Evidence 再利用） |
 
 ### 状態ラベルの意味
 
@@ -74,6 +75,7 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0062 | [0062_collab-mode-human-task-tool-implementation-spec.md](done/0062_collab-mode-human-task-tool-implementation-spec.md) | 実装済み | Collaborative Mode Human Task Tool（`ai collab` / 独立 `human_task`） |
 | 0061 | [0061_collab-mode-human-task-evidence-implementation-spec.md](done/0061_collab-mode-human-task-evidence-implementation-spec.md) | 実装済み | Collab Mode Human Task Evidence（bounded range reader・domain pure builder・post-handoff observation統合） |
 | 0060 | [0060_collab-mode-human-task-briefing-implementation-spec.md](done/0060_collab-mode-human-task-briefing-implementation-spec.md) | 実装済み | Collab Mode Human Task Briefing（開始時の安全な固定表示と終了後 outcome 入力の除去） |
 | 0058 | [0058_aish-doctor-diagnostics-implementation-spec.md](done/0058_aish-doctor-diagnostics-implementation-spec.md) | 実装済み | `ai doctor` の 6 HealthCheck、human / structured 出力、exit code、`status` 互換 |

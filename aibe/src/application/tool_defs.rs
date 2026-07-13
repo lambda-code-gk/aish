@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use aibe_protocol::SHELL_EXEC;
+use aibe_protocol::{HUMAN_TASK, SHELL_EXEC};
 
 use crate::domain::ToolName;
 use crate::ports::outbound::ToolDefinition;
@@ -21,6 +21,7 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
         .iter()
         .filter_map(|name| match name.as_str() {
             SHELL_EXEC => Some(shell_exec_definition()),
+            HUMAN_TASK => Some(human_task_definition()),
             READ_FILE => Some(read_file_definition()),
             LIST_DIR => Some(list_dir_definition()),
             GREP => Some(grep_definition()),
@@ -31,6 +32,25 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
             _ => None,
         })
         .collect()
+}
+
+fn human_task_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: HUMAN_TASK.to_string(),
+        description: "Delegate a structured task to the human using the interactive Human Shell."
+            .into(),
+        parameters: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "objective": { "type": "string" },
+                "reason": { "type": "string" },
+                "instructions": { "type": "array", "items": { "type": "string" } },
+                "completion_criteria": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["objective"]
+        }),
+    }
 }
 
 fn shell_exec_definition() -> ToolDefinition {

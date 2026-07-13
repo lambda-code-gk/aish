@@ -14,10 +14,12 @@ use tokio::time::{sleep_until, Instant};
 
 use crate::adapters::inbound::client_tool_gate::ConnectionClientToolGate;
 use crate::adapters::inbound::connection_approval::ConnectionApprovalGate;
+use crate::adapters::inbound::connection_human_task::ConnectionHumanTaskGate;
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{
-    ClientToolGate, ShellExecApprovalGate, ToolApprovalGate, TurnCancellation, TurnEventSink,
+    ClientToolGate, HumanTaskGate, ShellExecApprovalGate, ToolApprovalGate, TurnCancellation,
+    TurnEventSink,
 };
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ProgressPhase};
 
@@ -143,6 +145,7 @@ async fn serve_connection(
                 let mut gate: Option<Arc<dyn ShellExecApprovalGate>> = None;
                 let mut tool_gate: Option<Arc<dyn ToolApprovalGate>> = None;
                 let mut client_tool_gate: Option<Arc<dyn ClientToolGate>> = None;
+                let mut human_task_gate: Option<Arc<dyn HumanTaskGate>> = None;
                 let mut events: Option<Arc<dyn TurnEventSink>> = None;
                 if let ClientRequest::AgentTurn { id, .. } = &req {
                     let cancel = Arc::new(TurnCancellation::new());
@@ -166,10 +169,19 @@ async fn serve_connection(
                             Some(Arc::clone(&sink)),
                             Some(Arc::clone(&cancel)),
                         ));
+                    let human_gate_impl: Arc<dyn HumanTaskGate> =
+                        Arc::new(ConnectionHumanTaskGate::new(
+                            id.clone(),
+                            Arc::clone(&writer),
+                            Arc::clone(&lines),
+                            Some(Arc::clone(&sink)),
+                            Some(Arc::clone(&cancel)),
+                        ));
                     cancellation = Some(cancel);
                     gate = Some(approval_gate);
                     tool_gate = Some(tool_approval_gate);
                     client_tool_gate = Some(tool_gate_impl);
+                    human_task_gate = Some(human_gate_impl);
                     events = Some(sink);
                 }
                 handler
@@ -178,6 +190,7 @@ async fn serve_connection(
                         gate,
                         tool_gate,
                         client_tool_gate,
+                        human_task_gate,
                         events,
                         cancellation,
                     )

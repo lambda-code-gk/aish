@@ -191,11 +191,12 @@ fn human_task_briefing_has_no_summary_input() {
 
 #[test]
 fn human_task_briefing_uses_only_existing_env() {
-    assert_eq!(HANDOFF_ENV_KEYS.len(), 4);
+    assert_eq!(HANDOFF_ENV_KEYS.len(), 5);
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_CONTROL_MODE"));
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_PARENT_REQUEST"));
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_SUGGESTED_COMMAND"));
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_RUNTIME_DIR"));
+    assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_TASK_JSON"));
 }
 
 #[test]

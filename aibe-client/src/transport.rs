@@ -100,6 +100,14 @@ pub struct ToolApprovalPrompt {
     pub preview_truncated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HumanTaskExecutionPrompt {
+    pub prompt_id: String,
+    pub turn_id: String,
+    pub tool_call_id: String,
+    pub request: aibe_protocol::HumanTaskRequest,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolApprovalDecision {
     Approved(ToolApprovalOrigin),
@@ -118,9 +126,14 @@ impl ToolApprovalDecision {
 }
 
 /// `agent_turn` 中の承認 callback 集約（設計 §14.4）。
-pub struct AgentTurnCallbacks<S, T> {
+pub struct AgentTurnCallbacks<
+    S,
+    T,
+    H = fn(HumanTaskExecutionPrompt) -> Option<aibe_protocol::HumanTaskResult>,
+> {
     pub on_shell_exec: S,
     pub on_tool: T,
+    pub on_human_task: H,
 }
 
 impl<S, T> AgentTurnCallbacks<S, T> {
@@ -128,8 +141,23 @@ impl<S, T> AgentTurnCallbacks<S, T> {
         Self {
             on_shell_exec,
             on_tool,
+            on_human_task: unavailable_human_task,
         }
     }
+}
+
+impl<S, T, H> AgentTurnCallbacks<S, T, H> {
+    pub fn with_human_task<N>(self, on_human_task: N) -> AgentTurnCallbacks<S, T, N> {
+        AgentTurnCallbacks {
+            on_shell_exec: self.on_shell_exec,
+            on_tool: self.on_tool,
+            on_human_task,
+        }
+    }
+}
+
+fn unavailable_human_task(_: HumanTaskExecutionPrompt) -> Option<aibe_protocol::HumanTaskResult> {
+    None
 }
 
 pub fn shell_exec_only_callbacks<S>(
@@ -276,10 +304,12 @@ pub fn agent_turn_with_client_tools_on_stream(
     callbacks: AgentTurnCallbacks<
         impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
         impl FnMut(ToolApprovalPrompt) -> ToolApprovalDecision,
+        impl FnMut(HumanTaskExecutionPrompt) -> Option<aibe_protocol::HumanTaskResult>,
     >,
 ) -> Result<ClientResponse, ClientError> {
     let mut on_shell_exec = callbacks.on_shell_exec;
     let mut on_tool = callbacks.on_tool;
+    let mut on_human_task = callbacks.on_human_task;
     let mut writer = stream;
     let mut reader = BufReader::new(writer.try_clone().map_err(ClientError::Connect)?);
     send_request(&mut writer, &request).map_err(ClientError::Connect)?;
@@ -389,6 +419,36 @@ pub fn agent_turn_with_client_tools_on_stream(
                 send_request(&mut writer, &ClientRequest::ClientToolResult(result))
                     .map_err(ClientError::Connect)?;
             }
+            ClientResponse::HumanTaskExecutionRequest {
+                id,
+                turn_id,
+                tool_call_id,
+                request,
+            } => {
+                let Some(result) = on_human_task(HumanTaskExecutionPrompt {
+                    prompt_id: id.clone(),
+                    turn_id: turn_id.clone(),
+                    tool_call_id: tool_call_id.clone(),
+                    request,
+                }) else {
+                    return Err(ClientError::Unexpected(
+                        "human_task callback unavailable".into(),
+                    ));
+                };
+                result.validate().map_err(|reason| {
+                    ClientError::Unexpected(format!("invalid human_task result: {reason}"))
+                })?;
+                send_request(
+                    &mut writer,
+                    &ClientRequest::HumanTaskExecutionResult {
+                        id,
+                        turn_id,
+                        tool_call_id,
+                        result,
+                    },
+                )
+                .map_err(ClientError::Connect)?;
+            }
             cancelled @ ClientResponse::Cancelled { .. } => return Ok(cancelled),
             final_resp => return Ok(final_resp),
         }
@@ -420,6 +480,7 @@ pub fn agent_turn_on_stream_with_callbacks(
     callbacks: AgentTurnCallbacks<
         impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
         impl FnMut(ToolApprovalPrompt) -> ToolApprovalDecision,
+        impl FnMut(HumanTaskExecutionPrompt) -> Option<aibe_protocol::HumanTaskResult>,
     >,
 ) -> Result<ClientResponse, ClientError> {
     agent_turn_with_client_tools_on_stream(stream, request, |_| {}, |_| {}, |_| None, callbacks)
@@ -434,6 +495,7 @@ pub fn agent_turn_with_client_tools(
     callbacks: AgentTurnCallbacks<
         impl FnMut(ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
         impl FnMut(ToolApprovalPrompt) -> ToolApprovalDecision,
+        impl FnMut(HumanTaskExecutionPrompt) -> Option<aibe_protocol::HumanTaskResult>,
     >,
 ) -> Result<ClientResponse, ClientError> {
     let stream = connect_unix_stream(socket_path, CONNECT_TIMEOUT).map_err(ClientError::Connect)?;

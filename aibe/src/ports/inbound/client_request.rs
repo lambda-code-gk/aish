@@ -10,19 +10,22 @@ use tokio::sync::Mutex;
 
 use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{
-    ClientToolGate, ShellExecApprovalGate, ToolApprovalGate, TurnCancellation, TurnEventSink,
+    ClientToolGate, HumanTaskGate, ShellExecApprovalGate, ToolApprovalGate, TurnCancellation,
+    TurnEventSink,
 };
 
 pub type SubscribeConnectionLines = tokio::io::Lines<BufReader<OwnedReadHalf>>;
 
 #[async_trait]
 pub trait ClientRequestHandler: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
     async fn handle_with_events(
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse;

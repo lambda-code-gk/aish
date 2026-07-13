@@ -19,6 +19,7 @@ pub fn is_known_cli_head(word: &str) -> bool {
     matches!(
         word,
         "ask"
+            | "collab"
             | "chat"
             | "retry"
             | "rerun"

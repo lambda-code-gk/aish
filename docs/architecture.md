@@ -633,3 +633,10 @@ Evidence は最大 50 commands、2 KiB/command、command 合計 16 KiB に制限
 Ctrl+D または `exit` の後、追加入力（outcome 選択・summary）なく親へ制御を返す。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → HumanHandoffResult` であり、対話 collector は呼ばない。
 
 `HumanHandoffResult` は origin/main の既存 schema を維持し、`collab_outcome` を含む結果 field や status schema は追加しない。終了コードや return marker から作業 outcome を推定する処理も持たない。
+# Collaborative Mode と human_task（0062）
+
+`ai collab` は `ai` domain の `ExecutionMode::Collaborative` を選び、既存の ask 入力解決を再利用する。旧 `--collaborative` は同じ mode へ正規化される一方、0055 の `shell_exec` interception 互換も維持する。通常の tool allowlist は順序を保ち、Collaborative Mode policy が独立した組み込み `human_task` を末尾へ一度だけ追加する。Normal Mode では client 指定と server の `ToolExecutionContext.execution_mode` の両方で fail-closed にする。`@exec` は引き続き `shell_exec` だけを表す。
+
+`HumanTaskTool` は組み込み registry/definition 経路に一度だけ登録され、同一 Unix 接続の専用 `HumanTaskGate` callback を呼ぶ。callback は turn/tool-call/prompt ID の全一致を要求し、ShellExec approval DTO を使わない。`ai` の `ExecuteHumanTask` は既存 `HumanShellLauncher` と `EnvironmentObserver` を順に呼び、結果を同じ親 agent の tool round へ返す。
+
+構造化 briefing は ai→aish の既存 Human Shell process boundary で、version 1 の `AISH_HANDOFF_TASK_JSON` 一個として渡す。aish は 64 KiB、既知 version、JSON schema を shell 起動前に検証し、起動直後に子 shell 環境から unset する。値がない旧 handoff は従来の parent request/suggested command 表示へ fallback する。

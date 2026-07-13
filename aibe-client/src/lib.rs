@@ -18,8 +18,8 @@ pub use transport::{
     agent_turn_with_events_on_stream, memory_request, memory_request_on_stream, read_response_line,
     route_turn, route_turn_on_stream, send_cancel_request, send_request, shell_exec_only_callbacks,
     validate_shell_exec_approval_decision, AgentTurnCallbacks, AgentTurnProgressEvent, ClientError,
-    ClientToolCallRequest, ShellExecApprovalDecision, ShellExecApprovalPrompt,
-    ToolApprovalDecision, ToolApprovalPrompt,
+    ClientToolCallRequest, HumanTaskExecutionPrompt, ShellExecApprovalDecision,
+    ShellExecApprovalPrompt, ToolApprovalDecision, ToolApprovalPrompt,
 };
 pub use unix_connect::connect_unix_stream;
 

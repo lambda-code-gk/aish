@@ -8,9 +8,9 @@ use crate::application::tool_round::{RoundOutcome, ToolRoundExecutor};
 use crate::application::tool_round_terminator::finish_after_max_tool_rounds;
 use crate::domain::{AgentTurnContext, Capability, ChatMessage, ToolName, SHELL_EXEC};
 use crate::ports::outbound::{
-    CapabilityPolicy, ClientToolGate, LlmCallTracer, LlmProvider, ShellExecApprovalGate,
-    TerminationCapability, ToolApprovalGate, ToolExecutionContext, ToolRoundTerminator,
-    TurnCancellation, TurnEventSink, TurnHook,
+    CapabilityPolicy, ClientToolGate, HumanTaskGate, LlmCallTracer, LlmProvider,
+    ShellExecApprovalGate, TerminationCapability, ToolApprovalGate, ToolExecutionContext,
+    ToolRoundTerminator, TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
     AgentTurnStatus, ClientProvidedToolSpec, ClientResponse, ErrorCode, ProgressPhase,
@@ -87,6 +87,7 @@ impl AgentTurnService {
             approval_gate,
             None,
             None,
+            None,
         )
         .await
     }
@@ -102,6 +103,7 @@ impl AgentTurnService {
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
     ) -> ClientResponse {
         self.run_with_client_tools_and_events(
             id,
@@ -112,6 +114,7 @@ impl AgentTurnService {
             approval_gate,
             tool_approval_gate,
             client_tool_gate,
+            human_task_gate,
             None,
             None,
         )
@@ -138,6 +141,7 @@ impl AgentTurnService {
             approval_gate,
             None,
             None,
+            None,
             events,
             cancellation,
         )
@@ -155,6 +159,7 @@ impl AgentTurnService {
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
@@ -217,7 +222,8 @@ impl AgentTurnService {
         let mut tool_ctx = ToolExecutionContext::new(client_cwd)
             .with_turn_id(id.clone())
             .with_capability_policy(Arc::clone(&self.capability_policy))
-            .with_collaborative_handoff(context.collaborative_handoff);
+            .with_collaborative_handoff(context.collaborative_handoff)
+            .with_execution_mode(context.execution_mode);
         if let Some(gate) = approval_gate {
             tool_ctx = tool_ctx.with_approval_gate(gate);
         }
@@ -226,6 +232,9 @@ impl AgentTurnService {
         }
         if let Some(gate) = client_tool_gate {
             tool_ctx = tool_ctx.with_client_tool_gate(gate);
+        }
+        if let Some(gate) = human_task_gate {
+            tool_ctx = tool_ctx.with_human_task_gate(gate);
         }
         tool_ctx = tool_ctx.with_client_tools(client_tools.clone());
 

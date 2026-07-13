@@ -64,6 +64,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
                 parent_request_summary: request.parent_request_summary.clone(),
                 suggested_command: suggested_command.clone(),
                 runtime_dir: request.runtime_dir.clone(),
+                task_briefing: None,
             },
             cancel_requested,
         )?;

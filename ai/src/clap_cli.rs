@@ -143,6 +143,15 @@ pub enum AiCommand {
         #[arg(required = false, num_args = 0.., allow_hyphen_values = true)]
         message: Vec<String>,
     },
+    /// Collaborate with the agent and allow explicit human_task delegation
+    Collab {
+        #[command(flatten)]
+        turn: TurnOptions,
+        #[arg(long, value_hint = clap::ValueHint::FilePath)]
+        file: Option<PathBuf>,
+        #[arg(required = false, num_args = 0.., allow_hyphen_values = true)]
+        message: Vec<String>,
+    },
     /// Multi-turn chat REPL
     Chat {
         #[command(flatten)]

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use crate::domain::Capability;
 use crate::domain::ClientCwd;
 use crate::ports::outbound::{
-    CapabilityDenied, CapabilityPolicy, ClientToolGate, ShellExecApprovalGate, ToolApprovalGate,
+    CapabilityDenied, CapabilityPolicy, ClientToolGate, HumanTaskGate, ShellExecApprovalGate,
+    ToolApprovalGate,
 };
 use aibe_protocol::ClientProvidedToolSpec;
 
@@ -26,6 +27,8 @@ pub struct ToolExecutionContext {
     capability_policy: Option<Arc<dyn CapabilityPolicy>>,
     client_tools: Vec<ClientProvidedToolSpec>,
     collaborative_handoff: bool,
+    execution_mode: aibe_protocol::ExecutionMode,
+    human_task_gate: Option<Arc<dyn HumanTaskGate>>,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -42,6 +45,8 @@ impl std::fmt::Debug for ToolExecutionContext {
             )
             .field("client_tools", &self.client_tools.len())
             .field("collaborative_handoff", &self.collaborative_handoff)
+            .field("execution_mode", &self.execution_mode)
+            .field("human_task_gate", &self.human_task_gate.is_some())
             .finish()
     }
 }
@@ -57,6 +62,8 @@ impl PartialEq for ToolExecutionContext {
                 == other.capability_policy.as_ref().map(|p| p.profile_name())
             && self.client_tools == other.client_tools
             && self.collaborative_handoff == other.collaborative_handoff
+            && self.execution_mode == other.execution_mode
+            && self.human_task_gate.is_some() == other.human_task_gate.is_some()
     }
 }
 
@@ -73,6 +80,8 @@ impl ToolExecutionContext {
             capability_policy: None,
             client_tools: Vec::new(),
             collaborative_handoff: false,
+            execution_mode: aibe_protocol::ExecutionMode::Normal,
+            human_task_gate: None,
         }
     }
 
@@ -123,6 +132,21 @@ impl ToolExecutionContext {
 
     pub fn collaborative_handoff(&self) -> bool {
         self.collaborative_handoff
+    }
+
+    pub fn with_execution_mode(mut self, mode: aibe_protocol::ExecutionMode) -> Self {
+        self.execution_mode = mode;
+        self
+    }
+    pub fn execution_mode(&self) -> aibe_protocol::ExecutionMode {
+        self.execution_mode
+    }
+    pub fn with_human_task_gate(mut self, gate: Arc<dyn HumanTaskGate>) -> Self {
+        self.human_task_gate = Some(gate);
+        self
+    }
+    pub fn human_task_gate(&self) -> Option<&Arc<dyn HumanTaskGate>> {
+        self.human_task_gate.as_ref()
     }
 
     pub fn capability_policy(&self) -> Option<&Arc<dyn CapabilityPolicy>> {

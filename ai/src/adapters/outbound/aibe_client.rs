@@ -88,6 +88,9 @@ impl AibeUnixClient {
         on_progress: impl FnMut(AgentTurnProgressEvent),
         on_stream: impl FnMut(String),
         on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+        on_human_task: impl FnMut(
+            aibe_client::HumanTaskExecutionPrompt,
+        ) -> Option<aibe_protocol::HumanTaskResult>,
     ) -> Result<ClientResponse, AgentError> {
         agent_turn_with_client_tools(
             self.socket_path(),
@@ -95,7 +98,8 @@ impl AibeUnixClient {
             on_progress,
             on_stream,
             |_| None,
-            AgentTurnCallbacks::new(on_approval, tool_approval_callback),
+            AgentTurnCallbacks::new(on_approval, tool_approval_callback)
+                .with_human_task(on_human_task),
         )
         .map_err(map_client_error)
     }
@@ -107,6 +111,9 @@ impl AibeUnixClient {
         on_stream: impl FnMut(String),
         on_client_tool: impl FnMut(ClientToolCallRequest) -> Option<aibe_protocol::ClientToolResult>,
         on_approval: impl FnMut(aibe_client::ShellExecApprovalPrompt) -> ShellExecApprovalDecision,
+        on_human_task: impl FnMut(
+            aibe_client::HumanTaskExecutionPrompt,
+        ) -> Option<aibe_protocol::HumanTaskResult>,
     ) -> Result<ClientResponse, AgentError> {
         agent_turn_with_client_tools(
             self.socket_path(),
@@ -114,7 +121,8 @@ impl AibeUnixClient {
             on_progress,
             on_stream,
             on_client_tool,
-            AgentTurnCallbacks::new(on_approval, tool_approval_callback),
+            AgentTurnCallbacks::new(on_approval, tool_approval_callback)
+                .with_human_task(on_human_task),
         )
         .map_err(map_client_error)
     }
@@ -182,6 +190,7 @@ impl AibeUnixClient {
             on_progress,
             on_stream,
             on_approval,
+            |_| None,
         )
     }
 

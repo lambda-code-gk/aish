@@ -12,8 +12,10 @@ mod work;
 
 pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
 pub use collaborative_handoff::{
-    HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult, HumanTaskCommandEvidence,
-    HumanTaskEvidence, PostHandoffObservation, RequestedCommandCompletion, ShellLogRange,
+    HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult, HumanTaskBriefing,
+    HumanTaskCommandEvidence, HumanTaskEvidence, HumanTaskRequest, HumanTaskResult,
+    PostHandoffObservation, RequestedCommandCompletion, ShellLogRange,
+    HUMAN_TASK_BRIEFING_MAX_BYTES,
 };
 pub use executed_tool::{
     ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome, ShellExecApprovalOutcome,
@@ -34,8 +36,8 @@ pub use memory_space::{
 };
 pub use request::{
     ClientProvidedToolSpec, ClientRequest, ClientToolErrorKind, ClientToolResult,
-    ClientToolResultStatus, ProtocolMessage, RequestContext, ShellExecApprovalOrigin,
-    ToolApprovalOrigin,
+    ClientToolResultStatus, ExecutionMode, ProtocolMessage, RequestContext,
+    ShellExecApprovalOrigin, ToolApprovalOrigin,
 };
 pub use request::{
     RouteTurnCliOverrides, RouteTurnConversation, RouteTurnPreprocessorHints, RouteTurnSession,
@@ -47,8 +49,8 @@ pub use response::{
 pub use tool_name::{
     is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,
     sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, APPLY_PATCH, GIT_DIFF,
-    GIT_STATUS, GREP, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE, SHELL_EXEC,
-    WRITE_FILE,
+    GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE,
+    SHELL_EXEC, WRITE_FILE,
 };
 pub use work::{
     validate_work_id, validate_work_text, WorkApplyRequestBody, WorkApplyResponseBody,

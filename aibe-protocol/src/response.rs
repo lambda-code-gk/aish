@@ -66,6 +66,12 @@ pub enum ClientResponse {
         name: String,
         arguments: serde_json::Value,
     },
+    HumanTaskExecutionRequest {
+        id: String,
+        turn_id: String,
+        tool_call_id: String,
+        request: crate::HumanTaskRequest,
+    },
     Cancelled {
         id: String,
         turn_id: String,
