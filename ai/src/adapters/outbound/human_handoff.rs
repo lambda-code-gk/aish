@@ -90,6 +90,17 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             )
             .env("AISH_HANDOFF_SUGGESTED_COMMAND", &request.suggested_command)
             .env("AISH_HANDOFF_RUNTIME_DIR", &request.runtime_dir);
+        if let Some(briefing) = &request.task_briefing {
+            let encoded = serde_json::to_string(briefing).map_err(|_| {
+                HumanShellLaunchError::Failed("task briefing serialization failed".into())
+            })?;
+            if encoded.len() > aibe_protocol::HUMAN_TASK_BRIEFING_MAX_BYTES {
+                return Err(HumanShellLaunchError::Failed(
+                    "task briefing exceeds 64 KiB".into(),
+                ));
+            }
+            command.env("AISH_HANDOFF_TASK_JSON", encoded);
+        }
         // aish は親端末の stdin を raw にして PTY へ中継する。
         // 別 process group にすると background 扱いになり SIGTTIN/SIGTTOU で停止し、
         // プロンプトが出ない（PTY shell は setsid 済みなので group kill の対象外）。

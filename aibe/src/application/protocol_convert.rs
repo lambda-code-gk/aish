@@ -62,6 +62,7 @@ impl TryFrom<RequestContext> for AgentTurnContext {
             ai_session_id: ctx.ai_session_id,
             memory_space_id: ctx.memory_space_id.filter(|s| !s.is_empty()),
             collaborative_handoff: ctx.collaborative_handoff,
+            execution_mode: ctx.execution_mode,
         })
     }
 }

@@ -30,11 +30,11 @@ use ai::application::memory_space::{format_resolution, resolve_memory_space_id};
 use ai::application::{
     assistant_content_from_response, build_response_summary, build_summary, classify_from_raw_args,
     current_time_ms, ensure_aibe_if_needed, evaluate_preprocessor, execute_feature_actions_mvp,
-    list_history, memory_cli, next_history_id, persist_suggested_commands, plan_ask_launch,
-    plan_interactive_prompt_route, recall_next_command, recall_prev_command, record_turn,
-    resolve_recall_gating, HistoryRecordInput, HistoryReplayInput, InteractivePromptRoute,
-    PreprocessorRunInput, PreprocessorRunOutcome, RecallGatingInput, RecallTurnContext,
-    ShellLogMode,
+    list_history, memory_cli, next_history_id, persist_suggested_commands,
+    plan_ask_launch_for_mode, plan_interactive_prompt_route, recall_next_command,
+    recall_prev_command, record_turn, resolve_recall_gating, HistoryRecordInput,
+    HistoryReplayInput, InteractivePromptRoute, PreprocessorRunInput, PreprocessorRunOutcome,
+    RecallGatingInput, RecallTurnContext, ShellLogMode,
 };
 use ai::clap_cli::{
     AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
@@ -47,12 +47,14 @@ use ai::domain::smart_preprocessor::{
     LocalToolHint, PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
 };
 use ai::domain::{
-    resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
-    resolve_progress, resolve_tools, validate_ask_arg_order, AskArgOrderError, AskInput,
-    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, HistoryIndexFilter,
-    HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError,
-    OutputFormat, OutputFormatError, PromptAcquisitionResult, RequestContextInput,
-    ShellExecSessionState, ShellExecTier, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
+    collaborative_handoff_for_rerun, execution_mode_for_rerun, resolve_console_hints,
+    resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter, resolve_progress,
+    resolve_tools, tools_cli_for_rerun, validate_ask_arg_order, AskArgOrderError, AskInput,
+    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, ExecutionMode,
+    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
+    LogTailResolveError, OutputFormat, OutputFormatError, PromptAcquisitionResult,
+    RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
+    ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{
     CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
@@ -105,6 +107,18 @@ fn run() -> anyhow::Result<ExitCode> {
             file,
             message,
             invocation: ask_invocation,
+            mode_override: None,
+        }),
+        AiCommand::Collab {
+            turn,
+            file,
+            message,
+        } => run_ask(AskArgs {
+            turn,
+            file,
+            message,
+            invocation: AskInvocationSource::ExplicitAsk,
+            mode_override: Some(ExecutionMode::Collaborative),
         }),
         AiCommand::Chat { turn } => run_chat(turn),
         AiCommand::Retry { turn, history_id } => run_retry(turn, history_id),
@@ -156,6 +170,7 @@ struct AskArgs {
     file: Option<PathBuf>,
     message: Vec<String>,
     invocation: AskInvocationSource,
+    mode_override: Option<ExecutionMode>,
 }
 
 #[derive(Debug)]
@@ -195,6 +210,7 @@ struct ResolvedTurnSettings {
     console_hint: ConsoleHintReport,
     trace_route: bool,
     collaborative: bool,
+    execution_mode: ExecutionMode,
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +258,10 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
             return Ok(ExitCode::from(1u8));
         }
     };
-    let base_settings = resolve_turn_settings(&cfg, &args.turn)?;
+    let mut base_settings = resolve_turn_settings(&cfg, &args.turn)?;
+    if let Some(mode) = args.mode_override {
+        base_settings.execution_mode = mode;
+    }
     if args.turn.dry_run {
         let report = build_dry_run_report(
             "ask",
@@ -277,7 +296,10 @@ fn run_ask(args: AskArgs) -> anyhow::Result<ExitCode> {
         &base_settings,
         smart,
     );
-    let settings = resolve_turn_settings(&cfg, &prep.effective_turn)?;
+    let mut settings = resolve_turn_settings(&cfg, &prep.effective_turn)?;
+    if let Some(mode) = args.mode_override {
+        settings.execution_mode = mode;
+    }
     let response = execute_turn(
         &cfg,
         "ask",
@@ -468,8 +490,10 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     if merged_turn.socket.is_none() {
         merged_turn.socket = Some(PathBuf::from(payload.socket_path.clone()));
     }
-    if merged_turn.tools.is_none() && !payload.tools.is_empty() {
-        merged_turn.tools = Some(payload.tools.join(","));
+    if merged_turn.tools.is_none() {
+        if let Some(tools) = tools_cli_for_rerun(&payload.tools) {
+            merged_turn.tools = Some(tools);
+        }
     }
     if merged_turn.profile.is_none() {
         merged_turn.profile = payload.llm_profile.clone();
@@ -482,7 +506,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     merged_turn.session = None;
     let base_settings = resolve_turn_settings(&cfg, &merged_turn)?;
     let (
-        settings,
+        mut settings,
         messages,
         feature_summaries,
         conversation_id,
@@ -528,6 +552,10 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
             None,
         )
     };
+    settings.execution_mode =
+        execution_mode_for_rerun(merged_turn.collaborative, payload.execution_mode);
+    settings.collaborative =
+        collaborative_handoff_for_rerun(merged_turn.collaborative, payload.collaborative_handoff);
     let response = execute_turn(
         &cfg,
         "rerun",
@@ -717,11 +745,12 @@ fn execute_turn(
         }
     }
 
-    let plan = plan_ask_launch(
+    let plan = plan_ask_launch_for_mode(
         &settings.ask_tools,
         settings.tools_cli.as_deref(),
         settings.socket_path.clone(),
         !settings.no_start,
+        settings.execution_mode,
     )
     .map_err(tools_resolve_to_anyhow)?;
     ensure_aibe_if_needed(&plan, |path| {
@@ -782,6 +811,11 @@ fn execute_turn(
         replay_manifest_block.clone(),
     );
     request.request_context.collaborative_handoff = settings.collaborative;
+    request.request_context.execution_mode = settings.execution_mode;
+    request.request_context.system_instruction = ai::domain::append_collaborative_instruction(
+        request.request_context.system_instruction.take(),
+        settings.execution_mode,
+    );
     let turn_id = next_history_id();
     let request_messages = history_messages_from_protocol(&messages);
     let feature_summaries = history_messages_from_protocol(&feature_history_summaries);
@@ -792,6 +826,7 @@ fn execute_turn(
     } = client_request
     {
         ctx.collaborative_handoff = settings.collaborative;
+        ctx.execution_mode = settings.execution_mode.into();
     }
 
     let yes_exec_effective =
@@ -909,6 +944,8 @@ fn execute_turn(
             .or_else(|| std::env::current_dir().ok())
             .map(|p| p.display().to_string()),
         tools: tool_names,
+        execution_mode: settings.execution_mode,
+        collaborative_handoff: settings.collaborative,
         llm_profile: settings.llm_profile.clone(),
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
@@ -1349,6 +1386,44 @@ fn run_agent_turn_core(
                         handoff_error: None,
                     }
                 };
+            let human_task_handler = |prompt: aibe_client::HumanTaskExecutionPrompt| {
+                // Human Shell が TTY を使う前に tool_call スピナーを消す。
+                // `\r` 再描画がシェルプロンプトを潰すのを防ぐ。
+                presenter_thread.end_turn_progress();
+                let (cwd, _) = collaborative_meta_thread.clone().unwrap_or((None, None));
+                let cwd = cwd?;
+                let runtime_dir = match ai::adapters::outbound::create_runtime_handoff_dir() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return Some(aibe_protocol::HumanTaskResult {
+                            status: aibe_protocol::HandoffExecutionOutcome::Blocked,
+                            task: prompt.request,
+                            verified: false,
+                            human_shell_exit_code: None,
+                            final_shell_cwd: None,
+                            shell_log_range: None,
+                            observation: None,
+                            error: Some(aibe_protocol::HumanHandoffFailure {
+                                code: "human_task_runtime_unavailable".into(),
+                                message: "human task runtime directory is unavailable".into(),
+                            }),
+                        })
+                    }
+                };
+                let _runtime_guard =
+                    ai::adapters::outbound::RuntimeHandoffDirGuard::new(runtime_dir.clone());
+                let _termios_guard = ai::adapters::outbound::ParentTermiosGuard::save();
+                let service = ai::application::ExecuteHumanTask::new(
+                    &human_shell_launcher,
+                    &environment_observer,
+                );
+                Some(service.execute(
+                    prompt.request,
+                    cwd,
+                    runtime_dir,
+                    cancel_requested_thread.as_ref(),
+                ))
+            };
             let result = if use_client_tools {
                 worker_client.agent_turn_request_stream_with_client_tools(
                     request,
@@ -1368,6 +1443,7 @@ fn run_agent_turn_core(
                     },
                     replay_client_tool_callback(replay_events),
                     shell_exec_handler,
+                    human_task_handler,
                 )
             } else {
                 worker_client.agent_turn_request_stream(
@@ -1387,6 +1463,7 @@ fn run_agent_turn_core(
                         }
                     },
                     shell_exec_handler,
+                    human_task_handler,
                 )
             };
             match result {
@@ -1514,6 +1591,7 @@ fn request_turn_id(request: &ClientRequest) -> anyhow::Result<String> {
         ClientRequest::WorkApply(body) => Ok(body.id.clone()),
         ClientRequest::WorkQuery(body) => Ok(body.id.clone()),
         ClientRequest::ClientToolResult(body) => Ok(body.id.clone()),
+        ClientRequest::HumanTaskExecutionResult { id, .. } => Ok(id.clone()),
     }
 }
 
@@ -1702,6 +1780,7 @@ fn exit_code_for_response(
         | ClientResponse::MemoryChanged { .. }
         | ClientResponse::WorkApplyResult(_)
         | ClientResponse::WorkQueryResult(_) => ExitCode::SUCCESS,
+        ClientResponse::HumanTaskExecutionRequest { .. } => ExitCode::SUCCESS,
     }
 }
 
@@ -2653,6 +2732,7 @@ fn resolve_turn_settings(
         console_hint,
         trace_route: turn.trace_route,
         collaborative: turn.collaborative,
+        execution_mode: ExecutionMode::from_legacy_flag(turn.collaborative),
     })
 }
 
@@ -3542,7 +3622,8 @@ mod cli_tests {
     use ai::clap_cli::{AiCli, TurnOptions};
 
     use ai::domain::{
-        resolve_console_hints, resolve_progress, ConfigToolsTokens, FilterMetadata, ShellLogChoice,
+        resolve_console_hints, resolve_progress, ConfigToolsTokens, ExecutionMode, FilterMetadata,
+        ShellLogChoice,
     };
     use ai::domain::{
         HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus, HistorySummary,
@@ -3677,6 +3758,8 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3705,6 +3788,8 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3732,6 +3817,8 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3762,6 +3849,8 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3809,6 +3898,7 @@ mod cli_tests {
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
             collaborative: false,
+            execution_mode: ExecutionMode::Normal,
         };
         let turn = crate::TurnOptions::default();
         let hints = crate::RouteTurnHints {
@@ -3859,6 +3949,7 @@ mod cli_tests {
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
             collaborative: false,
+            execution_mode: ExecutionMode::Normal,
         };
         let turn = crate::TurnOptions {
             new: true,
@@ -3929,6 +4020,8 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
@@ -4207,6 +4300,7 @@ mod cli_tests {
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
             collaborative: false,
+            execution_mode: ExecutionMode::Normal,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,
@@ -4299,6 +4393,7 @@ mod cli_tests {
             console_hint: resolve_console_hints(None, None, None, true, None),
             trace_route: false,
             collaborative: false,
+            execution_mode: ExecutionMode::Normal,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,

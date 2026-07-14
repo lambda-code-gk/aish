@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use aibe_protocol::PostHandoffObservation;
+use aibe_protocol::{HumanTaskBriefing, PostHandoffObservation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HumanShellLaunchRequest {
@@ -11,6 +11,7 @@ pub struct HumanShellLaunchRequest {
     pub parent_request_summary: String,
     pub suggested_command: String,
     pub runtime_dir: PathBuf,
+    pub task_briefing: Option<HumanTaskBriefing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

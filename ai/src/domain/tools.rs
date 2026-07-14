@@ -5,9 +5,10 @@
 
 use std::str::FromStr;
 
+use crate::domain::ExecutionMode;
 use aibe_protocol::{
-    is_known_tool, ToolName, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE,
-    SHELL_EXEC, WRITE_FILE,
+    is_known_tool, ToolName, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, HUMAN_TASK, LIST_DIR,
+    READ_FILE, SHELL_EXEC, WRITE_FILE,
 };
 use thiserror::Error;
 
@@ -29,6 +30,24 @@ impl ToolAllowlist {
     pub fn into_names(self) -> Vec<ToolName> {
         self.names
     }
+}
+
+pub fn apply_execution_mode(mut resolved: ResolvedTools, mode: ExecutionMode) -> ResolvedTools {
+    if mode.is_collaborative()
+        && !resolved
+            .allowlist
+            .names
+            .iter()
+            .any(|n| n.as_str() == HUMAN_TASK)
+    {
+        resolved.allowlist.names.push(ToolName::human_task());
+        resolved.startup.enabled_list = if resolved.startup.enabled_list == "none" {
+            HUMAN_TASK.to_string()
+        } else {
+            format!("{}, {HUMAN_TASK}", resolved.startup.enabled_list)
+        };
+    }
+    resolved
 }
 
 /// 解決済み allowlist と起動時表示用メタデータ。
@@ -118,6 +137,8 @@ fn resolve_tokens(tokens: &[String]) -> Result<ResolvedTools, ToolsResolveError>
             for name in names {
                 expanded.push(parse_tool_name(name)?);
             }
+        } else if t == HUMAN_TASK {
+            return Err(ToolsResolveError::UnknownTool(t.to_string()));
         } else if is_known_tool(t) {
             expanded.push(parse_tool_name(t)?);
         } else if t.starts_with('@') {

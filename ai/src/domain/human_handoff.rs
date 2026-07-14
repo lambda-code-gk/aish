@@ -2,11 +2,12 @@
 
 use crate::domain::shell_single_quote;
 
-pub const HANDOFF_ENV_KEYS: [&str; 4] = [
+pub const HANDOFF_ENV_KEYS: [&str; 5] = [
     "AISH_CONTROL_MODE",
     "AISH_HANDOFF_PARENT_REQUEST",
     "AISH_HANDOFF_SUGGESTED_COMMAND",
     "AISH_HANDOFF_RUNTIME_DIR",
+    "AISH_HANDOFF_TASK_JSON",
 ];
 
 pub const HANDOFF_PARENT_REQUEST_MAX_BYTES: usize = 4 * 1024;

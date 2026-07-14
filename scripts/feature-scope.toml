@@ -16,6 +16,56 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0062"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 6
+scope_change_reason = "review: HumanTaskResult.verified=false + stronger collab instruction against unverified completion claims"
+scope_review = "approved"
+
+core_outcome = "ai collab で Collaborative Mode を正式起動し、LLM が独立 human_task tool で人間へ作業委譲して自動観測付き結果を受け取る"
+
+actors = 2
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 2
+process_boundaries = 2
+
+novel_mechanisms = ["human-task-tool-gate"]
+integrations = ["0055-0057-human-shell", "0060-human-task-briefing", "0061-human-task-evidence"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "persistence/resume/list, parallel or nested tasks, side agents, Human Shell ai ask, automatic verification, GUI/screenshots, ownership/lease, manual summary, and legacy shell_exec interception removal are deferred"
+
+vertical_slice_ac_id = "collab_human_task_vertical_with_fakes"
+
+locked_ac_ids = [
+  "collab_cli_selects_collaborative_mode",
+  "collab_legacy_flag_maps_to_same_mode",
+  "collab_preserves_explicit_tools_without_exec_requirement",
+  "human_task_is_published_only_in_collaborative_mode",
+  "human_task_schema_matches_request_contract",
+  "human_task_briefing_uses_task_labels_and_omits_empty_sections",
+  "execute_human_task_uses_existing_human_shell_ports",
+  "human_task_result_reuses_status_and_observation_types",
+  "human_task_result_requires_no_manual_summary",
+  "human_task_done_does_not_mean_verified",
+  "human_task_is_independent_from_shell_exec",
+  "collab_instruction_is_mode_scoped_and_not_in_cli",
+  "human_task_errors_are_structured_and_fail_closed",
+  "collab_human_task_vertical_with_fakes",
+  "collab_human_task_preserves_prior_stage_regressions",
+  "collab_docs_use_official_entrypoint",
+]
+
+[[features]]
 spec = "0061"
 status = "done"
 scope_class = "feature"

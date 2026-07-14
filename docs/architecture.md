@@ -171,6 +171,8 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
 - **pack 分離（0043 Phase 3）**: `kind_files` / `recipe_files` は memory pack、`feature_files` は feature pack に分けて解釈する。`feature_files=None` の互換解釈は維持するが、設定モデルは分離済みであるべき。
 - **履歴**: feature executor の memory 本文は `agent_turn` のみへ。local history の `request_messages` は **replay 用 transcript を保持**し、redacted summary は `feature_summaries` に分離する。
 - **retry / rerun**: TTY かつ元 turn が `ask` のとき `route_turn` + feature executor を再実行。non-TTY / `chat` は `request_messages` replay。
+  - **`ai rerun`**: 履歴 payload の `tools` / `execution_mode` / `collaborative_handoff` を復元する。`human_task` は Mode policy 経由でのみ再付与するため、復元 CLI トークンからは除外する。`execution_mode` と旧 `collaborative_handoff`（`--collaborative` の shell_exec interception）は独立であり、`ai collab` 由来の Collaborative Mode だけから interception を導出しない。CLI `--collaborative` 指定時のみ両フラグを Collaborative / true へ昇格できる。旧 payload で欠落時は Normal / false。
+  - **`ai retry`**: 履歴の mode / tools / handoff フラグは復元せず、**現在の CLI TurnOptions**（`--collaborative` 含む）だけを正とする。
 
 ### Smart Preprocessor（0044）
 
@@ -633,3 +635,10 @@ Evidence は最大 50 commands、2 KiB/command、command 合計 16 KiB に制限
 Ctrl+D または `exit` の後、追加入力（outcome 選択・summary）なく親へ制御を返す。composition root の順序は `RunSynchronousHumanHandoff::execute → ParentTermiosGuard drop → HumanHandoffResult` であり、対話 collector は呼ばない。
 
 `HumanHandoffResult` は origin/main の既存 schema を維持し、`collab_outcome` を含む結果 field や status schema は追加しない。終了コードや return marker から作業 outcome を推定する処理も持たない。
+# Collaborative Mode と human_task（0062）
+
+`ai collab` は `ai` domain の `ExecutionMode::Collaborative` を選び、既存の ask 入力解決を再利用する。旧 `--collaborative` は同じ mode へ正規化される一方、0055 の `shell_exec` interception 互換も維持する。通常の tool allowlist は順序を保ち、Collaborative Mode policy が独立した組み込み `human_task` を末尾へ一度だけ追加する。Normal Mode では client 指定と server の `ToolExecutionContext.execution_mode` の両方で fail-closed にする。`@exec` は引き続き `shell_exec` だけを表す。local history payload は `execution_mode` と旧 interception 用 `collaborative_handoff` を独立に保存し、`ai rerun` がそれぞれ復元する（`ai collab` は Mode のみなので rerun しても `shell_exec` を Human Shell へ変換しない。`ai retry` は現在 CLI 指定を正とする）。
+
+`HumanTaskTool` は組み込み registry/definition 経路に一度だけ登録され、同一 Unix 接続の専用 `HumanTaskGate` callback を呼ぶ。callback は turn/tool-call/prompt ID の全一致を要求し、ShellExec approval DTO を使わない。`ai` の `ExecuteHumanTask` は既存 `HumanShellLauncher` と `EnvironmentObserver` を順に呼び、結果を同じ親 agent の tool round へ返す。正常復帰の `HumanTaskResult` は `status=done` でも `verified=false` を必須とし、Collaborative Mode instruction は独立再観測なしの完了断定を禁止する。
+
+構造化 briefing は ai→aish の既存 Human Shell process boundary で、version 1 の `AISH_HANDOFF_TASK_JSON` 一個として渡す。aish は 64 KiB、既知 version、JSON schema を shell 起動前に検証し、起動直後に子 shell 環境から unset する。値がない旧 handoff は従来の parent request/suggested command 表示へ fallback する。

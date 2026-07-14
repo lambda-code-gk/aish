@@ -16,12 +16,28 @@ use crate::application::RunShell;
 use crate::domain::{CommandSpec, LogEvent};
 use crate::ports::outbound::SessionLog;
 
-pub const HANDOFF_ENV_KEYS: [&str; 4] = [
+pub const HANDOFF_ENV_KEYS: [&str; 5] = [
     "AISH_CONTROL_MODE",
     "AISH_HANDOFF_PARENT_REQUEST",
     "AISH_HANDOFF_SUGGESTED_COMMAND",
     "AISH_HANDOFF_RUNTIME_DIR",
+    "AISH_HANDOFF_TASK_JSON",
 ];
+
+const HUMAN_TASK_BRIEFING_MAX_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HumanTaskBriefing {
+    version: u8,
+    objective: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    instructions: Vec<String>,
+    #[serde(default)]
+    completion_criteria: Vec<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanShellResult {
@@ -119,6 +135,62 @@ pub fn render_human_task_briefing(parent_request: &str, suggested_command: &str)
     out
 }
 
+pub fn render_explicit_human_task(task: &HumanTaskBriefing) -> String {
+    let mut out = String::from(
+        "AISH Collaborative Mode\n=======================\n\nHuman Task\n\nObjective:\n",
+    );
+    out.push_str(&format_indented_block(&task.objective));
+    out.push('\n');
+    if let Some(reason) = task.reason.as_deref() {
+        out.push_str("\nWhy this is a Human Task:\n");
+        out.push_str(&format_indented_block(reason));
+        out.push('\n');
+    }
+    if !task.instructions.is_empty() {
+        out.push_str("\nSuggested actions:\n");
+        for item in &task.instructions {
+            out.push_str(&format_list_item(item));
+            out.push('\n');
+        }
+    }
+    if !task.completion_criteria.is_empty() {
+        out.push_str("\nDone when:\n");
+        for item in &task.completion_criteria {
+            out.push_str(&format_list_item(item));
+            out.push('\n');
+        }
+    }
+    out.push_str("\nYou remain in control:\n  Press Ctrl+D or run `exit` to return control.\n");
+    out
+}
+
+fn format_list_item(value: &str) -> String {
+    value
+        .split('\n')
+        .enumerate()
+        .map(|(index, line)| {
+            let prefix = if index == 0 { "  - " } else { "    " };
+            format!("{prefix}{}", escape_for_handoff_display(line))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn decode_explicit_briefing(raw: &str) -> anyhow::Result<HumanTaskBriefing> {
+    if raw.len() > HUMAN_TASK_BRIEFING_MAX_BYTES {
+        anyhow::bail!("human task briefing exceeds 64 KiB");
+    }
+    let task: HumanTaskBriefing =
+        serde_json::from_str(raw).map_err(|_| anyhow::anyhow!("invalid human task briefing"))?;
+    if task.version != 1 {
+        anyhow::bail!("unsupported human task briefing version");
+    }
+    if task.objective.trim().is_empty() {
+        anyhow::bail!("human task objective is empty");
+    }
+    Ok(task)
+}
+
 pub fn human_shell_result_from_marker(
     marker: crate::adapters::outbound::HumanReturnMarker,
     child_exit_code: i32,
@@ -150,16 +222,23 @@ pub fn validate_handoff_shell(shell: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn print_handoff_briefing() {
+pub fn print_handoff_briefing() -> anyhow::Result<()> {
+    if let Ok(raw) = std::env::var("AISH_HANDOFF_TASK_JSON") {
+        let task = decode_explicit_briefing(&raw)?;
+        let rendered = render_explicit_human_task(&task);
+        write!(std::io::stderr(), "{rendered}")?;
+        return Ok(());
+    }
     let parent_request = std::env::var("AISH_HANDOFF_PARENT_REQUEST").unwrap_or_default();
     let suggested = std::env::var("AISH_HANDOFF_SUGGESTED_COMMAND").unwrap_or_default();
     let rendered = render_human_task_briefing(&parent_request, &suggested);
     let _ = write!(std::io::stderr(), "{rendered}");
+    Ok(())
 }
 
 pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
     validate_handoff_environment()?;
-    print_handoff_briefing();
+    print_handoff_briefing()?;
     let cfg = AishConfig::load();
     validate_handoff_shell(&cfg.shell)?;
     let parent = resolve_sessions_parent(&cfg);
@@ -411,5 +490,33 @@ mod tests {
         let displayed = format_indented_block("line one\nline two");
         assert_eq!(displayed, "  line one\n  line two");
         assert!(!displayed.contains("\\n"));
+    }
+
+    #[test]
+    fn explicit_human_task_omits_empty_sections() {
+        let task = decode_explicit_briefing(r#"{"version":1,"objective":"inspect"}"#).unwrap();
+        let rendered = render_explicit_human_task(&task);
+        assert!(rendered.contains("Objective:\n  inspect"));
+        assert!(!rendered.contains("Why this is a Human Task:"));
+        assert!(!rendered.contains("Suggested actions:"));
+        assert!(!rendered.contains("Done when:"));
+    }
+
+    #[test]
+    fn explicit_human_task_rejects_invalid_version_and_size() {
+        assert!(decode_explicit_briefing(r#"{"version":2,"objective":"x"}"#).is_err());
+        assert!(decode_explicit_briefing(&"x".repeat(HUMAN_TASK_BRIEFING_MAX_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn explicit_human_task_indents_each_list_item_line() {
+        let task = decode_explicit_briefing(
+            r#"{"version":1,"objective":"inspect","instructions":["first\nsecond"],"completion_criteria":["done\nverified"]}"#,
+        )
+        .unwrap();
+        let rendered = render_explicit_human_task(&task);
+        assert!(rendered.contains("Suggested actions:\n  - first\n    second"));
+        assert!(rendered.contains("Done when:\n  - done\n    verified"));
+        assert!(!rendered.contains("first\\nsecond"));
     }
 }

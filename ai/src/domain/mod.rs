@@ -2,8 +2,10 @@ mod ask;
 mod ask_arg_order;
 mod ask_invocation;
 pub mod client_tools;
+mod collab_instruction;
 mod console_context;
 mod console_hint;
+mod execution_mode;
 mod history;
 mod human_handoff;
 pub mod human_task_evidence;
@@ -31,13 +33,17 @@ pub use ask_invocation::{
     classify_ask_invocation, is_known_cli_head, should_enter_interactive_prompt_mode,
     AskInvocationSource,
 };
+pub use collab_instruction::{append_collaborative_instruction, COLLABORATIVE_INSTRUCTION};
 pub use console_hint::{
     resolve_console_hints, ConsoleHintOutputFormat, ConsoleHintReport, ConsoleHintSource,
     ConsoleHintSuppressedBy,
 };
+pub use execution_mode::ExecutionMode;
 pub use history::{
-    HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryMessage, HistoryPayload,
-    HistoryRecordKind, HistoryRecordStatus, HistoryReplayRequest, HistorySummary, HistoryTurnInput,
+    collaborative_handoff_for_rerun, execution_mode_for_rerun, execution_mode_for_retry,
+    tools_cli_for_rerun, HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryMessage,
+    HistoryPayload, HistoryRecordKind, HistoryRecordStatus, HistoryReplayRequest, HistorySummary,
+    HistoryTurnInput,
 };
 pub use human_handoff::{
     build_suggested_command, truncate_parent_request_summary, HANDOFF_ENV_KEYS,
@@ -81,7 +87,7 @@ pub use suggested_command_recall::{
 };
 pub use terminal_size::TerminalSize;
 pub use tools::{
-    resolve_tools, tokens_from_config_value, AskToolsConfigRaw, ConfigToolsTokens, ResolvedTools,
-    ToolAllowlist, ToolsResolveError, ToolsStartupLine,
+    apply_execution_mode, resolve_tools, tokens_from_config_value, AskToolsConfigRaw,
+    ConfigToolsTokens, ResolvedTools, ToolAllowlist, ToolsResolveError, ToolsStartupLine,
 };
 pub use work::{render_work_snapshot, WorkView};

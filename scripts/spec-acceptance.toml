@@ -3177,3 +3177,147 @@ description = "Human Shell command 実行から structured Evidence の親返却
 test = "human_task_evidence_vertical_e2e"
 file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "collab_cli_selects_collaborative_mode"
+description = "ai collab が既存 ask の入力解決を再利用して Collaborative mode、通常 ask が Normal mode を選ぶ"
+test = "collab_cli_selects_collaborative_mode"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "collab_legacy_flag_maps_to_same_mode"
+description = "旧 --collaborative を同じ mode へ正規化し、依頼文や tool call から mode を推測しない"
+test = "collab_legacy_flag_maps_to_same_mode"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "collab_preserves_explicit_tools_without_exec_requirement"
+description = "Collaborative mode が @exec 必須でなく、明示 tools を順序保持して human_task を重複なく追加する"
+test = "collab_preserves_explicit_tools_without_exec_requirement"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_is_published_only_in_collaborative_mode"
+description = "human_task を Collaborative mode だけで公開し、Normal mode と forged allowlist を拒否する"
+test = "human_task_is_published_only_in_collaborative_mode"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_schema_matches_request_contract"
+description = "HumanTaskRequest schema、trim 正規化、未知 field・空 element・型不一致・64 KiB 上限を検証する"
+test = "human_task_schema_matches_request_contract"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_briefing_uses_task_labels_and_omits_empty_sections"
+description = "0060 renderer の固定ラベルへ request を対応付け、空 section を補完せず省略する"
+test = "human_task_briefing_uses_task_labels_and_omits_empty_sections"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "execute_human_task_uses_existing_human_shell_ports"
+description = "ExecuteHumanTask が既存 launcher と observer を順序どおり使い versioned JSON 1個で briefing を運ぶ"
+test = "execute_human_task_uses_existing_human_shell_ports"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_result_reuses_status_and_observation_types"
+description = "既存 outcome と observation を再利用した result を構築し status/error 不変条件違反を拒否する"
+test = "human_task_result_reuses_status_and_observation_types"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_result_requires_no_manual_summary"
+description = "終了後の summary/status 入力なしで Evidence commands が空でも done result を返せる"
+test = "human_task_result_requires_no_manual_summary"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_done_does_not_mean_verified"
+description = "done でも verified=false。exit/Evidence を達成とみなさず、instruction は完了断定を禁止する"
+test = "human_task_done_does_not_mean_verified"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "human_task_is_independent_from_shell_exec"
+description = "human_task 本番経路が ShellExecTool、@exec、command allowlist、approval gate に依存しない"
+test = "human_task_is_independent_from_shell_exec"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "collab_instruction_is_mode_scoped_and_not_in_cli"
+description = "Collaborative instruction を domain/application builder から既存合成点へ mode 限定で追加する"
+test = "collab_instruction_is_mode_scoped_and_not_in_cli"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 1
+id = "collab_human_task_vertical_with_fakes"
+description = "ai collab の mode/tool 公開から fake Human Shell と structured result を経て親 agent 継続まで shell_exec なしで通る"
+test = "collab_human_task_vertical_with_fakes"
+file_glob = "aibe/tests/0062_collab_mode_human_task_tool.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 2
+id = "human_task_errors_are_structured_and_fail_closed"
+description = "invalid schema/mode/gate/wire を安定 code で拒否し blocked/cancelled/観測失敗を契約どおり返す"
+test = "human_task_errors_are_structured_and_fail_closed"
+file_glob = "aibe/tests/0062_collab_mode_human_task_tool.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 2
+id = "collab_human_task_preserves_prior_stage_regressions"
+description = "0055/0057 cleanup、0060 briefing、0061 Evidence、通常 shell_exec、Normal mode、明示 tools を回帰させない"
+test = "collab_human_task_preserves_prior_stage_regressions"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false
+
+[[cases]]
+spec = "0062"
+phase = 2
+id = "collab_docs_use_official_entrypoint"
+description = "CLI help と docs が ai collab を正式導線、旧 flag を互換導線として示し @exec 必須説明を除く"
+test = "collab_docs_use_official_entrypoint"
+file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
+pending = false

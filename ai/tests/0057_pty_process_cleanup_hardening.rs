@@ -76,6 +76,7 @@ fn request(cwd: &Path, runtime_dir: PathBuf) -> HumanShellLaunchRequest {
         parent_request_summary: "0057 parent".into(),
         suggested_command: "true".into(),
         runtime_dir,
+        task_briefing: None,
     }
 }
 

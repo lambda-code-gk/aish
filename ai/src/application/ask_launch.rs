@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::domain::{resolve_tools, ConfigToolsTokens, ResolvedTools, ToolsResolveError};
+use crate::domain::{
+    apply_execution_mode, resolve_tools, ConfigToolsTokens, ExecutionMode, ResolvedTools,
+    ToolsResolveError,
+};
 
 /// tools 解決後に aibe へ接続するときのパラメータ。
 #[derive(Debug, Clone)]
@@ -19,7 +22,23 @@ pub fn plan_ask_launch(
     socket_path: PathBuf,
     auto_start: bool,
 ) -> Result<AskLaunchPlan, ToolsResolveError> {
-    let resolved_tools = resolve_tools(tools_cli, ask_tools)?;
+    plan_ask_launch_for_mode(
+        ask_tools,
+        tools_cli,
+        socket_path,
+        auto_start,
+        ExecutionMode::Normal,
+    )
+}
+
+pub fn plan_ask_launch_for_mode(
+    ask_tools: &ConfigToolsTokens,
+    tools_cli: Option<&str>,
+    socket_path: PathBuf,
+    auto_start: bool,
+    mode: ExecutionMode,
+) -> Result<AskLaunchPlan, ToolsResolveError> {
+    let resolved_tools = apply_execution_mode(resolve_tools(tools_cli, ask_tools)?, mode);
     Ok(AskLaunchPlan {
         socket_path,
         resolved_tools,

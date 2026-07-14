@@ -8,6 +8,7 @@
 
 | ファイル | 内容 |
 |----------|------|
+| [0062_collab-mode-human-task-tool.md](0062_collab-mode-human-task-tool.md) | Collaborative Mode の正式 CLI、human_task、同一接続 callback の実PTY確認 |
 | [0061_collab-mode-human-task-evidence.md](0061_collab-mode-human-task-evidence.md) | Collab Mode Human Task Evidence の実PTY・構造化返却確認 |
 | [0060_collab-mode-human-task-briefing.md](0060_collab-mode-human-task-briefing.md) | Collab Mode Human Task briefing と終了後の即時 return |
 | [aibe-openai-compatible.md](aibe-openai-compatible.md) | 実 LLM（`openai_compatible`: 公式 OpenAI API / ローカル互換）1 ターン |

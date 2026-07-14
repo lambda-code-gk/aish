@@ -9,6 +9,14 @@ use crate::memory::{
 use crate::work::{WorkApplyRequestBody, WorkQueryRequestBody};
 use crate::ToolRiskClass;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMode {
+    #[default]
+    Normal,
+    Collaborative,
+}
+
 /// NDJSON 1 行のリクエスト。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -63,6 +71,12 @@ pub enum ClientRequest {
     },
     /// `client_tool` 実行結果（同一 socket 接続上）。
     ClientToolResult(ClientToolResult),
+    HumanTaskExecutionResult {
+        id: String,
+        turn_id: String,
+        tool_call_id: String,
+        result: crate::HumanTaskResult,
+    },
     /// contextual memory の書き込み。
     MemoryApply(MemoryApplyRequestBody),
     /// contextual memory の読み取り。
@@ -133,6 +147,8 @@ pub struct RequestContext {
     /// 親 collaborative handoff mode（0055 minimal）。
     #[serde(default)]
     pub collaborative_handoff: bool,
+    #[serde(default)]
+    pub execution_mode: ExecutionMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

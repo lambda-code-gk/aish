@@ -7,6 +7,7 @@ mod git_common;
 mod git_diff;
 mod git_status;
 mod grep;
+mod human_task;
 mod list_dir;
 mod patch_parser;
 mod read_file;
@@ -27,6 +28,7 @@ pub use file_atomic::{
 pub use git_diff::GitDiffTool;
 pub use git_status::GitStatusTool;
 pub use grep::GrepTool;
+pub use human_task::HumanTaskTool;
 pub use list_dir::ListDirTool;
 pub use read_file::{ReadFileTool, FILE_METADATA_PREFIX};
 pub use registry::DefaultToolRegistry;
@@ -57,6 +59,7 @@ pub fn build_registry(
                 max_output,
                 external_commands.to_vec(),
             )) as Arc<dyn ToolExecutor>,
+            Arc::new(HumanTaskTool),
             Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
             Arc::new(ListDirTool::new(max_output, tools_cfg.explore.clone())),
             Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),

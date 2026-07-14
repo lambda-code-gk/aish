@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 pub const SHELL_EXEC: &str = "shell_exec";
+pub const HUMAN_TASK: &str = "human_task";
 pub const READ_FILE: &str = "read_file";
 pub const LIST_DIR: &str = "list_dir";
 pub const GREP: &str = "grep";
@@ -17,6 +18,7 @@ pub const APPLY_PATCH: &str = "apply_patch";
 
 pub const KNOWN_TOOLS: &[&str] = &[
     SHELL_EXEC,
+    HUMAN_TASK,
     READ_FILE,
     LIST_DIR,
     GREP,
@@ -48,6 +50,10 @@ impl ToolName {
 
     pub fn shell_exec() -> Self {
         Self(SHELL_EXEC.to_string())
+    }
+
+    pub fn human_task() -> Self {
+        Self(HUMAN_TASK.to_string())
     }
 
     pub fn list_dir() -> Self {

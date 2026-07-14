@@ -92,6 +92,11 @@ impl StdoutPresenter {
         self.spinner.stop();
     }
 
+    #[cfg(test)]
+    pub(crate) fn spinner_is_running_for_test(&self) -> bool {
+        self.spinner.is_running()
+    }
+
     /// turn スコープの spinner を RAII で停止する。
     pub fn progress_guard(&self) -> ProgressGuard<'_> {
         self.begin_turn_progress();
@@ -175,6 +180,11 @@ impl Presenter for StdoutPresenter {
         let label = format_progress_label(phase, message);
         if phase == "waiting_approval" {
             self.stop_spinner_for_output();
+            // human_task 待機は直後に Human Shell briefing が出るため、
+            // 「waiting for approval…」行を出さずスピナー消去だけにする。
+            if message == Some("human_task") {
+                return;
+            }
             eprintln!("ai: {label}");
             return;
         }
@@ -323,7 +333,8 @@ pub fn render_response(
             stdout: None,
             stderr: vec!["ai: internal error: unexpected tool approval prompt".into()],
         },
-        ClientResponse::ClientToolCallRequested { .. } => PresenterOutput {
+        ClientResponse::ClientToolCallRequested { .. }
+        | ClientResponse::HumanTaskExecutionRequest { .. } => PresenterOutput {
             stdout: None,
             stderr: Vec::new(),
         },
@@ -548,6 +559,20 @@ impl ResponseView {
             },
             ClientResponse::ClientToolCallRequested { id, .. } => Self {
                 response_type: "client_tool_call_requested".to_string(),
+                id: id.clone(),
+                status: None,
+                assistant_message: None,
+                tool_calls: Vec::new(),
+                error_code: None,
+                error_message: None,
+                alive: None,
+                warn_max_tool_rounds: false,
+                filter_warnings: Vec::new(),
+                filter_stderr: Vec::new(),
+                tool_warnings: Vec::new(),
+            },
+            ClientResponse::HumanTaskExecutionRequest { id, .. } => Self {
+                response_type: "human_task_execution_request".to_string(),
                 id: id.clone(),
                 status: None,
                 assistant_message: None,
@@ -1161,6 +1186,41 @@ mod tests {
         {
             let _guard = presenter.progress_guard();
         }
+    }
+
+    #[test]
+    fn waiting_approval_for_human_task_stops_spinner_without_keeping_it_running() {
+        use crate::ports::outbound::Presenter;
+
+        let presenter = StdoutPresenter::with_options(None, None, false, true);
+        presenter.show_progress("tool_call", Some("human_task"));
+        assert!(presenter.spinner_is_running_for_test());
+        presenter.show_progress("waiting_approval", Some("human_task"));
+        assert!(!presenter.spinner_is_running_for_test());
+    }
+
+    #[test]
+    fn waiting_approval_for_shell_exec_stops_spinner() {
+        use crate::ports::outbound::Presenter;
+
+        let presenter = StdoutPresenter::with_options(None, None, false, true);
+        presenter.show_progress("tool_call", Some("shell_exec"));
+        assert!(presenter.spinner_is_running_for_test());
+        presenter.show_progress("waiting_approval", Some("shell_exec: ls"));
+        assert!(!presenter.spinner_is_running_for_test());
+    }
+
+    #[test]
+    fn normal_tool_call_progress_keeps_spinner_running() {
+        use crate::ports::outbound::Presenter;
+
+        let presenter = StdoutPresenter::with_options(None, None, false, true);
+        presenter.show_progress("tool_call", Some("read_file"));
+        assert!(presenter.spinner_is_running_for_test());
+        presenter.show_progress("tool_call", Some("grep"));
+        assert!(presenter.spinner_is_running_for_test());
+        presenter.end_turn_progress();
+        assert!(!presenter.spinner_is_running_for_test());
     }
 
     #[test]

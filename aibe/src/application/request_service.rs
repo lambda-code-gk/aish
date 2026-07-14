@@ -12,9 +12,9 @@ use crate::domain::{
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
-    CapabilityPolicy, ClientToolGate, ConversationStore, LlmCallTracer, ProfileRegistry,
-    RouterConfig, RpcExtension, ShellExecApprovalGate, ToolApprovalGate, ToolRoundTerminator,
-    ToolsConfig, TurnCancellation, TurnEventSink, TurnHook,
+    CapabilityPolicy, ClientToolGate, ConversationStore, HumanTaskGate, LlmCallTracer,
+    ProfileRegistry, RouterConfig, RpcExtension, ShellExecApprovalGate, ToolApprovalGate,
+    ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
     ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody,
@@ -151,8 +151,16 @@ impl RequestService {
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
     ) -> ClientResponse {
-        self.handle_with_events(request, approval_gate, None, client_tool_gate, None, None)
-            .await
+        self.handle_with_events(
+            request,
+            approval_gate,
+            None,
+            client_tool_gate,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     pub async fn cancel_all_active_turns(&self) {
@@ -162,12 +170,14 @@ impl RequestService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_with_events(
         &self,
         request: ClientRequest,
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
@@ -226,6 +236,11 @@ impl RequestService {
                 String::new(),
                 ErrorCode::InvalidRequest,
                 "client_tool_result must be sent during an active agent_turn",
+            ),
+            ClientRequest::HumanTaskExecutionResult { .. } => ClientResponse::error(
+                String::new(),
+                ErrorCode::InvalidRequest,
+                "human_task_execution_result must be sent during an active agent_turn",
             ),
             ClientRequest::MemoryApply(body) => self.rpc_extension.memory_apply(body),
             ClientRequest::MemoryQuery(body) => self.rpc_extension.memory_query(body),
@@ -343,6 +358,7 @@ impl RequestService {
                         approval_gate,
                         tool_approval_gate,
                         client_tool_gate,
+                        human_task_gate,
                         events,
                         cancellation.clone(),
                     )
@@ -468,6 +484,7 @@ impl ClientRequestHandler for RequestService {
         approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
         tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
         client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
@@ -477,6 +494,7 @@ impl ClientRequestHandler for RequestService {
             approval_gate,
             tool_approval_gate,
             client_tool_gate,
+            human_task_gate,
             events,
             cancellation,
         )

@@ -21,6 +21,7 @@ pub struct AgentTurnContext {
     /// クライアントが解決済みの memory space（注入時の解決順 1 位）。
     pub memory_space_id: Option<String>,
     pub collaborative_handoff: bool,
+    pub execution_mode: aibe_protocol::ExecutionMode,
 }
 
 impl AgentTurnContext {
@@ -32,6 +33,7 @@ impl AgentTurnContext {
             ai_session_id: None,
             memory_space_id: None,
             collaborative_handoff: false,
+            execution_mode: aibe_protocol::ExecutionMode::Normal,
         }
     }
 
@@ -43,6 +45,7 @@ impl AgentTurnContext {
             ai_session_id: None,
             memory_space_id: None,
             collaborative_handoff: false,
+            execution_mode: aibe_protocol::ExecutionMode::Normal,
         }
     }
 
