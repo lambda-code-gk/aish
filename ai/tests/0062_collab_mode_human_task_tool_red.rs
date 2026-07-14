@@ -247,11 +247,18 @@ fn human_task_result_reuses_status_and_observation_types() {
 
 #[test]
 fn collab_rerun_restores_execution_mode_without_unknown_human_task() {
-    use ai::domain::{execution_mode_for_rerun, tools_cli_for_rerun};
+    use ai::domain::{
+        collaborative_handoff_for_rerun, execution_mode_for_rerun, tools_cli_for_rerun,
+    };
 
-    let saved_tools = vec!["read_file".into(), "human_task".into()];
+    let saved_tools = vec!["shell_exec".into(), "human_task".into()];
     let tools_cli = tools_cli_for_rerun(&saved_tools).expect("tools");
     let mode = execution_mode_for_rerun(false, ExecutionMode::Collaborative);
+    let handoff = collaborative_handoff_for_rerun(false, false);
+    assert!(
+        !handoff,
+        "ai collab must not enable legacy shell_exec interception on rerun"
+    );
     let plan = plan_ask_launch_for_mode(
         &ConfigToolsTokens::default(),
         Some(tools_cli.as_str()),
@@ -267,7 +274,7 @@ fn collab_rerun_restores_execution_mode_without_unknown_human_task() {
         .iter()
         .map(|n| n.as_str())
         .collect();
-    assert!(names.contains(&"read_file"));
+    assert!(names.contains(&"shell_exec"));
     assert!(names.contains(&"human_task"));
 }
 

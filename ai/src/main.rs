@@ -47,13 +47,14 @@ use ai::domain::smart_preprocessor::{
     LocalToolHint, PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
 };
 use ai::domain::{
-    execution_mode_for_rerun, resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes,
-    resolve_output_filter, resolve_progress, resolve_tools, tools_cli_for_rerun,
-    validate_ask_arg_order, AskArgOrderError, AskInput, AskInvocationSource, AskRequestError,
-    ConfigToolsTokens, ConsoleHintReport, ExecutionMode, HistoryIndexFilter, HistoryMessage,
-    HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat,
-    OutputFormatError, PromptAcquisitionResult, RequestContextInput, ShellExecSessionState,
-    ShellExecTier, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
+    collaborative_handoff_for_rerun, execution_mode_for_rerun, resolve_console_hints,
+    resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter, resolve_progress,
+    resolve_tools, tools_cli_for_rerun, validate_ask_arg_order, AskArgOrderError, AskInput,
+    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, ExecutionMode,
+    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
+    LogTailResolveError, OutputFormat, OutputFormatError, PromptAcquisitionResult,
+    RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
+    ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{
     CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
@@ -553,7 +554,8 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     };
     settings.execution_mode =
         execution_mode_for_rerun(merged_turn.collaborative, payload.execution_mode);
-    settings.collaborative = settings.execution_mode.is_collaborative();
+    settings.collaborative =
+        collaborative_handoff_for_rerun(merged_turn.collaborative, payload.collaborative_handoff);
     let response = execute_turn(
         &cfg,
         "rerun",
@@ -943,6 +945,7 @@ fn execute_turn(
             .map(|p| p.display().to_string()),
         tools: tool_names,
         execution_mode: settings.execution_mode,
+        collaborative_handoff: settings.collaborative,
         llm_profile: settings.llm_profile.clone(),
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
@@ -3755,6 +3758,7 @@ mod cli_tests {
             client_cwd: None,
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3784,6 +3788,7 @@ mod cli_tests {
             client_cwd: None,
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3812,6 +3817,7 @@ mod cli_tests {
             client_cwd: None,
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3843,6 +3849,7 @@ mod cli_tests {
             client_cwd: None,
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -4013,6 +4020,7 @@ mod cli_tests {
             client_cwd: None,
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),

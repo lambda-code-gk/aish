@@ -56,6 +56,10 @@ pub struct HistoryPayload {
     /// Collaborative / Normal。旧 payload 欠落時は Normal。
     #[serde(default)]
     pub execution_mode: ExecutionMode,
+    /// 旧 `--collaborative` の shell_exec → Human Shell interception。
+    /// `execution_mode` とは独立（`ai collab` は Mode のみでこのフラグは立てない）。
+    #[serde(default)]
+    pub collaborative_handoff: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,6 +106,12 @@ pub fn execution_mode_for_rerun(cli_collaborative: bool, saved: ExecutionMode) -
     } else {
         saved
     }
+}
+
+/// `ai rerun` の旧 interception フラグ。保存値を復元し、CLI `--collaborative` で true へ昇格できる。
+/// `execution_mode` から導出しない（`ai collab` 再実行で shell_exec を誤って Human Shell 化しない）。
+pub fn collaborative_handoff_for_rerun(cli_collaborative: bool, saved: bool) -> bool {
+    cli_collaborative || saved
 }
 
 /// `ai retry` の execution_mode。履歴は使わず、現在の CLI 指定だけを正とする。
@@ -376,6 +386,7 @@ mod tests {
             client_cwd: None,
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
+            collaborative_handoff: false,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
@@ -401,6 +412,7 @@ mod tests {
         .expect("deserialize");
         assert!(!payload.route_fallback);
         assert_eq!(payload.execution_mode, ExecutionMode::Normal);
+        assert!(!payload.collaborative_handoff);
     }
 
     #[test]
@@ -428,6 +440,20 @@ mod tests {
         );
         assert_eq!(execution_mode_for_retry(false), ExecutionMode::Normal);
         assert_eq!(execution_mode_for_retry(true), ExecutionMode::Collaborative);
+    }
+
+    #[test]
+    fn collaborative_handoff_for_rerun_stays_independent_from_execution_mode() {
+        // ai collab: mode Collaborative, legacy handoff false
+        assert!(!collaborative_handoff_for_rerun(false, false));
+        assert_eq!(
+            execution_mode_for_rerun(false, ExecutionMode::Collaborative),
+            ExecutionMode::Collaborative
+        );
+        // legacy --collaborative: both may be true
+        assert!(collaborative_handoff_for_rerun(false, true));
+        // CLI --collaborative upgrades handoff without requiring saved flag
+        assert!(collaborative_handoff_for_rerun(true, false));
     }
 
     #[test]
