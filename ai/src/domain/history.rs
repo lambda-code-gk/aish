@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::ExecutionMode;
+use aibe_protocol::HUMAN_TASK;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryIndexEntry {
     pub history_id: String,
@@ -50,6 +53,9 @@ pub struct HistoryPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_cwd: Option<String>,
     pub tools: Vec<String>,
+    /// Collaborative / Normal。旧 payload 欠落時は Normal。
+    #[serde(default)]
+    pub execution_mode: ExecutionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +75,38 @@ pub struct HistoryPayload {
     pub route_fallback: bool,
     pub socket_path: String,
     pub log_tail_bytes: usize,
+}
+
+/// `ai rerun` 用: payload の tools から CLI トークンを作る。
+/// `human_task` は Mode policy 経由でのみ再付与するため、明示トークンとしては載せない。
+pub fn tools_cli_for_rerun(tools: &[String]) -> Option<String> {
+    if tools.is_empty() {
+        return None;
+    }
+    let filtered: Vec<&str> = tools
+        .iter()
+        .map(String::as_str)
+        .filter(|name| *name != HUMAN_TASK)
+        .collect();
+    if filtered.is_empty() {
+        Some("none".to_string())
+    } else {
+        Some(filtered.join(","))
+    }
+}
+
+/// `ai rerun` の execution_mode。保存 mode を復元し、CLI `--collaborative` のみ Collaborative へ昇格できる。
+pub fn execution_mode_for_rerun(cli_collaborative: bool, saved: ExecutionMode) -> ExecutionMode {
+    if cli_collaborative {
+        ExecutionMode::Collaborative
+    } else {
+        saved
+    }
+}
+
+/// `ai retry` の execution_mode。履歴は使わず、現在の CLI 指定だけを正とする。
+pub fn execution_mode_for_retry(cli_collaborative: bool) -> ExecutionMode {
+    ExecutionMode::from_legacy_flag(cli_collaborative)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,6 +375,7 @@ mod tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
@@ -361,6 +400,34 @@ mod tests {
         )
         .expect("deserialize");
         assert!(!payload.route_fallback);
+        assert_eq!(payload.execution_mode, ExecutionMode::Normal);
+    }
+
+    #[test]
+    fn tools_cli_for_rerun_strips_human_task() {
+        assert_eq!(
+            tools_cli_for_rerun(&["read_file".into(), "human_task".into()]),
+            Some("read_file".into())
+        );
+        assert_eq!(
+            tools_cli_for_rerun(&["human_task".into()]),
+            Some("none".into())
+        );
+        assert_eq!(tools_cli_for_rerun(&[]), None);
+    }
+
+    #[test]
+    fn execution_mode_for_rerun_restores_saved_unless_cli_upgrades() {
+        assert_eq!(
+            execution_mode_for_rerun(false, ExecutionMode::Collaborative),
+            ExecutionMode::Collaborative
+        );
+        assert_eq!(
+            execution_mode_for_rerun(true, ExecutionMode::Normal),
+            ExecutionMode::Collaborative
+        );
+        assert_eq!(execution_mode_for_retry(false), ExecutionMode::Normal);
+        assert_eq!(execution_mode_for_retry(true), ExecutionMode::Collaborative);
     }
 
     #[test]

@@ -132,7 +132,10 @@ mod tests {
     use super::*;
     use crate::domain::ClientCwd;
     use crate::ports::outbound::HumanTaskGate;
-    use aibe_protocol::{HandoffExecutionOutcome, HumanTaskResult};
+    use aibe_protocol::{
+        HandoffExecutionOutcome, HumanTaskEvidence, HumanTaskResult, PostHandoffObservation,
+        ShellLogRange,
+    };
     use std::sync::Arc;
 
     struct Gate;
@@ -146,10 +149,26 @@ mod tests {
             Some(HumanTaskResult {
                 status: HandoffExecutionOutcome::Done,
                 task: request,
-                human_shell_exit_code: None,
-                final_shell_cwd: None,
-                shell_log_range: None,
-                observation: None,
+                human_shell_exit_code: Some(0),
+                final_shell_cwd: Some("/tmp".into()),
+                shell_log_range: Some(ShellLogRange {
+                    start: 0,
+                    end: Some(1),
+                }),
+                observation: Some(PostHandoffObservation {
+                    cwd_exists: true,
+                    cwd: "/tmp".into(),
+                    git_head: None,
+                    git_branch: None,
+                    git_status: None,
+                    shell_log_tail: None,
+                    shell_log_truncated: None,
+                    observation_errors: Vec::new(),
+                    human_task_evidence: Some(HumanTaskEvidence {
+                        commands: Vec::new(),
+                        truncated: false,
+                    }),
+                }),
                 error: None,
             })
         }
@@ -202,10 +221,26 @@ mod tests {
             Some(HumanTaskResult {
                 status: HandoffExecutionOutcome::Done,
                 task: tampered,
-                human_shell_exit_code: None,
-                final_shell_cwd: None,
-                shell_log_range: None,
-                observation: None,
+                human_shell_exit_code: Some(0),
+                final_shell_cwd: Some("/tmp".into()),
+                shell_log_range: Some(ShellLogRange {
+                    start: 0,
+                    end: Some(1),
+                }),
+                observation: Some(PostHandoffObservation {
+                    cwd_exists: true,
+                    cwd: "/tmp".into(),
+                    git_head: None,
+                    git_branch: None,
+                    git_status: None,
+                    shell_log_tail: None,
+                    shell_log_truncated: None,
+                    observation_errors: Vec::new(),
+                    human_task_evidence: Some(HumanTaskEvidence {
+                        commands: Vec::new(),
+                        truncated: false,
+                    }),
+                }),
                 error: None,
             })
         }

@@ -101,7 +101,17 @@ pub struct HumanTaskResult {
 impl HumanTaskResult {
     pub fn validate(&self) -> Result<(), &'static str> {
         match self.status {
-            HandoffExecutionOutcome::Done if self.error.is_none() => Ok(()),
+            HandoffExecutionOutcome::Done
+                if self.error.is_none()
+                    && self
+                        .final_shell_cwd
+                        .as_ref()
+                        .is_some_and(|cwd| !cwd.trim().is_empty())
+                    && self.shell_log_range.is_some()
+                    && self.observation.is_some() =>
+            {
+                Ok(())
+            }
             HandoffExecutionOutcome::Blocked
                 if self
                     .error
@@ -230,7 +240,7 @@ mod tests {
         };
         let blocked = HumanTaskResult {
             status: HandoffExecutionOutcome::Blocked,
-            task,
+            task: task.clone(),
             human_shell_exit_code: None,
             final_shell_cwd: None,
             shell_log_range: None,
@@ -238,6 +248,41 @@ mod tests {
             error: None,
         };
         assert!(blocked.validate().is_err());
+
+        let done_without_lifecycle = HumanTaskResult {
+            status: HandoffExecutionOutcome::Done,
+            task: task.clone(),
+            human_shell_exit_code: None,
+            final_shell_cwd: None,
+            shell_log_range: None,
+            observation: None,
+            error: None,
+        };
+        assert!(done_without_lifecycle.validate().is_err());
+
+        let done = HumanTaskResult {
+            status: HandoffExecutionOutcome::Done,
+            task,
+            human_shell_exit_code: Some(0),
+            final_shell_cwd: Some("/tmp".into()),
+            shell_log_range: Some(ShellLogRange {
+                start: 1,
+                end: Some(2),
+            }),
+            observation: Some(PostHandoffObservation {
+                cwd_exists: true,
+                cwd: "/tmp".into(),
+                git_head: None,
+                git_branch: None,
+                git_status: None,
+                shell_log_tail: None,
+                shell_log_truncated: None,
+                observation_errors: Vec::new(),
+                human_task_evidence: None,
+            }),
+            error: None,
+        };
+        assert!(done.validate().is_ok());
     }
 
     /// 0060: `collab_outcome` 系 wire 型の再導入を静的に禁止する。

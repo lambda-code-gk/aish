@@ -229,7 +229,46 @@ fn human_task_result_reuses_status_and_observation_types() {
         &AtomicBool::new(false),
     );
     assert!(result.validate().is_ok());
-    assert!(result.observation.unwrap().cwd_exists);
+    assert!(result.final_shell_cwd.is_some());
+    assert!(result.shell_log_range.is_some());
+    assert!(result.observation.as_ref().unwrap().cwd_exists);
+
+    let bare_done = aibe_protocol::HumanTaskResult {
+        status: HandoffExecutionOutcome::Done,
+        task: task(),
+        human_shell_exit_code: None,
+        final_shell_cwd: None,
+        shell_log_range: None,
+        observation: None,
+        error: None,
+    };
+    assert!(bare_done.validate().is_err());
+}
+
+#[test]
+fn collab_rerun_restores_execution_mode_without_unknown_human_task() {
+    use ai::domain::{execution_mode_for_rerun, tools_cli_for_rerun};
+
+    let saved_tools = vec!["read_file".into(), "human_task".into()];
+    let tools_cli = tools_cli_for_rerun(&saved_tools).expect("tools");
+    let mode = execution_mode_for_rerun(false, ExecutionMode::Collaborative);
+    let plan = plan_ask_launch_for_mode(
+        &ConfigToolsTokens::default(),
+        Some(tools_cli.as_str()),
+        "/tmp/x".into(),
+        false,
+        mode,
+    )
+    .expect("plan");
+    let names: Vec<_> = plan
+        .resolved_tools
+        .allowlist
+        .names()
+        .iter()
+        .map(|n| n.as_str())
+        .collect();
+    assert!(names.contains(&"read_file"));
+    assert!(names.contains(&"human_task"));
 }
 
 #[test]

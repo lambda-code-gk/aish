@@ -40,8 +40,9 @@ pub use console_hint::{
 };
 pub use execution_mode::ExecutionMode;
 pub use history::{
-    HistoryIndexEntry, HistoryIndexFilter, HistoryIndexView, HistoryMessage, HistoryPayload,
-    HistoryRecordKind, HistoryRecordStatus, HistoryReplayRequest, HistorySummary, HistoryTurnInput,
+    execution_mode_for_rerun, execution_mode_for_retry, tools_cli_for_rerun, HistoryIndexEntry,
+    HistoryIndexFilter, HistoryIndexView, HistoryMessage, HistoryPayload, HistoryRecordKind,
+    HistoryRecordStatus, HistoryReplayRequest, HistorySummary, HistoryTurnInput,
 };
 pub use human_handoff::{
     build_suggested_command, truncate_parent_request_summary, HANDOFF_ENV_KEYS,

@@ -47,13 +47,13 @@ use ai::domain::smart_preprocessor::{
     LocalToolHint, PreprocessConfig, RouteMetadataInput, SmartIntentClass, SmartPreprocessMode,
 };
 use ai::domain::{
-    resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter,
-    resolve_progress, resolve_tools, validate_ask_arg_order, AskArgOrderError, AskInput,
-    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, ExecutionMode,
-    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
-    LogTailResolveError, OutputFormat, OutputFormatError, PromptAcquisitionResult,
-    RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
-    ShellLogResolveError, ToolsResolveError,
+    execution_mode_for_rerun, resolve_console_hints, resolve_llm_profile, resolve_log_tail_bytes,
+    resolve_output_filter, resolve_progress, resolve_tools, tools_cli_for_rerun,
+    validate_ask_arg_order, AskArgOrderError, AskInput, AskInvocationSource, AskRequestError,
+    ConfigToolsTokens, ConsoleHintReport, ExecutionMode, HistoryIndexFilter, HistoryMessage,
+    HistoryPayload, HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat,
+    OutputFormatError, PromptAcquisitionResult, RequestContextInput, ShellExecSessionState,
+    ShellExecTier, ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{
     CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
@@ -489,8 +489,10 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     if merged_turn.socket.is_none() {
         merged_turn.socket = Some(PathBuf::from(payload.socket_path.clone()));
     }
-    if merged_turn.tools.is_none() && !payload.tools.is_empty() {
-        merged_turn.tools = Some(payload.tools.join(","));
+    if merged_turn.tools.is_none() {
+        if let Some(tools) = tools_cli_for_rerun(&payload.tools) {
+            merged_turn.tools = Some(tools);
+        }
     }
     if merged_turn.profile.is_none() {
         merged_turn.profile = payload.llm_profile.clone();
@@ -503,7 +505,7 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
     merged_turn.session = None;
     let base_settings = resolve_turn_settings(&cfg, &merged_turn)?;
     let (
-        settings,
+        mut settings,
         messages,
         feature_summaries,
         conversation_id,
@@ -549,6 +551,9 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
             None,
         )
     };
+    settings.execution_mode =
+        execution_mode_for_rerun(merged_turn.collaborative, payload.execution_mode);
+    settings.collaborative = settings.execution_mode.is_collaborative();
     let response = execute_turn(
         &cfg,
         "rerun",
@@ -937,6 +942,7 @@ fn execute_turn(
             .or_else(|| std::env::current_dir().ok())
             .map(|p| p.display().to_string()),
         tools: tool_names,
+        execution_mode: settings.execution_mode,
         llm_profile: settings.llm_profile.clone(),
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
@@ -3748,6 +3754,7 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3776,6 +3783,7 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3803,6 +3811,7 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -3833,6 +3842,7 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -4002,6 +4012,7 @@ mod cli_tests {
             shell_log_tail: None,
             client_cwd: None,
             tools: vec![],
+            execution_mode: ExecutionMode::Normal,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
