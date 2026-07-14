@@ -236,6 +236,7 @@ fn human_task_result_reuses_status_and_observation_types() {
     let bare_done = aibe_protocol::HumanTaskResult {
         status: HandoffExecutionOutcome::Done,
         task: task(),
+        verified: false,
         human_shell_exit_code: None,
         final_shell_cwd: None,
         shell_log_range: None,
@@ -306,7 +307,25 @@ fn human_task_done_does_not_mean_verified() {
         &AtomicBool::new(false),
     );
     assert_eq!(result.status, HandoffExecutionOutcome::Done);
+    assert!(!result.verified);
+    assert!(result.validate().is_ok());
     assert_eq!(result.human_shell_exit_code, Some(7));
+    // 無操作復帰でも status=done になり得るが、verified=false で完了断定禁止。
+    assert!(result
+        .observation
+        .as_ref()
+        .unwrap()
+        .human_task_evidence
+        .as_ref()
+        .unwrap()
+        .commands
+        .is_empty());
+
+    let instruction = append_collaborative_instruction(None, ExecutionMode::Collaborative).unwrap();
+    let lowered = instruction.to_ascii_lowercase();
+    assert!(lowered.contains("verified=false"));
+    assert!(lowered.contains("completion has not been confirmed"));
+    assert!(!instruction.contains("\"done\" means success"));
 }
 
 #[test]
@@ -332,6 +351,8 @@ fn collab_instruction_is_mode_scoped_and_not_in_cli() {
         append_collaborative_instruction(Some("existing".into()), ExecutionMode::Collaborative)
             .unwrap();
     assert!(text.contains("human_task") && text.starts_with("existing"));
+    assert!(text.contains("verified=false"));
+    assert!(text.contains("completion has not been confirmed"));
 }
 
 #[test]
@@ -364,6 +385,7 @@ fn human_task_result_errors_are_structured() {
     let invalid = aibe_protocol::HumanTaskResult {
         status: HandoffExecutionOutcome::Blocked,
         task: task(),
+        verified: false,
         human_shell_exit_code: None,
         final_shell_cwd: None,
         shell_log_range: None,

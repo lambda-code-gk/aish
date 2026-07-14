@@ -149,6 +149,7 @@ mod tests {
             Some(HumanTaskResult {
                 status: HandoffExecutionOutcome::Done,
                 task: request,
+                verified: false,
                 human_shell_exit_code: Some(0),
                 final_shell_cwd: Some("/tmp".into()),
                 shell_log_range: Some(ShellLogRange {
@@ -206,6 +207,7 @@ mod tests {
             .await;
         assert!(!result.is_error);
         assert!(result.content.contains("\"status\":\"done\""));
+        assert!(result.content.contains("\"verified\":false"));
     }
 
     struct TamperingGate;
@@ -221,6 +223,7 @@ mod tests {
             Some(HumanTaskResult {
                 status: HandoffExecutionOutcome::Done,
                 task: tampered,
+                verified: false,
                 human_shell_exit_code: Some(0),
                 final_shell_cwd: Some("/tmp".into()),
                 shell_log_range: Some(ShellLogRange {

@@ -28,7 +28,7 @@ use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, ErrorCode, ExecutionMode,
     HandoffExecutionOutcome, HumanTaskEvidence, HumanTaskRequest, HumanTaskResult,
     PostHandoffObservation, ProtocolMessage, RequestContext, ShellExecApprovalOrigin,
-    ToolApprovalOrigin, HUMAN_TASK, SHELL_EXEC,
+    ShellLogRange, ToolApprovalOrigin, ToolRiskClass, HUMAN_TASK, SHELL_EXEC,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -282,10 +282,27 @@ fn gate_result() -> HumanTaskResult {
     HumanTaskResult {
         status: HandoffExecutionOutcome::Done,
         task: gate_task(),
+        verified: false,
         human_shell_exit_code: Some(0),
         final_shell_cwd: Some("/tmp".into()),
-        shell_log_range: None,
-        observation: None,
+        shell_log_range: Some(ShellLogRange {
+            start: 0,
+            end: Some(1),
+        }),
+        observation: Some(PostHandoffObservation {
+            cwd_exists: true,
+            cwd: "/tmp".into(),
+            git_head: None,
+            git_branch: None,
+            git_status: None,
+            shell_log_tail: None,
+            shell_log_truncated: None,
+            observation_errors: Vec::new(),
+            human_task_evidence: Some(HumanTaskEvidence {
+                commands: Vec::new(),
+                truncated: false,
+            }),
+        }),
         error: None,
     }
 }

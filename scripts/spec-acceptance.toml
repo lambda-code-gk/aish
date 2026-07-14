@@ -3263,7 +3263,7 @@ pending = false
 spec = "0062"
 phase = 1
 id = "human_task_done_does_not_mean_verified"
-description = "done や exit code、command Evidence を達成・検証済みとみなさず status を推定しない"
+description = "done でも verified=false。exit/Evidence を達成とみなさず、instruction は完了断定を禁止する"
 test = "human_task_done_does_not_mean_verified"
 file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
 pending = false

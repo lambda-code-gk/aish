@@ -36,6 +36,7 @@ impl<'a> ExecuteHumanTask<'a> {
         let blocked = |code: &str, message: String| HumanTaskResult {
             status: HandoffExecutionOutcome::Blocked,
             task: task.clone(),
+            verified: false,
             human_shell_exit_code: None,
             final_shell_cwd: None,
             shell_log_range: None,
@@ -70,6 +71,7 @@ impl<'a> ExecuteHumanTask<'a> {
                 return HumanTaskResult {
                     status: HandoffExecutionOutcome::Cancelled,
                     task,
+                    verified: false,
                     human_shell_exit_code: None,
                     final_shell_cwd: None,
                     shell_log_range: None,
@@ -94,6 +96,7 @@ impl<'a> ExecuteHumanTask<'a> {
         HumanTaskResult {
             status: HandoffExecutionOutcome::Done,
             task,
+            verified: false,
             human_shell_exit_code: returned.exit_code,
             final_shell_cwd: Some(returned.final_cwd.display().to_string()),
             shell_log_range: Some(ShellLogRange {

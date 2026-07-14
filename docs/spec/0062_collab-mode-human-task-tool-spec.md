@@ -130,13 +130,15 @@ HumanTaskResult
 
 | wire status | 構築条件 | 意味 |
 |-------------|----------|------|
-| `done` | Human Shell が正常 return marker とともに終了 | 人間から制御が戻った。要求作業の自動検証済みを意味しない |
+| `done` | Human Shell が正常 return marker とともに終了 | 人間から制御が戻った。要求作業の自動検証済みを意味しない。`verified` は常に `false` |
 | `blocked` | cwd / runtime dir / shell 起動 / normal return marker 等の理由で Human Task を完遂できる shell lifecycle を成立させられない | 機械的な handoff 阻害。人間に理由入力を要求しない |
 | `cancelled` | turn cancellation、SIGINT、timeout により既存 cleanup 経路で中止 | ユーザーまたは親 turn により中止 |
 
-`task` は開始時 request の clone、`observation` は 0061 の `PostHandoffObservation` を優先してそのまま格納する。GUI 作業など Human Shell 内で command を実行しなかった場合、`HumanTaskEvidence.commands` が空でも正常な `done` である。command exit code、git status、shell exit codeから status を推定しない。`done` は自動検証、要求達成、成功を保証しない。
+`task` は開始時 request の clone、`observation` は 0061 の `PostHandoffObservation` を優先してそのまま格納する。GUI 作業など Human Shell 内で command を実行しなかった場合、`HumanTaskEvidence.commands` が空でも正常な `done` である（ただし `verified=false`）。command exit code、git status、shell exit codeから status を推定しない。`done` は自動検証、要求達成、成功を保証しない。親 LLM は独立再観測に成功するまで完了・成功・インストール済みなどを断定してはならない。
 
-結果の構築不変条件は次で固定する。`done` では `error = None` かつ正常 return marker を持つ。`blocked` では安定 code の `error = Some(HumanHandoffFailure)` を必須とし、成立しなかった lifecycle の metadata / observation は取得できた値だけを残す。`cancelled` では `error = None` とし、取消理由を自由文 error へ複製しない。これらに反する client result は wire decode 後の domain validation で `human_task_unavailable` として拒否し、親へ矛盾した structured result を渡さない。
+`HumanTaskResult.verified` は 0062 では常に `false` を書き、`validated` Done / Blocked / Cancelled は `verified=false` を必須とする。自動検証の本番化は後続段階へ延期する。
+
+結果の構築不変条件は次で固定する。`done` では `error = None`、`verified = false`、かつ正常 return marker に対応する lifecycle metadata を持つ。`blocked` では安定 code の `error = Some(HumanHandoffFailure)` と `verified = false` を必須とし、成立しなかった lifecycle の metadata / observation は取得できた値だけを残す。`cancelled` では `error = None`・`verified = false` とし、取消理由を自由文 error へ複製しない。これらに反する client result は wire decode 後の domain validation で `human_task_unavailable` として拒否し、親へ矛盾した structured result を渡さない。
 
 ### 1.8 `shell_exec` との責務分離
 
@@ -158,7 +160,8 @@ instruction は少なくとも次を伝える。
 - 人間への作業委譲には `human_task` を明示的に使う
 - AISH 自身が許可済み command を実行する場合は `shell_exec` を使い、両者を混同しない
 - `objective` は具体的に必須とし、任意 field は不明なら空または省略できる
-- `done` や command Evidence を自動検証済みとみなさず、必要なら返却後に環境を再観測する
+- `done`（`verified=false`）や command Evidence を自動検証済みとみなさず、独立再観測に成功するまで「完了した」「成功した」「インストールされた」と断定しない
+- 検証できない場合は「Human Task から制御が戻ったが、完了は確認できていない」と述べる
 - Human Task を並列・入れ子にしない
 
 Normal Mode の system instruction にはこの本文を入れない。依頼文解析や tool call 後の mode 変更にも使わない。
@@ -277,7 +280,7 @@ Normal Mode の system instruction にはこの本文を入れない。依頼文
 | `execute_human_task_uses_existing_human_shell_ports` | fake `HumanShellLauncher` / `EnvironmentObserver` により、request 受付、構造化 briefing 構築、同期開始・待機、結果返却の順序を検証できる。明示 task は versioned JSON 1個で既存起動境界を通り、旧 handoff は従来表示を維持する |
 | `human_task_result_reuses_status_and_observation_types` | `HumanTaskResult` が拡張した既存 `HandoffExecutionOutcome` の done/blocked/cancelled、開始時 `HumanTaskRequest`、0061 `PostHandoffObservation` と lifecycle metadata から構築され、status / error の排他不変条件に違反する payload を拒否する |
 | `human_task_result_requires_no_manual_summary` | Human Shell 終了後に summary、reason、status、outcome の手入力を要求せず、GUI 作業で Evidence commands が空でも正常結果を返せる |
-| `human_task_done_does_not_mean_verified` | done、shell exit code、command Evidence を要求達成または自動検証済みとして扱わず、command / git 状態から status を推定しない |
+| `human_task_done_does_not_mean_verified` | done、shell exit code、command Evidence を要求達成または自動検証済みとして扱わず、`verified=false` と Collaborative Mode instruction により完了断定を禁止する。command / git 状態から status を推定しない |
 | `human_task_is_independent_from_shell_exec` | `HumanTaskTool → ExecuteHumanTask → Human Shell` が `ShellExecTool`、`@exec`、command allowlist、shell_exec approval に依存せず、Collaborative Mode の全 shell_exec を Human Shell 化する新規分岐がない |
 | `collab_instruction_is_mode_scoped_and_not_in_cli` | Collaborative Mode 専用 LLM instruction を domain/application の builder で既存 system instruction 合成点へ追加し、Normal Mode と CLI parser / dispatch 本文には入れない |
 | `human_task_errors_are_structured_and_fail_closed` | invalid schema / mode / gate / wire を安定 error code で拒否し、既知 lifecycle failure は blocked、取消は cancelled、観測失敗は非 fatal とする |

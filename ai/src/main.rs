@@ -1398,6 +1398,7 @@ fn run_agent_turn_core(
                         return Some(aibe_protocol::HumanTaskResult {
                             status: aibe_protocol::HandoffExecutionOutcome::Blocked,
                             task: prompt.request,
+                            verified: false,
                             human_shell_exit_code: None,
                             final_shell_cwd: None,
                             shell_log_range: None,

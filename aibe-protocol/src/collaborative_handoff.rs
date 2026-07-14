@@ -86,6 +86,9 @@ impl From<&HumanTaskRequest> for HumanTaskBriefing {
 pub struct HumanTaskResult {
     pub status: HandoffExecutionOutcome,
     pub task: HumanTaskRequest,
+    /// 0062: Human Task は自動検証しない。正常復帰の Done でも常に false。
+    #[serde(default)]
+    pub verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub human_shell_exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +106,7 @@ impl HumanTaskResult {
         match self.status {
             HandoffExecutionOutcome::Done
                 if self.error.is_none()
+                    && !self.verified
                     && self
                         .final_shell_cwd
                         .as_ref()
@@ -113,14 +117,14 @@ impl HumanTaskResult {
                 Ok(())
             }
             HandoffExecutionOutcome::Blocked
-                if self
-                    .error
-                    .as_ref()
-                    .is_some_and(|e| !e.code.trim().is_empty() && !e.message.trim().is_empty()) =>
+                if !self.verified
+                    && self.error.as_ref().is_some_and(|e| {
+                        !e.code.trim().is_empty() && !e.message.trim().is_empty()
+                    }) =>
             {
                 Ok(())
             }
-            HandoffExecutionOutcome::Cancelled if self.error.is_none() => Ok(()),
+            HandoffExecutionOutcome::Cancelled if self.error.is_none() && !self.verified => Ok(()),
             HandoffExecutionOutcome::HumanControlReturned => {
                 Err("legacy outcome is not valid for HumanTaskResult")
             }
@@ -241,6 +245,7 @@ mod tests {
         let blocked = HumanTaskResult {
             status: HandoffExecutionOutcome::Blocked,
             task: task.clone(),
+            verified: false,
             human_shell_exit_code: None,
             final_shell_cwd: None,
             shell_log_range: None,
@@ -252,6 +257,7 @@ mod tests {
         let done_without_lifecycle = HumanTaskResult {
             status: HandoffExecutionOutcome::Done,
             task: task.clone(),
+            verified: false,
             human_shell_exit_code: None,
             final_shell_cwd: None,
             shell_log_range: None,
@@ -262,7 +268,8 @@ mod tests {
 
         let done = HumanTaskResult {
             status: HandoffExecutionOutcome::Done,
-            task,
+            task: task.clone(),
+            verified: false,
             human_shell_exit_code: Some(0),
             final_shell_cwd: Some("/tmp".into()),
             shell_log_range: Some(ShellLogRange {
@@ -283,6 +290,12 @@ mod tests {
             error: None,
         };
         assert!(done.validate().is_ok());
+
+        let done_verified_true = HumanTaskResult {
+            verified: true,
+            ..done.clone()
+        };
+        assert!(done_verified_true.validate().is_err());
     }
 
     /// 0060: `collab_outcome` 系 wire 型の再導入を静的に禁止する。
