@@ -129,7 +129,7 @@ impl HumanTaskCheckpointV1 {
             HumanTaskWorkflowState::Running
                 if self.suspended_at_ms.is_none()
                     && self.suspend_reason.is_none()
-                    && self.segments.is_empty() =>
+                    && suspended_segments_are_contiguous(&self.segments) =>
             {
                 Ok(())
             }
@@ -138,11 +138,9 @@ impl HumanTaskCheckpointV1 {
                     validate_suspend_reason(reason)?;
                 }
                 if self.suspended_at_ms.is_some()
-                    && self.segments.len() == 1
-                    && self.segments[0].index == 0
-                    && self.segments[0].started_at_ms <= self.segments[0].ended_at_ms
-                    && self.segments[0].end_reason == HumanShellSegmentEnd::Suspended
-                    && self.current_cwd == self.segments[0].final_cwd
+                    && !self.segments.is_empty()
+                    && suspended_segments_are_contiguous(&self.segments)
+                    && self.current_cwd == self.segments.last().unwrap().final_cwd
                 {
                     Ok(())
                 } else {
@@ -152,6 +150,14 @@ impl HumanTaskCheckpointV1 {
             _ => Err("checkpoint invariant violated"),
         }
     }
+}
+
+fn suspended_segments_are_contiguous(segments: &[HumanShellSegment]) -> bool {
+    segments.iter().enumerate().all(|(index, segment)| {
+        segment.index == index as u32
+            && segment.started_at_ms <= segment.ended_at_ms
+            && segment.end_reason == HumanShellSegmentEnd::Suspended
+    })
 }
 
 pub fn validate_suspend_reason(reason: &str) -> Result<(), &'static str> {

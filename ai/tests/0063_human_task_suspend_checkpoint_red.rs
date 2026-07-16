@@ -433,6 +433,7 @@ fn human_task_status_reports_suspended_checkpoint() {
         "review deployment",
         "need approval",
         "Current cwd:",
+        "Resume:\n  ai human-task resume",
         "Cancel:\n  ai human-task cancel --yes",
     ] {
         assert!(text.contains(expected));

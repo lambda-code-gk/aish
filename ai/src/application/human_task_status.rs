@@ -50,6 +50,7 @@ impl<'a> HumanTaskStatus<'a> {
         if let Some(reason) = checkpoint.suspend_reason {
             out.push_str(&format!("Reason: {}\n", escape_status_field(&reason)));
         }
+        out.push_str("Resume:\n  ai human-task resume\n");
         out.push_str("Cancel:\n  ai human-task cancel --yes\n");
         Ok(out)
     }

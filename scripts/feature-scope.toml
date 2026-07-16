@@ -16,6 +16,51 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0064"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 1
+scope_change_reason = "0063-C resume vertical slice: Suspended→Running→re-suspend with multi-segment invariants; Done/continuation deferred to 0063-D"
+scope_review = "approved"
+
+core_outcome = "Suspended Human Task を ai human-task resume で再開し、再 suspend で segment を順序保持できる"
+
+actors = 1
+state_machines = 1
+persistent_aggregates = 1
+external_effects = 2
+process_boundaries = 1
+
+novel_mechanisms = ["human-task-resume"]
+integrations = ["0063-checkpoint", "0055-0057-human-shell-briefing", "0061-evidence-retention"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "Done/ResultPending/agent continuation/continuation turn ID deferred to 0063-D; crash recovery/lease/migration deferred to 0063-E"
+
+vertical_slice_ac_id = "human_task_resume_vertical_e2e"
+
+locked_ac_ids = [
+  "human_task_resume_vertical_e2e",
+  "human_task_resume_restores_cwd_and_briefing",
+  "human_task_resume_appends_suspended_segment",
+  "human_task_resume_holds_root_lock",
+  "human_task_status_shows_resume_command",
+  "human_task_resume_supports_multiple_suspends",
+  "human_task_resume_rejects_missing_or_mismatched_id",
+  "human_task_resume_rejects_non_suspended",
+  "human_task_resume_cwd_unavailable_fails_closed",
+  "human_task_resume_done_restores_suspended",
+  "human_task_resume_preserves_single_segment_regression",
+]
+
+[[features]]
 spec = "0063"
 status = "done"
 scope_class = "feature"

@@ -147,6 +147,9 @@ fn run() -> anyhow::Result<ExitCode> {
             command: HumanTaskCommand::Status,
         } => run_human_task_status(),
         AiCommand::HumanTask {
+            command: HumanTaskCommand::Resume { task_id },
+        } => run_human_task_resume(task_id),
+        AiCommand::HumanTask {
             command: HumanTaskCommand::Cancel { yes },
         } => run_human_task_cancel(yes),
         AiCommand::Doctor {
@@ -177,6 +180,38 @@ fn run_human_task_status() -> anyhow::Result<ExitCode> {
     let output = ai::application::HumanTaskStatus::new(&store, &formatter).render()?;
     print!("{output}");
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_human_task_resume(task_id: Option<String>) -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let identity = ai::adapters::outbound::SystemHumanTaskIdentity;
+    let launcher = ai::adapters::outbound::AishHumanShellLauncher::default();
+    let observer = ai::adapters::outbound::ProcessEnvironmentObserver::default();
+    let runtime_dir = ai::adapters::outbound::allocate_runtime_handoff_path();
+    let _runtime_guard = ai::adapters::outbound::RuntimeHandoffDirGuard::new(runtime_dir.clone());
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match ai::application::HumanTaskResume::new(&store, &identity, &launcher, &observer).execute(
+        task_id.as_deref(),
+        runtime_dir,
+        &cancel,
+    ) {
+        Ok(output) => {
+            print!("{output}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(ai::application::HumanTaskResumeError::CompletionDeferred) => {
+            eprint!(
+                "Human Task completion after resume is not available yet.\n\
+Checkpoint restored to suspended.\n\
+Suspend to save progress, or cancel to discard:\n\
+  human-task suspend\n\
+  ai human-task cancel --yes\n"
+            );
+            Ok(ExitCode::from(1))
+        }
+        Err(error) => Err(anyhow::anyhow!("{error}")),
+    }
 }
 
 fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {

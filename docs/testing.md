@@ -393,6 +393,10 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 - `aibe/tests/0063_human_task_suspend_checkpoint_red.rs`: scripted LLMの同一roundにhuman_taskと後続toolを置き、実coordinator/file store/statusを通して`SuspendTurn`、LLM 1 call、後続tool 0 call、store再openを検証する。外部providerと実PTYだけをfakeにする。
 - Phase 2回帰は0055/0057/0060/0061/0062の既存integration testも直列実行する。
 
+### 0064 Human Task resume
+
+- `ai/tests/0064_human_task_resume_red.rs`: Suspended→resume→再suspendのvertical E2E、cwd/briefing復元、segment追記、root flock保持、複数回suspendのObservation順序、missing/mismatched ID、非Suspended拒否、cwd不在、Done時のSuspended復元、0063単一segment/Done削除回帰。
+
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
 - 実 API キーを使うテストを CI に入れない
 - フィクスチャは `*/tests/fixtures/` に置き、大きなログは必要最小限
