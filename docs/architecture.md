@@ -651,7 +651,7 @@ composition root は `ai/main.rs` の Human Task callback である。runtime di
 
 `HumanTaskResult.status=suspended` は `task_id` と一segment分のmetadataを返す。aibeの`ToolRoundExecutor`はこれを内部`SuspendTurn`へ変換し、同roundの残りtoolと次のLLM callを行わず固定の Resume / Cancel 案内で正常turn終了する。旧`HumanHandoffResult`と通常`shell_exec`はsuspendを生成しない。
 
-`ai human-task status` はaibe socketへ接続せずroot lock下でlocal storeを一貫読取する。Suspendedに加え、lock取得後も残るRunningを所有processの予期しない終了によるorphaned状態としてcancel案内付きで表示する。task entryなしだけを成功のno-taskとし、有効task ID directory内のcheckpoint欠落・temp残骸・破損・未知version・owner/mode不正は安定errorで失敗する。`ai human-task cancel [--yes]`も同じlock下でSuspendedまたはorphaned Runningだけを確認付きで削除し、確認拒否・非TTY・invalidは変更なしで失敗する。これはlocal復旧だけでaibe continuation/resultは送らない。continuation、自動crash recovery、lease/heartbeat、schema migrationは0063に含まれない。
+`ai human-task status` はaibe socketへ接続せず、root lockを非ブロッキング取得してlocal storeを読む。lock取得後に残るRunningは所有processの予期しない終了によるorphaned状態としてcancel案内付きで表示する。Human Shell実行中でcreate/resumeがlockを保持している場合はブロックせず、保存済みRunningをbest-effort読取してactive `running`とsuspend案内を表示する。task entryなしだけを成功のno-taskとし、有効task ID directory内のcheckpoint欠落・temp残骸・破損・未知version・owner/mode不正は安定errorで失敗する。`ai human-task cancel [--yes]`も非ブロッキングで同じlockを取り、busyならfile非変更で失敗する。取得できた場合はSuspendedまたはorphaned Runningだけを確認付きで削除し、確認拒否・非TTY・invalidは変更なしで失敗する。これはlocal復旧だけでaibe continuation/resultは送らない。continuation、自動crash recovery、lease/heartbeat、schema migrationは0063に含まれない。
 
 ## Human Task resume（0064）
 

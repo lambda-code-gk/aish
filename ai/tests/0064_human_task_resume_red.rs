@@ -599,6 +599,11 @@ impl HumanTaskStore for FailTerminalResumeSaveStore {
     fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError> {
         self.inner.lock_exclusive()
     }
+    fn try_lock_exclusive(
+        &self,
+    ) -> Result<Option<Box<dyn HumanTaskStoreLock + '_>>, HumanTaskStoreError> {
+        self.inner.try_lock_exclusive()
+    }
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {
         self.inner.load_active()
     }

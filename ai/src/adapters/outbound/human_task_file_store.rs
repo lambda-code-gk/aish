@@ -173,10 +173,8 @@ impl HumanTaskFileStore {
             .map_err(|_| HumanTaskStoreError::Invalid)?;
         Ok(checkpoint)
     }
-}
 
-impl HumanTaskStore for HumanTaskFileStore {
-    fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError> {
+    fn open_root_lock_file(&self) -> Result<File, HumanTaskStoreError> {
         if let Some(parent) = self.root.parent() {
             fs::create_dir_all(parent).map_err(|_| HumanTaskStoreError::Unavailable)?;
         }
@@ -199,10 +197,31 @@ impl HumanTaskStore for HumanTaskFileStore {
         {
             return Err(HumanTaskStoreError::PermissionDenied);
         }
+        Ok(file)
+    }
+}
+
+impl HumanTaskStore for HumanTaskFileStore {
+    fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError> {
+        let file = self.open_root_lock_file()?;
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
             return Err(HumanTaskStoreError::Unavailable);
         }
         Ok(Box::new(HumanTaskFileLock(file)))
+    }
+
+    fn try_lock_exclusive(
+        &self,
+    ) -> Result<Option<Box<dyn HumanTaskStoreLock + '_>>, HumanTaskStoreError> {
+        let file = self.open_root_lock_file()?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Some(Box::new(HumanTaskFileLock(file))));
+        }
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        if errno == Some(libc::EWOULDBLOCK) || errno == Some(libc::EAGAIN) {
+            return Ok(None);
+        }
+        Err(HumanTaskStoreError::Unavailable)
     }
 
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {

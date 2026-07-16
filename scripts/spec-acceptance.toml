@@ -3478,6 +3478,15 @@ pending = false
 [[cases]]
 spec = "0063"
 phase = 2
+id = "human_task_status_reports_active_running_without_blocking"
+description = "Human Shell所有中にroot lockが保持されていてもstatusはブロックせずactive runningを表示し、cancelはbusyで失敗する"
+test = "human_task_status_reports_active_running_without_blocking"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
 id = "human_task_suspend_is_explicit_tool_only"
 description = "suspendを明示human_taskだけに限定し旧shell_exec handoff wire/resultを変更しない"
 test = "human_task_suspend_is_explicit_tool_only"

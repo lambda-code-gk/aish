@@ -23,7 +23,7 @@
 ## 期待結果
 
 - Running checkpoint保存後だけHuman Shellが起動し、suspend後は同roundの後続toolや追加LLM callを実行しない。
-- status/cancelはsocket不要で同じroot lockを使い、破損・未知version・権限不正・checkpoint欠落を「taskなし」へ丸めず、lock取得後のorphaned Runningだけを確認付きcancelで復旧できる。
+- status/cancelはsocket不要で同じroot lockを非ブロッキング取得する。Human Shell実行中のstatusはactive runningを表示し、cancelはbusyで失敗する。破損・未知version・権限不正・checkpoint欠落を「taskなし」へ丸めず、lock取得後のorphaned Runningだけを確認付きcancelで復旧できる。
 - 旧`shell_exec` handoffには`human-task suspend`を公開せず、既存のreturn動作を維持する。
 
 ## 未実装

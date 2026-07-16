@@ -23,7 +23,15 @@ impl<'a> HumanTaskStatus<'a> {
         }
     }
     pub fn render(&self) -> Result<String, HumanTaskStatusError> {
-        let _root_lock = self.store.lock_exclusive()?;
+        match self.store.try_lock_exclusive()? {
+            Some(_root_lock) => self.render_under_lock(),
+            // Owner (create/resume) holds the lock for the whole Human Shell session.
+            // Do not block; best-effort read of the stable Running checkpoint.
+            None => self.render_while_owner_holds_lock(),
+        }
+    }
+
+    fn render_under_lock(&self) -> Result<String, HumanTaskStatusError> {
         let checkpoint = match self.store.load_active() {
             Err(HumanTaskStoreError::NotFound) => return Ok("No suspended Human Task.\n".into()),
             other => other?,
@@ -61,6 +69,22 @@ impl<'a> HumanTaskStatus<'a> {
         out.push_str("Resume:\n  ai human-task resume\n");
         out.push_str("Cancel:\n  ai human-task cancel --yes\n");
         Ok(out)
+    }
+
+    fn render_while_owner_holds_lock(&self) -> Result<String, HumanTaskStatusError> {
+        match self.store.load_active() {
+            Err(HumanTaskStoreError::NotFound) => {
+                Ok("Human Task is currently active in another ai process.\n".into())
+            }
+            Ok(checkpoint) if checkpoint.state == HumanTaskWorkflowState::Running => Ok(format!(
+                "Human Task: {}\nState: running\nObjective: {}\nCurrent cwd: {}\nThis Human Shell session is active.\nSuspend:\n  human-task suspend [reason]\n",
+                checkpoint.task_id.as_str(),
+                escape_status_field(&checkpoint.task.objective),
+                escape_status_field(&checkpoint.current_cwd.to_string_lossy())
+            )),
+            Ok(_) => Ok("Human Task is currently active in another ai process.\n".into()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 

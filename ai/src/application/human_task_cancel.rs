@@ -13,6 +13,8 @@ pub enum HumanTaskCancelError {
     Invalid,
     #[error("human_task_cancel_not_confirmed")]
     NotConfirmed,
+    #[error("human_task_checkpoint_busy")]
+    Busy,
 }
 
 impl<'a> HumanTaskCancel<'a> {
@@ -24,7 +26,9 @@ impl<'a> HumanTaskCancel<'a> {
     where
         F: FnOnce(&HumanTaskCheckpointV1) -> bool,
     {
-        let _root_lock = self.store.lock_exclusive()?;
+        let Some(_root_lock) = self.store.try_lock_exclusive()? else {
+            return Err(HumanTaskCancelError::Busy);
+        };
         let checkpoint = match self.store.load_active() {
             Err(HumanTaskStoreError::NotFound) => return Ok("No suspended Human Task.\n".into()),
             other => other?,

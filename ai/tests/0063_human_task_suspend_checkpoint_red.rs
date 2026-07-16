@@ -154,6 +154,12 @@ impl HumanTaskStore for RecordingStore {
         Ok(Box::new(NoopStoreLock))
     }
 
+    fn try_lock_exclusive(
+        &self,
+    ) -> Result<Option<Box<dyn HumanTaskStoreLock + '_>>, HumanTaskStoreError> {
+        Ok(Some(self.lock_exclusive()?))
+    }
+
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {
         self.log.lock().unwrap().push("load");
         self.value
@@ -623,6 +629,39 @@ fn human_task_create_holds_root_lock_until_terminal() {
     assert_eq!(result.status, HandoffExecutionOutcome::Done);
     let lock = store.lock_exclusive().unwrap();
     drop(lock);
+}
+
+#[test]
+fn human_task_status_reports_active_running_without_blocking() {
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let cwd = dir.path().to_path_buf();
+    store
+        .save(&checkpoint(HumanTaskWorkflowState::Running, cwd.clone()))
+        .unwrap();
+    let _held = store.lock_exclusive().unwrap();
+
+    let started = Instant::now();
+    let status = HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
+        .render()
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "status must not block on flock while the owning Human Shell holds the root lock"
+    );
+    assert!(status.contains("State: running"));
+    assert!(status.contains("This Human Shell session is active."));
+    assert!(status.contains("human-task suspend"));
+    assert!(!status.contains("orphaned"));
+    assert!(!status.contains("ai human-task cancel"));
+
+    assert!(matches!(
+        HumanTaskCancel::new(&store).execute(|_| true),
+        Err(ai::application::HumanTaskCancelError::Busy)
+    ));
+    assert!(store.load_active().is_ok());
 }
 
 #[test]

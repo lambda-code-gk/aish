@@ -18,6 +18,10 @@ pub trait HumanTaskStoreLock: Send {}
 
 pub trait HumanTaskStore: Send + Sync {
     fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError>;
+    /// Non-blocking exclusive lock. `Ok(None)` means another process holds the root lock.
+    fn try_lock_exclusive(
+        &self,
+    ) -> Result<Option<Box<dyn HumanTaskStoreLock + '_>>, HumanTaskStoreError>;
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError>;
     fn save(&self, checkpoint: &HumanTaskCheckpointV1) -> Result<(), HumanTaskStoreError>;
     fn remove(&self, task_id: &HumanTaskId) -> Result<(), HumanTaskStoreError>;

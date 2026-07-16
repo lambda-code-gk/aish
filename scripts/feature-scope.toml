@@ -72,8 +72,8 @@ spec = "0063"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 4
-scope_change_reason = "PR #7 follow-up review: recover orphaned Running by confirmed cancel, reject task directories missing checkpoint.json, and keep Suspended from the single result JSON without a sidecar"
+scope_revision = 5
+scope_change_reason = "status/cancel must not block while create/resume holds root lock during Human Shell; report active running via non-blocking lock"
 scope_review = "approved"
 
 core_outcome = "明示 human_task を human-task suspend で中断し、ai終了後も安全なcheckpointをstatusで確認できる"
@@ -116,6 +116,7 @@ locked_ac_ids = [
   "human_task_cancel_clears_suspended_checkpoint",
   "human_task_cancel_requires_confirmation_without_yes",
   "human_task_create_holds_root_lock_until_terminal",
+  "human_task_status_reports_active_running_without_blocking",
   "human_task_suspend_is_explicit_tool_only",
   "human_task_suspend_preserves_bash_zsh_and_prior_stages",
   "human_task_orphaned_running_cancel_recovers",
