@@ -70,9 +70,10 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             ));
         }
         ensure_dir_0700(&request.runtime_dir)
-            .map_err(|e| HumanShellLaunchError::Failed(format!("runtime dir: {e}")))?;
-        ensure_private_dir_owned_0700(&request.runtime_dir)
-            .map_err(|e| HumanShellLaunchError::Failed(format!("runtime dir permissions: {e}")))?;
+            .map_err(|e| HumanShellLaunchError::PreLaunchFailed(format!("runtime dir: {e}")))?;
+        ensure_private_dir_owned_0700(&request.runtime_dir).map_err(|e| {
+            HumanShellLaunchError::PreLaunchFailed(format!("runtime dir permissions: {e}"))
+        })?;
         let result_path = request.runtime_dir.join("result.json");
         let mut command = Command::new(&self.binary);
         command
@@ -92,10 +93,10 @@ impl HumanShellLauncher for AishHumanShellLauncher {
             .env("AISH_HANDOFF_RUNTIME_DIR", &request.runtime_dir);
         if let Some(briefing) = &request.task_briefing {
             let encoded = serde_json::to_string(briefing).map_err(|_| {
-                HumanShellLaunchError::Failed("task briefing serialization failed".into())
+                HumanShellLaunchError::PreLaunchFailed("task briefing serialization failed".into())
             })?;
             if encoded.len() > aibe_protocol::HUMAN_TASK_BRIEFING_MAX_BYTES {
-                return Err(HumanShellLaunchError::Failed(
+                return Err(HumanShellLaunchError::PreLaunchFailed(
                     "task briefing exceeds 64 KiB".into(),
                 ));
             }
@@ -106,7 +107,7 @@ impl HumanShellLauncher for AishHumanShellLauncher {
         // プロンプトが出ない（PTY shell は setsid 済みなので group kill の対象外）。
         let mut child = command
             .spawn()
-            .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
+            .map_err(|e| HumanShellLaunchError::PreLaunchFailed(e.to_string()))?;
         let status = wait_child_cancellable(&mut child, cancel_requested)?;
         if cancel_requested.load(Ordering::SeqCst) && !result_path.is_file() {
             return Err(HumanShellLaunchError::Cancelled(

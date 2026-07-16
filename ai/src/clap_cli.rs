@@ -51,6 +51,11 @@ pub enum RecallCommand {
 pub enum HumanTaskCommand {
     /// Show the local suspended or orphaned Human Task without contacting aibe
     Status,
+    /// Resume a local suspended Human Task without contacting aibe
+    Resume {
+        /// Optional task ID; defaults to the single active suspended task
+        task_id: Option<String>,
+    },
     /// Remove a local suspended or orphaned Human Task without contacting aibe
     Cancel {
         /// Skip the interactive confirmation prompt

@@ -147,6 +147,9 @@ fn run() -> anyhow::Result<ExitCode> {
             command: HumanTaskCommand::Status,
         } => run_human_task_status(),
         AiCommand::HumanTask {
+            command: HumanTaskCommand::Resume { task_id },
+        } => run_human_task_resume(task_id),
+        AiCommand::HumanTask {
             command: HumanTaskCommand::Cancel { yes },
         } => run_human_task_cancel(yes),
         AiCommand::Doctor {
@@ -179,6 +182,29 @@ fn run_human_task_status() -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn run_human_task_resume(task_id: Option<String>) -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let identity = ai::adapters::outbound::SystemHumanTaskIdentity;
+    let launcher = ai::adapters::outbound::AishHumanShellLauncher::default();
+    let observer = ai::adapters::outbound::ProcessEnvironmentObserver::default();
+    let runtime_dir = ai::adapters::outbound::allocate_runtime_handoff_path();
+    let _runtime_guard = ai::adapters::outbound::RuntimeHandoffDirGuard::new(runtime_dir.clone());
+    let _termios_guard = ai::adapters::outbound::ParentTermiosGuard::save();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    match ai::application::HumanTaskResume::new(&store, &identity, &launcher, &observer).execute(
+        task_id.as_deref(),
+        runtime_dir,
+        &cancel,
+    ) {
+        Ok(output) => {
+            print!("{output}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => Err(anyhow::anyhow!("{error}")),
+    }
+}
+
 fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
     let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
@@ -190,12 +216,14 @@ fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
         if !stdin.is_terminal() {
             return false;
         }
-        let description = if checkpoint.state
-            == ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Running
-        {
-            "orphaned running Human Task after unexpected termination"
-        } else {
-            "suspended Human Task"
+        let description = match checkpoint.state {
+            ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Running => {
+                "orphaned running Human Task after unexpected termination"
+            }
+            ai::domain::human_task_checkpoint::HumanTaskWorkflowState::ResultPending => {
+                "result-pending Human Task"
+            }
+            _ => "suspended Human Task",
         };
         eprint!(
             "Cancel {description} {}? [y/N] ",

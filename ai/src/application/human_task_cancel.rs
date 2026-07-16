@@ -31,7 +31,9 @@ impl<'a> HumanTaskCancel<'a> {
         };
         if !matches!(
             checkpoint.state,
-            HumanTaskWorkflowState::Suspended | HumanTaskWorkflowState::Running
+            HumanTaskWorkflowState::Suspended
+                | HumanTaskWorkflowState::Running
+                | HumanTaskWorkflowState::ResultPending
         ) {
             return Err(HumanTaskCancelError::Invalid);
         }
