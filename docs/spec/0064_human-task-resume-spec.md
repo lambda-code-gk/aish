@@ -22,22 +22,23 @@
 → ai human-task status が task ID・cwd・最新 reason・Resume/Cancel 案内を表示
 ```
 
-本 spec は resume と複数回中断（segment 追記）までを含む。Ctrl+D / `exit`（Done）後の `ResultPending`・agent continuation は含めない。
+本 spec は resume・複数回中断（segment 追記）に加え、Done 後の **`ResultPending` 永続化**（agent continuation なし）を含む。親 Collaborative Mode turn の開始は後送する。
 
 ### 1.1 Checkpoint invariant 拡張
 
 0063 の version 1 envelope を維持し、同一 aggregate の状態不変条件だけを拡張する。
 
 - `Running`: `suspended_at_ms` / `suspend_reason` / `final_result` / continuation turn ID がなく、segment は空（初回 create）またはすべて `end_reason=Suspended` の連番 index（resume 中）
-- `Suspended`: `suspended_at_ms` があり、1 件以上の完全な `Suspended` segment があり、index は `0..n-1` の連番、`current_cwd == segments.last().final_cwd`。reason は未指定または validation 済み
-- `ResultPending` / `Continuing` / `Finished`: 引き続き予約。0064 の reader / writer は生成・遷移させない
+- `Suspended`: `suspended_at_ms` があり、`final_result` がなく、1 件以上の完全な `Suspended` segment があり、index は `0..n-1` の連番、`current_cwd == segments.last().final_cwd`
+- `ResultPending`: `final_result` が Done の `HumanTaskResult`、prior segments はすべて Suspended、最後の segment は `end_reason=Done`、suspend fields なし、continuation turn ID なし
+- `Continuing` / `Finished`: 引き続き予約。0064 は生成・遷移させない
 
 遷移:
 
 ```text
-Suspended → Running → Suspended   # resume 後の再中断（本 spec）
-Suspended → Running →（Done）→ Suspended 復元  # fail-closed（本 spec）
-Running → terminal Done（checkpoint 削除）     # 初回 create の既存 0063 経路のみ
+Suspended → Running → Suspended              # resume 後の再中断
+Suspended → Running → ResultPending          # resume 後の Done（continuation は後送）
+Running → terminal Done（checkpoint 削除）   # 初回 create の既存 0063 経路のみ
 ```
 
 ### 1.2 Resume application
@@ -47,17 +48,15 @@ Running → terminal Done（checkpoint 削除）     # 初回 create の既存 0
 1. root の排他 file lock を取得する
 2. `load_active` で Suspended checkpoint を読む（なければ `human_task_not_found`）
 3. 任意の TASK_ID 指定時は一致確認（不一致は `human_task_not_found`、既存 file 非変更）
-4. state が Suspended でない場合は拒否（Running は `human_task_not_suspended` / orphaned 案内、予約 state は invalid）
+4. state が Suspended でない場合は拒否（Running / ResultPending は `human_task_not_suspended`）
 5. `current_cwd` の存在を確認し、なければ shell を起動せず Suspended を維持（`human_task_resume_cwd_unavailable`）
 6. state を Running へ更新し、suspend fields をクリアして save（prior segments は保持）
-7. 新しい runtime handoff directory を割り当て、既存 `HumanShellLauncher` で briefing 付き Human Shell を起動する（cwd = `current_cwd`）
+7. 新しい runtime handoff directory を割り当て、`ParentTermiosGuard` 付きで既存 `HumanShellLauncher` を起動する
 8. shell 終端後、0061 の bounded Observation を収集する
-9. `Suspended` なら新 segment（index = prior.len()）を追記し Suspended を atomic 保存、exit 0
-10. `Done` なら当該 resume session の Evidence を永続化せず、resume 直前の Suspended checkpoint を復元して non-zero（`human_task_resume_completion_deferred`）。`ResultPending` / `final_result` は書かない
-11. launch 失敗時も Suspended を復元し、安定 code で fail-closed する
+9. `Suspended` なら新 segment を追記し Suspended を atomic 保存。最終 save 失敗時は resume 直前の Suspended へ復元する
+10. `Done` なら Done segment と `final_result` を持つ `ResultPending` を atomic 保存（Suspended へ巻き戻さない）。最終 save 失敗時も同様に Suspended へ復元する
+11. launch 失敗時は Suspended を復元し、安定 code で fail-closed する
 12. lock は終端処理まで保持する
-
-Checkpoint 作成前に Human Shell を起動してはならない（Running save 成功後のみ）。
 
 ### 1.3 CLI と案内
 
@@ -66,21 +65,25 @@ ai human-task resume
 ai human-task resume ht-20260714-7f31c2
 ```
 
-`ai human-task status` と aibe の SuspendTurn 固定応答は、動作する Resume 案内と Cancel 案内の両方を表示する。
+`ai human-task status` と aibe の SuspendTurn 固定応答は、動作する Resume 案内と Cancel 案内の両方を表示する。ResultPending の status は Resume を案内せず Cancel のみを案内する。
 
 Done after resume の標準出力例:
 
 ```text
-Human Task completion after resume is not available yet.
-Checkpoint restored to suspended.
-Suspend to save progress, or cancel to discard:
-  human-task suspend
+Human Task completed and saved.
+
+Task:
+  <task-id>
+State: result pending
+
+Agent continuation is not available yet.
+Cancel to discard:
   ai human-task cancel --yes
 ```
 
 ### 1.4 Evidence
 
-全 segment の Observation を順序どおり checkpoint に保持する。`HumanTaskResult` への flatten や親 Collaborative Mode turn への返却は 0063-D。
+全 segment の Observation を順序どおり checkpoint に保持する。Done 時は当該 session の Observation を `final_result` に保存する。親 Collaborative Mode turn への返却は 0063-D。
 
 ## 2. Fault model
 
@@ -90,15 +93,15 @@ Suspend to save progress, or cancel to discard:
 
 ### 2.2 保証対象外
 
-- Done 後の agent continuation / `ResultPending`
+- Done 後の agent continuation / continuation turn ID
 - `ai` / `aish` crash 途中からの自動復旧
 - cwd 再作成、`--cwd` 上書き
 - crash recovery、lease、schema migration、exactly-once
 
 ## 3. Non-goals
 
-- `ResultPending`、`final_result`、continuation turn ID、新しい Collaborative Mode turn
-- Done segment の永続化と Evidence flatten の親への返却
+- continuation turn ID、新しい Collaborative Mode turn（ResultPending の永続化自体は本 spec）
+- Evidence flatten の親 turn への返却
 - 0055 旧 `shell_exec` handoff への resume
 - 複数 active task、task 一覧 UI、crash recovery、lease
 
@@ -136,7 +139,7 @@ Suspend to save progress, or cancel to discard:
 
 ## 7. Split triggers
 
-- Done → `ResultPending` / agent continuation / continuation turn ID
+- agent continuation / continuation turn ID / Continuing→Finished
 - 二つ目の永続正本・実行主体・agent loop
 - lease / heartbeat / reconciler / crash recovery / schema migration
 - cwd 上書き UI、複数 active task
@@ -156,14 +159,16 @@ Suspend to save progress, or cancel to discard:
 | `human_task_status_shows_resume_command` | status と SuspendTurn 固定応答が `ai human-task resume` を案内する |
 | `human_task_resume_supports_multiple_suspends` | Suspended→Running→Suspended を複数回繰り返し、全 segment の Observation が順序保持される |
 | `human_task_resume_rejects_missing_or_mismatched_id` | task なし・ID 不一致を安定 code で拒否し file を変更しない |
-| `human_task_resume_rejects_non_suspended` | Running / invalid を Suspended として扱わず shell を起動しない |
+| `human_task_resume_rejects_non_suspended` | Running / ResultPending / invalid を Suspended として扱わず shell を起動しない |
 | `human_task_resume_cwd_unavailable_fails_closed` | cwd 不在時は shell 未起動・Suspended 維持・安定 code |
-| `human_task_resume_done_restores_suspended` | Done 後は session Evidence を残さず Suspended を復元し non-zero |
+| `human_task_resume_done_persists_result_pending` | Done 後は Done segment と final_result を ResultPending として永続化し Suspended へ巻き戻さない |
+| `human_task_resume_final_save_failure_restores_suspended` | 再 suspend の最終 save 失敗時は Running を残さず resume 前の Suspended へ復元する |
+| `human_task_resume_cli_installs_parent_termios_guard` | resume CLI が ParentTermiosGuard で親 TTY を復元する |
 | `human_task_resume_preserves_single_segment_regression` | 単一 segment の 0063 Suspended 経路と create Done 削除が回帰しない |
 
 ## 10. Deferred specs
 
-- **0063-D（別4桁番号）**: Done → `ResultPending`、Evidence flatten、親 context からの新 Collaborative Mode turn、continuation turn ID
+- **0063-D（別4桁番号）**: ResultPending から親 context の新 Collaborative Mode turn、continuation turn ID、Evidence flatten の親への返却
 - **0063-E（別4桁番号）**: stale ownership、crash hardening
 
 ## 11. Scope change log
@@ -171,3 +176,4 @@ Suspend to save progress, or cancel to discard:
 | Revision | 分類 | 変更 | 理由 |
 |----------|------|------|------|
 | 1 | INITIAL | 0063-C を 0064 として Scope Lock。Done/continuation は後送 | overview 分割と One Novelty Rule に従い resume だけを実装単位にする |
+| 2 | SAFETY_WITHIN_FAULT_MODEL / BLOCKER_ORIGINAL_AC | Done を ResultPending 永続化へ変更。最終 save 失敗時の Suspended 復元と ParentTermiosGuard を追加 | PR #8 レビュー: Suspended 巻き戻しは外部副作用に対して fail-closed でない |

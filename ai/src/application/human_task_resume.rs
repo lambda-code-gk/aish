@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use aibe_protocol::{HumanTaskBriefing, ShellLogRange};
+use aibe_protocol::{HandoffExecutionOutcome, HumanTaskBriefing, HumanTaskResult, ShellLogRange};
 
 use crate::domain::human_task_checkpoint::{
     HumanShellSegment, HumanShellSegmentEnd, HumanTaskCheckpointV1, HumanTaskId,
@@ -9,7 +9,7 @@ use crate::domain::human_task_checkpoint::{
 };
 use crate::ports::outbound::{
     EnvironmentObserver, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
-    HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError,
+    HumanShellReturn, HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError,
 };
 
 pub struct HumanTaskResume<'a> {
@@ -27,8 +27,6 @@ pub enum HumanTaskResumeError {
     NotSuspended,
     #[error("human_task_resume_cwd_unavailable")]
     CwdUnavailable,
-    #[error("human_task_resume_completion_deferred")]
-    CompletionDeferred,
     #[error("human_task_resume_launch_failed")]
     LaunchFailed,
     #[error("human_task_checkpoint_invalid")]
@@ -84,7 +82,9 @@ impl<'a> HumanTaskResume<'a> {
         }
         match suspended.state {
             HumanTaskWorkflowState::Suspended => {}
-            HumanTaskWorkflowState::Running => return Err(HumanTaskResumeError::NotSuspended),
+            HumanTaskWorkflowState::Running | HumanTaskWorkflowState::ResultPending => {
+                return Err(HumanTaskResumeError::NotSuspended);
+            }
             _ => return Err(HumanTaskResumeError::Invalid),
         }
         if !suspended.current_cwd.is_dir() {
@@ -115,15 +115,10 @@ impl<'a> HumanTaskResume<'a> {
             Ok(returned) => (returned, None, false),
             Err(HumanShellLaunchError::Suspended { returned, reason }) => (*returned, reason, true),
             Err(HumanShellLaunchError::Cancelled(_)) | Err(_) => {
-                self.restore_suspended(&restore)?;
+                self.restore_checkpoint(&restore)?;
                 return Err(HumanTaskResumeError::LaunchFailed);
             }
         };
-
-        if !suspended_outcome {
-            self.restore_suspended(&restore)?;
-            return Err(HumanTaskResumeError::CompletionDeferred);
-        }
 
         let observation = self.observer.observe(
             &returned.final_cwd,
@@ -134,37 +129,90 @@ impl<'a> HumanTaskResume<'a> {
         );
         let ended = self.identity.now_ms();
         let next_index = running.segments.len() as u32;
-        running.state = HumanTaskWorkflowState::Suspended;
-        running.updated_at_ms = ended;
-        running.suspended_at_ms = Some(ended);
-        running.suspend_reason = reason;
-        running.current_cwd = returned.final_cwd.clone();
-        running.segments.push(HumanShellSegment {
+        let range = ShellLogRange {
+            start: returned.shell_log_start,
+            end: Some(returned.shell_log_end),
+        };
+        let segment = HumanShellSegment {
             index: next_index,
-            shell_session_id: returned.shell_session_id,
+            shell_session_id: returned.shell_session_id.clone(),
             started_at_ms,
             ended_at_ms: ended,
             initial_cwd,
-            final_cwd: returned.final_cwd,
-            shell_log_range: ShellLogRange {
-                start: returned.shell_log_start,
-                end: Some(returned.shell_log_end),
+            final_cwd: returned.final_cwd.clone(),
+            shell_log_range: range.clone(),
+            observation: observation.clone(),
+            end_reason: if suspended_outcome {
+                HumanShellSegmentEnd::Suspended
+            } else {
+                HumanShellSegmentEnd::Done
             },
-            observation,
-            end_reason: HumanShellSegmentEnd::Suspended,
-        });
-        self.store.save(&running)?;
-        Ok(format!(
-            "Human Task suspended.\n\nTask:\n  {}\n\nResume:\n  ai human-task resume\n\nCancel:\n  ai human-task cancel --yes\n",
-            running.task_id.as_str()
-        ))
+        };
+        running.updated_at_ms = ended;
+        running.current_cwd = returned.final_cwd.clone();
+        running.segments.push(segment);
+
+        if suspended_outcome {
+            running.state = HumanTaskWorkflowState::Suspended;
+            running.suspended_at_ms = Some(ended);
+            running.suspend_reason = reason;
+            running.final_result = None;
+            self.save_or_restore(&running, &restore)?;
+            Ok(format!(
+                "Human Task suspended.\n\nTask:\n  {}\n\nResume:\n  ai human-task resume\n\nCancel:\n  ai human-task cancel --yes\n",
+                running.task_id.as_str()
+            ))
+        } else {
+            let final_result = done_result(&running.task, &returned, range, observation);
+            running.state = HumanTaskWorkflowState::ResultPending;
+            running.suspended_at_ms = None;
+            running.suspend_reason = None;
+            running.final_result = Some(final_result);
+            self.save_or_restore(&running, &restore)?;
+            Ok(format!(
+                "Human Task completed and saved.\n\nTask:\n  {}\nState: result pending\n\nAgent continuation is not available yet.\nCancel to discard:\n  ai human-task cancel --yes\n",
+                running.task_id.as_str()
+            ))
+        }
     }
 
-    fn restore_suspended(
+    fn save_or_restore(
+        &self,
+        checkpoint: &HumanTaskCheckpointV1,
+        restore: &HumanTaskCheckpointV1,
+    ) -> Result<(), HumanTaskResumeError> {
+        if let Err(error) = self.store.save(checkpoint) {
+            self.restore_checkpoint(restore)?;
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
+    fn restore_checkpoint(
         &self,
         restore: &HumanTaskCheckpointV1,
     ) -> Result<(), HumanTaskResumeError> {
         self.store.save(restore)?;
         Ok(())
+    }
+}
+
+fn done_result(
+    task: &aibe_protocol::HumanTaskRequest,
+    returned: &HumanShellReturn,
+    range: ShellLogRange,
+    observation: aibe_protocol::PostHandoffObservation,
+) -> HumanTaskResult {
+    HumanTaskResult {
+        status: HandoffExecutionOutcome::Done,
+        task: task.clone(),
+        verified: false,
+        human_shell_exit_code: returned.exit_code,
+        final_shell_cwd: Some(returned.final_cwd.display().to_string()),
+        shell_log_range: Some(range),
+        observation: Some(observation),
+        error: None,
+        task_id: None,
+        suspend_reason: None,
     }
 }

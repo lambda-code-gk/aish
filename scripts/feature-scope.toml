@@ -20,8 +20,8 @@ spec = "0064"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 1
-scope_change_reason = "0063-C resume vertical slice: Suspended→Running→re-suspend with multi-segment invariants; Done/continuation deferred to 0063-D"
+scope_revision = 2
+scope_change_reason = "PR #8 review: persist Done as ResultPending instead of restoring Suspended; restore Suspended on terminal save failure; ParentTermiosGuard on resume CLI"
 scope_review = "approved"
 
 core_outcome = "Suspended Human Task を ai human-task resume で再開し、再 suspend で segment を順序保持できる"
@@ -42,7 +42,7 @@ lease_or_heartbeat = false
 reconciler = false
 exactly_once = false
 
-split_decision = "Done/ResultPending/agent continuation/continuation turn ID deferred to 0063-D; crash recovery/lease/migration deferred to 0063-E"
+split_decision = "Agent continuation/continuation turn ID deferred to 0063-D; ResultPending persistence of Done after resume is included for safety; crash recovery/lease/migration deferred to 0063-E"
 
 vertical_slice_ac_id = "human_task_resume_vertical_e2e"
 
@@ -56,7 +56,9 @@ locked_ac_ids = [
   "human_task_resume_rejects_missing_or_mismatched_id",
   "human_task_resume_rejects_non_suspended",
   "human_task_resume_cwd_unavailable_fails_closed",
-  "human_task_resume_done_restores_suspended",
+  "human_task_resume_done_persists_result_pending",
+  "human_task_resume_final_save_failure_restores_suspended",
+  "human_task_resume_cli_installs_parent_termios_guard",
   "human_task_resume_preserves_single_segment_regression",
 ]
 

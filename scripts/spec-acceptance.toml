@@ -3604,9 +3604,27 @@ pending = false
 [[cases]]
 spec = "0064"
 phase = 2
-id = "human_task_resume_done_restores_suspended"
-description = "Done後はsession Evidenceを残さずSuspendedを復元しnon-zero"
-test = "human_task_resume_done_restores_suspended"
+id = "human_task_resume_done_persists_result_pending"
+description = "Done後はDone segmentとfinal_resultをResultPendingとして永続化し、Suspendedへ巻き戻さない"
+test = "human_task_resume_done_persists_result_pending"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
+id = "human_task_resume_final_save_failure_restores_suspended"
+description = "再suspendの最終save失敗時はRunningを残さずresume前のSuspendedへ復元する"
+test = "human_task_resume_final_save_failure_restores_suspended"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
+id = "human_task_resume_cli_installs_parent_termios_guard"
+description = "resume CLIがParentTermiosGuardで親TTYを復元する"
+test = "human_task_resume_cli_installs_parent_termios_guard"
 file_glob = "ai/tests/0064_human_task_resume_red.rs"
 pending = false
 

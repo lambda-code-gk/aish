@@ -513,7 +513,7 @@ fn human_task_resume_cwd_unavailable_fails_closed() {
 }
 
 #[test]
-fn human_task_resume_done_restores_suspended() {
+fn human_task_resume_done_persists_result_pending() {
     let dir = tempfile::tempdir().unwrap();
     let store = HumanTaskFileStore::new(dir.path().into());
     let cwd = dir.path().to_path_buf();
@@ -526,28 +526,140 @@ fn human_task_resume_done_restores_suspended() {
         }]),
         lock_path: None,
     };
+    let message = HumanTaskResume::new(
+        &store,
+        &Identity {
+            now: AtomicU64::new(80),
+        },
+        &launcher,
+        &Observer {
+            marker: Mutex::new("done-seg".into()),
+        },
+    )
+    .execute(None, cwd.join("rt"), &AtomicBool::new(false))
+    .unwrap();
+    assert!(message.contains("result pending"));
+    assert!(!message.contains("ai human-task resume"));
+
+    let pending = store.load_active().unwrap();
+    assert_eq!(pending.state, HumanTaskWorkflowState::ResultPending);
+    assert_eq!(pending.segments.len(), 2);
+    assert_eq!(pending.segments[1].end_reason, HumanShellSegmentEnd::Done);
+    assert_eq!(
+        pending.segments[1].observation.shell_log_tail.as_deref(),
+        Some("done-seg")
+    );
+    let final_result = pending.final_result.as_ref().unwrap();
+    assert_eq!(final_result.status, HandoffExecutionOutcome::Done);
+    assert!(!final_result.verified);
+    assert_eq!(
+        final_result
+            .observation
+            .as_ref()
+            .unwrap()
+            .shell_log_tail
+            .as_deref(),
+        Some("done-seg")
+    );
+
+    let status = HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
+        .render()
+        .unwrap();
+    assert!(status.contains("State: result pending"));
+    assert!(!status.contains("Resume:"));
+
     assert_eq!(
         HumanTaskResume::new(
             &store,
             &Identity {
-                now: AtomicU64::new(80)
+                now: AtomicU64::new(200)
             },
             &launcher,
             &Observer {
-                marker: Mutex::new("should-not-persist".into())
+                marker: Mutex::new("x".into())
+            }
+        )
+        .execute(None, cwd.join("rt2"), &AtomicBool::new(false)),
+        Err(HumanTaskResumeError::NotSuspended)
+    );
+}
+
+struct FailTerminalResumeSaveStore {
+    inner: HumanTaskFileStore,
+}
+impl HumanTaskStore for FailTerminalResumeSaveStore {
+    fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError> {
+        self.inner.lock_exclusive()
+    }
+    fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {
+        self.inner.load_active()
+    }
+    fn save(&self, checkpoint: &HumanTaskCheckpointV1) -> Result<(), HumanTaskStoreError> {
+        // Fail only the post-shell terminal write (re-suspend or ResultPending),
+        // so the pre-resume Suspended restore can still succeed.
+        if matches!(
+            checkpoint.state,
+            HumanTaskWorkflowState::Suspended | HumanTaskWorkflowState::ResultPending
+        ) && checkpoint.segments.len() > 1
+        {
+            return Err(HumanTaskStoreError::Unavailable);
+        }
+        self.inner.save(checkpoint)
+    }
+    fn remove(&self, task_id: &HumanTaskId) -> Result<(), HumanTaskStoreError> {
+        self.inner.remove(task_id)
+    }
+}
+
+#[test]
+fn human_task_resume_final_save_failure_restores_suspended() {
+    let dir = tempfile::tempdir().unwrap();
+    let inner = HumanTaskFileStore::new(dir.path().into());
+    let cwd = dir.path().to_path_buf();
+    let original = suspended_checkpoint(cwd.clone());
+    inner.save(&original).unwrap();
+    let store = FailTerminalResumeSaveStore { inner };
+    let launcher = ScriptedLauncher {
+        log: Arc::new(Mutex::new(Vec::new())),
+        plans: Mutex::new(vec![LaunchPlan::Suspend {
+            reason: "lost".into(),
+            final_cwd: cwd.clone(),
+        }]),
+        lock_path: None,
+    };
+    assert_eq!(
+        HumanTaskResume::new(
+            &store,
+            &Identity {
+                now: AtomicU64::new(90)
+            },
+            &launcher,
+            &Observer {
+                marker: Mutex::new("seg1".into())
             }
         )
         .execute(None, cwd.join("rt"), &AtomicBool::new(false)),
-        Err(HumanTaskResumeError::CompletionDeferred)
+        Err(HumanTaskResumeError::Unavailable)
     );
     let restored = store.load_active().unwrap();
     assert_eq!(restored.state, HumanTaskWorkflowState::Suspended);
     assert_eq!(restored.segments.len(), 1);
     assert_eq!(restored.suspend_reason, original.suspend_reason);
-    assert_eq!(
-        restored.segments[0].observation.shell_log_tail.as_deref(),
-        Some("seg0")
+}
+
+#[test]
+fn human_task_resume_cli_installs_parent_termios_guard() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"));
+    let resume_fn = src
+        .split("fn run_human_task_resume")
+        .nth(1)
+        .and_then(|rest| rest.split("fn run_human_task_cancel").next())
+        .expect("resume fn");
+    assert!(
+        resume_fn.contains("ParentTermiosGuard::save()"),
+        "resume CLI must restore parent termios on exit"
     );
+    assert!(resume_fn.contains("RuntimeHandoffDirGuard::new"));
 }
 
 #[test]
