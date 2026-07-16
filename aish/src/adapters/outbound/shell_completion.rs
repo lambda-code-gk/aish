@@ -42,9 +42,11 @@ _aish_replay_emit() {
     kill "$wpid" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   local wdog=$!
-  wait "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null
+  local emit_status=$?
   kill "$wdog" 2>/dev/null || true
   wait "$wdog" 2>/dev/null || true
+  return "$emit_status"
 }
 _aish_replay_debug() {
   [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return 0
@@ -73,6 +75,16 @@ _aish_handoff_return() {
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
   _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
 }
+human-task() {
+  [[ "${_AISH_EXPLICIT_HUMAN_TASK:-}" == 1 && "${1:-}" == suspend && $# -le 2 ]] || { printf '%s\n' 'usage: human-task suspend [reason]' >&2; return 2; }
+  local reason="${2:-}"
+  local byte_len
+  byte_len=$(LC_ALL=C printf '%s' "$reason" | wc -c) || return 1
+  [[ "$byte_len" -le 4096 ]] || { printf '%s\n' 'suspend reason exceeds 4096 bytes' >&2; return 2; }
+  command aish __human-task-suspend --reason "$reason" --cwd "$PWD" || return 1
+  trap - EXIT
+  exit 0
+}
 if [[ -n "${AISH_CONTROL_FIFO:-}" && $- == *i* ]]; then
   # rcfile 評価中に DEBUG が有効だと直後の PROMPT_COMMAND 代入自体が span 化され control pipe が詰まる。
   trap - DEBUG 2>/dev/null || true
@@ -98,6 +110,7 @@ const BASH_HANDOFF_ENV_STRIP_SNIPPET: &str = r#"
 # 0055 minimal human handoff: 対話 shell へ handoff 環境変数を渡さない
 if [[ "${AISH_CONTROL_MODE:-}" == human-shell ]]; then
   _AISH_HUMAN_SHELL=1
+  [[ -n "${AISH_HANDOFF_TASK_JSON:-}" ]] && _AISH_EXPLICIT_HUMAN_TASK=1
   _AISH_HANDOFF_SUGGESTED_COMMAND="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
   unset AISH_CONTROL_MODE AISH_HANDOFF_PARENT_REQUEST AISH_HANDOFF_SUGGESTED_COMMAND AISH_HANDOFF_RUNTIME_DIR AISH_HANDOFF_TASK_JSON
 fi
@@ -152,9 +165,11 @@ _aish_replay_emit() {
     kill "$wpid" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   local wdog=$!
-  wait "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null
+  local emit_status=$?
   kill "$wdog" 2>/dev/null || true
   wait "$wdog" 2>/dev/null || true
+  return "$emit_status"
 }
 _aish_replay_preexec() {
   emulate -L zsh
@@ -179,6 +194,16 @@ _aish_handoff_return() {
   local code=$?
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return
   _aish_replay_emit "{\"event\":\"human_return\",\"exit_code\":$code,\"cwd\":$(_aish_json_escape "$PWD")}" || true
+}
+human-task() {
+  emulate -L zsh
+  [[ "${_AISH_EXPLICIT_HUMAN_TASK:-}" == 1 && "${1:-}" == suspend && $# -le 2 ]] || { print -u2 'usage: human-task suspend [reason]'; return 2; }
+  local reason="${2:-}"
+  local byte_len=$(LC_ALL=C printf '%s' "$reason" | wc -c) || return 1
+  [[ "$byte_len" -le 4096 ]] || { print -u2 'suspend reason exceeds 4096 bytes'; return 2; }
+  command aish __human-task-suspend --reason "$reason" --cwd "$PWD" || return 1
+  zshexit_functions=(${zshexit_functions:#_aish_handoff_return})
+  exit 0
 }
 if [[ -n "${AISH_CONTROL_FIFO:-}" ]]; then
   precmd_functions+=(_aish_replay_install_hooks)
@@ -205,6 +230,7 @@ const ZSH_HANDOFF_ENV_STRIP_SNIPPET: &str = r#"
 # 0055 minimal human handoff: 対話 shell へ handoff 環境変数を渡さない
 if [[ "${AISH_CONTROL_MODE:-}" == human-shell ]]; then
   _AISH_HUMAN_SHELL=1
+  [[ -n "${AISH_HANDOFF_TASK_JSON:-}" ]] && _AISH_EXPLICIT_HUMAN_TASK=1
   _AISH_HANDOFF_SUGGESTED_COMMAND="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
   unset AISH_CONTROL_MODE AISH_HANDOFF_PARENT_REQUEST AISH_HANDOFF_SUGGESTED_COMMAND AISH_HANDOFF_RUNTIME_DIR AISH_HANDOFF_TASK_JSON
 fi

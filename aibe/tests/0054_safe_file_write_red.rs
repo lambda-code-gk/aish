@@ -734,9 +734,10 @@ impl ToolApprovalGate for Phase6ApprovalGate {
 }
 
 fn phase6_write_config(approval: FileWriteApprovalMode) -> FileWriteConfig {
-    let mut config = FileWriteConfig::default();
-    config.approval = approval;
-    config
+    FileWriteConfig {
+        approval,
+        ..Default::default()
+    }
 }
 
 fn phase6_service(dir: &Path, config: FileWriteConfig) -> Arc<dyn FileChangeExecutor> {
@@ -2168,7 +2169,7 @@ async fn replace_rejects_oversized_existing_file_before_read() {
     let mut config = phase6_write_config(FileWriteApprovalMode::Always);
     config.max_file_bytes = 16;
     std::fs::write(&path, vec![b'x'; 32]).expect("seed");
-    let hash = sha256_hex(&vec![b'x'; 32]);
+    let hash = sha256_hex(&[b'x'; 32]);
     let (executed, result) = run_write_file(
         dir.path(),
         config,

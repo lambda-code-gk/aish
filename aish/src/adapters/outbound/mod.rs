@@ -10,7 +10,7 @@ pub mod toml_config;
 
 pub use jsonl_log::JsonlFileLog;
 pub use process_shell::ProcessShell;
-pub use pty_shell::{HumanReturnMarker, PtyShell};
+pub use pty_shell::{accept_human_terminal_control, HumanReturnMarker, PtyShell};
 pub use replay_log::{read_log_events, ReplayLogReadError};
 pub use replay_picker::{pick_entry, require_interactive_tty, PickerEntry, ReplayPickerError};
 pub use session_info::{

@@ -8,6 +8,7 @@ mod console_hint;
 mod execution_mode;
 mod history;
 mod human_handoff;
+pub mod human_task_checkpoint;
 pub mod human_task_evidence;
 mod llm_profile;
 mod log_tail;

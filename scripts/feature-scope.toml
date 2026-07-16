@@ -16,6 +16,62 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0063"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 4
+scope_change_reason = "PR #7 follow-up review: recover orphaned Running by confirmed cancel, reject task directories missing checkpoint.json, and keep Suspended from the single result JSON without a sidecar"
+scope_review = "approved"
+
+core_outcome = "明示 human_task を human-task suspend で中断し、ai終了後も安全なcheckpointをstatusで確認できる"
+
+actors = 2
+state_machines = 1
+persistent_aggregates = 1
+external_effects = 2
+process_boundaries = 2
+
+novel_mechanisms = ["suspendable-human-task-checkpoint"]
+integrations = ["0062-human-task-tool", "0055-0057-human-shell", "0060-0061-briefing-evidence"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "resume/multiple segments/evidence merge, agent continuation, crash recovery, stale ownership, schema migration, lease/heartbeat/reconciler, and exactly-once are deferred; local cancel recovery and operation-scoped create/status/cancel flock are included"
+
+vertical_slice_ac_id = "human_task_suspend_checkpoint_vertical_e2e"
+
+locked_ac_ids = [
+  "human_task_suspend_checkpoint_vertical_e2e",
+  "human_task_checkpoint_is_saved_before_shell_launch",
+  "human_task_checkpoint_v1_preserves_resume_context",
+  "human_task_checkpoint_store_is_secure_and_atomic",
+  "human_task_checkpoint_invalid_is_preserved",
+  "human_task_id_is_safe_path_component",
+  "human_task_suspend_function_is_ephemeral",
+  "human_task_suspend_first_terminal_event_wins",
+  "human_task_suspend_stops_agent_turn_without_llm",
+  "human_task_status_reports_suspended_checkpoint",
+  "human_task_status_reports_no_task_as_success",
+  "human_task_status_does_not_hide_invalid_checkpoint",
+  "human_task_active_collision_fails_closed",
+  "human_task_normal_done_leaves_no_suspend_checkpoint",
+  "human_task_cancel_clears_suspended_checkpoint",
+  "human_task_cancel_requires_confirmation_without_yes",
+  "human_task_create_holds_root_lock_until_terminal",
+  "human_task_suspend_is_explicit_tool_only",
+  "human_task_suspend_preserves_bash_zsh_and_prior_stages",
+  "human_task_orphaned_running_cancel_recovers",
+  "human_task_checkpoint_directory_without_checkpoint_is_invalid",
+  "human_task_suspended_result_without_sidecar_preserves_checkpoint",
+]
+
+[[features]]
 spec = "0062"
 status = "done"
 scope_class = "feature"

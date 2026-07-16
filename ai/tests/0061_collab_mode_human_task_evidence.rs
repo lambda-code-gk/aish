@@ -204,7 +204,7 @@ fn human_task_evidence_is_bounded() {
     .unwrap();
     assert!(evidence_long.commands[0].command.len() <= MAX_EVIDENCE_COMMAND_BYTES);
     assert!(evidence_long.truncated);
-    assert!(MAX_EVIDENCE_TOTAL_COMMAND_BYTES >= MAX_EVIDENCE_COMMAND_BYTES);
+    const { assert!(MAX_EVIDENCE_TOTAL_COMMAND_BYTES >= MAX_EVIDENCE_COMMAND_BYTES) };
     assert_eq!(MAX_EVIDENCE_SCAN_BYTES, 8 * 1024 * 1024);
 }
 

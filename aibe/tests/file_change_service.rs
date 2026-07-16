@@ -231,8 +231,10 @@ async fn file_write_never_mode_denies_execution() {
     let gate = Arc::new(TestToolApprovalGate::fixed(
         ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
     ));
-    let mut config = FileWriteConfig::default();
-    config.approval = FileWriteApprovalMode::Never;
+    let config = FileWriteConfig {
+        approval: FileWriteApprovalMode::Never,
+        ..Default::default()
+    };
     let service = test_service(config, dir.path().join("journal"));
     let request = create_request(
         path.clone(),
@@ -257,8 +259,10 @@ async fn file_write_always_mode_skips_prompt() {
     let gate = Arc::new(TestToolApprovalGate::fixed(
         ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
     ));
-    let mut config = FileWriteConfig::default();
-    config.approval = FileWriteApprovalMode::Always;
+    let config = FileWriteConfig {
+        approval: FileWriteApprovalMode::Always,
+        ..Default::default()
+    };
     let service = test_service(config, dir.path().join("journal"));
     let request = create_request(
         path.clone(),
@@ -284,8 +288,10 @@ async fn file_write_always_mode_skips_prompt() {
 async fn file_write_disabled_returns_tool_disabled() {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("out.txt");
-    let mut config = FileWriteConfig::default();
-    config.enabled = false;
+    let config = FileWriteConfig {
+        enabled: false,
+        ..Default::default()
+    };
     let service = test_service(config, dir.path().join("journal"));
     let request = create_request(
         path.clone(),
@@ -404,8 +410,10 @@ async fn file_change_sanitizes_executed_tool_arguments() {
     let gate = Arc::new(TestToolApprovalGate::fixed(
         ToolApprovalGateOutcome::Approved(ToolApprovalOrigin::UiYes),
     ));
-    let mut config = FileWriteConfig::default();
-    config.approval = FileWriteApprovalMode::Always;
+    let config = FileWriteConfig {
+        approval: FileWriteApprovalMode::Always,
+        ..Default::default()
+    };
     let service = test_service(config, dir.path().join("journal"));
     let secret = "super-secret-content\n";
     let sanitized = sanitize_write_file_arguments("out.txt", "create", None, secret);

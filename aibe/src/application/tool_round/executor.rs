@@ -33,6 +33,10 @@ pub enum RoundOutcome {
     Cancelled {
         executed: Vec<ExecutedToolCall>,
     },
+    SuspendTurn {
+        task_id: String,
+        executed: Vec<ExecutedToolCall>,
+    },
 }
 
 pub struct ToolRoundExecutor {
@@ -376,6 +380,21 @@ impl ToolRoundExecutor {
                 record.with_audit(risk, approval, false)
             };
             executed.push(record);
+            if logical_name == aibe_protocol::HUMAN_TASK && !result.is_error {
+                if let Ok(task_result) =
+                    serde_json::from_str::<aibe_protocol::HumanTaskResult>(&result.content)
+                {
+                    if task_result.status == aibe_protocol::HandoffExecutionOutcome::Suspended {
+                        if let Some(task_id) = task_result.task_id {
+                            if let Some(record) = executed.last_mut() {
+                                record.arguments = serde_json::json!({"redacted": true});
+                                record.output = None;
+                            }
+                            return Ok(RoundOutcome::SuspendTurn { task_id, executed });
+                        }
+                    }
+                }
+            }
             let content = if result.is_error {
                 format!("[tool error]\n{}", result.content)
             } else {
@@ -532,6 +551,7 @@ mod tests {
             }
             RoundOutcome::Continue { .. } => panic!("expected Completed"),
             RoundOutcome::Cancelled { .. } => panic!("expected Completed"),
+            RoundOutcome::SuspendTurn { .. } => panic!("expected Completed"),
         }
     }
 
@@ -577,6 +597,7 @@ mod tests {
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
             RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
+            RoundOutcome::SuspendTurn { .. } => panic!("expected Continue"),
         }
     }
 
@@ -619,6 +640,7 @@ mod tests {
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
             RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
+            RoundOutcome::SuspendTurn { .. } => panic!("expected Continue"),
         }
     }
 
@@ -659,6 +681,7 @@ mod tests {
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
             RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
+            RoundOutcome::SuspendTurn { .. } => panic!("expected Continue"),
         }
     }
 
@@ -698,6 +721,7 @@ mod tests {
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
             RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
+            RoundOutcome::SuspendTurn { .. } => panic!("expected Continue"),
         }
     }
 
@@ -760,6 +784,7 @@ mod tests {
             }
             RoundOutcome::Completed { .. } => panic!("expected Continue"),
             RoundOutcome::Cancelled { .. } => panic!("expected Continue"),
+            RoundOutcome::SuspendTurn { .. } => panic!("expected Continue"),
         }
     }
 }

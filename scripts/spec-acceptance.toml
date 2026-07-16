@@ -3321,3 +3321,201 @@ description = "CLI help と docs が ai collab を正式導線、旧 flag を互
 test = "collab_docs_use_official_entrypoint"
 file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
 pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_suspend_checkpoint_vertical_e2e"
+description = "明示 human_task の開始から理由付き中断、永続化、追加LLM呼出しなしのturn終了、status表示までを通す"
+test = "human_task_suspend_checkpoint_vertical_e2e"
+file_glob = "aibe/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_checkpoint_is_saved_before_shell_launch"
+description = "Running checkpointの保存成功後だけshellを起動し、保存失敗は安定codeでfail-closedする"
+test = "human_task_checkpoint_is_saved_before_shell_launch"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_checkpoint_v1_preserves_resume_context"
+description = "version 1 round-tripが必要なtask・親context・cwd・segmentを保持しruntime秘密を保存しない"
+test = "human_task_checkpoint_v1_preserves_resume_context"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_checkpoint_store_is_secure_and_atomic"
+description = "owner/mode/symlink/1 MiB境界を検査しfsyncとatomic renameでcheckpointを確定する"
+test = "human_task_checkpoint_store_is_secure_and_atomic"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_checkpoint_invalid_is_preserved"
+description = "破損JSON・未知version・状態不変条件違反を保持したまま安定codeで拒否する"
+test = "human_task_checkpoint_invalid_is_preserved"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_id_is_safe_path_component"
+description = "固定task ID形式だけをpath componentとして受理し危険なIDをjoin前に拒否する"
+test = "human_task_id_is_safe_path_component"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_suspend_function_is_ephemeral"
+description = "一時rcfileだけのhuman-task functionがreason境界とevent送信失敗をfail-closedに扱う"
+test = "human_task_suspend_function_is_ephemeral"
+file_glob = "aish/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_suspend_first_terminal_event_wins"
+description = "human_suspend後のhuman_returnで結果を上書きせずreasonとfinal cwdを保持する"
+test = "human_task_suspend_first_terminal_event_wins"
+file_glob = "aish/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_suspend_stops_agent_turn_without_llm"
+description = "Suspended後は同roundの残りtoolと次LLM callを止め固定応答で正常終了する"
+test = "human_task_suspend_stops_agent_turn_without_llm"
+file_glob = "aibe/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_status_reports_suspended_checkpoint"
+description = "local storeだけでSuspended checkpointの許可fieldと動作するcancel案内を表示してexit 0にする"
+test = "human_task_status_reports_suspended_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_status_reports_no_task_as_success"
+description = "checkpointがないstatusは固定文を表示してexit 0にする"
+test = "human_task_status_reports_no_task_as_success"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_status_does_not_hide_invalid_checkpoint"
+description = "Running・破損・未知version・owner/mode不正をtaskなしへ丸めずfileを変更しない"
+test = "human_task_status_does_not_hide_invalid_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_active_collision_fails_closed"
+description = "既存非終端checkpointを変更せず二重開始を拒否してshellを起動しない"
+test = "human_task_active_collision_fails_closed"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 1
+id = "human_task_normal_done_leaves_no_suspend_checkpoint"
+description = "Ctrl+Dとexitは既存Doneで親agentを継続し中断checkpointを残さない"
+test = "human_task_normal_done_leaves_no_suspend_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_cancel_clears_suspended_checkpoint"
+description = "Suspended checkpointだけをlocal cancelで削除し、taskなしを成功に保ち、新しいHuman Taskを開始可能にする"
+test = "human_task_cancel_clears_suspended_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_cancel_requires_confirmation_without_yes"
+description = "--yesなしの非TTYまたは拒否ではcancelをnon-zeroにしてcheckpointを変更しない"
+test = "human_task_cancel_requires_confirmation_without_yes"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_create_holds_root_lock_until_terminal"
+description = "createがroot flockをactive確認前から最終save/removeまで保持し並行開始のsingle-active-task invariantを守る"
+test = "human_task_create_holds_root_lock_until_terminal"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_suspend_is_explicit_tool_only"
+description = "suspendを明示human_taskだけに限定し旧shell_exec handoff wire/resultを変更しない"
+test = "human_task_suspend_is_explicit_tool_only"
+file_glob = "aibe/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_suspend_preserves_bash_zsh_and_prior_stages"
+description = "bash/zshと0055/0057/0060/0061/0062の既存正常経路を回帰させない"
+test = "human_task_suspend_preserves_bash_zsh_and_prior_stages"
+file_glob = "aish/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_orphaned_running_cancel_recovers"
+description = "root lock取得後に残るRunningをorphanedとしてstatus表示し、確認付きcancelで削除後に新規Human Taskを開始できる"
+test = "human_task_orphaned_running_cancel_recovers"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_checkpoint_directory_without_checkpoint_is_invalid"
+description = "有効task ID directoryが空・tempのみ・checkpoint欠落ならNotFoundへ丸めずInvalidとして残骸を保持する"
+test = "human_task_checkpoint_directory_without_checkpoint_is_invalid"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_suspended_result_without_sidecar_preserves_checkpoint"
+description = "単一result JSONのSuspendedをsidecarなしでも保持し、旧JSONでreason field欠落時はNoneとしてcheckpointを保存する"
+test = "human_task_suspended_result_without_sidecar_preserves_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false

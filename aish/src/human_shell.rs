@@ -40,8 +40,17 @@ pub struct HumanTaskBriefing {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanShellOutcome {
+    Done,
+    Suspended,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanShellResult {
-    pub normal_return: bool,
+    pub outcome: HumanShellOutcome,
+    #[serde(default)]
+    pub suspend_reason: Option<String>,
     pub exit_code: Option<i32>,
     pub final_cwd: PathBuf,
     pub shell_session_id: String,
@@ -196,7 +205,12 @@ pub fn human_shell_result_from_marker(
     child_exit_code: i32,
 ) -> HumanShellResult {
     HumanShellResult {
-        normal_return: true,
+        outcome: if marker.suspended {
+            HumanShellOutcome::Suspended
+        } else {
+            HumanShellOutcome::Done
+        },
+        suspend_reason: marker.suspend_reason,
         exit_code: marker.exit_code.or(Some(child_exit_code)),
         final_cwd: PathBuf::from(marker.final_cwd),
         shell_session_id: String::new(),
@@ -268,6 +282,41 @@ pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
         .unwrap_or(shell_log_start);
     write_result(result_file, &result)?;
     Ok(result)
+}
+
+pub fn emit_human_suspend_control(cwd: &Path, reason: &str) -> anyhow::Result<()> {
+    if reason.len() > 4096 || reason.chars().any(char::is_control) {
+        anyhow::bail!("invalid suspend reason");
+    }
+    let cwd = cwd
+        .to_str()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("invalid suspend cwd"))?;
+    let fifo = std::env::var_os("AISH_CONTROL_FIFO")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("human suspend control unavailable"))?;
+    let metadata = std::fs::symlink_metadata(&fifo)
+        .map_err(|_| anyhow::anyhow!("human suspend control unavailable"))?;
+    if !std::os::unix::fs::FileTypeExt::is_fifo(&metadata.file_type()) {
+        anyhow::bail!("human suspend control unavailable");
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(fifo)
+        .map_err(|_| anyhow::anyhow!("human suspend control unavailable"))?;
+    let event = serde_json::json!({
+        "version": 1,
+        "event": "human_suspend",
+        "exit_code": 0,
+        "cwd": cwd,
+        "reason": reason,
+    });
+    serde_json::to_writer(&mut file, &event)
+        .map_err(|_| anyhow::anyhow!("human suspend control unavailable"))?;
+    file.write_all(b"\n")
+        .map_err(|_| anyhow::anyhow!("human suspend control unavailable"))?;
+    Ok(())
 }
 
 fn ensure_dir_0700(path: &Path) -> std::io::Result<()> {
@@ -384,7 +433,8 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&victim, &result_path).unwrap();
         let result = HumanShellResult {
-            normal_return: true,
+            outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: parent.clone(),
             shell_session_id: "test".into(),
@@ -412,7 +462,8 @@ mod tests {
         fs::set_permissions(&parent, perms).unwrap();
         let result_path = parent.join("result.json");
         let result = HumanShellResult {
-            normal_return: true,
+            outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: parent.clone(),
             shell_session_id: "test".into(),

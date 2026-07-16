@@ -7,7 +7,7 @@ use ai::clap_cli::{AiCli, AiCommand};
 use ai::domain::{append_collaborative_instruction, ConfigToolsTokens, ExecutionMode};
 use ai::ports::outbound::{
     EnvironmentObserver, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
-    HumanShellReturn,
+    HumanShellOutcome, HumanShellReturn,
 };
 use aibe_protocol::{
     HandoffExecutionOutcome, HumanHandoffFailure, HumanTaskEvidence, HumanTaskRequest,
@@ -36,7 +36,8 @@ impl HumanShellLauncher for FakeLauncher {
     ) -> Result<HumanShellReturn, HumanShellLaunchError> {
         *self.request.lock().expect("request") = Some(request.clone());
         Ok(HumanShellReturn {
-            normal_return: true,
+            outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(7),
             final_cwd: request.cwd.clone(),
             shell_session_id: "s".into(),
@@ -242,6 +243,8 @@ fn human_task_result_reuses_status_and_observation_types() {
         shell_log_range: None,
         observation: None,
         error: None,
+        task_id: None,
+        suspend_reason: None,
     };
     assert!(bare_done.validate().is_err());
 }
@@ -391,6 +394,8 @@ fn human_task_result_errors_are_structured() {
         shell_log_range: None,
         observation: None,
         error: None,
+        task_id: None,
+        suspend_reason: None,
     };
     assert!(invalid.validate().is_err());
     let valid = aibe_protocol::HumanTaskResult {

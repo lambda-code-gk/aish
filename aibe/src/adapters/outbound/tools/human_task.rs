@@ -171,6 +171,8 @@ mod tests {
                     }),
                 }),
                 error: None,
+                task_id: None,
+                suspend_reason: None,
             })
         }
     }
@@ -245,6 +247,8 @@ mod tests {
                     }),
                 }),
                 error: None,
+                task_id: None,
+                suspend_reason: None,
             })
         }
     }

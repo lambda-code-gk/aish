@@ -54,6 +54,10 @@ fn run() -> anyhow::Result<u8> {
             aish::human_shell::run_human_shell(&result_file)?;
             Ok(0)
         }
+        AishCommand::HumanTaskSuspend { reason, cwd } => {
+            aish::human_shell::emit_human_suspend_control(&cwd, &reason)?;
+            Ok(0)
+        }
     }
 }
 

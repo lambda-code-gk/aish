@@ -112,7 +112,7 @@ fn human_task_briefing_returns_with_ctrl_d_or_exit() {
     let home = private_temp_home();
     let (output, result) = run_human_shell_with(b"exit\n", home.path(), "true", &[]);
     assert!(output.status.success());
-    assert!(result.normal_return);
+    assert_eq!(result.outcome, aish::human_shell::HumanShellOutcome::Done);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("作業結果を選択してください"));
     assert!(!stderr.contains("サマリを入力"));
@@ -204,7 +204,7 @@ fn human_task_briefing_creates_no_persistent_state() {
     let home = private_temp_home();
     let before = snapshot_paths(home.path());
     let (_output, result) = run_human_shell_with(b"exit\n", home.path(), "true", &[]);
-    assert!(result.normal_return);
+    assert_eq!(result.outcome, aish::human_shell::HumanShellOutcome::Done);
     let after = snapshot_paths(home.path());
     // human-shell may create session logs under HOME; ensure no outcome/task state files.
     for path in &after {

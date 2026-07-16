@@ -7,7 +7,8 @@ use ai::adapters::outbound::ProcessEnvironmentObserver;
 use ai::application::{HumanHandoffRequest, RunSynchronousHumanHandoff};
 use ai::domain::HANDOFF_ENV_KEYS;
 use ai::ports::outbound::{
-    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellReturn,
+    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellOutcome,
+    HumanShellReturn,
 };
 use aibe_protocol::{HandoffExecutionOutcome, RequestedCommandCompletion};
 
@@ -24,7 +25,8 @@ impl HumanShellLauncher for TestLauncher {
     ) -> Result<HumanShellReturn, HumanShellLaunchError> {
         self.calls.lock().unwrap().push(request.clone());
         Ok(HumanShellReturn {
-            normal_return: true,
+            outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: request.cwd.clone(),
             shell_session_id: "sess".into(),
@@ -86,7 +88,8 @@ fn parent_reobserves_after_handoff() {
             _cancel_requested: &std::sync::atomic::AtomicBool,
         ) -> Result<HumanShellReturn, HumanShellLaunchError> {
             Ok(HumanShellReturn {
-                normal_return: true,
+                outcome: HumanShellOutcome::Done,
+                suspend_reason: None,
                 exit_code: Some(0),
                 final_cwd: request.cwd.clone(),
                 shell_session_id: "sess".into(),

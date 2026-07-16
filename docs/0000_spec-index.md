@@ -56,6 +56,8 @@
 | 0060 | [0060_collab-mode-human-task-briefing-spec.md](spec/0060_collab-mode-human-task-briefing-spec.md) | 設計確定（実装済み） | Collab Mode Human Task Briefing（目的・固定理由・候補操作・親へ戻るタイミングの開始時表示） |
 | 0061 | [0061_collab-mode-human-task-evidence-spec.md](spec/0061_collab-mode-human-task-evidence-spec.md) | 設計確定（実装済み） | Collab Mode Human Task Evidence（command span から追加入力なしに構造化 Evidence を返却） |
 | 0062 | [0062_collab-mode-human-task-tool-spec.md](spec/0062_collab-mode-human-task-tool-spec.md) | 設計確定（実装済み） | Collaborative Mode Human Task Tool（`ai collab` 正式導線・独立 `human_task`・既存 Human Shell / Evidence 再利用） |
+| 0063 | [0063_human-task-suspend-resume-overview.md](spec/0063_human-task-suspend-resume-overview.md) | 親概要（設計確定） | Human Task中断・再開の全体分割（A+B / C / D / E、Red要素を後続へ分離） |
+| 0063 | [0063_human-task-suspend-checkpoint-spec.md](spec/0063_human-task-suspend-checkpoint-spec.md) | 設計確定（実装済み） | 最初のVertical Slice（明示Human Taskの中断・checkpoint保存・agent turn停止・status） |
 
 ### 状態ラベルの意味
 
@@ -76,6 +78,7 @@
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
 | 0062 | [0062_collab-mode-human-task-tool-implementation-spec.md](done/0062_collab-mode-human-task-tool-implementation-spec.md) | 実装済み | Collaborative Mode Human Task Tool（`ai collab` / 独立 `human_task`） |
+| 0063 | [0063_human-task-suspend-checkpoint-implementation-spec.md](done/0063_human-task-suspend-checkpoint-implementation-spec.md) | 実装済み | Human Task suspend checkpointのVertical Sliceとfail-closed hardening |
 | 0061 | [0061_collab-mode-human-task-evidence-implementation-spec.md](done/0061_collab-mode-human-task-evidence-implementation-spec.md) | 実装済み | Collab Mode Human Task Evidence（bounded range reader・domain pure builder・post-handoff observation統合） |
 | 0060 | [0060_collab-mode-human-task-briefing-implementation-spec.md](done/0060_collab-mode-human-task-briefing-implementation-spec.md) | 実装済み | Collab Mode Human Task Briefing（開始時の安全な固定表示と終了後 outcome 入力の除去） |
 | 0058 | [0058_aish-doctor-diagnostics-implementation-spec.md](done/0058_aish-doctor-diagnostics-implementation-spec.md) | 実装済み | `ai doctor` の 6 HealthCheck、human / structured 出力、exit code、`status` 互換 |

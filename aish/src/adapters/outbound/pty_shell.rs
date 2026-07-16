@@ -35,6 +35,46 @@ pub struct PtyShell<'a, L: SessionLog> {
 pub struct HumanReturnMarker {
     pub exit_code: Option<i32>,
     pub final_cwd: String,
+    pub suspended: bool,
+    pub suspend_reason: Option<String>,
+}
+
+pub fn accept_human_terminal_control(current: &mut Option<HumanReturnMarker>, line: &str) {
+    if current.is_some() {
+        return;
+    }
+    let Ok(msg) = serde_json::from_str::<ControlMessage>(line.trim()) else {
+        return;
+    };
+    let Some(cwd) = msg.cwd.filter(|cwd| !cwd.is_empty()) else {
+        return;
+    };
+    match msg.event.as_str() {
+        "human_return" => {
+            *current = Some(HumanReturnMarker {
+                exit_code: msg.exit_code,
+                final_cwd: cwd,
+                suspended: false,
+                suspend_reason: None,
+            })
+        }
+        "human_suspend" => {
+            if msg
+                .reason
+                .as_ref()
+                .is_some_and(|reason| reason.len() > 4096 || reason.chars().any(char::is_control))
+            {
+                return;
+            }
+            *current = Some(HumanReturnMarker {
+                exit_code: msg.exit_code,
+                final_cwd: cwd,
+                suspended: true,
+                suspend_reason: msg.reason,
+            });
+        }
+        _ => {}
+    }
 }
 
 #[derive(Debug, Default)]
@@ -68,10 +108,13 @@ struct QueuedCommandStart {
 
 #[derive(Debug, serde::Deserialize)]
 struct ControlMessage {
+    #[serde(default)]
+    version: Option<u8>,
     event: String,
     command: Option<String>,
     exit_code: Option<i32>,
     cwd: Option<String>,
+    reason: Option<String>,
 }
 
 impl<'a, L: SessionLog> PtyShell<'a, L> {
@@ -312,12 +355,13 @@ impl<'a, L: SessionLog> PtyShell<'a, L> {
                 }
             }
             "human_return" => {
-                if let Some(cwd) = msg.cwd.filter(|cwd| !cwd.is_empty()) {
-                    self.human_return = Some(HumanReturnMarker {
-                        exit_code: msg.exit_code,
-                        final_cwd: cwd,
-                    });
+                accept_human_terminal_control(&mut self.human_return, line);
+            }
+            "human_suspend" => {
+                if msg.version != Some(1) {
+                    return Ok(());
                 }
+                accept_human_terminal_control(&mut self.human_return, line);
             }
             _ => {}
         }

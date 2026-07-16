@@ -28,7 +28,7 @@ use aibe_protocol::{
     AgentTurnStatus, ClientRequest, ClientResponse, ErrorCode, ExecutionMode,
     HandoffExecutionOutcome, HumanTaskEvidence, HumanTaskRequest, HumanTaskResult,
     PostHandoffObservation, ProtocolMessage, RequestContext, ShellExecApprovalOrigin,
-    ShellLogRange, ToolApprovalOrigin, ToolRiskClass, HUMAN_TASK, SHELL_EXEC,
+    ShellLogRange, ToolApprovalOrigin, HUMAN_TASK, SHELL_EXEC,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -51,7 +51,8 @@ impl HumanShellLauncher for RecordingLauncher {
             .expect("launcher requests")
             .push(request.clone());
         Ok(HumanShellReturn {
-            normal_return: true,
+            outcome: ai::ports::outbound::HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: request.cwd.clone(),
             shell_session_id: "fake-human-shell".into(),
@@ -247,23 +248,24 @@ async fn collab_human_task_vertical_with_fakes() {
         1
     );
 
-    let calls = llm.calls.lock().expect("llm calls");
-    assert_eq!(
-        calls.len(),
-        2,
-        "parent agent must continue to the next round"
-    );
-    assert_eq!(calls[0].1, [HUMAN_TASK]);
-    let tool_result = calls[1]
-        .0
-        .iter()
-        .find(|message| message.role == MessageRole::Tool)
-        .expect("structured result returned to LLM");
-    let round_result: aibe_protocol::HumanTaskResult =
-        serde_json::from_str(&tool_result.content).expect("round result json");
-    assert_eq!(round_result.status, HandoffExecutionOutcome::Done);
-    assert!(calls[1].1.iter().all(|name| name != SHELL_EXEC));
-    drop(calls);
+    {
+        let calls = llm.calls.lock().expect("llm calls");
+        assert_eq!(
+            calls.len(),
+            2,
+            "parent agent must continue to the next round"
+        );
+        assert_eq!(calls[0].1, [HUMAN_TASK]);
+        let tool_result = calls[1]
+            .0
+            .iter()
+            .find(|message| message.role == MessageRole::Tool)
+            .expect("structured result returned to LLM");
+        let round_result: aibe_protocol::HumanTaskResult =
+            serde_json::from_str(&tool_result.content).expect("round result json");
+        assert_eq!(round_result.status, HandoffExecutionOutcome::Done);
+        assert!(calls[1].1.iter().all(|name| name != SHELL_EXEC));
+    }
 
     server_task.abort();
     let _ = server_task.await;
@@ -304,6 +306,8 @@ fn gate_result() -> HumanTaskResult {
             }),
         }),
         error: None,
+        task_id: None,
+        suspend_reason: None,
     }
 }
 

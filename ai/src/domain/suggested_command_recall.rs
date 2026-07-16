@@ -300,7 +300,7 @@ git commit -m "wip"
         assert!(extract_shell_candidates_from_content(nul, 8).is_empty());
 
         let control = "```bash\necho hi\u{7}\n```";
-        assert!(extract_shell_candidates_from_content(&control, 8).is_empty());
+        assert!(extract_shell_candidates_from_content(control, 8).is_empty());
 
         let huge_body = "x".repeat(SUGGESTED_COMMAND_MAX_BYTES + 1);
         let huge = format!("```bash\n{huge_body}\n```");
