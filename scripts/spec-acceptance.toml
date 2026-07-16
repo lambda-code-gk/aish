@@ -3407,7 +3407,7 @@ pending = false
 spec = "0063"
 phase = 1
 id = "human_task_status_reports_suspended_checkpoint"
-description = "local storeだけでSuspended checkpointの許可fieldとresume案内を表示してexit 0にする"
+description = "local storeだけでSuspended checkpointの許可fieldと動作するcancel案内を表示してexit 0にする"
 test = "human_task_status_reports_suspended_checkpoint"
 file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
 pending = false
@@ -3445,6 +3445,33 @@ phase = 1
 id = "human_task_normal_done_leaves_no_suspend_checkpoint"
 description = "Ctrl+Dとexitは既存Doneで親agentを継続し中断checkpointを残さない"
 test = "human_task_normal_done_leaves_no_suspend_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_cancel_clears_suspended_checkpoint"
+description = "Suspended checkpointだけをlocal cancelで削除し、taskなしを成功に保ち、新しいHuman Taskを開始可能にする"
+test = "human_task_cancel_clears_suspended_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_cancel_requires_confirmation_without_yes"
+description = "--yesなしの非TTYまたは拒否ではcancelをnon-zeroにしてcheckpointを変更しない"
+test = "human_task_cancel_requires_confirmation_without_yes"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_create_holds_root_lock_until_terminal"
+description = "createがroot flockをactive確認前から最終save/removeまで保持し並行開始のsingle-active-task invariantを守る"
+test = "human_task_create_holds_root_lock_until_terminal"
 file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
 pending = false
 

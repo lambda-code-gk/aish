@@ -60,6 +60,12 @@ scan_file() {
   if [[ "$path" == *"/tests/"* ]]; then
     return 0
   fi
+  # 0063 Human Task durable checkpoint is intentional and outside 0055 scope.
+  case "$path" in
+    *human_task*|*/0063_*)
+      return 0
+      ;;
+  esac
   for file in "${FORBIDDEN_FILES[@]}"; do
     if rg -n "$file" "$path" >/dev/null 2>&1; then
       echo "forbidden file reference '$file' in $path" >&2

@@ -69,6 +69,10 @@ impl<'a> HumanTaskCoordinator<'a> {
             task_id: None,
             suspend_reason: None,
         };
+        let _root_lock = match self.store.lock_exclusive() {
+            Ok(lock) => lock,
+            Err(_) => return blocked("human_task_checkpoint_unavailable"),
+        };
         match self.store.load_active() {
             Ok(_) => return blocked("human_task_already_active"),
             Err(HumanTaskStoreError::NotFound) => {}

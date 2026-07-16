@@ -320,6 +320,10 @@ async fn human_task_suspend_checkpoint_vertical_e2e() {
     assert!(assistant_message
         .content
         .starts_with("Human Task suspended."));
+    assert!(assistant_message
+        .content
+        .contains("Cancel:\n  ai human-task cancel --yes"));
+    assert!(!assistant_message.content.contains("resume"));
     assert_eq!(
         tool_calls.len(),
         1,

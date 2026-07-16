@@ -1,13 +1,15 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use crate::domain::human_task_checkpoint::{
     HumanTaskCheckpointV1, HumanTaskId, HUMAN_TASK_CHECKPOINT_MAX_BYTES,
 };
 use crate::ports::outbound::{
-    HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError, HumanTaskTimeFormatter,
+    HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError, HumanTaskStoreLock,
+    HumanTaskTimeFormatter,
 };
 
 pub struct HumanTaskFileStore {
@@ -16,6 +18,16 @@ pub struct HumanTaskFileStore {
 
 pub struct SystemHumanTaskIdentity;
 pub struct SystemHumanTaskTimeFormatter;
+
+struct HumanTaskFileLock(File);
+
+impl HumanTaskStoreLock for HumanTaskFileLock {}
+
+impl Drop for HumanTaskFileLock {
+    fn drop(&mut self) {
+        let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
 
 impl HumanTaskTimeFormatter for SystemHumanTaskTimeFormatter {
     fn format_local(&self, timestamp_ms: u64) -> String {
@@ -164,6 +176,35 @@ impl HumanTaskFileStore {
 }
 
 impl HumanTaskStore for HumanTaskFileStore {
+    fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError> {
+        if let Some(parent) = self.root.parent() {
+            fs::create_dir_all(parent).map_err(|_| HumanTaskStoreError::Unavailable)?;
+        }
+        Self::ensure_dir(&self.root)?;
+        let path = self.root.join("lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|_| HumanTaskStoreError::PermissionDenied)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| HumanTaskStoreError::Unavailable)?;
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o7777 != 0o600
+        {
+            return Err(HumanTaskStoreError::PermissionDenied);
+        }
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(HumanTaskStoreError::Unavailable);
+        }
+        Ok(Box::new(HumanTaskFileLock(file)))
+    }
+
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {
         if !self.root.exists() {
             return Err(HumanTaskStoreError::NotFound);
@@ -176,6 +217,9 @@ impl HumanTaskStore for HumanTaskFileStore {
                 .file_name()
                 .into_string()
                 .map_err(|_| HumanTaskStoreError::Invalid)?;
+            if name == "lock" {
+                continue;
+            }
             let id = HumanTaskId::parse(name).map_err(|_| HumanTaskStoreError::Invalid)?;
             let dir = entry.path();
             Self::ensure_dir(&dir)?;

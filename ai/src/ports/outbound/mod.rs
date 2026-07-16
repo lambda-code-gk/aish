@@ -15,7 +15,8 @@ pub use human_handoff::{
     HumanShellOutcome, HumanShellReturn, ShellTranscriptReader,
 };
 pub use human_task_store::{
-    HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError, HumanTaskTimeFormatter,
+    HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError, HumanTaskStoreLock,
+    HumanTaskTimeFormatter,
 };
 pub use memory_client::MemoryClient;
 pub use presenter::Presenter;

@@ -20,8 +20,8 @@ spec = "0063"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 2
-scope_change_reason = "implementation scope lock: freeze all 16 reviewed acceptance criteria before production work"
+scope_revision = 3
+scope_change_reason = "PR #7 review: add local cancel recovery and create/status/cancel root flock for original AC safety and concurrent single-active-task regression"
 scope_review = "approved"
 
 core_outcome = "明示 human_task を human-task suspend で中断し、ai終了後も安全なcheckpointをstatusで確認できる"
@@ -42,7 +42,7 @@ lease_or_heartbeat = false
 reconciler = false
 exactly_once = false
 
-split_decision = "resume/multiple segments/evidence merge, agent continuation, cancel, file-lock ownership, crash recovery, schema migration, lease, and exactly-once are deferred to separately numbered specs"
+split_decision = "resume/multiple segments/evidence merge, agent continuation, crash recovery, stale ownership, schema migration, lease/heartbeat/reconciler, and exactly-once are deferred; local cancel recovery and operation-scoped create/status/cancel flock are included"
 
 vertical_slice_ac_id = "human_task_suspend_checkpoint_vertical_e2e"
 
@@ -61,6 +61,9 @@ locked_ac_ids = [
   "human_task_status_does_not_hide_invalid_checkpoint",
   "human_task_active_collision_fails_closed",
   "human_task_normal_done_leaves_no_suspend_checkpoint",
+  "human_task_cancel_clears_suspended_checkpoint",
+  "human_task_cancel_requires_confirmation_without_yes",
+  "human_task_create_holds_root_lock_until_terminal",
   "human_task_suspend_is_explicit_tool_only",
   "human_task_suspend_preserves_bash_zsh_and_prior_stages",
 ]

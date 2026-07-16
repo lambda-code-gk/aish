@@ -23,6 +23,7 @@ impl<'a> HumanTaskStatus<'a> {
         }
     }
     pub fn render(&self) -> Result<String, HumanTaskStatusError> {
+        let _root_lock = self.store.lock_exclusive()?;
         let checkpoint = match self.store.load_active() {
             Err(HumanTaskStoreError::NotFound) => return Ok("No suspended Human Task.\n".into()),
             other => other?,
@@ -41,10 +42,7 @@ impl<'a> HumanTaskStatus<'a> {
         if let Some(reason) = checkpoint.suspend_reason {
             out.push_str(&format!("Reason: {}\n", escape_status_field(&reason)));
         }
-        out.push_str(&format!(
-            "Resume: ai human-task resume {}\n",
-            checkpoint.task_id.as_str()
-        ));
+        out.push_str("Cancel:\n  ai human-task cancel --yes\n");
         Ok(out)
     }
 }

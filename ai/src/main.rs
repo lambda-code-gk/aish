@@ -2,7 +2,7 @@
 
 #![cfg(unix)]
 
-use std::io::{BufRead, BufReader, IsTerminal};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
@@ -146,6 +146,9 @@ fn run() -> anyhow::Result<ExitCode> {
         AiCommand::HumanTask {
             command: HumanTaskCommand::Status,
         } => run_human_task_status(),
+        AiCommand::HumanTask {
+            command: HumanTaskCommand::Cancel { yes },
+        } => run_human_task_cancel(yes),
         AiCommand::Doctor {
             quiet,
             format,
@@ -172,6 +175,32 @@ fn run_human_task_status() -> anyhow::Result<ExitCode> {
     let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
     let formatter = ai::adapters::outbound::SystemHumanTaskTimeFormatter;
     let output = ai::application::HumanTaskStatus::new(&store, &formatter).render()?;
+    print!("{output}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let output = ai::application::HumanTaskCancel::new(&store).execute(|checkpoint| {
+        if yes {
+            return true;
+        }
+        let stdin = std::io::stdin();
+        if !stdin.is_terminal() {
+            return false;
+        }
+        eprint!(
+            "Cancel suspended Human Task {}? [y/N] ",
+            checkpoint.task_id.as_str()
+        );
+        if std::io::stderr().flush().is_err() {
+            return false;
+        }
+        let mut answer = String::new();
+        stdin.read_line(&mut answer).is_ok()
+            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    })?;
     print!("{output}");
     Ok(ExitCode::SUCCESS)
 }

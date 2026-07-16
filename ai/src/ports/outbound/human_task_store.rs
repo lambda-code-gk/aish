@@ -13,7 +13,11 @@ pub enum HumanTaskStoreError {
     #[error("human_task_checkpoint_unavailable")]
     Unavailable,
 }
+
+pub trait HumanTaskStoreLock: Send {}
+
 pub trait HumanTaskStore: Send + Sync {
+    fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError>;
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError>;
     fn save(&self, checkpoint: &HumanTaskCheckpointV1) -> Result<(), HumanTaskStoreError>;
     fn remove(&self, task_id: &HumanTaskId) -> Result<(), HumanTaskStoreError>;

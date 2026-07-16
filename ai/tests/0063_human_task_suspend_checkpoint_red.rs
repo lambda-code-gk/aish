@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex};
 use ai::adapters::outbound::{
     allocate_runtime_handoff_path, HumanTaskFileStore, SystemHumanTaskTimeFormatter,
 };
-use ai::application::{HumanTaskCoordinator, HumanTaskParentInput, HumanTaskStatus};
+use ai::application::{
+    HumanTaskCancel, HumanTaskCoordinator, HumanTaskParentInput, HumanTaskStatus,
+};
 use ai::domain::human_task_checkpoint::*;
 use ai::ports::outbound::*;
 use aibe_protocol::{
@@ -141,7 +143,15 @@ struct RecordingStore {
     value: Mutex<Option<HumanTaskCheckpointV1>>,
     fail_save: bool,
 }
+struct NoopStoreLock;
+impl HumanTaskStoreLock for NoopStoreLock {}
+
 impl HumanTaskStore for RecordingStore {
+    fn lock_exclusive(&self) -> Result<Box<dyn HumanTaskStoreLock + '_>, HumanTaskStoreError> {
+        self.log.lock().unwrap().push("lock");
+        Ok(Box::new(NoopStoreLock))
+    }
+
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {
         self.log.lock().unwrap().push("load");
         self.value
@@ -196,7 +206,10 @@ fn human_task_checkpoint_is_saved_before_shell_launch() {
         &AtomicBool::new(false),
     );
     assert_eq!(result.status, HandoffExecutionOutcome::Suspended);
-    assert_eq!(&*log.lock().unwrap(), &["load", "save", "launch", "save"]);
+    assert_eq!(
+        &*log.lock().unwrap(),
+        &["lock", "load", "save", "launch", "save"]
+    );
     let failed_log = Arc::new(Mutex::new(vec![]));
     let failed = RecordingStore {
         log: failed_log.clone(),
@@ -276,6 +289,16 @@ fn human_task_checkpoint_store_is_secure_and_atomic() {
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
     );
+    let root_lock = store.lock_exclusive().unwrap();
+    assert_eq!(
+        fs::metadata(dir.path().join("human-tasks/lock"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    drop(root_lock);
     assert_eq!(store.load_active().unwrap(), value);
     let mut changed = value.clone();
     changed.updated_at_ms = 21;
@@ -328,6 +351,8 @@ fn human_task_checkpoint_invalid_is_preserved() {
         HumanTaskStoreError::Invalid
     );
     assert_eq!(fs::read(&path).unwrap(), raw);
+    assert!(HumanTaskCancel::new(&store).execute(|_| true).is_err());
+    assert_eq!(fs::read(&path).unwrap(), raw);
 }
 
 #[test]
@@ -366,7 +391,7 @@ fn human_task_status_reports_suspended_checkpoint() {
         "review deployment",
         "need approval",
         "Current cwd:",
-        "ai human-task resume",
+        "Cancel:\n  ai human-task cancel --yes",
     ] {
         assert!(text.contains(expected));
     }
@@ -382,6 +407,135 @@ fn human_task_status_reports_suspended_checkpoint() {
         .unwrap();
     assert!(escaped.contains(r"review\n\u{1b}[31msecret"));
     assert!(!escaped.contains('\u{1b}'));
+}
+
+#[test]
+fn human_task_cancel_clears_suspended_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("history");
+    let store = HumanTaskFileStore::new(history.clone());
+    store
+        .save(&checkpoint(
+            HumanTaskWorkflowState::Suspended,
+            dir.path().into(),
+        ))
+        .unwrap();
+    let config = dir.path().join("ai.toml");
+    fs::write(&config, format!("history_dir = {history:?}\n")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &config)
+        .args(["human-task", "cancel", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"Cancelled Human Task ht-20260714-7f31c2.\n");
+    assert!(matches!(
+        store.load_active(),
+        Err(HumanTaskStoreError::NotFound)
+    ));
+    let no_task = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &config)
+        .args(["human-task", "cancel", "--yes"])
+        .output()
+        .unwrap();
+    assert!(no_task.status.success());
+    assert_eq!(no_task.stdout, b"No suspended Human Task.\n");
+
+    let log = Arc::new(Mutex::new(vec![]));
+    let launcher = Launcher {
+        log: log.clone(),
+        suspended: false,
+    };
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.status, HandoffExecutionOutcome::Done);
+    assert_eq!(&*log.lock().unwrap(), &["launch"]);
+}
+
+#[test]
+fn human_task_cancel_requires_confirmation_without_yes() {
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("history");
+    let store = HumanTaskFileStore::new(history.clone());
+    let active = checkpoint(HumanTaskWorkflowState::Suspended, dir.path().into());
+    store.save(&active).unwrap();
+    let before = serde_json::to_vec(&store.load_active().unwrap()).unwrap();
+    let config = dir.path().join("ai.toml");
+    fs::write(&config, format!("history_dir = {history:?}\n")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", config)
+        .args(["human-task", "cancel"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "non-TTY stdin must not auto-confirm"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("human_task_cancel_not_confirmed"));
+    assert_eq!(
+        serde_json::to_vec(&store.load_active().unwrap()).unwrap(),
+        before
+    );
+
+    assert!(matches!(
+        HumanTaskCancel::new(&store).execute(|_| false),
+        Err(ai::application::HumanTaskCancelError::NotConfirmed)
+    ));
+    assert!(store.load_active().is_ok());
+}
+
+struct RootLockCheckingLauncher {
+    lock_path: PathBuf,
+}
+
+impl HumanShellLauncher for RootLockCheckingLauncher {
+    fn launch_and_wait(
+        &self,
+        request: &HumanShellLaunchRequest,
+        _: &AtomicBool,
+    ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+        use std::os::unix::io::AsRawFd;
+
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.lock_path)
+            .unwrap();
+        assert_ne!(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0,
+            "a second process must not acquire the root lock while Human Shell is active"
+        );
+        Ok(HumanShellReturn {
+            outcome: HumanShellOutcome::Done,
+            exit_code: Some(0),
+            final_cwd: request.cwd.clone(),
+            shell_session_id: "shell-lock-check".into(),
+            shell_session_dir: PathBuf::new(),
+            shell_log_start: 0,
+            shell_log_end: 0,
+        })
+    }
+}
+
+#[test]
+fn human_task_create_holds_root_lock_until_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let launcher = RootLockCheckingLauncher {
+        lock_path: dir.path().join("human-tasks/lock"),
+    };
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.status, HandoffExecutionOutcome::Done);
+    let lock = store.lock_exclusive().unwrap();
+    drop(lock);
 }
 
 #[test]
@@ -423,6 +577,10 @@ fn human_task_status_does_not_hide_invalid_checkpoint() {
     assert!(HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
         .render()
         .is_err());
+    assert!(matches!(
+        HumanTaskCancel::new(&store).execute(|_| true),
+        Err(ai::application::HumanTaskCancelError::Invalid)
+    ));
     assert!(store.load_active().is_ok());
 }
 
