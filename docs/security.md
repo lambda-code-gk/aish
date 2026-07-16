@@ -210,3 +210,13 @@
 - 同一接続 callback は turn ID、tool call ID、prompt ID の全一致を要求し、不一致・重複・decode 失敗・待機 call 不在を別 call へ回送しない。
 - `AISH_HANDOFF_TASK_JSON` は 64 KiB 以下の既知 version だけを受理し、子 shell から unset する。JSON 本文、shell log、生の端末入力を通常 log/error に含めない。
 - `done` は人間から制御が戻った事実だけであり、criteria 達成や自動検証済みを意味しない。
+
+## Human Task checkpoint（0063）
+
+- checkpointは元ユーザー要求、task、Observation、suspend reasonを含み得る機微データである。許可fieldを表示する`ai human-task status`以外のlog/error/固定応答へ本文を複製しない。
+- `SuspendTurn`でクライアントへ返すtool audit recordはhuman_taskの引数と結果本文を除去し、`--verbose-tools`や構造化出力へobjective、reason、Observationを流さない。
+- `ai human-task status`の許可fieldもcontrol characterをescapeしてから表示し、保存済みobjectiveやcwdによるterminal controlを許さない。
+- 保存先は`<history_dir>/human-tasks/<validated-task-id>/checkpoint.json`だけとし、directoryは作成時から0700、fileは作成時から0600、current UID、component symlink、`O_NOFOLLOW`、encode/decode 1 MiB上限をfail-closedで検査する。削除時もtask directoryとcheckpointのsymlink/owner/modeを再検査する。
+- atomic更新はsame-directory temp、file fsync、rename、directory fsyncで行い、破損JSON、未知version、invariant違反、owner/mode不正を自動削除・自動修復しない。
+- `human-task suspend`のreasonはUTF-8 4096 bytes以下かつ全Unicode control characterなし。shellはJSONを組み立てず、Rust helperがversion 1 eventを生成する。validation/control送信失敗時はshellを継続し、成功表示やSuspended checkpointを作らない。
+- 0063は単一processの正常終了をFault Modelとする。file lock、lease、crash recovery、schema migration、複数process競合の保証はない。

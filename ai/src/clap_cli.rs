@@ -47,6 +47,12 @@ pub enum RecallCommand {
     Prev,
 }
 
+#[derive(Subcommand)]
+pub enum HumanTaskCommand {
+    /// Show the locally suspended Human Task without contacting aibe
+    Status,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum HistoryStatusArg {
     Ok,
@@ -192,6 +198,11 @@ pub enum AiCommand {
         format: OutputFormatArg,
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         socket: Option<PathBuf>,
+    },
+    /// Inspect durable Human Task state stored by this client
+    HumanTask {
+        #[command(subcommand)]
+        command: HumanTaskCommand,
     },
     /// Check local prerequisites for everyday use
     Doctor {

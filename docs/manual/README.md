@@ -8,6 +8,7 @@
 
 | ファイル | 内容 |
 |----------|------|
+| [0063_human-task-suspend-checkpoint.md](0063_human-task-suspend-checkpoint.md) | Human Task suspend、local checkpoint status、bash/zsh・異常系の手動確認 |
 | [0062_collab-mode-human-task-tool.md](0062_collab-mode-human-task-tool.md) | Collaborative Mode の正式 CLI、human_task、同一接続 callback の実PTY確認 |
 | [0061_collab-mode-human-task-evidence.md](0061_collab-mode-human-task-evidence.md) | Collab Mode Human Task Evidence の実PTY・構造化返却確認 |
 | [0060_collab-mode-human-task-briefing.md](0060_collab-mode-human-task-briefing.md) | Collab Mode Human Task briefing と終了後の即時 return |

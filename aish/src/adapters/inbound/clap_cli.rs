@@ -146,6 +146,14 @@ pub enum AishCommand {
         #[arg(long, value_hint = clap::ValueHint::FilePath)]
         result_file: PathBuf,
     },
+    /// Emit a validated Human Task suspend event (internal shell helper)
+    #[command(name = "__human-task-suspend", hide = true)]
+    HumanTaskSuspend {
+        #[arg(long, allow_hyphen_values = true)]
+        reason: String,
+        #[arg(long, allow_hyphen_values = true, value_hint = clap::ValueHint::DirPath)]
+        cwd: PathBuf,
+    },
 }
 
 impl AishCli {

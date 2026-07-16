@@ -1,0 +1,478 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+
+use ai::adapters::outbound::{
+    allocate_runtime_handoff_path, HumanTaskFileStore, SystemHumanTaskTimeFormatter,
+};
+use ai::application::{HumanTaskCoordinator, HumanTaskParentInput, HumanTaskStatus};
+use ai::domain::human_task_checkpoint::*;
+use ai::ports::outbound::*;
+use aibe_protocol::{
+    HandoffExecutionOutcome, HumanTaskRequest, PostHandoffObservation, ShellLogRange,
+};
+
+fn task() -> HumanTaskRequest {
+    HumanTaskRequest {
+        objective: "review deployment".into(),
+        reason: None,
+        instructions: vec!["inspect".into()],
+        completion_criteria: vec!["report".into()],
+    }
+}
+fn observation(cwd: &Path) -> PostHandoffObservation {
+    PostHandoffObservation {
+        cwd_exists: true,
+        cwd: cwd.display().to_string(),
+        git_head: Some("abc".into()),
+        git_branch: Some("main".into()),
+        git_status: Some("clean".into()),
+        shell_log_tail: Some("bounded".into()),
+        shell_log_truncated: Some(false),
+        observation_errors: vec![],
+        human_task_evidence: None,
+    }
+}
+fn checkpoint(state: HumanTaskWorkflowState, cwd: PathBuf) -> HumanTaskCheckpointV1 {
+    let mut value = HumanTaskCheckpointV1 {
+        version: 1,
+        task_id: HumanTaskId::parse("ht-20260714-7f31c2").unwrap(),
+        state,
+        task: task(),
+        parent: HumanTaskParentContext {
+            ai_session_id: "s1".into(),
+            conversation_id: "c1".into(),
+            turn_id: "t1".into(),
+            user_request: "please review".into(),
+            original_cwd: cwd.clone(),
+            llm_profile: "fast".into(),
+        },
+        created_at_ms: 10,
+        updated_at_ms: 10,
+        suspended_at_ms: None,
+        suspend_reason: None,
+        current_cwd: cwd.clone(),
+        segments: vec![],
+        final_result: None,
+        continuation: HumanTaskContinuationState::default(),
+    };
+    if state == HumanTaskWorkflowState::Suspended {
+        value.updated_at_ms = 20;
+        value.suspended_at_ms = Some(20);
+        value.suspend_reason = Some("need approval".into());
+        value.segments.push(HumanShellSegment {
+            index: 0,
+            shell_session_id: "shell-1".into(),
+            started_at_ms: 10,
+            ended_at_ms: 20,
+            initial_cwd: cwd.clone(),
+            final_cwd: cwd.clone(),
+            shell_log_range: ShellLogRange {
+                start: 2,
+                end: Some(9),
+            },
+            observation: observation(&cwd),
+            end_reason: HumanShellSegmentEnd::Suspended,
+        });
+    }
+    value
+}
+
+struct Identity;
+impl HumanTaskIdentity for Identity {
+    fn new_task_id(&self) -> HumanTaskId {
+        HumanTaskId::parse("ht-20260714-7f31c2").unwrap()
+    }
+    fn now_ms(&self) -> u64 {
+        20
+    }
+}
+struct Observer;
+impl EnvironmentObserver for Observer {
+    fn observe(
+        &self,
+        cwd: &Path,
+        _: u64,
+        _: Option<u64>,
+        _: Option<&Path>,
+    ) -> PostHandoffObservation {
+        observation(cwd)
+    }
+}
+struct Launcher {
+    log: Arc<Mutex<Vec<&'static str>>>,
+    suspended: bool,
+}
+impl HumanShellLauncher for Launcher {
+    fn launch_and_wait(
+        &self,
+        request: &HumanShellLaunchRequest,
+        _: &AtomicBool,
+    ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+        self.log.lock().unwrap().push("launch");
+        let returned = HumanShellReturn {
+            outcome: if self.suspended {
+                HumanShellOutcome::Suspended
+            } else {
+                HumanShellOutcome::Done
+            },
+            exit_code: Some(0),
+            final_cwd: request.cwd.clone(),
+            shell_session_id: "shell-1".into(),
+            shell_session_dir: PathBuf::new(),
+            shell_log_start: 2,
+            shell_log_end: 9,
+        };
+        if self.suspended {
+            Err(HumanShellLaunchError::Suspended {
+                returned: Box::new(returned),
+                reason: Some("need approval".into()),
+            })
+        } else {
+            Ok(returned)
+        }
+    }
+}
+struct RecordingStore {
+    log: Arc<Mutex<Vec<&'static str>>>,
+    value: Mutex<Option<HumanTaskCheckpointV1>>,
+    fail_save: bool,
+}
+impl HumanTaskStore for RecordingStore {
+    fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError> {
+        self.log.lock().unwrap().push("load");
+        self.value
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(HumanTaskStoreError::NotFound)
+    }
+    fn save(&self, value: &HumanTaskCheckpointV1) -> Result<(), HumanTaskStoreError> {
+        self.log.lock().unwrap().push("save");
+        if self.fail_save {
+            Err(HumanTaskStoreError::Unavailable)
+        } else {
+            *self.value.lock().unwrap() = Some(value.clone());
+            Ok(())
+        }
+    }
+    fn remove(&self, _: &HumanTaskId) -> Result<(), HumanTaskStoreError> {
+        self.log.lock().unwrap().push("remove");
+        *self.value.lock().unwrap() = None;
+        Ok(())
+    }
+}
+fn parent(cwd: &Path) -> HumanTaskParentInput {
+    HumanTaskParentInput {
+        ai_session_id: "s1".into(),
+        conversation_id: "c1".into(),
+        turn_id: "t1".into(),
+        user_request: "please review".into(),
+        cwd: cwd.into(),
+        llm_profile: "fast".into(),
+        runtime_dir: cwd.join("runtime"),
+    }
+}
+
+#[test]
+fn human_task_checkpoint_is_saved_before_shell_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = Arc::new(Mutex::new(vec![]));
+    let store = RecordingStore {
+        log: log.clone(),
+        value: Mutex::new(None),
+        fail_save: false,
+    };
+    let launcher = Launcher {
+        log: log.clone(),
+        suspended: true,
+    };
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.status, HandoffExecutionOutcome::Suspended);
+    assert_eq!(&*log.lock().unwrap(), &["load", "save", "launch", "save"]);
+    let failed_log = Arc::new(Mutex::new(vec![]));
+    let failed = RecordingStore {
+        log: failed_log.clone(),
+        value: Mutex::new(None),
+        fail_save: true,
+    };
+    let failed_launcher = Launcher {
+        log: failed_log.clone(),
+        suspended: false,
+    };
+    let result = HumanTaskCoordinator::new(&failed, &Identity, &failed_launcher, &Observer)
+        .execute(task(), parent(dir.path()), &AtomicBool::new(false));
+    assert_eq!(
+        result.error.unwrap().code,
+        "human_task_checkpoint_unavailable"
+    );
+    assert!(!failed_log.lock().unwrap().contains(&"launch"));
+
+    let runtime_candidate = allocate_runtime_handoff_path();
+    assert!(
+        !runtime_candidate.exists(),
+        "production runtime allocation must be side-effect free before checkpoint save"
+    );
+}
+
+#[test]
+fn human_task_checkpoint_v1_preserves_resume_context() {
+    let value = checkpoint(
+        HumanTaskWorkflowState::Suspended,
+        PathBuf::from("/tmp/project"),
+    );
+    value.validate().unwrap();
+    let json = serde_json::to_string(&value).unwrap();
+    let decoded: HumanTaskCheckpointV1 = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, value);
+    assert_eq!(decoded.segments[0].index, 0);
+    assert!(decoded.final_result.is_none());
+    assert!(decoded.continuation.continuation_turn_id.is_none());
+    for forbidden in [
+        "api_key",
+        "socket",
+        "callback",
+        "cancel_flag",
+        "pty_fd",
+        "environment",
+    ] {
+        assert!(!json.contains(forbidden));
+    }
+}
+
+#[test]
+fn human_task_checkpoint_store_is_secure_and_atomic() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let value = checkpoint(HumanTaskWorkflowState::Suspended, dir.path().into());
+    store.save(&value).unwrap();
+    let path = dir
+        .path()
+        .join("human-tasks/ht-20260714-7f31c2/checkpoint.json");
+    assert_eq!(
+        fs::metadata(dir.path().join("human-tasks"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(store.load_active().unwrap(), value);
+    let mut changed = value.clone();
+    changed.updated_at_ms = 21;
+    changed.suspended_at_ms = Some(21);
+    changed.segments[0].ended_at_ms = 21;
+    store.save(&changed).unwrap();
+    assert_eq!(store.load_active().unwrap(), changed);
+
+    let oversized_dir = tempfile::tempdir().unwrap();
+    let oversized_store = HumanTaskFileStore::new(oversized_dir.path().into());
+    let mut oversized = checkpoint(
+        HumanTaskWorkflowState::Suspended,
+        oversized_dir.path().into(),
+    );
+    oversized.parent.user_request = "x".repeat(HUMAN_TASK_CHECKPOINT_MAX_BYTES);
+    assert_eq!(
+        oversized_store.save(&oversized).unwrap_err(),
+        HumanTaskStoreError::Invalid
+    );
+
+    let symlink_dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), symlink_dir.path().join("human-tasks")).unwrap();
+    assert_eq!(
+        HumanTaskFileStore::new(symlink_dir.path().into())
+            .save(&value)
+            .unwrap_err(),
+        HumanTaskStoreError::PermissionDenied
+    );
+}
+
+#[test]
+fn human_task_checkpoint_invalid_is_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("human-tasks/ht-20260714-7f31c2");
+    fs::create_dir_all(&root).unwrap();
+    fs::set_permissions(
+        dir.path().join("human-tasks"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = root.join("checkpoint.json");
+    let raw = b"{broken-json";
+    fs::write(&path, raw).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    assert_eq!(
+        store.load_active().unwrap_err(),
+        HumanTaskStoreError::Invalid
+    );
+    assert_eq!(fs::read(&path).unwrap(), raw);
+}
+
+#[test]
+fn human_task_id_is_safe_path_component() {
+    assert!(HumanTaskId::parse("ht-20260714-7f31c2").is_ok());
+    for value in [
+        "",
+        ".",
+        "..",
+        "ht-20260714/7f31c2",
+        "ht-20260714\\7f31c2",
+        "ht-20260714-7F31C2",
+        "ht-20260714-7f31c20",
+        "ht-２０２６0714-7f31c2",
+    ] {
+        assert!(HumanTaskId::parse(value).is_err(), "{value}");
+    }
+}
+
+#[test]
+fn human_task_status_reports_suspended_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    store
+        .save(&checkpoint(
+            HumanTaskWorkflowState::Suspended,
+            dir.path().into(),
+        ))
+        .unwrap();
+    let text = HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
+        .render()
+        .unwrap();
+    for expected in [
+        "ht-20260714-7f31c2",
+        "State: suspended",
+        "review deployment",
+        "need approval",
+        "Current cwd:",
+        "ai human-task resume",
+    ] {
+        assert!(text.contains(expected));
+    }
+
+    let escaped_dir = tempfile::tempdir().unwrap();
+    let escaped_store = HumanTaskFileStore::new(escaped_dir.path().into());
+    let mut unsafe_display =
+        checkpoint(HumanTaskWorkflowState::Suspended, escaped_dir.path().into());
+    unsafe_display.task.objective = "review\n\u{1b}[31msecret".into();
+    escaped_store.save(&unsafe_display).unwrap();
+    let escaped = HumanTaskStatus::new(&escaped_store, &SystemHumanTaskTimeFormatter)
+        .render()
+        .unwrap();
+    assert!(escaped.contains(r"review\n\u{1b}[31msecret"));
+    assert!(!escaped.contains('\u{1b}'));
+}
+
+#[test]
+fn human_task_status_reports_no_task_as_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    assert_eq!(
+        HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
+            .render()
+            .unwrap(),
+        "No suspended Human Task.\n"
+    );
+
+    let config = dir.path().join("ai.toml");
+    fs::write(
+        &config,
+        format!("history_dir = {:?}\n", dir.path().join("cli-history")),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", config)
+        .args(["human-task", "status"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"No suspended Human Task.\n");
+}
+
+#[test]
+fn human_task_status_does_not_hide_invalid_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    store
+        .save(&checkpoint(
+            HumanTaskWorkflowState::Running,
+            dir.path().into(),
+        ))
+        .unwrap();
+    assert!(HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
+        .render()
+        .is_err());
+    assert!(store.load_active().is_ok());
+}
+
+#[test]
+fn human_task_active_collision_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let active = checkpoint(HumanTaskWorkflowState::Suspended, dir.path().into());
+    store.save(&active).unwrap();
+    let before = serde_json::to_vec(&store.load_active().unwrap()).unwrap();
+    let log = Arc::new(Mutex::new(vec![]));
+    let launcher = Launcher {
+        log: log.clone(),
+        suspended: false,
+    };
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.error.unwrap().code, "human_task_already_active");
+    assert!(log.lock().unwrap().is_empty());
+    assert_eq!(
+        serde_json::to_vec(&store.load_active().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn human_task_normal_done_leaves_no_suspend_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = Arc::new(Mutex::new(vec![]));
+    let store = RecordingStore {
+        log: log.clone(),
+        value: Mutex::new(None),
+        fail_save: false,
+    };
+    let launcher = Launcher {
+        log,
+        suspended: false,
+    };
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.status, HandoffExecutionOutcome::Done);
+    assert!(!result.verified);
+    assert!(matches!(
+        store.load_active(),
+        Err(HumanTaskStoreError::NotFound)
+    ));
+}

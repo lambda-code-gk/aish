@@ -386,6 +386,13 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 
 ## モック・フィクスチャ
 
+### 0063 Human Task suspend checkpoint
+
+- `ai/tests/0063_human_task_suspend_checkpoint_red.rs`: checkpoint domain round-trip、実tempdir file storeのmode/symlink/size/atomic replace/invalid保全、coordinator順序・副作用なしruntime path割当・collision・Done cleanup、read-only statusと実CLIのsocket不要empty表示。
+- `aish/tests/0063_human_task_suspend_checkpoint_red.rs`: 生成されたbash/zsh一時rcfile、Rust helperによるversion 1 event送信とUnicode reason validation、最初のterminal event、通常return回帰。
+- `aibe/tests/0063_human_task_suspend_checkpoint_red.rs`: scripted LLMの同一roundにhuman_taskと後続toolを置き、実coordinator/file store/statusを通して`SuspendTurn`、LLM 1 call、後続tool 0 call、store再openを検証する。外部providerと実PTYだけをfakeにする。
+- Phase 2回帰は0055/0057/0060/0061/0062の既存integration testも直列実行する。
+
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
 - 実 API キーを使うテストを CI に入れない
 - フィクスチャは `*/tests/fixtures/` に置き、大きなログは必要最小限

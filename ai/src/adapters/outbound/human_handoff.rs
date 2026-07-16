@@ -132,7 +132,17 @@ impl HumanShellLauncher for AishHumanShellLauncher {
         })?;
         let mut returned: HumanShellReturn = serde_json::from_str(raw.trim())
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
-        if !returned.normal_return {
+        if returned.outcome == crate::ports::outbound::HumanShellOutcome::Suspended {
+            let reason_path = request.runtime_dir.join("suspend-reason");
+            if reason_path.is_file() {
+                let reason = std::fs::read_to_string(&reason_path)
+                    .ok()
+                    .filter(|v| !v.is_empty());
+                return Err(HumanShellLaunchError::Suspended {
+                    returned: Box::new(returned),
+                    reason,
+                });
+            }
             return Err(HumanShellLaunchError::MissingReturnMarker);
         }
         if returned.exit_code.is_none() {
@@ -574,6 +584,21 @@ pub fn create_runtime_handoff_dir() -> std::io::Result<PathBuf> {
         std::env::var_os("TMPDIR").as_deref(),
         unsafe { libc::getuid() },
     )
+}
+
+/// Human Task coordinator が checkpoint を保存する前には副作用を起こさず、
+/// launcher が保存後に作成する runtime directory の候補だけを返す。
+pub fn allocate_runtime_handoff_path() -> PathBuf {
+    runtime_handoff_aish_root(
+        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+        std::env::var_os("TMPDIR").as_deref(),
+        unsafe { libc::getuid() },
+    )
+    .join(format!(
+        "handoff-{}-{}",
+        std::process::id(),
+        rand_handoff_suffix()
+    ))
 }
 
 pub fn cleanup_runtime_handoff_dir(dir: &PathBuf) {

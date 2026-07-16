@@ -19,7 +19,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use ai::adapters::outbound::{AishHumanShellLauncher, RuntimeHandoffDirGuard};
-use ai::ports::outbound::{HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher};
+use ai::ports::outbound::{
+    HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher, HumanShellOutcome,
+};
 use aibe_protocol::{ClientRequest, ClientResponse, ErrorCode, ShellExecApprovalOrigin};
 
 fn e2e_timeout() -> Duration {
@@ -389,13 +391,12 @@ impl CancelPathHandoffMock {
                             let mut line = String::new();
                             if read_line_with_deadline(&mut reader, &mut line, cancel_deadline)
                                 .is_ok()
-                            {
-                                if matches!(
+                                && matches!(
                                     serde_json::from_str::<ClientRequest>(line.trim()),
                                     Ok(ClientRequest::CancelTurn { .. })
-                                ) {
-                                    saw_cancel_drain.store(true, Ordering::SeqCst);
-                                }
+                                )
+                            {
+                                saw_cancel_drain.store(true, Ordering::SeqCst);
                             }
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -844,7 +845,7 @@ fn normal_handoff_success_path_unchanged() {
     let body = format!(
         "cat > \"$result_file\" <<'JSON'\n{}\nJSON\n",
         serde_json::json!({
-            "normal_return": true,
+            "outcome": "done",
             "exit_code": 0,
             "final_cwd": home.path(),
             "shell_session_id": "sess-0057",
@@ -859,7 +860,7 @@ fn normal_handoff_success_path_unchanged() {
     let returned = launcher
         .launch_and_wait(&request(home.path(), runtime), &cancel)
         .expect("normal handoff succeeds");
-    assert!(returned.normal_return);
+    assert_eq!(returned.outcome, HumanShellOutcome::Done);
     assert_eq!(returned.exit_code, Some(0));
     assert_eq!(returned.final_cwd, home.path());
 }

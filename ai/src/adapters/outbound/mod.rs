@@ -7,6 +7,7 @@ mod external_editor;
 mod file_log;
 mod file_write_approval_ui;
 mod human_handoff;
+mod human_task_file_store;
 mod local_history;
 mod memory_recipe_approval_ui;
 mod output_filter;
@@ -48,8 +49,11 @@ pub use file_write_approval_ui::{
     stdin_ready_for_file_write_approval,
 };
 pub use human_handoff::{
-    cleanup_runtime_handoff_dir, create_runtime_handoff_dir, AishHumanShellLauncher,
-    ParentTermiosGuard, ProcessEnvironmentObserver, RuntimeHandoffDirGuard,
+    allocate_runtime_handoff_path, cleanup_runtime_handoff_dir, create_runtime_handoff_dir,
+    AishHumanShellLauncher, ParentTermiosGuard, ProcessEnvironmentObserver, RuntimeHandoffDirGuard,
+};
+pub use human_task_file_store::{
+    HumanTaskFileStore, SystemHumanTaskIdentity, SystemHumanTaskTimeFormatter,
 };
 pub use local_history::LocalHistoryStore;
 pub use memory_recipe_approval_ui::{

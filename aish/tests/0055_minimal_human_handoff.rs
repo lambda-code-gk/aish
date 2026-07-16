@@ -103,7 +103,7 @@ fn run_human_shell(input: &[u8]) -> (std::process::Output, aish::human_shell::Hu
 fn human_shell_ctrl_d_returns_control_to_parent() {
     let (output, actual) = run_human_shell(b"\x04");
     assert!(output.status.success());
-    assert!(actual.normal_return);
+    assert_eq!(actual.outcome, aish::human_shell::HumanShellOutcome::Done);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn human_shell_exit_returns_control_regardless_of_code() {
     for input in [b"exit\n".as_slice(), b"exit 1\n".as_slice()] {
         let (output, actual) = run_human_shell(input);
         assert!(output.status.success());
-        assert!(actual.normal_return);
+        assert_eq!(actual.outcome, aish::human_shell::HumanShellOutcome::Done);
         assert!(actual.exit_code.is_some());
     }
 }
@@ -153,7 +153,7 @@ fn human_shell_startup_prints_parent_request_and_suggested_command() {
 fn bash_human_return_marker() {
     let (output, actual) = run_human_shell(b"exit\n");
     assert!(output.status.success());
-    assert!(actual.normal_return);
+    assert_eq!(actual.outcome, aish::human_shell::HumanShellOutcome::Done);
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn zsh_human_return_marker() {
     );
     let actual: aish::human_shell::HumanShellResult =
         serde_json::from_str(&std::fs::read_to_string(result_file).unwrap()).unwrap();
-    assert!(actual.normal_return);
+    assert_eq!(actual.outcome, aish::human_shell::HumanShellOutcome::Done);
 }
 
 #[test]
@@ -229,12 +229,12 @@ fn unsupported_shell_fails_before_interactive_launch() {
 #[test]
 fn human_shell_child_cannot_read_handoff_env_vars() {
     let home = private_temp_home();
-    let script = format!(
+    let script = String::from(
         "printf 'MODE=%s\\nREQ=%s\\nSUG=%s\\nRT=%s\\n' \
-         \"${{AISH_CONTROL_MODE:-}}\" \
-         \"${{AISH_HANDOFF_PARENT_REQUEST:-}}\" \
-         \"${{AISH_HANDOFF_SUGGESTED_COMMAND:-}}\" \
-         \"${{AISH_HANDOFF_RUNTIME_DIR:-}}\"; exit\n"
+         \"${AISH_CONTROL_MODE:-}\" \
+         \"${AISH_HANDOFF_PARENT_REQUEST:-}\" \
+         \"${AISH_HANDOFF_SUGGESTED_COMMAND:-}\" \
+         \"${AISH_HANDOFF_RUNTIME_DIR:-}\"; exit\n",
     );
     let (output, _) = run_human_shell_with(script.as_bytes(), home.path(), "true", &[]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -392,7 +392,7 @@ fn terminal_disconnect_does_not_create_normal_return_marker() {
             let result: aish::human_shell::HumanShellResult =
                 serde_json::from_str(&std::fs::read_to_string(&result_file).unwrap()).unwrap();
             assert!(
-                !result.normal_return,
+                result.outcome == aish::human_shell::HumanShellOutcome::Suspended,
                 "stdin EOF must not synthesize Ctrl+D normal return"
             );
         } else {

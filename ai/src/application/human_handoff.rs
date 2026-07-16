@@ -68,7 +68,7 @@ impl<'a> RunSynchronousHumanHandoff<'a> {
             },
             cancel_requested,
         )?;
-        if !shell_return.normal_return {
+        if shell_return.outcome != crate::ports::outbound::HumanShellOutcome::Done {
             return Err(HumanHandoffError::Launch(
                 HumanShellLaunchError::MissingReturnMarker,
             ));

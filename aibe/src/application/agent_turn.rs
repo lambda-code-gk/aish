@@ -481,6 +481,19 @@ impl AgentTurnService {
                         reason: Some("cancelled".into()),
                     };
                 }
+                Ok(RoundOutcome::SuspendTurn { task_id, executed }) => {
+                    if let Some(events) = events.as_ref() {
+                        events.final_response(&id).await;
+                    }
+                    return ClientResponse::AgentTurnResult {
+                        id,
+                        status: AgentTurnStatus::Ok,
+                        assistant_message: protocol_message_out_from_chat(&crate::domain::ChatMessage::assistant(format!(
+                            "Human Task suspended.\n\nTask:\n  {task_id}\n\nResume:\n  ai human-task resume\n"
+                        ))),
+                        tool_calls: executed,
+                    };
+                }
                 Err(e) => return client_response_for_llm_error(id, e),
             }
         }

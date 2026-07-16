@@ -6,6 +6,8 @@ mod execute_human_task;
 mod feature_executor;
 mod history;
 mod human_handoff;
+mod human_task_coordinator;
+mod human_task_status;
 pub mod memory_cli;
 pub mod memory_cli_context;
 pub mod memory_cli_pack;
@@ -33,6 +35,8 @@ pub use history::{
 pub use human_handoff::{
     handoff_tool_result_message, HumanHandoffError, HumanHandoffRequest, RunSynchronousHumanHandoff,
 };
+pub use human_task_coordinator::{HumanTaskCoordinator, HumanTaskParentInput};
+pub use human_task_status::{HumanTaskStatus, HumanTaskStatusError};
 
 pub use feature_executor::{execute_feature_actions_mvp, FeatureExecutionOutcome};
 pub use replay_manifest::ShellLogMode;

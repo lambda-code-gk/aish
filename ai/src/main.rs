@@ -37,9 +37,9 @@ use ai::application::{
     RecallGatingInput, RecallTurnContext, ShellLogMode,
 };
 use ai::clap_cli::{
-    AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, IdeaCommand, MemCommand,
-    MemoryCliOptions, NowCommand, OutputFormatArg, RecallCommand, SmartCommand, TurnOptions,
-    WorkCliOptions, WorkCommand,
+    AiCli, AiCommand, ContextCommand, GoalCommand, HistoryStatusArg, HumanTaskCommand, IdeaCommand,
+    MemCommand, MemoryCliOptions, NowCommand, OutputFormatArg, RecallCommand, SmartCommand,
+    TurnOptions, WorkCliOptions, WorkCommand,
 };
 use ai::domain::client_tools::replay_show::replay_client_tool_callback;
 use ai::domain::smart_preprocessor::{
@@ -143,6 +143,9 @@ fn run() -> anyhow::Result<ExitCode> {
             format,
             socket,
         } => run_diagnostic_command("status", quiet, format.into(), socket),
+        AiCommand::HumanTask {
+            command: HumanTaskCommand::Status,
+        } => run_human_task_status(),
         AiCommand::Doctor {
             quiet,
             format,
@@ -162,6 +165,15 @@ fn run() -> anyhow::Result<ExitCode> {
         AiCommand::Work { command, options } => run_work(command, options),
         AiCommand::Recall { command } => run_recall_command(command),
     }
+}
+
+fn run_human_task_status() -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let formatter = ai::adapters::outbound::SystemHumanTaskTimeFormatter;
+    let output = ai::application::HumanTaskStatus::new(&store, &formatter).render()?;
+    print!("{output}");
+    Ok(ExitCode::SUCCESS)
 }
 
 #[derive(Debug)]
@@ -1143,6 +1155,25 @@ fn run_agent_turn_core(
         )),
         _ => None,
     };
+    let human_task_parent_meta = match &request {
+        ClientRequest::AgentTurn {
+            messages,
+            context,
+            llm_profile,
+            ..
+        } => Some((
+            context.cwd.clone().map(PathBuf::from),
+            messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.clone()),
+            llm_profile.clone().unwrap_or_else(|| "default".into()),
+            context.ai_session_id.clone(),
+            context.conversation_id.clone(),
+        )),
+        _ => None,
+    };
     let worker_client = AibeUnixClient::new(socket_path.clone());
     let cancel_client = AibeUnixClient::new(socket_path);
     let cancel_guard = TurnCancelGuard::new().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1165,6 +1196,8 @@ fn run_agent_turn_core(
     let silent_shell_exec_thread = silent_shell_exec;
     let collaborative_thread = collaborative;
     let collaborative_meta_thread = collaborative_meta;
+    let human_task_parent_meta_thread = human_task_parent_meta;
+    let human_task_session_thread = session_id.clone().unwrap_or_else(|| turn_id.clone());
     let cancel_requested_thread = Arc::clone(&cancel_requested);
     let handoff_failure_thread = Arc::clone(&handoff_failure);
     let handoff_failure_tx_thread = handoff_failure_tx.clone();
@@ -1390,37 +1423,41 @@ fn run_agent_turn_core(
                 // Human Shell が TTY を使う前に tool_call スピナーを消す。
                 // `\r` 再描画がシェルプロンプトを潰すのを防ぐ。
                 presenter_thread.end_turn_progress();
-                let (cwd, _) = collaborative_meta_thread.clone().unwrap_or((None, None));
+                let (cwd, user_request, llm_profile, ai_session_id, conversation_id) =
+                    human_task_parent_meta_thread.clone().unwrap_or((
+                        None,
+                        None,
+                        "default".into(),
+                        None,
+                        None,
+                    ));
                 let cwd = cwd?;
-                let runtime_dir = match ai::adapters::outbound::create_runtime_handoff_dir() {
-                    Ok(value) => value,
-                    Err(_) => {
-                        return Some(aibe_protocol::HumanTaskResult {
-                            status: aibe_protocol::HandoffExecutionOutcome::Blocked,
-                            task: prompt.request,
-                            verified: false,
-                            human_shell_exit_code: None,
-                            final_shell_cwd: None,
-                            shell_log_range: None,
-                            observation: None,
-                            error: Some(aibe_protocol::HumanHandoffFailure {
-                                code: "human_task_runtime_unavailable".into(),
-                                message: "human task runtime directory is unavailable".into(),
-                            }),
-                        })
-                    }
-                };
+                let user_request = user_request?;
+                let runtime_dir = ai::adapters::outbound::allocate_runtime_handoff_path();
                 let _runtime_guard =
                     ai::adapters::outbound::RuntimeHandoffDirGuard::new(runtime_dir.clone());
                 let _termios_guard = ai::adapters::outbound::ParentTermiosGuard::save();
-                let service = ai::application::ExecuteHumanTask::new(
+                let checkpoint_store =
+                    ai::adapters::outbound::HumanTaskFileStore::new(history_dir_thread.clone());
+                let identity = ai::adapters::outbound::SystemHumanTaskIdentity;
+                let service = ai::application::HumanTaskCoordinator::new(
+                    &checkpoint_store,
+                    &identity,
                     &human_shell_launcher,
                     &environment_observer,
                 );
                 Some(service.execute(
                     prompt.request,
-                    cwd,
-                    runtime_dir,
+                    ai::application::HumanTaskParentInput {
+                        ai_session_id:
+                            ai_session_id.unwrap_or_else(|| human_task_session_thread.clone()),
+                        conversation_id: conversation_id.unwrap_or_else(|| turn_id_thread.clone()),
+                        turn_id: turn_id_thread.clone(),
+                        user_request,
+                        cwd,
+                        llm_profile,
+                        runtime_dir,
+                    },
                     cancel_requested_thread.as_ref(),
                 ))
             };

@@ -10,6 +10,7 @@ pub enum HandoffExecutionOutcome {
     Done,
     Blocked,
     Cancelled,
+    Suspended,
 }
 
 pub const HUMAN_TASK_BRIEFING_MAX_BYTES: usize = 64 * 1024;
@@ -99,6 +100,10 @@ pub struct HumanTaskResult {
     pub observation: Option<PostHandoffObservation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<HumanHandoffFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspend_reason: Option<String>,
 }
 
 impl HumanTaskResult {
@@ -112,25 +117,71 @@ impl HumanTaskResult {
                         .as_ref()
                         .is_some_and(|cwd| !cwd.trim().is_empty())
                     && self.shell_log_range.is_some()
-                    && self.observation.is_some() =>
+                    && self.observation.is_some()
+                    && self.task_id.is_none()
+                    && self.suspend_reason.is_none() =>
             {
                 Ok(())
             }
             HandoffExecutionOutcome::Blocked
                 if !self.verified
+                    && self.task_id.is_none()
+                    && self.suspend_reason.is_none()
                     && self.error.as_ref().is_some_and(|e| {
                         !e.code.trim().is_empty() && !e.message.trim().is_empty()
                     }) =>
             {
                 Ok(())
             }
-            HandoffExecutionOutcome::Cancelled if self.error.is_none() && !self.verified => Ok(()),
+            HandoffExecutionOutcome::Cancelled
+                if self.error.is_none()
+                    && !self.verified
+                    && self.task_id.is_none()
+                    && self.suspend_reason.is_none() =>
+            {
+                Ok(())
+            }
+            HandoffExecutionOutcome::Suspended
+                if self.error.is_none()
+                    && !self.verified
+                    && self
+                        .task_id
+                        .as_ref()
+                        .is_some_and(|id| valid_human_task_id(id))
+                    && self
+                        .suspend_reason
+                        .as_ref()
+                        .is_none_or(|reason| valid_suspend_reason(reason))
+                    && self
+                        .final_shell_cwd
+                        .as_ref()
+                        .is_some_and(|cwd| !cwd.trim().is_empty())
+                    && self.shell_log_range.is_some()
+                    && self.observation.is_some() =>
+            {
+                Ok(())
+            }
             HandoffExecutionOutcome::HumanControlReturned => {
                 Err("legacy outcome is not valid for HumanTaskResult")
             }
             _ => Err("status/error invariant violated"),
         }
     }
+}
+
+fn valid_human_task_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 18
+        && bytes.starts_with(b"ht-")
+        && bytes[3..11].iter().all(u8::is_ascii_digit)
+        && bytes[11] == b'-'
+        && bytes[12..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+fn valid_suspend_reason(reason: &str) -> bool {
+    reason.len() <= 4096 && !reason.chars().any(char::is_control)
 }
 
 /// 親が要求したコマンドの完了可否（human shell 返却時は不明が既定）。
@@ -251,6 +302,8 @@ mod tests {
             shell_log_range: None,
             observation: None,
             error: None,
+            task_id: None,
+            suspend_reason: None,
         };
         assert!(blocked.validate().is_err());
 
@@ -263,6 +316,8 @@ mod tests {
             shell_log_range: None,
             observation: None,
             error: None,
+            task_id: None,
+            suspend_reason: None,
         };
         assert!(done_without_lifecycle.validate().is_err());
 
@@ -288,8 +343,24 @@ mod tests {
                 human_task_evidence: None,
             }),
             error: None,
+            task_id: None,
+            suspend_reason: None,
         };
         assert!(done.validate().is_ok());
+
+        let mut suspended = done.clone();
+        suspended.status = HandoffExecutionOutcome::Suspended;
+        suspended.task_id = Some("ht-20260714-7f31c2".into());
+        assert!(suspended.validate().is_ok());
+        suspended.task_id = Some("ht-20260714-7f31c2\nsecret".into());
+        assert!(suspended.validate().is_err());
+        suspended.task_id = Some("ht-20260714-7f31c2".into());
+        suspended.suspend_reason = Some("unsafe\u{85}reason".into());
+        assert!(suspended.validate().is_err());
+
+        let mut done_with_suspend_fields = done.clone();
+        done_with_suspend_fields.task_id = Some("ht-20260714-7f31c2".into());
+        assert!(done_with_suspend_fields.validate().is_err());
 
         let done_verified_true = HumanTaskResult {
             verified: true,

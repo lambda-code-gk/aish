@@ -45,6 +45,8 @@ impl<'a> ExecuteHumanTask<'a> {
                 code: code.into(),
                 message,
             }),
+            task_id: None,
+            suspend_reason: None,
         };
         if !cwd.is_dir() {
             return blocked(
@@ -60,7 +62,7 @@ impl<'a> ExecuteHumanTask<'a> {
             task_briefing: Some(HumanTaskBriefing::from(&task)),
         };
         let returned = match self.shell_launcher.launch_and_wait(&launch, cancel) {
-            Ok(value) if value.normal_return => value,
+            Ok(value) if value.outcome == crate::ports::outbound::HumanShellOutcome::Done => value,
             Ok(_) => {
                 return blocked(
                     "human_task_missing_return_marker",
@@ -77,6 +79,8 @@ impl<'a> ExecuteHumanTask<'a> {
                     shell_log_range: None,
                     observation: None,
                     error: None,
+                    task_id: None,
+                    suspend_reason: None,
                 }
             }
             Err(_) => {
@@ -105,6 +109,8 @@ impl<'a> ExecuteHumanTask<'a> {
             }),
             observation: Some(observation),
             error: None,
+            task_id: None,
+            suspend_reason: None,
         }
     }
 }

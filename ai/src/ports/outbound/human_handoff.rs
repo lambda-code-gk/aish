@@ -5,6 +5,13 @@ use std::sync::atomic::AtomicBool;
 
 use aibe_protocol::{HumanTaskBriefing, PostHandoffObservation};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanShellOutcome {
+    Done,
+    Suspended,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HumanShellLaunchRequest {
     pub cwd: PathBuf,
@@ -16,7 +23,7 @@ pub struct HumanShellLaunchRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HumanShellReturn {
-    pub normal_return: bool,
+    pub outcome: HumanShellOutcome,
     pub exit_code: Option<i32>,
     pub final_cwd: PathBuf,
     #[serde(default)]
@@ -41,6 +48,11 @@ pub enum HumanShellLaunchError {
     Interrupted(String),
     #[error("human handoff was cancelled: {0}")]
     Cancelled(String),
+    #[error("human task suspended")]
+    Suspended {
+        returned: Box<HumanShellReturn>,
+        reason: Option<String>,
+    },
 }
 
 pub trait HumanShellLauncher: Send + Sync {

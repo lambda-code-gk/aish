@@ -25,6 +25,7 @@ pub fn is_known_cli_head(word: &str) -> bool {
             | "rerun"
             | "history"
             | "status"
+            | "human-task"
             | "doctor"
             | "ping"
             | "smart"
