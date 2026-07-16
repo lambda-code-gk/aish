@@ -3631,6 +3631,24 @@ pending = false
 [[cases]]
 spec = "0064"
 phase = 2
+id = "human_task_resume_post_launch_error_keeps_running"
+description = "Human Shell起動後のCancelled/Interrupted/FailedではSuspendedへ戻さずRunningを維持する"
+test = "human_task_resume_post_launch_error_keeps_running"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
+id = "human_task_resume_pre_launch_error_restores_suspended"
+description = "Human Shell未開始のpre-launch失敗だけSuspendedへ復元する"
+test = "human_task_resume_pre_launch_error_restores_suspended"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
 id = "human_task_resume_cli_installs_parent_termios_guard"
 description = "resume CLIがParentTermiosGuardで親TTYを復元する"
 test = "human_task_resume_cli_installs_parent_termios_guard"

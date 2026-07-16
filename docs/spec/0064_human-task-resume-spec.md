@@ -55,7 +55,7 @@ Running → terminal Done（checkpoint 削除）   # 初回 create の既存 006
 8. shell 終端後、0061 の bounded Observation を収集する
 9. `Suspended` なら新 segment を追記し Suspended を atomic 保存。最終 save 失敗時は resume 直前の Suspended へ復元する
 10. `Done` なら Done segment と `final_result` を持つ `ResultPending` を atomic 保存（Suspended へ巻き戻さない）。最終 save 失敗時も Suspended へ戻さず、既存の Running（orphaned / resume 不可・cancel のみ）を維持する
-11. launch 失敗時は Suspended を復元し、安定 code で fail-closed する
+11. launch 失敗時: Human Shell 未開始（MissingCwd / PreLaunchFailed）だけ Suspended へ復元する。起動後または不明な Cancelled / Interrupted / Failed では Running を維持する
 12. lock は終端処理まで保持する
 
 ### 1.3 CLI と案内
@@ -164,6 +164,8 @@ Cancel to discard:
 | `human_task_resume_done_persists_result_pending` | Done 後は Done segment と final_result を ResultPending として永続化し Suspended へ巻き戻さない |
 | `human_task_resume_final_save_failure_restores_suspended` | 再 suspend の最終 save 失敗時は Running を残さず resume 前の Suspended へ復元する |
 | `human_task_resume_done_save_failure_keeps_running` | Done 後の ResultPending save 失敗時は Suspended へ戻さず Running を維持し resume を拒否する |
+| `human_task_resume_post_launch_error_keeps_running` | Human Shell 起動後の Cancelled / Interrupted / Failed では Suspended へ戻さず Running を維持する |
+| `human_task_resume_pre_launch_error_restores_suspended` | Human Shell 未開始の pre-launch 失敗だけ Suspended へ復元する |
 | `human_task_resume_cli_installs_parent_termios_guard` | resume CLI が ParentTermiosGuard で親 TTY を復元する |
 | `human_task_resume_preserves_single_segment_regression` | 単一 segment の 0063 Suspended 経路と create Done 削除が回帰しない |
 
@@ -179,3 +181,4 @@ Cancel to discard:
 | 1 | INITIAL | 0063-C を 0064 として Scope Lock。Done/continuation は後送 | overview 分割と One Novelty Rule に従い resume だけを実装単位にする |
 | 2 | SAFETY_WITHIN_FAULT_MODEL / BLOCKER_ORIGINAL_AC | Done を ResultPending 永続化へ変更。最終 save 失敗時の Suspended 復元と ParentTermiosGuard を追加 | PR #8 レビュー: Suspended 巻き戻しは外部副作用に対して fail-closed でない |
 | 3 | SAFETY_WITHIN_FAULT_MODEL | Done/ResultPending の terminal save 失敗では Suspended へ戻さず Running を維持 | PR #8 再レビュー: rename後fsync失敗でも完了済み作業を再resume可能にしてはならない |
+| 4 | SAFETY_WITHIN_FAULT_MODEL | 起動後 Cancelled/Interrupted/Failed では Suspended 復元せず Running 維持。PreLaunchFailed を分離 | PR #8 再レビュー: spawn後失敗で副作用済み作業を再resume可能にしてはならない |

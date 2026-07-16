@@ -42,6 +42,9 @@ pub struct HumanShellReturn {
 pub enum HumanShellLaunchError {
     #[error("human shell cwd does not exist: {0}")]
     MissingCwd(String),
+    /// Human Shell がまだ開始していない段階の失敗（cwd/runtime/spawn 等）。
+    #[error("failed before launching human shell: {0}")]
+    PreLaunchFailed(String),
     #[error("failed to launch human shell: {0}")]
     Failed(String),
     #[error("human shell ended without a normal return marker")]

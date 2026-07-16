@@ -114,8 +114,18 @@ impl<'a> HumanTaskResume<'a> {
         {
             Ok(returned) => (returned, None, false),
             Err(HumanShellLaunchError::Suspended { returned, reason }) => (*returned, reason, true),
-            Err(HumanShellLaunchError::Cancelled(_)) | Err(_) => {
+            // Human Shell が確実に未開始なら Suspended へ戻して再 resume 可能にする。
+            Err(HumanShellLaunchError::MissingCwd(_))
+            | Err(HumanShellLaunchError::PreLaunchFailed(_)) => {
                 self.restore_checkpoint(&restore)?;
+                return Err(HumanTaskResumeError::LaunchFailed);
+            }
+            // spawn 後または開始有無が不明な失敗: 外部副作用があり得るため Running を維持し
+            // resume 不可・cancel のみにする（Suspended へ戻さない）。
+            Err(HumanShellLaunchError::Cancelled(_))
+            | Err(HumanShellLaunchError::Interrupted(_))
+            | Err(HumanShellLaunchError::Failed(_))
+            | Err(HumanShellLaunchError::MissingReturnMarker) => {
                 return Err(HumanTaskResumeError::LaunchFailed);
             }
         };

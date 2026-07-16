@@ -108,6 +108,9 @@ impl EnvironmentObserver for Observer {
 enum LaunchPlan {
     Suspend { reason: String, final_cwd: PathBuf },
     Done { final_cwd: PathBuf },
+    Cancelled,
+    Interrupted,
+    PreLaunchFail,
     Fail,
 }
 
@@ -156,6 +159,11 @@ impl HumanShellLauncher for ScriptedLauncher {
                 shell_log_start: 10,
                 shell_log_end: 20,
             }),
+            LaunchPlan::Cancelled => Err(HumanShellLaunchError::Cancelled("ctrl-c".into())),
+            LaunchPlan::Interrupted => Err(HumanShellLaunchError::Interrupted("child died".into())),
+            LaunchPlan::PreLaunchFail => Err(HumanShellLaunchError::PreLaunchFailed(
+                "spawn failed".into(),
+            )),
             LaunchPlan::Fail => Err(HumanShellLaunchError::Failed("boom".into())),
         }
     }
@@ -698,6 +706,92 @@ fn human_task_resume_done_save_failure_keeps_running() {
         .execute(None, cwd.join("rt2"), &AtomicBool::new(false)),
         Err(HumanTaskResumeError::NotSuspended)
     );
+}
+
+#[test]
+fn human_task_resume_post_launch_error_keeps_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let cwd = dir.path().to_path_buf();
+    store.save(&suspended_checkpoint(cwd.clone())).unwrap();
+    for plan in [
+        LaunchPlan::Cancelled,
+        LaunchPlan::Interrupted,
+        LaunchPlan::Fail,
+    ] {
+        store.save(&suspended_checkpoint(cwd.clone())).unwrap();
+        let launcher = ScriptedLauncher {
+            log: Arc::new(Mutex::new(Vec::new())),
+            plans: Mutex::new(vec![plan]),
+            lock_path: None,
+        };
+        assert_eq!(
+            HumanTaskResume::new(
+                &store,
+                &Identity {
+                    now: AtomicU64::new(90)
+                },
+                &launcher,
+                &Observer {
+                    marker: Mutex::new("x".into())
+                }
+            )
+            .execute(None, cwd.join("rt"), &AtomicBool::new(false)),
+            Err(HumanTaskResumeError::LaunchFailed)
+        );
+        let leftover = store.load_active().unwrap();
+        assert_eq!(
+            leftover.state,
+            HumanTaskWorkflowState::Running,
+            "post-launch failure must not restore Suspended"
+        );
+        assert_eq!(
+            HumanTaskResume::new(
+                &store,
+                &Identity {
+                    now: AtomicU64::new(200)
+                },
+                &launcher,
+                &Observer {
+                    marker: Mutex::new("x".into())
+                }
+            )
+            .execute(None, cwd.join("rt2"), &AtomicBool::new(false)),
+            Err(HumanTaskResumeError::NotSuspended)
+        );
+    }
+}
+
+#[test]
+fn human_task_resume_pre_launch_error_restores_suspended() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let cwd = dir.path().to_path_buf();
+    let original = suspended_checkpoint(cwd.clone());
+    store.save(&original).unwrap();
+    let launcher = ScriptedLauncher {
+        log: Arc::new(Mutex::new(Vec::new())),
+        plans: Mutex::new(vec![LaunchPlan::PreLaunchFail]),
+        lock_path: None,
+    };
+    assert_eq!(
+        HumanTaskResume::new(
+            &store,
+            &Identity {
+                now: AtomicU64::new(90)
+            },
+            &launcher,
+            &Observer {
+                marker: Mutex::new("x".into())
+            }
+        )
+        .execute(None, cwd.join("rt"), &AtomicBool::new(false)),
+        Err(HumanTaskResumeError::LaunchFailed)
+    );
+    let restored = store.load_active().unwrap();
+    assert_eq!(restored.state, HumanTaskWorkflowState::Suspended);
+    assert_eq!(restored.segments.len(), 1);
+    assert_eq!(restored.suspend_reason, original.suspend_reason);
 }
 
 #[test]
