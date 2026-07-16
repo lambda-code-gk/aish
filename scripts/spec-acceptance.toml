@@ -3622,6 +3622,15 @@ pending = false
 [[cases]]
 spec = "0064"
 phase = 2
+id = "human_task_resume_done_save_failure_keeps_running"
+description = "Done後のResultPending save失敗時はSuspendedへ戻さずRunningを維持しresumeを拒否する"
+test = "human_task_resume_done_save_failure_keeps_running"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
 id = "human_task_resume_cli_installs_parent_termios_guard"
 description = "resume CLIがParentTermiosGuardで親TTYを復元する"
 test = "human_task_resume_cli_installs_parent_termios_guard"

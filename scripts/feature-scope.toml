@@ -20,8 +20,8 @@ spec = "0064"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 2
-scope_change_reason = "PR #8 review: persist Done as ResultPending instead of restoring Suspended; restore Suspended on terminal save failure; ParentTermiosGuard on resume CLI"
+scope_revision = 3
+scope_change_reason = "PR #8 re-review: on Done/ResultPending terminal save failure keep Running (do not restore Suspended); re-suspend save failure still restores Suspended"
 scope_review = "approved"
 
 core_outcome = "Suspended Human Task を ai human-task resume で再開し、再 suspend で segment を順序保持できる"
@@ -58,6 +58,7 @@ locked_ac_ids = [
   "human_task_resume_cwd_unavailable_fails_closed",
   "human_task_resume_done_persists_result_pending",
   "human_task_resume_final_save_failure_restores_suspended",
+  "human_task_resume_done_save_failure_keeps_running",
   "human_task_resume_cli_installs_parent_termios_guard",
   "human_task_resume_preserves_single_segment_regression",
 ]

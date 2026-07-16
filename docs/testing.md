@@ -395,7 +395,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 
 ### 0064 Human Task resume
 
-- `ai/tests/0064_human_task_resume_red.rs`: Suspended→resume→再suspendのvertical E2E、cwd/briefing復元、segment追記、root flock保持、複数回suspendのObservation順序、missing/mismatched ID、非Suspended拒否、cwd不在、Done時のResultPending永続化、最終save失敗時のSuspended復元、ParentTermiosGuard配線、0063単一segment/Done削除回帰。
+- `ai/tests/0064_human_task_resume_red.rs`: Suspended→resume→再suspendのvertical E2E、cwd/briefing復元、segment追記、root flock保持、複数回suspendのObservation順序、missing/mismatched ID、非Suspended拒否、cwd不在、Done時のResultPending永続化、再suspend最終save失敗時のSuspended復元、Done最終save失敗時のRunning維持、ParentTermiosGuard配線、0063単一segment/Done削除回帰。
 
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
 - 実 API キーを使うテストを CI に入れない

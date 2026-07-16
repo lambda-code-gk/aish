@@ -157,7 +157,11 @@ impl<'a> HumanTaskResume<'a> {
             running.suspended_at_ms = Some(ended);
             running.suspend_reason = reason;
             running.final_result = None;
-            self.save_or_restore(&running, &restore)?;
+            // Re-suspend failed to persist: restore the previous Suspended so the
+            // task remains resumable. External side effects from this segment are
+            // incomplete relative to a Suspended end, so restoring is safer than
+            // leaving Running.
+            self.save_or_restore_suspended(&running, &restore)?;
             Ok(format!(
                 "Human Task suspended.\n\nTask:\n  {}\n\nResume:\n  ai human-task resume\n\nCancel:\n  ai human-task cancel --yes\n",
                 running.task_id.as_str()
@@ -168,7 +172,10 @@ impl<'a> HumanTaskResume<'a> {
             running.suspended_at_ms = None;
             running.suspend_reason = None;
             running.final_result = Some(final_result);
-            self.save_or_restore(&running, &restore)?;
+            // Done already happened with external side effects. Never restore
+            // Suspended on terminal save failure — that would allow duplicate resume.
+            // Leave the pre-terminal Running checkpoint (orphaned; cancel-only).
+            self.store.save(&running)?;
             Ok(format!(
                 "Human Task completed and saved.\n\nTask:\n  {}\nState: result pending\n\nAgent continuation is not available yet.\nCancel to discard:\n  ai human-task cancel --yes\n",
                 running.task_id.as_str()
@@ -176,7 +183,7 @@ impl<'a> HumanTaskResume<'a> {
         }
     }
 
-    fn save_or_restore(
+    fn save_or_restore_suspended(
         &self,
         checkpoint: &HumanTaskCheckpointV1,
         restore: &HumanTaskCheckpointV1,

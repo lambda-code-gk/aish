@@ -648,6 +648,59 @@ fn human_task_resume_final_save_failure_restores_suspended() {
 }
 
 #[test]
+fn human_task_resume_done_save_failure_keeps_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let inner = HumanTaskFileStore::new(dir.path().into());
+    let cwd = dir.path().to_path_buf();
+    let original = suspended_checkpoint(cwd.clone());
+    inner.save(&original).unwrap();
+    let store = FailTerminalResumeSaveStore { inner };
+    let launcher = ScriptedLauncher {
+        log: Arc::new(Mutex::new(Vec::new())),
+        plans: Mutex::new(vec![LaunchPlan::Done {
+            final_cwd: cwd.clone(),
+        }]),
+        lock_path: None,
+    };
+    assert_eq!(
+        HumanTaskResume::new(
+            &store,
+            &Identity {
+                now: AtomicU64::new(90)
+            },
+            &launcher,
+            &Observer {
+                marker: Mutex::new("done-lost".into())
+            }
+        )
+        .execute(None, cwd.join("rt"), &AtomicBool::new(false)),
+        Err(HumanTaskResumeError::Unavailable)
+    );
+    let leftover = store.load_active().unwrap();
+    assert_eq!(
+        leftover.state,
+        HumanTaskWorkflowState::Running,
+        "Done terminal save failure must not restore Suspended"
+    );
+    assert_eq!(leftover.segments.len(), 1);
+    assert!(leftover.final_result.is_none());
+    assert_eq!(
+        HumanTaskResume::new(
+            &store,
+            &Identity {
+                now: AtomicU64::new(200)
+            },
+            &launcher,
+            &Observer {
+                marker: Mutex::new("x".into())
+            }
+        )
+        .execute(None, cwd.join("rt2"), &AtomicBool::new(false)),
+        Err(HumanTaskResumeError::NotSuspended)
+    );
+}
+
+#[test]
 fn human_task_resume_cli_installs_parent_termios_guard() {
     let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"));
     let resume_fn = src
