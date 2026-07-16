@@ -860,3 +860,77 @@ fn human_task_resume_preserves_single_segment_regression() {
     assert_eq!(done.status, HandoffExecutionOutcome::Done);
     assert_eq!(done_store.load_active(), Err(HumanTaskStoreError::NotFound));
 }
+
+#[test]
+fn human_task_create_post_launch_error_keeps_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    for (label, plan, expected_status) in [
+        (
+            "cancelled",
+            LaunchPlan::Cancelled,
+            HandoffExecutionOutcome::Cancelled,
+        ),
+        (
+            "interrupted",
+            LaunchPlan::Interrupted,
+            HandoffExecutionOutcome::Blocked,
+        ),
+        ("failed", LaunchPlan::Fail, HandoffExecutionOutcome::Blocked),
+    ] {
+        let store = HumanTaskFileStore::new(dir.path().join(label).into());
+        let launcher = ScriptedLauncher {
+            log: Arc::new(Mutex::new(Vec::new())),
+            plans: Mutex::new(vec![plan]),
+            lock_path: None,
+        };
+        let result = HumanTaskCoordinator::new(
+            &store,
+            &Identity {
+                now: AtomicU64::new(10),
+            },
+            &launcher,
+            &Observer {
+                marker: Mutex::new("x".into()),
+            },
+        )
+        .execute(task(), parent(&cwd), &AtomicBool::new(false));
+        assert_eq!(result.status, expected_status);
+        let leftover = store.load_active().unwrap();
+        assert_eq!(
+            leftover.state,
+            HumanTaskWorkflowState::Running,
+            "create post-launch failure must keep Running for cancel-only recovery"
+        );
+        assert!(leftover.segments.is_empty());
+    }
+}
+
+#[test]
+fn human_task_create_pre_launch_error_removes_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let launcher = ScriptedLauncher {
+        log: Arc::new(Mutex::new(Vec::new())),
+        plans: Mutex::new(vec![LaunchPlan::PreLaunchFail]),
+        lock_path: None,
+    };
+    let result = HumanTaskCoordinator::new(
+        &store,
+        &Identity {
+            now: AtomicU64::new(10),
+        },
+        &launcher,
+        &Observer {
+            marker: Mutex::new("x".into()),
+        },
+    )
+    .execute(task(), parent(&cwd), &AtomicBool::new(false));
+    assert_eq!(result.status, HandoffExecutionOutcome::Blocked);
+    assert_eq!(
+        result.error.as_ref().map(|e| e.code.as_str()),
+        Some("human_task_launch_failed")
+    );
+    assert_eq!(store.load_active(), Err(HumanTaskStoreError::NotFound));
+}

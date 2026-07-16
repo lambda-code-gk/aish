@@ -166,6 +166,8 @@ Cancel to discard:
 | `human_task_resume_done_save_failure_keeps_running` | Done 後の ResultPending save 失敗時は Suspended へ戻さず Running を維持し resume を拒否する |
 | `human_task_resume_post_launch_error_keeps_running` | Human Shell 起動後の Cancelled / Interrupted / Failed では Suspended へ戻さず Running を維持する |
 | `human_task_resume_pre_launch_error_restores_suspended` | Human Shell 未開始の pre-launch 失敗だけ Suspended へ復元する |
+| `human_task_create_post_launch_error_keeps_running` | 初回 create で起動後 Cancelled / Interrupted / Failed 時は checkpoint を削除せず Running を維持する |
+| `human_task_create_pre_launch_error_removes_checkpoint` | 初回 create の pre-launch 失敗だけ Running checkpoint を削除する |
 | `human_task_resume_cli_installs_parent_termios_guard` | resume CLI が ParentTermiosGuard で親 TTY を復元する |
 | `human_task_resume_preserves_single_segment_regression` | 単一 segment の 0063 Suspended 経路と create Done 削除が回帰しない |
 
@@ -182,3 +184,4 @@ Cancel to discard:
 | 2 | SAFETY_WITHIN_FAULT_MODEL / BLOCKER_ORIGINAL_AC | Done を ResultPending 永続化へ変更。最終 save 失敗時の Suspended 復元と ParentTermiosGuard を追加 | PR #8 レビュー: Suspended 巻き戻しは外部副作用に対して fail-closed でない |
 | 3 | SAFETY_WITHIN_FAULT_MODEL | Done/ResultPending の terminal save 失敗では Suspended へ戻さず Running を維持 | PR #8 再レビュー: rename後fsync失敗でも完了済み作業を再resume可能にしてはならない |
 | 4 | SAFETY_WITHIN_FAULT_MODEL | 起動後 Cancelled/Interrupted/Failed では Suspended 復元せず Running 維持。PreLaunchFailed を分離 | PR #8 再レビュー: spawn後失敗で副作用済み作業を再resume可能にしてはならない |
+| 5 | SAFETY_WITHIN_FAULT_MODEL / REGRESSION | HumanTaskCoordinator 初回 create も起動後エラーで Running を維持 | PR #8 再レビュー: resume と同じ重複実行リスクが初回経路に残っていた |

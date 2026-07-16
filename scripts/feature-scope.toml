@@ -20,8 +20,8 @@ spec = "0064"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 4
-scope_change_reason = "PR #8 re-review: restore Suspended only on pre-launch errors; keep Running after Cancelled/Interrupted/post-launch Failed"
+scope_revision = 5
+scope_change_reason = "PR #8 re-review: HumanTaskCoordinator create path keeps Running on post-launch errors (same as resume); delete only on PreLaunchFailed/MissingCwd"
 scope_review = "approved"
 
 core_outcome = "Suspended Human Task を ai human-task resume で再開し、再 suspend で segment を順序保持できる"
@@ -61,6 +61,8 @@ locked_ac_ids = [
   "human_task_resume_done_save_failure_keeps_running",
   "human_task_resume_post_launch_error_keeps_running",
   "human_task_resume_pre_launch_error_restores_suspended",
+  "human_task_create_post_launch_error_keeps_running",
+  "human_task_create_pre_launch_error_removes_checkpoint",
   "human_task_resume_cli_installs_parent_termios_guard",
   "human_task_resume_preserves_single_segment_regression",
 ]

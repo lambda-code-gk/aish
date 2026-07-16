@@ -115,10 +115,17 @@ impl<'a> HumanTaskCoordinator<'a> {
         let (returned, reason, suspended) = match self.launcher.launch_and_wait(&request, cancel) {
             Ok(returned) => (returned, None, false),
             Err(HumanShellLaunchError::Suspended { returned, reason }) => (*returned, reason, true),
-            Err(HumanShellLaunchError::Cancelled(_)) => {
+            // Human Shell 未開始: checkpoint を削除して新規開始可能にする。
+            Err(HumanShellLaunchError::MissingCwd(_))
+            | Err(HumanShellLaunchError::PreLaunchFailed(_)) => {
                 if self.store.remove(&task_id).is_err() {
                     return blocked("human_task_checkpoint_unavailable");
                 }
+                return blocked("human_task_launch_failed");
+            }
+            // spawn 後または開始有無が不明: 外部副作用があり得るため Running を残し
+            // orphaned / cancel-only にする（checkpoint を削除しない）。
+            Err(HumanShellLaunchError::Cancelled(_)) => {
                 return HumanTaskResult {
                     status: HandoffExecutionOutcome::Cancelled,
                     task,
@@ -132,10 +139,9 @@ impl<'a> HumanTaskCoordinator<'a> {
                     suspend_reason: None,
                 };
             }
-            Err(_) => {
-                if self.store.remove(&task_id).is_err() {
-                    return blocked("human_task_checkpoint_unavailable");
-                }
+            Err(HumanShellLaunchError::Interrupted(_))
+            | Err(HumanShellLaunchError::Failed(_))
+            | Err(HumanShellLaunchError::MissingReturnMarker) => {
                 return blocked("human_task_launch_failed");
             }
         };

@@ -3649,6 +3649,24 @@ pending = false
 [[cases]]
 spec = "0064"
 phase = 2
+id = "human_task_create_post_launch_error_keeps_running"
+description = "初回createで起動後Cancelled/Interrupted/Failed時はcheckpointを削除せずRunningを維持する"
+test = "human_task_create_post_launch_error_keeps_running"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
+id = "human_task_create_pre_launch_error_removes_checkpoint"
+description = "初回createのpre-launch失敗だけRunning checkpointを削除する"
+test = "human_task_create_pre_launch_error_removes_checkpoint"
+file_glob = "ai/tests/0064_human_task_resume_red.rs"
+pending = false
+
+[[cases]]
+spec = "0064"
+phase = 2
 id = "human_task_resume_cli_installs_parent_termios_guard"
 description = "resume CLIがParentTermiosGuardで親TTYを復元する"
 test = "human_task_resume_cli_installs_parent_termios_guard"
