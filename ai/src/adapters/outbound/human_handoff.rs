@@ -133,17 +133,11 @@ impl HumanShellLauncher for AishHumanShellLauncher {
         let mut returned: HumanShellReturn = serde_json::from_str(raw.trim())
             .map_err(|e| HumanShellLaunchError::Failed(e.to_string()))?;
         if returned.outcome == crate::ports::outbound::HumanShellOutcome::Suspended {
-            let reason_path = request.runtime_dir.join("suspend-reason");
-            if reason_path.is_file() {
-                let reason = std::fs::read_to_string(&reason_path)
-                    .ok()
-                    .filter(|v| !v.is_empty());
-                return Err(HumanShellLaunchError::Suspended {
-                    returned: Box::new(returned),
-                    reason,
-                });
-            }
-            return Err(HumanShellLaunchError::MissingReturnMarker);
+            let reason = returned.suspend_reason.clone();
+            return Err(HumanShellLaunchError::Suspended {
+                returned: Box::new(returned),
+                reason,
+            });
         }
         if returned.exit_code.is_none() {
             returned.exit_code = status.code();

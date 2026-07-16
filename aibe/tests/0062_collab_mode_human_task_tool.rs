@@ -52,6 +52,7 @@ impl HumanShellLauncher for RecordingLauncher {
             .push(request.clone());
         Ok(HumanShellReturn {
             outcome: ai::ports::outbound::HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: request.cwd.clone(),
             shell_session_id: "fake-human-shell".into(),

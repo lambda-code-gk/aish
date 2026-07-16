@@ -3492,3 +3492,30 @@ description = "bash/zshと0055/0057/0060/0061/0062の既存正常経路を回帰
 test = "human_task_suspend_preserves_bash_zsh_and_prior_stages"
 file_glob = "aish/tests/0063_human_task_suspend_checkpoint_red.rs"
 pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_orphaned_running_cancel_recovers"
+description = "root lock取得後に残るRunningをorphanedとしてstatus表示し、確認付きcancelで削除後に新規Human Taskを開始できる"
+test = "human_task_orphaned_running_cancel_recovers"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_checkpoint_directory_without_checkpoint_is_invalid"
+description = "有効task ID directoryが空・tempのみ・checkpoint欠落ならNotFoundへ丸めずInvalidとして残骸を保持する"
+test = "human_task_checkpoint_directory_without_checkpoint_is_invalid"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false
+
+[[cases]]
+spec = "0063"
+phase = 2
+id = "human_task_suspended_result_without_sidecar_preserves_checkpoint"
+description = "単一result JSONのSuspendedをsidecarなしでも保持し、旧JSONでreason field欠落時はNoneとしてcheckpointを保存する"
+test = "human_task_suspended_result_without_sidecar_preserves_checkpoint"
+file_glob = "ai/tests/0063_human_task_suspend_checkpoint_red.rs"
+pending = false

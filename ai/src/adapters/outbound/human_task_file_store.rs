@@ -223,7 +223,10 @@ impl HumanTaskStore for HumanTaskFileStore {
             let id = HumanTaskId::parse(name).map_err(|_| HumanTaskStoreError::Invalid)?;
             let dir = entry.path();
             Self::ensure_dir(&dir)?;
-            let checkpoint = Self::read_checkpoint(&dir.join("checkpoint.json"))?;
+            let checkpoint = match Self::read_checkpoint(&dir.join("checkpoint.json")) {
+                Err(HumanTaskStoreError::NotFound) => return Err(HumanTaskStoreError::Invalid),
+                other => other?,
+            };
             if checkpoint.task_id != id || found.is_some() {
                 return Err(HumanTaskStoreError::Invalid);
             }

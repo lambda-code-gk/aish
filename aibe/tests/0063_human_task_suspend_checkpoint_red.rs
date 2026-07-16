@@ -50,6 +50,7 @@ impl HumanShellLauncher for SuspendedLauncher {
         Err(HumanShellLaunchError::Suspended {
             returned: Box::new(HumanShellReturn {
                 outcome: ai::ports::outbound::HumanShellOutcome::Suspended,
+                suspend_reason: Some("approval needed".into()),
                 exit_code: Some(0),
                 final_cwd: request.cwd.clone(),
                 shell_session_id: "shell-1".into(),

@@ -18,11 +18,12 @@
 7. bashとzshで手順2–4を繰り返し、通常の`~/.bashrc` / `~/.zshrc`とPATHが変更されていないことを確認する。
 8. 4097 bytesのreason、改行を含むreason、読み手のないcontrol FIFO相当の送信失敗を試し、commandがnon-zeroでshellを終了しないことを確認する。
 9. 通常のCtrl+D / `exit`ではDoneとして親agentが継続し、checkpointが残らないことを確認する。
+10. Human Shell所有processの異常終了を模したRunning checkpointでstatusがorphanedを示すこと、`ai human-task cancel --yes`で削除後に新しいHuman Taskを開始できることを確認する。
 
 ## 期待結果
 
 - Running checkpoint保存後だけHuman Shellが起動し、suspend後は同roundの後続toolや追加LLM callを実行しない。
-- status/cancelはsocket不要で同じroot lockを使い、破損・未知version・権限不正・Runningを「taskなし」へ丸めたり削除したりしない。
+- status/cancelはsocket不要で同じroot lockを使い、破損・未知version・権限不正・checkpoint欠落を「taskなし」へ丸めず、lock取得後のorphaned Runningだけを確認付きcancelで復旧できる。
 - 旧`shell_exec` handoffには`human-task suspend`を公開せず、既存のreturn動作を維持する。
 
 ## 未実装

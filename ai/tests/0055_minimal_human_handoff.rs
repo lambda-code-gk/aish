@@ -26,6 +26,7 @@ impl HumanShellLauncher for TestLauncher {
         self.calls.lock().unwrap().push(request.clone());
         Ok(HumanShellReturn {
             outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: request.cwd.clone(),
             shell_session_id: "sess".into(),
@@ -88,6 +89,7 @@ fn parent_reobserves_after_handoff() {
         ) -> Result<HumanShellReturn, HumanShellLaunchError> {
             Ok(HumanShellReturn {
                 outcome: HumanShellOutcome::Done,
+                suspend_reason: None,
                 exit_code: Some(0),
                 final_cwd: request.cwd.clone(),
                 shell_session_id: "sess".into(),

@@ -49,6 +49,8 @@ pub enum HumanShellOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanShellResult {
     pub outcome: HumanShellOutcome,
+    #[serde(default)]
+    pub suspend_reason: Option<String>,
     pub exit_code: Option<i32>,
     pub final_cwd: PathBuf,
     pub shell_session_id: String,
@@ -208,6 +210,7 @@ pub fn human_shell_result_from_marker(
         } else {
             HumanShellOutcome::Done
         },
+        suspend_reason: marker.suspend_reason,
         exit_code: marker.exit_code.or(Some(child_exit_code)),
         final_cwd: PathBuf::from(marker.final_cwd),
         shell_session_id: String::new(),
@@ -270,8 +273,6 @@ pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
         .take_human_return_marker()
         .ok_or_else(|| anyhow::anyhow!("human shell ended without normal return marker"))?;
     log.append(&LogEvent::Exit { code: Some(code) })?;
-    let suspend_reason = marker.suspend_reason.clone();
-    let suspended = marker.suspended;
     let mut result = human_shell_result_from_marker(marker, code);
     result.shell_session_id = layout.id;
     result.shell_session_dir = layout.dir;
@@ -280,9 +281,6 @@ pub fn run_human_shell(result_file: &Path) -> anyhow::Result<HumanShellResult> {
         .map(|m| m.len())
         .unwrap_or(shell_log_start);
     write_result(result_file, &result)?;
-    if suspended {
-        write_suspend_reason(result_file, suspend_reason.as_deref())?;
-    }
     Ok(result)
 }
 
@@ -318,22 +316,6 @@ pub fn emit_human_suspend_control(cwd: &Path, reason: &str) -> anyhow::Result<()
         .map_err(|_| anyhow::anyhow!("human suspend control unavailable"))?;
     file.write_all(b"\n")
         .map_err(|_| anyhow::anyhow!("human suspend control unavailable"))?;
-    Ok(())
-}
-
-fn write_suspend_reason(result_file: &Path, reason: Option<&str>) -> anyhow::Result<()> {
-    let Some(parent) = result_file.parent() else {
-        anyhow::bail!("missing result parent");
-    };
-    let path = parent.join("suspend-reason");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
-    file.write_all(reason.unwrap_or("").as_bytes())?;
-    file.sync_all()?;
     Ok(())
 }
 
@@ -452,6 +434,7 @@ mod tests {
         std::os::unix::fs::symlink(&victim, &result_path).unwrap();
         let result = HumanShellResult {
             outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: parent.clone(),
             shell_session_id: "test".into(),
@@ -480,6 +463,7 @@ mod tests {
         let result_path = parent.join("result.json");
         let result = HumanShellResult {
             outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: parent.clone(),
             shell_session_id: "test".into(),

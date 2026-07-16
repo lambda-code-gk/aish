@@ -388,7 +388,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 
 ### 0063 Human Task suspend checkpoint
 
-- `ai/tests/0063_human_task_suspend_checkpoint_red.rs`: checkpoint domain round-trip、実tempdir file storeのmode/symlink/size/atomic replace/invalid保全、coordinator順序・副作用なしruntime path割当・collision・Done cleanup、root flock保持、statusの一貫読取、実CLI cancelの削除/no-task/非TTY確認拒否、cancel後の新規開始。
+- `ai/tests/0063_human_task_suspend_checkpoint_red.rs`: checkpoint domain round-trip、実tempdir file storeのmode/symlink/size/atomic replace/invalid保全とcheckpoint欠落残骸、coordinator順序・副作用なしruntime path割当・collision・Done cleanup、root flock保持、statusの一貫読取、Suspended/orphaned Runningの実CLI cancel、cancel後の新規開始、sidecarなしSuspended result保持。
 - `aish/tests/0063_human_task_suspend_checkpoint_red.rs`: 生成されたbash/zsh一時rcfile、Rust helperによるversion 1 event送信とUnicode reason validation、最初のterminal event、通常return回帰。
 - `aibe/tests/0063_human_task_suspend_checkpoint_red.rs`: scripted LLMの同一roundにhuman_taskと後続toolを置き、実coordinator/file store/statusを通して`SuspendTurn`、LLM 1 call、後続tool 0 call、store再openを検証する。外部providerと実PTYだけをfakeにする。
 - Phase 2回帰は0055/0057/0060/0061/0062の既存integration testも直列実行する。

@@ -219,6 +219,6 @@
 - 保存先は`<history_dir>/human-tasks/<validated-task-id>/checkpoint.json`だけとし、directoryは作成時から0700、fileは作成時から0600、current UID、component symlink、`O_NOFOLLOW`、encode/decode 1 MiB上限をfail-closedで検査する。削除時もtask directoryとcheckpointのsymlink/owner/modeを再検査する。
 - atomic更新はsame-directory temp、file fsync、rename、directory fsyncで行い、破損JSON、未知version、invariant違反、owner/mode不正を自動削除・自動修復しない。
 - `<history_dir>/human-tasks/lock`は0600/current UID/symlink拒否で開き、createはactive確認からHuman Shell終端後の最終save/removeまで、status/cancelはloadと必要なremoveの間、`flock(LOCK_EX)`を保持する。これはleaseやcrash ownershipではない。
-- cancelはSuspendedだけを削除する。`--yes`なしの非TTY・拒否・入力失敗、およびRunning/invalid checkpointでは削除しない。aibeへagent continuationやCancelled tool resultを送らない。
+- cancelはroot lock取得後のSuspendedまたはorphaned Runningだけを削除する。`--yes`なしの非TTY・拒否・入力失敗、およびinvalid checkpointでは削除しない。有効task ID directoryのcheckpoint欠落やtemp残骸はInvalidとして保持し、aibeへagent continuationやCancelled tool resultを送らない。
 - `human-task suspend`のreasonはUTF-8 4096 bytes以下かつ全Unicode control characterなし。shellはJSONを組み立てず、Rust helperがversion 1 eventを生成する。validation/control送信失敗時はshellを継続し、成功表示やSuspended checkpointを作らない。
 - 0063はcreate/status/cancelのroot flockによる同一ユーザー・同一ホスト上のprocess間直列化を保証する。lease、stale ownership判定、crash recovery、schema migration、複数user/host競合は保証しない。

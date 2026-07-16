@@ -24,6 +24,8 @@ pub struct HumanShellLaunchRequest {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HumanShellReturn {
     pub outcome: HumanShellOutcome,
+    #[serde(default)]
+    pub suspend_reason: Option<String>,
     pub exit_code: Option<i32>,
     pub final_cwd: PathBuf,
     #[serde(default)]

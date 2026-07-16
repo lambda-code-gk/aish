@@ -28,6 +28,14 @@ impl<'a> HumanTaskStatus<'a> {
             Err(HumanTaskStoreError::NotFound) => return Ok("No suspended Human Task.\n".into()),
             other => other?,
         };
+        if checkpoint.state == HumanTaskWorkflowState::Running {
+            return Ok(format!(
+                "Human Task: {}\nState: orphaned running\nObjective: {}\nCurrent cwd: {}\nRecovery:\n  ai human-task cancel --yes\n",
+                checkpoint.task_id.as_str(),
+                escape_status_field(&checkpoint.task.objective),
+                escape_status_field(&checkpoint.current_cwd.to_string_lossy())
+            ));
+        }
         if checkpoint.state != HumanTaskWorkflowState::Suspended {
             return Err(HumanTaskStatusError::Invalid);
         }

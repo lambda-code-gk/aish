@@ -29,7 +29,10 @@ impl<'a> HumanTaskCancel<'a> {
             Err(HumanTaskStoreError::NotFound) => return Ok("No suspended Human Task.\n".into()),
             other => other?,
         };
-        if checkpoint.state != HumanTaskWorkflowState::Suspended {
+        if !matches!(
+            checkpoint.state,
+            HumanTaskWorkflowState::Suspended | HumanTaskWorkflowState::Running
+        ) {
             return Err(HumanTaskCancelError::Invalid);
         }
         if !confirm(&checkpoint) {

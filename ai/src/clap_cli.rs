@@ -49,9 +49,9 @@ pub enum RecallCommand {
 
 #[derive(Subcommand)]
 pub enum HumanTaskCommand {
-    /// Show the locally suspended Human Task without contacting aibe
+    /// Show the local suspended or orphaned Human Task without contacting aibe
     Status,
-    /// Remove a locally suspended Human Task without contacting aibe
+    /// Remove a local suspended or orphaned Human Task without contacting aibe
     Cancel {
         /// Skip the interactive confirmation prompt
         #[arg(long)]

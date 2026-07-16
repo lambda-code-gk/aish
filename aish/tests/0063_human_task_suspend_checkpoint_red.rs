@@ -100,6 +100,14 @@ fn human_task_suspend_first_terminal_event_wins() {
     assert!(marker.suspended);
     assert_eq!(marker.final_cwd, "/tmp/final");
     assert_eq!(marker.suspend_reason.as_deref(), Some("approval needed"));
+    let result = aish::human_shell::human_shell_result_from_marker(marker, 0);
+    assert_eq!(
+        result.outcome,
+        aish::human_shell::HumanShellOutcome::Suspended
+    );
+    assert_eq!(result.suspend_reason.as_deref(), Some("approval needed"));
+    let result_json = serde_json::to_value(&result).unwrap();
+    assert_eq!(result_json["suspend_reason"], "approval needed");
 
     let mut invalid = None;
     accept_human_terminal_control(

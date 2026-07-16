@@ -37,6 +37,7 @@ impl HumanShellLauncher for FakeLauncher {
         *self.request.lock().expect("request") = Some(request.clone());
         Ok(HumanShellReturn {
             outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(7),
             final_cwd: request.cwd.clone(),
             shell_session_id: "s".into(),

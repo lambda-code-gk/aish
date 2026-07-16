@@ -190,8 +190,15 @@ fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
         if !stdin.is_terminal() {
             return false;
         }
+        let description = if checkpoint.state
+            == ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Running
+        {
+            "orphaned running Human Task after unexpected termination"
+        } else {
+            "suspended Human Task"
+        };
         eprint!(
-            "Cancel suspended Human Task {}? [y/N] ",
+            "Cancel {description} {}? [y/N] ",
             checkpoint.task_id.as_str()
         );
         if std::io::stderr().flush().is_err() {

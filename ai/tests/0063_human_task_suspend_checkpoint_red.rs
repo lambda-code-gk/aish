@@ -6,7 +6,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use ai::adapters::outbound::{
-    allocate_runtime_handoff_path, HumanTaskFileStore, SystemHumanTaskTimeFormatter,
+    allocate_runtime_handoff_path, AishHumanShellLauncher, HumanTaskFileStore,
+    SystemHumanTaskTimeFormatter,
 };
 use ai::application::{
     HumanTaskCancel, HumanTaskCoordinator, HumanTaskParentInput, HumanTaskStatus,
@@ -121,6 +122,7 @@ impl HumanShellLauncher for Launcher {
             } else {
                 HumanShellOutcome::Done
             },
+            suspend_reason: self.suspended.then(|| "need approval".into()),
             exit_code: Some(0),
             final_cwd: request.cwd.clone(),
             shell_session_id: "shell-1".into(),
@@ -356,6 +358,46 @@ fn human_task_checkpoint_invalid_is_preserved() {
 }
 
 #[test]
+fn human_task_checkpoint_directory_without_checkpoint_is_invalid() {
+    for residue in ["empty", "temp-only", "missing-checkpoint"] {
+        let dir = tempfile::tempdir().unwrap();
+        let task_dir = dir.path().join("human-tasks").join("ht-20260714-7f31c2");
+        fs::create_dir_all(&task_dir).unwrap();
+        fs::set_permissions(
+            dir.path().join("human-tasks"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        fs::set_permissions(&task_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        match residue {
+            "temp-only" => fs::write(task_dir.join(".checkpoint.123.tmp"), b"partial").unwrap(),
+            "missing-checkpoint" => fs::write(task_dir.join("unexpected"), b"residue").unwrap(),
+            _ => {}
+        }
+
+        let store = HumanTaskFileStore::new(dir.path().into());
+        assert_eq!(
+            store.load_active(),
+            Err(HumanTaskStoreError::Invalid),
+            "{residue} task directory must not be hidden as no active task"
+        );
+        assert!(matches!(
+            HumanTaskCancel::new(&store).execute(|_| true),
+            Err(ai::application::HumanTaskCancelError::Store(
+                HumanTaskStoreError::Invalid
+            ))
+        ));
+        assert!(task_dir.is_dir(), "invalid residue must be preserved");
+    }
+
+    let no_entry = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(no_entry.path().into());
+    let lock = store.lock_exclusive().unwrap();
+    drop(lock);
+    assert_eq!(store.load_active(), Err(HumanTaskStoreError::NotFound));
+}
+
+#[test]
 fn human_task_id_is_safe_path_component() {
     assert!(HumanTaskId::parse("ht-20260714-7f31c2").is_ok());
     for value in [
@@ -456,6 +498,49 @@ fn human_task_cancel_clears_suspended_checkpoint() {
 }
 
 #[test]
+fn human_task_orphaned_running_cancel_recovers() {
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("history");
+    let store = HumanTaskFileStore::new(history.clone());
+    store
+        .save(&checkpoint(
+            HumanTaskWorkflowState::Running,
+            dir.path().into(),
+        ))
+        .unwrap();
+
+    let status = HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
+        .render()
+        .unwrap();
+    assert!(status.contains("State: orphaned running"));
+    assert!(status.contains("ai human-task cancel --yes"));
+
+    let config = dir.path().join("ai.toml");
+    fs::write(&config, format!("history_dir = {history:?}\n")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ai"))
+        .env("AI_CONFIG", &config)
+        .args(["human-task", "cancel", "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"Cancelled Human Task ht-20260714-7f31c2.\n");
+    assert_eq!(store.load_active(), Err(HumanTaskStoreError::NotFound));
+
+    let log = Arc::new(Mutex::new(vec![]));
+    let launcher = Launcher {
+        log: log.clone(),
+        suspended: false,
+    };
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.status, HandoffExecutionOutcome::Done);
+    assert_eq!(&*log.lock().unwrap(), &["launch"]);
+}
+
+#[test]
 fn human_task_cancel_requires_confirmation_without_yes() {
     let dir = tempfile::tempdir().unwrap();
     let history = dir.path().join("history");
@@ -511,6 +596,7 @@ impl HumanShellLauncher for RootLockCheckingLauncher {
         );
         Ok(HumanShellReturn {
             outcome: HumanShellOutcome::Done,
+            suspend_reason: None,
             exit_code: Some(0),
             final_cwd: request.cwd.clone(),
             shell_session_id: "shell-lock-check".into(),
@@ -567,21 +653,63 @@ fn human_task_status_reports_no_task_as_success() {
 #[test]
 fn human_task_status_does_not_hide_invalid_checkpoint() {
     let dir = tempfile::tempdir().unwrap();
+    let task_dir = dir.path().join("human-tasks").join("ht-20260714-7f31c2");
+    fs::create_dir_all(&task_dir).unwrap();
+    fs::set_permissions(
+        dir.path().join("human-tasks"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    fs::set_permissions(&task_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let checkpoint_path = task_dir.join("checkpoint.json");
+    fs::write(&checkpoint_path, b"{broken").unwrap();
+    fs::set_permissions(&checkpoint_path, fs::Permissions::from_mode(0o600)).unwrap();
     let store = HumanTaskFileStore::new(dir.path().into());
-    store
-        .save(&checkpoint(
-            HumanTaskWorkflowState::Running,
-            dir.path().into(),
-        ))
-        .unwrap();
     assert!(HumanTaskStatus::new(&store, &SystemHumanTaskTimeFormatter)
         .render()
         .is_err());
     assert!(matches!(
         HumanTaskCancel::new(&store).execute(|_| true),
-        Err(ai::application::HumanTaskCancelError::Invalid)
+        Err(ai::application::HumanTaskCancelError::Store(
+            HumanTaskStoreError::Invalid
+        ))
     ));
-    assert!(store.load_active().is_ok());
+    assert_eq!(fs::read(checkpoint_path).unwrap(), b"{broken");
+}
+
+#[test]
+fn human_task_suspended_result_without_sidecar_preserves_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = dir.path().join("fake-aish");
+    let json = serde_json::json!({
+        "outcome": "suspended",
+        "exit_code": 0,
+        "final_cwd": dir.path(),
+        "shell_session_id": "shell-no-sidecar",
+        "shell_session_dir": dir.path().join("session"),
+        "shell_log_start": 0,
+        "shell_log_end": 0
+    });
+    fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nset -eu\nresult_file=\"$3\"\ncat > \"$result_file\" <<'JSON'\n{json}\nJSON\n"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let store = HumanTaskFileStore::new(dir.path().join("history"));
+    let launcher = AishHumanShellLauncher::new(fake);
+    let result = HumanTaskCoordinator::new(&store, &Identity, &launcher, &Observer).execute(
+        task(),
+        parent(dir.path()),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.status, HandoffExecutionOutcome::Suspended);
+    let saved = store.load_active().unwrap();
+    assert_eq!(saved.state, HumanTaskWorkflowState::Suspended);
+    assert_eq!(saved.suspend_reason, None);
 }
 
 #[test]
