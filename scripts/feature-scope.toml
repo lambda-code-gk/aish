@@ -20,8 +20,8 @@ spec = "0065"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 1
-scope_change_reason = "0063-D formalized as 0065: reuse existing Collaborative Mode turn and in-memory aibe turn admission; defer durable dedup/crash recovery"
+scope_revision = 2
+scope_change_reason = "Clarify aibe process-local duplicate rejection: in-flight or AgentTurnResult success only; allow same-ID retry after ordinary failure (preserves ResultPending retry AC)"
 scope_review = "approved"
 
 core_outcome = "完了した Human Task の保存済み親 context と unverified final result から新しい Collaborative Mode 継続 turn を開始する"

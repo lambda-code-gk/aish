@@ -400,7 +400,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 ### 0065 Human Task agent continuation
 
 - `ai/tests/0065_human_task_agent_continuation_red.rs`: ResultPending→Continuing→Finished/delete vertical E2E、固定 unverified message、保存済み parent context と current cwd、stable continuation turn ID、状態 invariant、Human Shell 非起動 retry、通常失敗時 ResultPending 復元、root flock、Finished delete fail-closed、status/CLI、Running/Suspended invariant 回帰。
-- `aibe/tests/0065_human_task_agent_continuation.rs`: `continuation_turn=true` の成功 ID を同じ RequestService process 内で再送し、2回目を LLM call 前に `invalid_request` で拒否する。
+- `aibe/tests/0065_human_task_agent_continuation.rs`: `continuation_turn=true` の成功 ID を同じ RequestService process 内で再送し、2回目を LLM call 前に `invalid_request` で拒否する。通常の provider failure 後は同一 ID 再試行を許可する。
 - 0063/0064 の既存 integration test を直列実行し、create Done 削除、Suspended resume、複数 segment、ResultPending 保存を回帰確認する。
 
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
