@@ -25,6 +25,12 @@ pub trait HumanTaskStore: Send + Sync {
     fn load_active(&self) -> Result<HumanTaskCheckpointV1, HumanTaskStoreError>;
     fn save(&self, checkpoint: &HumanTaskCheckpointV1) -> Result<(), HumanTaskStoreError>;
     fn remove(&self, task_id: &HumanTaskId) -> Result<(), HumanTaskStoreError>;
+    /// Remove the single invalid task residue without deserializing it.
+    ///
+    /// Implementations must not follow symlinks or recurse outside the checkpoint root.
+    fn remove_invalid_active(&self) -> Result<String, HumanTaskStoreError> {
+        Err(HumanTaskStoreError::Unavailable)
+    }
 }
 pub trait HumanTaskIdentity: Send + Sync {
     fn new_task_id(&self) -> HumanTaskId;

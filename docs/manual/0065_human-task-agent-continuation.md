@@ -26,7 +26,7 @@
 
 - continuation 失敗後も ResultPending と同じ `continuation_turn_id` が checkpoint に残る。
 - 同じ aibe process へ成功済み continuation turn ID を再送すると `invalid_request` で拒否される。
-- ai / aibe を Continuing 中に強制終了した場合の自動復旧は未実装（0063-E）である。checkpointを手動編集・削除せず、状態を記録して停止する。
+- ai / aibe を Continuing 中に強制終了した場合の自動復旧は未実装である。0066の`ai human-task recover`による明示回復だけを使用し、checkpointを手動編集・削除しない。
 
 ## 実施状況
 

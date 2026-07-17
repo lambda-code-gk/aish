@@ -663,4 +663,10 @@ resume 後の Done→ResultPending 保存直後、または既存 ResultPending 
 
 継続メッセージは Human Task result が unverified であること、環境を再観測すること、completion criteria を検証してから完了を主張することを固定指示する。成功時（`AgentTurnStatus::Ok` のみ）は `Continuing→Finished` を保存してから checkpoint を削除する。provider/socket/turn error および `MaxToolRounds` は同じ ID を保持した `ResultPending` へ戻し、Finished save 前は削除しない。delete 失敗は有効な Finished checkpoint を残し、status と cancel cleanup を可能にする。開始前に `current_cwd` の存在を確認し、欠落時は turn を開始しない。process crash で Continuing が残る場合の自動回復は 0063-E だが、lock 解放後の stale Continuing / Finished は local cancel で削除できる。
 
+## Human Task recovery hardening（0066 / 0063-E）
+
+`ai human-task recover [--yes]` はlocal storeだけを操作し、非ブロッキングroot flock取得後のorphaned `Running`を確認付きで`Suspended`へ、stale `Continuing`を同じ`continuation_turn_id`を保持した`ResultPending`へatomic保存する。前者のreasonは固定`unexpected_process_termination`で、segmentがまだない初回Runningも既存resumeへ渡せる。`Suspended` / `ResultPending`は既にresume可能なため上書きせず、`Finished`は既存cancelを案内する。PIDや時刻からstaleを推定せず、lock取得可否だけを競合境界に使う。
+
+破損JSON、未知version、mode不正、checkpoint欠落directoryはstatusで`recover --force-invalid`を診断案内するが自動削除しない。`--force-invalid`はroot lockと確認の後、validated task IDを持つ単一残骸を`.removing/`へquarantineし、`openat(O_PATH|O_NOFOLLOW)`でinodeを固定してから子entryだけを掃除する。共有pathへの`AT_REMOVEDIR`は行わない（空quarantine directoryが残ることがある）。symlinkを辿らず、checkpoint root外へ再帰せず、所有外directoryやnested directoryを拒否する。これはschema migration、repair、lease、heartbeat、reconciler、自動crash recoveryではない。
+
 wire `RequestContext.continuation_turn=true` は aibe の既存 request service に process-local admission を指示する。aibe は active ID と、`AgentTurnStatus::Ok` で完了した continuation ID の `HashSet` を process memory に保持し、同じ ID の並行開始または Ok 成功後の再受理を LLM 実行前に拒否する。provider error / MaxToolRounds 等の失敗 ID は completed 集合へ入れず、同じ ID の明示 retry を許す。これは永続正本、journal、lease、reconciler、aibe 再起動跨ぎの exactly-once ではない。

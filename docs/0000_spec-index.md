@@ -60,6 +60,7 @@
 | 0063 | [0063_human-task-suspend-checkpoint-spec.md](spec/0063_human-task-suspend-checkpoint-spec.md) | 設計確定（実装済み） | 最初のVertical Slice（明示Human Taskの中断・checkpoint保存・agent turn停止・status） |
 | 0064 | [0064_human-task-resume-spec.md](spec/0064_human-task-resume-spec.md) | 設計確定（実装済み） | Human Task resume（Suspended→再起動・複数segment・DoneはResultPendingへ保存） |
 | 0065 | [0065_human-task-agent-continuation-spec.md](spec/0065_human-task-agent-continuation-spec.md) | 設計確定（実装済み） | Human Task Agent Continuation（0063-D、ResultPending→新Collaborative Mode turn） |
+| 0066 | [0066_human-task-recovery-hardening-spec.md](spec/0066_human-task-recovery-hardening-spec.md) | 設計確定（実装済み） | Human Task Recovery Hardening（0063-E、明示 recovery / invalid cleanup） |
 
 ### 状態ラベルの意味
 
@@ -80,6 +81,7 @@
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
 | 0065 | [0065_human-task-agent-continuation-implementation-spec.md](done/0065_human-task-agent-continuation-implementation-spec.md) | 実装済み | Human Task Agent Continuation（ResultPending→Collaborative Mode turn） |
+| 0066 | [0066_human-task-recovery-hardening-implementation-spec.md](done/0066_human-task-recovery-hardening-implementation-spec.md) | 実装済み | Human Task の手動 stale recovery と invalid residue cleanup |
 | 0064 | [0064_human-task-resume-implementation-spec.md](done/0064_human-task-resume-implementation-spec.md) | 実装済み | Human Task resume（local CLI・segment追記・Done fail-closed） |
 | 0062 | [0062_collab-mode-human-task-tool-implementation-spec.md](done/0062_collab-mode-human-task-tool-implementation-spec.md) | 実装済み | Collaborative Mode Human Task Tool（`ai collab` / 独立 `human_task`） |
 | 0063 | [0063_human-task-suspend-checkpoint-implementation-spec.md](done/0063_human-task-suspend-checkpoint-implementation-spec.md) | 実装済み | Human Task suspend checkpointのVertical Sliceとfail-closed hardening |

@@ -403,6 +403,11 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 - `aibe/tests/0065_human_task_agent_continuation.rs`: `continuation_turn=true` の `AgentTurnStatus::Ok` ID を同じ RequestService process 内で再送し、2回目を LLM call 前に `invalid_request` で拒否する。通常の provider failure および MaxToolRounds 後は同一 ID 再試行を許可する。
 - 0063/0064 の既存 integration test を直列実行し、create Done 削除、Suspended resume、複数 segment、ResultPending 保存を回帰確認する。
 
+### 0066 Human Task recovery hardening
+
+- `ai/tests/0066_human_task_recovery_hardening_red.rs`: orphaned Running→Suspended→既存resumeのvertical E2E、Continuing→ResultPendingのturn ID保持、状態別status案内、corrupt / unsupported相当 / mode不正 / checkpoint欠落残骸の明示force cleanup、confirmation拒否、root flock busy、既存recoverable状態の非上書きを実tempdir storeで検証する。
+- PID / lease / heartbeat / reconciler / schema migration / 自動crash recoveryはテストfixtureにも製品契約にも追加しない。bash / zshの新規実PTY確認は`docs/manual/0066_human-task-recovery-hardening.md`に限定する。
+
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
 - 実 API キーを使うテストを CI に入れない
 - フィクスチャは `*/tests/fixtures/` に置き、大きなログは必要最小限

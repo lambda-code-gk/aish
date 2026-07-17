@@ -140,9 +140,13 @@ impl HumanTaskCheckpointV1 {
                 if self.suspended_at_ms.is_some()
                     && self.final_result.is_none()
                     && self.continuation.continuation_turn_id.is_none()
-                    && !self.segments.is_empty()
+                    && (!self.segments.is_empty()
+                        || self.suspend_reason.as_deref() == Some("unexpected_process_termination"))
                     && suspended_segments_are_contiguous(&self.segments)
-                    && self.current_cwd == self.segments.last().unwrap().final_cwd
+                    && self
+                        .segments
+                        .last()
+                        .is_none_or(|segment| self.current_cwd == segment.final_cwd)
                 {
                     Ok(())
                 } else {
