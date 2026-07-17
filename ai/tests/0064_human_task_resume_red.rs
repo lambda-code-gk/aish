@@ -574,22 +574,21 @@ fn human_task_resume_done_persists_result_pending() {
         .render()
         .unwrap();
     assert!(status.contains("State: result pending"));
-    assert!(!status.contains("Resume:"));
+    assert!(status.contains("ai human-task resume"));
 
-    assert_eq!(
-        HumanTaskResume::new(
-            &store,
-            &Identity {
-                now: AtomicU64::new(200)
-            },
-            &launcher,
-            &Observer {
-                marker: Mutex::new("x".into())
-            }
-        )
-        .execute(None, cwd.join("rt2"), &AtomicBool::new(false)),
-        Err(HumanTaskResumeError::NotSuspended)
-    );
+    assert!(HumanTaskResume::new(
+        &store,
+        &Identity {
+            now: AtomicU64::new(200)
+        },
+        &launcher,
+        &Observer {
+            marker: Mutex::new("x".into())
+        }
+    )
+    .execute(None, cwd.join("rt2"), &AtomicBool::new(false))
+    .unwrap()
+    .contains("Continuing saved Human Task result"));
 }
 
 struct FailTerminalResumeSaveStore {

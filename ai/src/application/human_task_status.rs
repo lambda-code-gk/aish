@@ -46,7 +46,23 @@ impl<'a> HumanTaskStatus<'a> {
         }
         if checkpoint.state == HumanTaskWorkflowState::ResultPending {
             return Ok(format!(
-                "Human Task: {}\nState: result pending\nObjective: {}\nCurrent cwd: {}\nAgent continuation is not available yet.\nCancel:\n  ai human-task cancel --yes\n",
+                "Human Task: {}\nState: result pending\nObjective: {}\nCurrent cwd: {}\nContinue:\n  ai human-task resume\nCancel:\n  ai human-task cancel --yes\n",
+                checkpoint.task_id.as_str(),
+                escape_status_field(&checkpoint.task.objective),
+                escape_status_field(&checkpoint.current_cwd.to_string_lossy())
+            ));
+        }
+        if checkpoint.state == HumanTaskWorkflowState::Continuing {
+            return Ok(format!(
+                "Human Task: {}\nState: continuing\nObjective: {}\nCurrent cwd: {}\nA continuation turn was started. Automatic crash recovery is not available.\nCleanup:\n  ai human-task cancel --yes\n",
+                checkpoint.task_id.as_str(),
+                escape_status_field(&checkpoint.task.objective),
+                escape_status_field(&checkpoint.current_cwd.to_string_lossy())
+            ));
+        }
+        if checkpoint.state == HumanTaskWorkflowState::Finished {
+            return Ok(format!(
+                "Human Task: {}\nState: finished\nObjective: {}\nCurrent cwd: {}\nCleanup:\n  ai human-task cancel --yes\n",
                 checkpoint.task_id.as_str(),
                 escape_status_field(&checkpoint.task.objective),
                 escape_status_field(&checkpoint.current_cwd.to_string_lossy())

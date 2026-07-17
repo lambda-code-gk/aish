@@ -149,6 +149,9 @@ pub struct RequestContext {
     pub collaborative_handoff: bool,
     #[serde(default)]
     pub execution_mode: ExecutionMode,
+    /// Durable Human Task result から開始する新規 turn。aibe process 内の同一 ID 再受理を拒否する。
+    #[serde(default)]
+    pub continuation_turn: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

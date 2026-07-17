@@ -16,6 +16,56 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0065"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 3
+scope_change_reason = "PR #9 review: Continuing cancel-only cleanup, AgentTurnStatus::Ok-only success, continuation cwd existence check"
+scope_review = "approved"
+
+core_outcome = "完了した Human Task の保存済み親 context と unverified final result から新しい Collaborative Mode 継続 turn を開始する"
+
+actors = 1
+state_machines = 1
+persistent_aggregates = 1
+external_effects = 2
+process_boundaries = 1
+
+novel_mechanisms = ["agent-continuation"]
+integrations = ["0064-result-pending", "existing-collaborative-execute-turn", "aibe-in-memory-turn-admission"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "Continuing crash recovery, durable/restart-spanning dedup, lease/heartbeat/reconciler, schema migration, secondary agent loop, and exactly-once are deferred to 0063-E or a later spec"
+
+vertical_slice_ac_id = "human_task_continuation_vertical_e2e"
+
+locked_ac_ids = [
+  "human_task_continuation_vertical_e2e",
+  "human_task_continuation_message_is_unverified",
+  "human_task_continuation_preserves_parent_context",
+  "human_task_result_pending_resume_retries_without_shell",
+  "human_task_continuation_turn_id_is_stable",
+  "human_task_continuation_state_invariants",
+  "human_task_continuation_failure_keeps_result_pending",
+  "human_task_continuation_holds_root_lock",
+  "aibe_rejects_duplicate_continuation_turn_id",
+  "aibe_allows_retry_after_max_tool_rounds_continuation",
+  "human_task_continuation_finished_delete_is_fail_closed",
+  "human_task_continuation_status_and_cli_guidance",
+  "human_task_continuation_cancel_clears_continuing",
+  "human_task_continuation_cwd_unavailable_keeps_result_pending",
+  "human_task_continuation_turn_success_requires_ok_status",
+  "human_task_continuation_preserves_resume_regressions",
+]
+
+[[features]]
 spec = "0064"
 status = "done"
 scope_class = "feature"

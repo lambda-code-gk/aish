@@ -120,7 +120,6 @@ impl HumanTaskCheckpointV1 {
             || self.parent.user_request.is_empty()
             || self.parent.original_cwd.as_os_str().is_empty()
             || self.parent.llm_profile.is_empty()
-            || self.continuation.continuation_turn_id.is_some()
         {
             return Err("checkpoint invariant violated");
         }
@@ -129,6 +128,7 @@ impl HumanTaskCheckpointV1 {
                 if self.suspended_at_ms.is_none()
                     && self.suspend_reason.is_none()
                     && self.final_result.is_none()
+                    && self.continuation.continuation_turn_id.is_none()
                     && suspended_segments_are_contiguous(&self.segments) =>
             {
                 Ok(())
@@ -139,6 +139,7 @@ impl HumanTaskCheckpointV1 {
                 }
                 if self.suspended_at_ms.is_some()
                     && self.final_result.is_none()
+                    && self.continuation.continuation_turn_id.is_none()
                     && !self.segments.is_empty()
                     && suspended_segments_are_contiguous(&self.segments)
                     && self.current_cwd == self.segments.last().unwrap().final_cwd
@@ -148,12 +149,28 @@ impl HumanTaskCheckpointV1 {
                     Err("checkpoint invariant violated")
                 }
             }
-            HumanTaskWorkflowState::ResultPending => {
+            HumanTaskWorkflowState::ResultPending
+            | HumanTaskWorkflowState::Continuing
+            | HumanTaskWorkflowState::Finished => {
                 let Some(final_result) = &self.final_result else {
                     return Err("checkpoint invariant violated");
                 };
+                let turn_id_is_valid = match self.state {
+                    HumanTaskWorkflowState::ResultPending => self
+                        .continuation
+                        .continuation_turn_id
+                        .as_ref()
+                        .is_none_or(|id| !id.is_empty()),
+                    HumanTaskWorkflowState::Continuing | HumanTaskWorkflowState::Finished => self
+                        .continuation
+                        .continuation_turn_id
+                        .as_ref()
+                        .is_some_and(|id| !id.is_empty()),
+                    _ => unreachable!(),
+                };
                 if self.suspended_at_ms.is_none()
                     && self.suspend_reason.is_none()
+                    && turn_id_is_valid
                     && final_result.validate().is_ok()
                     && final_result.status == aibe_protocol::HandoffExecutionOutcome::Done
                     && result_pending_segments_are_valid(&self.segments)

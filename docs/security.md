@@ -219,7 +219,8 @@
 - 保存先は`<history_dir>/human-tasks/<validated-task-id>/checkpoint.json`だけとし、directoryは作成時から0700、fileは作成時から0600、current UID、component symlink、`O_NOFOLLOW`、encode/decode 1 MiB上限をfail-closedで検査する。削除時もtask directoryとcheckpointのsymlink/owner/modeを再検査する。
 - atomic更新はsame-directory temp、file fsync、rename、directory fsyncで行い、破損JSON、未知version、invariant違反、owner/mode不正を自動削除・自動修復しない。
 - `<history_dir>/human-tasks/lock`は0600/current UID/symlink拒否で開き、create/resumeはactive確認からHuman Shell終端後の最終save/removeまで`flock(LOCK_EX)`を保持する。status/cancelは非ブロッキング`LOCK_EX|LOCK_NB`で取り、busy時はstatusがactive runningをbest-effort表示、cancelは`human_task_checkpoint_busy`で失敗する。これはleaseやcrash ownershipではない。
-- cancelはroot lock取得後のSuspendedまたはorphaned Runningだけを削除する。`--yes`なしの非TTY・拒否・入力失敗、およびinvalid checkpointでは削除しない。有効task ID directoryのcheckpoint欠落やtemp残骸はInvalidとして保持し、aibeへagent continuationやCancelled tool resultを送らない。
+- cancelはroot lock取得後のSuspended、orphaned Running、ResultPending、stale Continuing、またはdelete失敗後のFinishedだけを削除する。`--yes`なしの非TTY・拒否・入力失敗、およびinvalid checkpointでは削除しない。有効task ID directoryのcheckpoint欠落やtemp残骸はInvalidとして保持し、aibeへagent continuationやCancelled tool resultを送らない。
 - `human-task suspend`のreasonはUTF-8 4096 bytes以下かつ全Unicode control characterなし。shellはJSONを組み立てず、Rust helperがversion 1 eventを生成する。validation/control送信失敗時はshellを継続し、成功表示やSuspended checkpointを作らない。
 - 0063/0064はcreate/status/cancel/resumeのroot flockによる同一ユーザー・同一ホスト上のprocess間直列化を保証する。lease、stale ownership判定、crash recovery、schema migration、複数user/host競合は保証しない。
-- 0064のresumeはlocal CLIのみ。Done後のagent continuationは未実装であり、checkpoint本文やsession Evidenceをerror表示へ複製しない。
+- 0065 continuation は checkpoint の元要求・task・final_result（Evidenceを含む）を新しい aibe agent turn の入力として送るため、選択された LLM provider と conversation/history 保存の機微データ境界に入る。API key、環境変数、socket、approval cache、raw shell logはcheckpointにも継続messageにも含めない。本文やEvidenceをstderr/error/statusへ表示せず、statusはobjective/cwdと状態だけをescapeして表示する。
+- continuation中は同じroot flockを保持し、別ai processの二重開始を防ぐ。aibeは`continuation_turn=true`のactive IDと`AgentTurnStatus::Ok`完了IDをprocess memoryだけで拒否する。MaxToolRoundsは完了扱いしない。永続dedup正本、aibe再起動跨ぎexactly-once、Continuingの自動crash recoveryは提供しない。

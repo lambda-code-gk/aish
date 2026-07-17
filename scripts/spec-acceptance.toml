@@ -3539,6 +3539,150 @@ file_glob = "ai/tests/0064_human_task_resume_red.rs"
 pending = false
 
 [[cases]]
+spec = "0065"
+phase = 1
+id = "human_task_continuation_vertical_e2e"
+description = "resume Done後に既存Collaborative Mode turnを開始し、成功時Finished保存後にcheckpointを削除する"
+test = "human_task_continuation_vertical_e2e"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 1
+id = "human_task_continuation_message_is_unverified"
+description = "継続messageが元要求、task、final_result、unverified/re-observe/検証指示を含む"
+test = "human_task_continuation_message_is_unverified"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 1
+id = "human_task_continuation_preserves_parent_context"
+description = "保存済みsession/conversation/current_cwd/profile/Collaborative Modeを継続turnへ渡す"
+test = "human_task_continuation_preserves_parent_context"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_result_pending_resume_retries_without_shell"
+description = "ResultPendingへのresumeはHuman Shellを起動せずcontinuationだけを再試行する"
+test = "human_task_result_pending_resume_retries_without_shell"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 1
+id = "human_task_continuation_turn_id_is_stable"
+description = "初回前にcontinuation_turn_idを保存し、失敗後の再試行でも同じIDを使う"
+test = "human_task_continuation_turn_id_is_stable"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 1
+id = "human_task_continuation_state_invariants"
+description = "ResultPending/Continuing/Finishedをfinal_result/segment/turn ID invariantで検証する"
+test = "human_task_continuation_state_invariants"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_failure_keeps_result_pending"
+description = "継続失敗時はcheckpointを削除せずResultPendingと同じturn IDを保持する"
+test = "human_task_continuation_failure_keeps_result_pending"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_holds_root_lock"
+description = "continuationがloadから終端save/deleteまでroot lockを保持する"
+test = "human_task_continuation_holds_root_lock"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "aibe_rejects_duplicate_continuation_turn_id"
+description = "同一aibe processで実行中またはAgentTurnStatus::Ok済みの同一turn IDを実行前に拒否する。通常失敗/MaxToolRounds後の同一ID再試行は拒否しない"
+test = "aibe_rejects_duplicate_continuation_turn_id"
+file_glob = "aibe/tests/0065_human_task_agent_continuation.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "aibe_allows_retry_after_max_tool_rounds_continuation"
+description = "MaxToolRounds後の同一continuation turn ID再送を同一aibe processで許可する"
+test = "aibe_allows_retry_after_max_tool_rounds_continuation"
+file_glob = "aibe/tests/0065_human_task_agent_continuation.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_finished_delete_is_fail_closed"
+description = "Finished save前は削除せずdelete失敗時もFinished checkpointを残す"
+test = "human_task_continuation_finished_delete_is_fail_closed"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_status_and_cli_guidance"
+description = "ResultPending statusはresume再試行を案内しContinuing/Finishedはcancel cleanupを案内する"
+test = "human_task_continuation_status_and_cli_guidance"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_cancel_clears_continuing"
+description = "stale Continuing checkpointをcancelで削除できる"
+test = "human_task_continuation_cancel_clears_continuing"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_cwd_unavailable_keeps_result_pending"
+description = "continuation開始前のcwd欠落はturn未開始・ResultPending維持・安定code"
+test = "human_task_continuation_cwd_unavailable_keeps_result_pending"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_turn_success_requires_ok_status"
+description = "continuation成功判定はAgentTurnStatus::Okに限定しMaxToolRoundsを成功扱いしない"
+test = "human_task_continuation_turn_success_requires_ok_status"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 3
+id = "human_task_continuation_preserves_resume_regressions"
+description = "Running/Suspended resumeと初回create Done checkpoint削除が回帰しない"
+test = "human_task_continuation_preserves_resume_regressions"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
 spec = "0064"
 phase = 1
 id = "human_task_resume_restores_cwd_and_briefing"

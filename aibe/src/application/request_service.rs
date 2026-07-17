@@ -20,7 +20,7 @@ use aibe_protocol::{
     ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody,
     ProtocolMessage, RequestContext, ToolRiskClass,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 
 use crate::application::protocol_convert::ProtocolMessageConversionError;
@@ -31,6 +31,7 @@ pub struct RequestService {
     tools_config: ToolsConfig,
     terminator: Arc<dyn ToolRoundTerminator>,
     active_turns: Arc<Mutex<HashMap<String, Arc<TurnCancellation>>>>,
+    completed_continuation_turns: Arc<Mutex<HashSet<String>>>,
     router_profile: String,
     conversation_store: Arc<dyn ConversationStore>,
     capability_policy: Arc<dyn CapabilityPolicy>,
@@ -64,6 +65,7 @@ impl RequestService {
             tools_config,
             terminator,
             active_turns,
+            completed_continuation_turns: Arc::new(Mutex::new(HashSet::new())),
             router_profile,
             conversation_store,
             capability_policy,
@@ -263,6 +265,7 @@ impl RequestService {
                 context,
                 llm_profile,
             } => {
+                let continuation_turn = context.continuation_turn;
                 let (llm, termination_capability) =
                     match self.profile_registry.resolve(llm_profile.as_deref()) {
                         Ok(pair) => pair,
@@ -309,6 +312,25 @@ impl RequestService {
                     Err(e) => match e {},
                 };
 
+                let turn_id = id.clone();
+                let effective_cancellation = cancellation
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(TurnCancellation::new()));
+                {
+                    let mut active = self.active_turns.lock().await;
+                    let completed = self.completed_continuation_turns.lock().await;
+                    if active.contains_key(&turn_id)
+                        || (continuation_turn && completed.contains(&turn_id))
+                    {
+                        return ClientResponse::error(
+                            id,
+                            ErrorCode::InvalidRequest,
+                            "duplicate agent turn id in this aibe process",
+                        );
+                    }
+                    active.insert(turn_id.clone(), Arc::clone(&effective_cancellation));
+                }
+
                 let executor = ToolRoundExecutor::new(
                     Arc::clone(llm),
                     Arc::clone(&self.tool_registry),
@@ -324,11 +346,6 @@ impl RequestService {
                     Arc::clone(&self.turn_hook),
                     Arc::clone(&self.llm_tracer),
                 );
-                let turn_id = id.clone();
-                if let Some(cancel) = cancellation.clone() {
-                    let mut guard = self.active_turns.lock().await;
-                    guard.insert(turn_id.clone(), cancel);
-                }
                 let mut run_messages = messages.clone();
                 if let (Some(session_id), Some(conv_id)) = (&ai_session_id, &conversation_id) {
                     if let Ok(Some(snapshot)) =
@@ -360,7 +377,7 @@ impl RequestService {
                         client_tool_gate,
                         human_task_gate,
                         events,
-                        cancellation.clone(),
+                        Some(Arc::clone(&effective_cancellation)),
                     )
                     .await;
                 if let (Some(conversation_id), Some(ai_session_id)) =
@@ -387,10 +404,25 @@ impl RequestService {
                         );
                     }
                 }
-                if cancellation.is_some() {
-                    let mut guard = self.active_turns.lock().await;
-                    let _ = guard.remove(&turn_id);
+                // Continuation duplicate policy (0065): reject while in-flight or after
+                // AgentTurnStatus::Ok. MaxToolRounds / Error must not enter this set so
+                // ResultPending retry can reuse the same turn ID in this aibe process.
+                if continuation_turn
+                    && matches!(
+                        response,
+                        ClientResponse::AgentTurnResult {
+                            status: aibe_protocol::AgentTurnStatus::Ok,
+                            ..
+                        }
+                    )
+                {
+                    self.completed_continuation_turns
+                        .lock()
+                        .await
+                        .insert(turn_id.clone());
                 }
+                let mut guard = self.active_turns.lock().await;
+                let _ = guard.remove(&turn_id);
                 response
             }
         }
