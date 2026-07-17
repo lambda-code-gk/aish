@@ -83,6 +83,9 @@ impl<'a> HumanTaskResume<'a> {
         match suspended.state {
             HumanTaskWorkflowState::Suspended => {}
             HumanTaskWorkflowState::ResultPending => {
+                if !suspended.current_cwd.is_dir() {
+                    return Err(HumanTaskResumeError::CwdUnavailable);
+                }
                 return Ok(format!(
                     "Continuing saved Human Task result.\n\nTask:\n  {}\n",
                     suspended.task_id.as_str()

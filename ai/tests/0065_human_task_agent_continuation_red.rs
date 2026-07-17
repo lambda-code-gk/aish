@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use ai::adapters::outbound::HumanTaskFileStore;
 use ai::application::{
-    build_human_task_continuation_message, HumanTaskContinuation, HumanTaskContinuationRequest,
-    HumanTaskResume, HumanTaskStatus,
+    build_human_task_continuation_message, continuation_turn_succeeded, HumanTaskCancel,
+    HumanTaskContinuation, HumanTaskContinuationError, HumanTaskContinuationRequest,
+    HumanTaskResume, HumanTaskResumeError, HumanTaskStatus,
 };
 use ai::domain::human_task_checkpoint::*;
 use ai::ports::outbound::*;
@@ -347,10 +348,104 @@ fn human_task_continuation_status_and_cli_guidance() {
     store.save(&checkpoint).unwrap();
     let continuing = HumanTaskStatus::new(&store, &Time).render().unwrap();
     assert!(continuing.contains("State: continuing"));
+    assert!(continuing.contains("ai human-task cancel --yes"));
     checkpoint.state = HumanTaskWorkflowState::Finished;
     store.save(&checkpoint).unwrap();
     let finished = HumanTaskStatus::new(&store, &Time).render().unwrap();
     assert!(finished.contains("State: finished"));
+    assert!(finished.contains("ai human-task cancel --yes"));
+}
+
+#[test]
+fn human_task_continuation_cancel_clears_continuing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let mut checkpoint = pending_checkpoint(dir.path().to_path_buf());
+    checkpoint.state = HumanTaskWorkflowState::Continuing;
+    checkpoint.continuation.continuation_turn_id = Some("continuation-1".into());
+    store.save(&checkpoint).unwrap();
+    let output = HumanTaskCancel::new(&store).execute(|_| true).unwrap();
+    assert!(output.contains("Cancelled Human Task"));
+    assert!(matches!(
+        store.load_active(),
+        Err(HumanTaskStoreError::NotFound)
+    ));
+}
+
+#[test]
+fn human_task_continuation_cwd_unavailable_keeps_result_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = HumanTaskFileStore::new(dir.path().into());
+    let missing = dir.path().join("missing-cwd");
+    let mut checkpoint = pending_checkpoint(missing.clone());
+    // Keep segment/final_cwd consistent with invariant while pointing at a missing path.
+    checkpoint.segments[0].initial_cwd = missing.clone();
+    checkpoint.segments[0].final_cwd = missing.clone();
+    checkpoint.current_cwd = missing;
+    store.save(&checkpoint).unwrap();
+    let err = HumanTaskContinuation::new(&store, 30)
+        .execute(None, |_| panic!("turn must not start"))
+        .unwrap_err();
+    assert_eq!(err, HumanTaskContinuationError::CwdUnavailable);
+    let saved = store.load_active().unwrap();
+    assert_eq!(saved.state, HumanTaskWorkflowState::ResultPending);
+
+    let resume_err = HumanTaskResume::new(
+        &store,
+        &FixedIdentity,
+        &UnusedLauncher,
+        &ai::adapters::outbound::ProcessEnvironmentObserver::default(),
+    )
+    .execute(None, dir.path().join("runtime"), &AtomicBool::new(false))
+    .unwrap_err();
+    assert_eq!(resume_err, HumanTaskResumeError::CwdUnavailable);
+}
+
+struct FixedIdentity;
+impl HumanTaskIdentity for FixedIdentity {
+    fn new_task_id(&self) -> HumanTaskId {
+        HumanTaskId::parse("ht-20260714-7f31c2").unwrap()
+    }
+    fn now_ms(&self) -> u64 {
+        40
+    }
+}
+
+struct UnusedLauncher;
+impl HumanShellLauncher for UnusedLauncher {
+    fn launch_and_wait(
+        &self,
+        _: &HumanShellLaunchRequest,
+        _: &AtomicBool,
+    ) -> Result<HumanShellReturn, HumanShellLaunchError> {
+        panic!("launcher must not run for ResultPending continuation")
+    }
+}
+
+#[test]
+fn human_task_continuation_turn_success_requires_ok_status() {
+    use aibe_protocol::{AgentTurnStatus, ClientResponse, ProtocolMessageOut};
+
+    let ok = ClientResponse::AgentTurnResult {
+        id: "t1".into(),
+        status: AgentTurnStatus::Ok,
+        assistant_message: ProtocolMessageOut {
+            role: "assistant".into(),
+            content: "done".into(),
+        },
+        tool_calls: vec![],
+    };
+    let max_rounds = ClientResponse::AgentTurnResult {
+        id: "t1".into(),
+        status: AgentTurnStatus::MaxToolRounds,
+        assistant_message: ProtocolMessageOut {
+            role: "assistant".into(),
+            content: "stopped".into(),
+        },
+        tool_calls: vec![],
+    };
+    assert!(continuation_turn_succeeded(&ok));
+    assert!(!continuation_turn_succeeded(&max_rounds));
 }
 
 #[test]

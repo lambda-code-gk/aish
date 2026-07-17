@@ -258,7 +258,7 @@ fn run_saved_human_task_continuation(
                 Some(request.turn_id.clone()),
             )
             .map_err(|_| ())?;
-            matches!(outcome.response, ClientResponse::AgentTurnResult { .. })
+            ai::application::continuation_turn_succeeded(&outcome.response)
                 .then_some(())
                 .ok_or(())
         },
@@ -284,6 +284,9 @@ fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
             }
             ai::domain::human_task_checkpoint::HumanTaskWorkflowState::ResultPending => {
                 "result-pending Human Task"
+            }
+            ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Continuing => {
+                "stale continuing Human Task"
             }
             ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Finished => {
                 "finished Human Task pending cleanup"

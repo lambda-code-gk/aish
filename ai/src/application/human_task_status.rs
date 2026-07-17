@@ -54,7 +54,7 @@ impl<'a> HumanTaskStatus<'a> {
         }
         if checkpoint.state == HumanTaskWorkflowState::Continuing {
             return Ok(format!(
-                "Human Task: {}\nState: continuing\nObjective: {}\nCurrent cwd: {}\nA continuation turn was started. Automatic crash recovery is not available.\n",
+                "Human Task: {}\nState: continuing\nObjective: {}\nCurrent cwd: {}\nA continuation turn was started. Automatic crash recovery is not available.\nCleanup:\n  ai human-task cancel --yes\n",
                 checkpoint.task_id.as_str(),
                 escape_status_field(&checkpoint.task.objective),
                 escape_status_field(&checkpoint.current_cwd.to_string_lossy())

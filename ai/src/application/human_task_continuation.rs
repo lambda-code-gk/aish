@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use aibe_protocol::{AgentTurnStatus, ClientResponse};
+
 use crate::domain::human_task_checkpoint::{
     HumanTaskCheckpointV1, HumanTaskId, HumanTaskWorkflowState,
 };
@@ -26,12 +28,26 @@ pub enum HumanTaskContinuationError {
     NotFound,
     #[error("human_task_continuation_not_pending")]
     NotPending,
+    #[error("human_task_continuation_cwd_unavailable")]
+    CwdUnavailable,
     #[error("human_task_continuation_failed")]
     TurnFailed,
     #[error("human_task_checkpoint_invalid")]
     Invalid,
     #[error("human_task_checkpoint_unavailable")]
     Unavailable,
+}
+
+/// Continuation turn success is only `AgentTurnStatus::Ok`.
+/// `MaxToolRounds` shares `AgentTurnResult` but must not finish/delete the checkpoint.
+pub fn continuation_turn_succeeded(response: &ClientResponse) -> bool {
+    matches!(
+        response,
+        ClientResponse::AgentTurnResult {
+            status: AgentTurnStatus::Ok,
+            ..
+        }
+    )
 }
 
 impl From<HumanTaskStoreError> for HumanTaskContinuationError {
@@ -64,6 +80,9 @@ impl<'a> HumanTaskContinuation<'a> {
         ensure_task_id(task_id, &checkpoint.task_id)?;
         if checkpoint.state != HumanTaskWorkflowState::ResultPending {
             return Err(HumanTaskContinuationError::NotPending);
+        }
+        if !checkpoint.current_cwd.is_dir() {
+            return Err(HumanTaskContinuationError::CwdUnavailable);
         }
 
         if checkpoint.continuation.continuation_turn_id.is_none() {

@@ -38,6 +38,7 @@ impl<'a> HumanTaskCancel<'a> {
             HumanTaskWorkflowState::Suspended
                 | HumanTaskWorkflowState::Running
                 | HumanTaskWorkflowState::ResultPending
+                | HumanTaskWorkflowState::Continuing
                 | HumanTaskWorkflowState::Finished
         ) {
             return Err(HumanTaskCancelError::Invalid);

@@ -20,8 +20,8 @@ spec = "0065"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 2
-scope_change_reason = "Clarify aibe process-local duplicate rejection: in-flight or AgentTurnResult success only; allow same-ID retry after ordinary failure (preserves ResultPending retry AC)"
+scope_revision = 3
+scope_change_reason = "PR #9 review: Continuing cancel-only cleanup, AgentTurnStatus::Ok-only success, continuation cwd existence check"
 scope_review = "approved"
 
 core_outcome = "完了した Human Task の保存済み親 context と unverified final result から新しい Collaborative Mode 継続 turn を開始する"
@@ -56,8 +56,12 @@ locked_ac_ids = [
   "human_task_continuation_failure_keeps_result_pending",
   "human_task_continuation_holds_root_lock",
   "aibe_rejects_duplicate_continuation_turn_id",
+  "aibe_allows_retry_after_max_tool_rounds_continuation",
   "human_task_continuation_finished_delete_is_fail_closed",
   "human_task_continuation_status_and_cli_guidance",
+  "human_task_continuation_cancel_clears_continuing",
+  "human_task_continuation_cwd_unavailable_keeps_result_pending",
+  "human_task_continuation_turn_success_requires_ok_status",
   "human_task_continuation_preserves_resume_regressions",
 ]
 

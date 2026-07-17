@@ -40,8 +40,8 @@ pub use human_handoff::{
 };
 pub use human_task_cancel::{HumanTaskCancel, HumanTaskCancelError};
 pub use human_task_continuation::{
-    build_human_task_continuation_message, HumanTaskContinuation, HumanTaskContinuationError,
-    HumanTaskContinuationRequest,
+    build_human_task_continuation_message, continuation_turn_succeeded, HumanTaskContinuation,
+    HumanTaskContinuationError, HumanTaskContinuationRequest,
 };
 pub use human_task_coordinator::{HumanTaskCoordinator, HumanTaskParentInput};
 pub use human_task_resume::{HumanTaskResume, HumanTaskResumeError};

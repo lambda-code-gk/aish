@@ -90,9 +90,11 @@ ResultPending → Continuing → Finished → checkpoint 削除
 - ai は既存 Human Task root lock を continuation の load から終端 save / delete まで保持し、同じ checkpoint の二重開始を防ぐ。
 - aibe は既存 in-memory turn 管理を拡張し、同一 process で次のいずれかに該当する turn ID の再受理を拒否する。これは永続正本ではなく、aibe 再起動を跨いで保持しない。
   1. **実行中**（`active_turns` に存在する）
-  2. **AgentTurnResult 成功後**（process-local の完了集合）
-- 通常の provider error / 接続失敗などで turn が `AgentTurnResult` 以外で終端した場合は完了集合へ入れない。同じ ID での ResultPending 再試行を同一 aibe process でも許可する（exactly-once ではない）。
-- provider error、接続失敗、duplicate 拒否を含む継続失敗では Finished にせず、checkpoint を削除しない。ai が失敗を観測できた場合は ResultPending へ戻し、ID を保持する。process crash で Continuing が残る場合の回復は 0063-E とする。
+  2. **`AgentTurnResult` かつ `status == AgentTurnStatus::Ok`**（process-local の完了集合）
+- `MaxToolRounds` は `AgentTurnResult` でも完了扱いしない。通常の provider error / 接続失敗と同様に完了集合へ入れず、同じ ID での ResultPending 再試行を同一 aibe process でも許可する（exactly-once ではない）。
+- provider error、接続失敗、`MaxToolRounds`、duplicate 拒否を含む継続失敗では Finished にせず、checkpoint を削除しない。ai が失敗を観測できた場合は ResultPending へ戻し、ID を保持する。
+- process crash や save 失敗で `Continuing` が残った場合の **自動** 回復は 0063-E。ただし root lock 解放後の stale `Continuing` / `Finished` は local `ai human-task cancel` で削除できる（実行中は flock により cancel が `Busy`）。
+- continuation 開始前に `current_cwd` の存在を確認し、欠落時は turn を開始せず ResultPending を維持する。
 - 「受理直後に恒久拒否し、失敗後も同じ ID を二度と実行しない」方式は採用しない。それは ResultPending 再試行 AC と両立しない。接続喪失などで成功を観測できなかった場合の厳密確定は Fault model 外（exactly-once 後送）。
 
 ## 2. Fault model
@@ -175,11 +177,15 @@ ResultPending → Continuing → Finished → checkpoint 削除
 | `human_task_result_pending_resume_retries_without_shell` | ResultPending に resume すると Human Shell を起動せず continuation だけを試す |
 | `human_task_continuation_turn_id_is_stable` | 初回試行前に continuation_turn_id を保存し、失敗後の再試行でも同じ ID を使う |
 | `human_task_continuation_state_invariants` | validate が ResultPending / Continuing / Finished の final_result・segment・turn ID 不変条件を状態別に検証する |
-| `human_task_continuation_failure_keeps_result_pending` | 通常の continuation 失敗は checkpoint を削除せず ResultPending と turn ID を保持する |
+| `human_task_continuation_failure_keeps_result_pending` | 通常の continuation 失敗および `MaxToolRounds` は checkpoint を削除せず ResultPending と turn ID を保持する |
 | `human_task_continuation_holds_root_lock` | load から Continuing、turn 実行、Finished、delete または ResultPending 復元まで root lock を保持する |
-| `aibe_rejects_duplicate_continuation_turn_id` | 同一 aibe process で実行中または AgentTurnResult 成功済みの同一 turn ID の二重 AgentTurn を実行前に拒否する。通常失敗後の同一 ID 再試行は拒否しない |
+| `aibe_rejects_duplicate_continuation_turn_id` | 同一 aibe process で実行中または `AgentTurnStatus::Ok` 済みの同一 turn ID の二重 AgentTurn を実行前に拒否する。通常失敗 / MaxToolRounds 後の同一 ID 再試行は拒否しない |
+| `aibe_allows_retry_after_max_tool_rounds_continuation` | MaxToolRounds 後の同一 continuation turn ID 再送を同一 aibe process で許可する |
 | `human_task_continuation_finished_delete_is_fail_closed` | Finished save 成功前は削除せず、delete 失敗時も Finished checkpoint を残す |
-| `human_task_continuation_status_and_cli_guidance` | ResultPending status は resume で continuation 再試行を案内し、Continuing/Finished を invalid と誤表示しない |
+| `human_task_continuation_status_and_cli_guidance` | ResultPending status は resume で continuation 再試行を案内し、Continuing/Finished は invalid と誤表示せず cancel cleanup を案内する |
+| `human_task_continuation_cancel_clears_continuing` | stale Continuing checkpoint を `ai human-task cancel` で削除できる |
+| `human_task_continuation_cwd_unavailable_keeps_result_pending` | continuation 開始前の cwd 欠落は turn 未開始・ResultPending 維持・安定 code |
+| `human_task_continuation_turn_success_requires_ok_status` | continuation 成功判定は `AgentTurnStatus::Ok` に限定し MaxToolRounds を成功扱いしない |
 | `human_task_continuation_preserves_resume_regressions` | Running/Suspended の resume と初回 create Done checkpoint 削除が回帰しない |
 
 ## 10. Deferred specs
@@ -193,3 +199,4 @@ ResultPending → Continuing → Finished → checkpoint 削除
 |----------|------|------|------|
 | 1 | INITIAL | 0063-D を正式 spec 0065 として Scope Lock。自動 continuation と ResultPending resume retry を同じ vertical slice に含める | 両導線は同じ application service と既存 execute_turn を使い、Human Shell 二重起動を防ぐ本番 UX の一契約であるため |
 | 2 | SAFETY_WITHIN_FAULT_MODEL | aibe の process-local 拒否を「実行中 or AgentTurnResult 成功後」に限定し、通常失敗後の同一 ID 再試行を明示 | レビュー: 受理時点恒久拒否だと ResultPending 再試行 AC と衝突するため |
+| 3 | SAFETY_WITHIN_FAULT_MODEL / BLOCKER_ORIGINAL_AC | Continuing cancel-only 復旧、成功判定を `AgentTurnStatus::Ok` に限定、continuation 前の cwd 存在検証 | PR #9 レビュー: stale Continuing 詰まりと MaxToolRounds 誤完了 |

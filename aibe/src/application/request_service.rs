@@ -405,9 +405,17 @@ impl RequestService {
                     }
                 }
                 // Continuation duplicate policy (0065): reject while in-flight or after
-                // AgentTurnResult success. Ordinary failures must not enter this set so
+                // AgentTurnStatus::Ok. MaxToolRounds / Error must not enter this set so
                 // ResultPending retry can reuse the same turn ID in this aibe process.
-                if continuation_turn && matches!(response, ClientResponse::AgentTurnResult { .. }) {
+                if continuation_turn
+                    && matches!(
+                        response,
+                        ClientResponse::AgentTurnResult {
+                            status: aibe_protocol::AgentTurnStatus::Ok,
+                            ..
+                        }
+                    )
+                {
                     self.completed_continuation_turns
                         .lock()
                         .await

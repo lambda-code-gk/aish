@@ -3614,8 +3614,17 @@ pending = false
 spec = "0065"
 phase = 2
 id = "aibe_rejects_duplicate_continuation_turn_id"
-description = "同一aibe processで実行中またはAgentTurnResult成功済みの同一turn IDを実行前に拒否する。通常失敗後の同一ID再試行は拒否しない"
+description = "同一aibe processで実行中またはAgentTurnStatus::Ok済みの同一turn IDを実行前に拒否する。通常失敗/MaxToolRounds後の同一ID再試行は拒否しない"
 test = "aibe_rejects_duplicate_continuation_turn_id"
+file_glob = "aibe/tests/0065_human_task_agent_continuation.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "aibe_allows_retry_after_max_tool_rounds_continuation"
+description = "MaxToolRounds後の同一continuation turn ID再送を同一aibe processで許可する"
+test = "aibe_allows_retry_after_max_tool_rounds_continuation"
 file_glob = "aibe/tests/0065_human_task_agent_continuation.rs"
 pending = false
 
@@ -3632,8 +3641,35 @@ pending = false
 spec = "0065"
 phase = 2
 id = "human_task_continuation_status_and_cli_guidance"
-description = "ResultPending statusはresume再試行を案内しContinuing/Finishedをinvalid扱いしない"
+description = "ResultPending statusはresume再試行を案内しContinuing/Finishedはcancel cleanupを案内する"
 test = "human_task_continuation_status_and_cli_guidance"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_cancel_clears_continuing"
+description = "stale Continuing checkpointをcancelで削除できる"
+test = "human_task_continuation_cancel_clears_continuing"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_cwd_unavailable_keeps_result_pending"
+description = "continuation開始前のcwd欠落はturn未開始・ResultPending維持・安定code"
+test = "human_task_continuation_cwd_unavailable_keeps_result_pending"
+file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0065"
+phase = 2
+id = "human_task_continuation_turn_success_requires_ok_status"
+description = "continuation成功判定はAgentTurnStatus::Okに限定しMaxToolRoundsを成功扱いしない"
+test = "human_task_continuation_turn_success_requires_ok_status"
 file_glob = "ai/tests/0065_human_task_agent_continuation_red.rs"
 pending = false
 
