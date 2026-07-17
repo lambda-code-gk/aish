@@ -17,7 +17,7 @@ red_integrations = 4
 
 [[features]]
 spec = "0065"
-status = "locked"
+status = "done"
 scope_class = "feature"
 
 scope_revision = 1

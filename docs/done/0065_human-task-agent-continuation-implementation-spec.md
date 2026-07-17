@@ -1,6 +1,6 @@
 # 0065 Human Task Agent Continuation 実装指示書
 
-> **状態**: 全 AC 完了・全体検証待ち（既存 0054 socket test の sandbox EPERM）
+> **状態**: 実装済み（全 AC `pending = false`、`./scripts/verify.sh` 成功）
 
 ## 0. 目的
 
