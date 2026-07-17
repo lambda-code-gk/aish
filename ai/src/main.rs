@@ -60,7 +60,7 @@ use ai::domain::{
     CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
 };
 use ai::ports::outbound::Presenter;
-use ai::ports::outbound::{AgentError, MemoryClient};
+use ai::ports::outbound::{AgentError, HumanTaskStore, MemoryClient};
 use ai::ports::outbound::{HistoryStore, LogReadError, ShellLogSource};
 use aibe_client::{
     ensure_running, ping_detailed, AgentTurnProgressEvent, ShellExecApprovalDecision,
@@ -175,7 +175,7 @@ fn run() -> anyhow::Result<ExitCode> {
 
 fn run_human_task_status() -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
-    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir.clone());
     let formatter = ai::adapters::outbound::SystemHumanTaskTimeFormatter;
     let output = ai::application::HumanTaskStatus::new(&store, &formatter).render()?;
     print!("{output}");
@@ -184,7 +184,7 @@ fn run_human_task_status() -> anyhow::Result<ExitCode> {
 
 fn run_human_task_resume(task_id: Option<String>) -> anyhow::Result<ExitCode> {
     let cfg = AiConfig::load();
-    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir.clone());
     let identity = ai::adapters::outbound::SystemHumanTaskIdentity;
     let launcher = ai::adapters::outbound::AishHumanShellLauncher::default();
     let observer = ai::adapters::outbound::ProcessEnvironmentObserver::default();
@@ -199,10 +199,72 @@ fn run_human_task_resume(task_id: Option<String>) -> anyhow::Result<ExitCode> {
     ) {
         Ok(output) => {
             print!("{output}");
-            Ok(ExitCode::SUCCESS)
+            let continuation_pending = store.load_active().is_ok_and(|checkpoint| {
+                checkpoint.state
+                    == ai::domain::human_task_checkpoint::HumanTaskWorkflowState::ResultPending
+            });
+            if continuation_pending {
+                run_saved_human_task_continuation(&cfg, &store, task_id.as_deref())
+            } else {
+                Ok(ExitCode::SUCCESS)
+            }
         }
         Err(error) => Err(anyhow::anyhow!("{error}")),
     }
+}
+
+fn run_saved_human_task_continuation(
+    cfg: &AiConfig,
+    store: &dyn ai::ports::outbound::HumanTaskStore,
+    task_id: Option<&str>,
+) -> anyhow::Result<ExitCode> {
+    let output = ai::application::HumanTaskContinuation::new(store, current_time_ms()).execute(
+        task_id,
+        |request| {
+            let mut turn = TurnOptions {
+                profile: Some(request.llm_profile.clone()),
+                no_log: true,
+                ..TurnOptions::default()
+            };
+            // Continuation restores saved context, not process-local approval/timeout state.
+            turn.timeout = None;
+            let mut settings = resolve_turn_settings(cfg, &turn).map_err(|_| ())?;
+            settings.ai_session_id = request.ai_session_id.clone();
+            settings.llm_profile = Some(request.llm_profile.clone());
+            settings.execution_mode = ExecutionMode::Collaborative;
+            settings.collaborative = false;
+            let message = ResolvedMessage {
+                source: "human-task-continuation".into(),
+                content: request.message.clone(),
+            };
+            let messages = vec![ProtocolMessage {
+                role: "user".into(),
+                content: request.message.clone(),
+            }];
+            let outcome = execute_turn_with_id(
+                cfg,
+                "human-task-continuation",
+                message,
+                settings,
+                None,
+                Some(request.cwd.clone()),
+                messages,
+                Vec::new(),
+                Some(request.conversation_id.clone()),
+                None,
+                false,
+                None,
+                Arc::new(std::sync::Mutex::new(ShellExecSessionState::default())),
+                Some(request.turn_id.clone()),
+            )
+            .map_err(|_| ())?;
+            matches!(outcome.response, ClientResponse::AgentTurnResult { .. })
+                .then_some(())
+                .ok_or(())
+        },
+    )?;
+    print!("{output}");
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
@@ -222,6 +284,9 @@ fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
             }
             ai::domain::human_task_checkpoint::HumanTaskWorkflowState::ResultPending => {
                 "result-pending Human Task"
+            }
+            ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Finished => {
+                "finished Human Task pending cleanup"
             }
             _ => "suspended Human Task",
         };
@@ -790,6 +855,41 @@ fn execute_turn(
     observation_draft: Option<PreprocessorObservationDraft>,
     shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
 ) -> anyhow::Result<TurnExecutionOutcome> {
+    execute_turn_with_id(
+        cfg,
+        command,
+        message,
+        settings,
+        shell_log_override,
+        client_cwd_override,
+        messages,
+        feature_history_summaries,
+        conversation_id,
+        route_plan_json,
+        route_fallback,
+        observation_draft,
+        shell_exec_state,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_turn_with_id(
+    cfg: &AiConfig,
+    command: &str,
+    message: ResolvedMessage,
+    settings: ResolvedTurnSettings,
+    shell_log_override: Option<String>,
+    client_cwd_override: Option<PathBuf>,
+    messages: Vec<ProtocolMessage>,
+    feature_history_summaries: Vec<ProtocolMessage>,
+    conversation_id: Option<String>,
+    route_plan_json: Option<String>,
+    route_fallback: bool,
+    observation_draft: Option<PreprocessorObservationDraft>,
+    shell_exec_state: Arc<std::sync::Mutex<ShellExecSessionState>>,
+    turn_id_override: Option<String>,
+) -> anyhow::Result<TurnExecutionOutcome> {
     let shell_log_choice = settings.shell_log_choice.clone();
     let replay_ctx = ai::application::replay_manifest::build_turn_replay_context(
         settings.shell_log_mode,
@@ -888,11 +988,12 @@ fn execute_turn(
     );
     request.request_context.collaborative_handoff = settings.collaborative;
     request.request_context.execution_mode = settings.execution_mode;
+    request.request_context.continuation_turn = turn_id_override.is_some();
     request.request_context.system_instruction = ai::domain::append_collaborative_instruction(
         request.request_context.system_instruction.take(),
         settings.execution_mode,
     );
-    let turn_id = next_history_id();
+    let turn_id = turn_id_override.unwrap_or_else(next_history_id);
     let request_messages = history_messages_from_protocol(&messages);
     let feature_summaries = history_messages_from_protocol(&feature_history_summaries);
     let mut client_request = request_from_messages(turn_id.clone(), request, messages)?;

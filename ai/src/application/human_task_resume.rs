@@ -82,10 +82,18 @@ impl<'a> HumanTaskResume<'a> {
         }
         match suspended.state {
             HumanTaskWorkflowState::Suspended => {}
-            HumanTaskWorkflowState::Running | HumanTaskWorkflowState::ResultPending => {
+            HumanTaskWorkflowState::ResultPending => {
+                return Ok(format!(
+                    "Continuing saved Human Task result.\n\nTask:\n  {}\n",
+                    suspended.task_id.as_str()
+                ));
+            }
+            HumanTaskWorkflowState::Running => {
                 return Err(HumanTaskResumeError::NotSuspended);
             }
-            _ => return Err(HumanTaskResumeError::Invalid),
+            HumanTaskWorkflowState::Continuing | HumanTaskWorkflowState::Finished => {
+                return Err(HumanTaskResumeError::Invalid);
+            }
         }
         if !suspended.current_cwd.is_dir() {
             return Err(HumanTaskResumeError::CwdUnavailable);
@@ -187,7 +195,7 @@ impl<'a> HumanTaskResume<'a> {
             // Leave the pre-terminal Running checkpoint (orphaned; cancel-only).
             self.store.save(&running)?;
             Ok(format!(
-                "Human Task completed and saved.\n\nTask:\n  {}\nState: result pending\n\nAgent continuation is not available yet.\nCancel to discard:\n  ai human-task cancel --yes\n",
+                "Human Task completed and saved.\n\nTask:\n  {}\nState: result pending\n\nContinuing Collaborative Mode...\n",
                 running.task_id.as_str()
             ))
         }

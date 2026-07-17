@@ -397,6 +397,12 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 
 - `ai/tests/0064_human_task_resume_red.rs`: Suspended→resume→再suspendのvertical E2E、cwd/briefing復元、segment追記、root flock保持、複数回suspendのObservation順序、missing/mismatched ID、非Suspended拒否、cwd不在、Done時のResultPending永続化、再suspend最終save失敗時のSuspended復元、Done最終save失敗時のRunning維持、起動後Cancelled/Interrupted/FailedのRunning維持、pre-launch失敗のSuspended復元、初回createの起動後エラーでRunning維持・pre-launchで削除、ParentTermiosGuard配線、0063単一segment/Done削除回帰。
 
+### 0065 Human Task agent continuation
+
+- `ai/tests/0065_human_task_agent_continuation_red.rs`: ResultPending→Continuing→Finished/delete vertical E2E、固定 unverified message、保存済み parent context と current cwd、stable continuation turn ID、状態 invariant、Human Shell 非起動 retry、通常失敗時 ResultPending 復元、root flock、Finished delete fail-closed、status/CLI、Running/Suspended invariant 回帰。
+- `aibe/tests/0065_human_task_agent_continuation.rs`: `continuation_turn=true` の成功 ID を同じ RequestService process 内で再送し、2回目を LLM call 前に `invalid_request` で拒否する。
+- 0063/0064 の既存 integration test を直列実行し、create Done 削除、Suspended resume、複数 segment、ResultPending 保存を回帰確認する。
+
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
 - 実 API キーを使うテストを CI に入れない
 - フィクスチャは `*/tests/fixtures/` に置き、大きなログは必要最小限

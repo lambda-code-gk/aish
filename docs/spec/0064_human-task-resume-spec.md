@@ -5,6 +5,8 @@
 > **関連**: [`0063_human-task-suspend-resume-overview.md`](0063_human-task-suspend-resume-overview.md)、[`0063_human-task-suspend-checkpoint-spec.md`](0063_human-task-suspend-checkpoint-spec.md)、[`docs/feature-development-policy.md`](../feature-development-policy.md)  
 > **論理区分**: Issue #6 の 0063-C
 
+> **後続変更**: 0064 完了時点では ResultPending の continuation は未実装だった。正式 spec [`0065_human-task-agent-continuation-spec.md`](0065_human-task-agent-continuation-spec.md) が ResultPending への `resume` を Human Shell 非起動の continuation retry として拡張する。
+
 ## 0. Core outcome
 
 ユーザーが Suspended の Human Task を `ai human-task resume [TASK_ID]` で再開し、最後の作業 cwd と既存 briefing から新しい Human Shell を始め、再度 `human-task suspend` して進捗（segment / Observation）を順序どおり checkpoint に残せる。

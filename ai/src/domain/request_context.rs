@@ -15,6 +15,7 @@ pub struct RequestContextInput {
     pub memory_space_id: Option<String>,
     pub collaborative_handoff: bool,
     pub execution_mode: ExecutionMode,
+    pub continuation_turn: bool,
 }
 
 impl RequestContextInput {
@@ -28,6 +29,7 @@ impl RequestContextInput {
             memory_space_id: self.memory_space_id,
             collaborative_handoff: self.collaborative_handoff,
             execution_mode: self.execution_mode.into(),
+            continuation_turn: self.continuation_turn,
         }
     }
 }
