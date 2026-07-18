@@ -9,6 +9,7 @@ mod human_handoff;
 mod human_task_cancel;
 mod human_task_continuation;
 mod human_task_coordinator;
+mod human_task_recover;
 mod human_task_resume;
 mod human_task_status;
 pub mod memory_cli;
@@ -44,6 +45,7 @@ pub use human_task_continuation::{
     HumanTaskContinuationError, HumanTaskContinuationRequest,
 };
 pub use human_task_coordinator::{HumanTaskCoordinator, HumanTaskParentInput};
+pub use human_task_recover::{HumanTaskRecover, HumanTaskRecoverError};
 pub use human_task_resume::{HumanTaskResume, HumanTaskResumeError};
 pub use human_task_status::{HumanTaskStatus, HumanTaskStatusError};
 

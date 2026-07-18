@@ -11,6 +11,8 @@ pub enum HumanTaskStatusError {
     Store(#[from] HumanTaskStoreError),
     #[error("human_task_checkpoint_invalid")]
     Invalid,
+    #[error("{0}\nRecovery (explicit invalid residue cleanup):\n  ai human-task recover --force-invalid")]
+    Diagnosed(HumanTaskStoreError),
 }
 impl<'a> HumanTaskStatus<'a> {
     pub fn new(
@@ -23,7 +25,11 @@ impl<'a> HumanTaskStatus<'a> {
         }
     }
     pub fn render(&self) -> Result<String, HumanTaskStatusError> {
-        match self.store.try_lock_exclusive()? {
+        match self
+            .store
+            .try_lock_exclusive()
+            .map_err(diagnose_store_error)?
+        {
             Some(_root_lock) => self.render_under_lock(),
             // Owner (create/resume) holds the lock for the whole Human Shell session.
             // Do not block; best-effort read of the stable Running checkpoint.
@@ -34,11 +40,12 @@ impl<'a> HumanTaskStatus<'a> {
     fn render_under_lock(&self) -> Result<String, HumanTaskStatusError> {
         let checkpoint = match self.store.load_active() {
             Err(HumanTaskStoreError::NotFound) => return Ok("No suspended Human Task.\n".into()),
-            other => other?,
+            Err(error) => return Err(diagnose_store_error(error)),
+            Ok(checkpoint) => checkpoint,
         };
         if checkpoint.state == HumanTaskWorkflowState::Running {
             return Ok(format!(
-                "Human Task: {}\nState: orphaned running\nObjective: {}\nCurrent cwd: {}\nRecovery:\n  ai human-task cancel --yes\n",
+                "Human Task: {}\nState: orphaned running\nObjective: {}\nCurrent cwd: {}\nRecovery:\n  ai human-task recover\nCleanup instead:\n  ai human-task cancel --yes\n",
                 checkpoint.task_id.as_str(),
                 escape_status_field(&checkpoint.task.objective),
                 escape_status_field(&checkpoint.current_cwd.to_string_lossy())
@@ -54,7 +61,7 @@ impl<'a> HumanTaskStatus<'a> {
         }
         if checkpoint.state == HumanTaskWorkflowState::Continuing {
             return Ok(format!(
-                "Human Task: {}\nState: continuing\nObjective: {}\nCurrent cwd: {}\nA continuation turn was started. Automatic crash recovery is not available.\nCleanup:\n  ai human-task cancel --yes\n",
+                "Human Task: {}\nState: continuing\nObjective: {}\nCurrent cwd: {}\nA continuation turn was started. Automatic crash recovery is not available.\nRecovery retry:\n  ai human-task recover\nCleanup instead:\n  ai human-task cancel --yes\n",
                 checkpoint.task_id.as_str(),
                 escape_status_field(&checkpoint.task.objective),
                 escape_status_field(&checkpoint.current_cwd.to_string_lossy())
@@ -101,6 +108,15 @@ impl<'a> HumanTaskStatus<'a> {
             Ok(_) => Ok("Human Task is currently active in another ai process.\n".into()),
             Err(error) => Err(error.into()),
         }
+    }
+}
+
+fn diagnose_store_error(error: HumanTaskStoreError) -> HumanTaskStatusError {
+    match error {
+        HumanTaskStoreError::Invalid
+        | HumanTaskStoreError::VersionUnsupported
+        | HumanTaskStoreError::PermissionDenied => HumanTaskStatusError::Diagnosed(error),
+        other => HumanTaskStatusError::Store(other),
     }
 }
 

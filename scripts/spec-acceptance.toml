@@ -3323,6 +3323,60 @@ file_glob = "ai/tests/0062_collab_mode_human_task_tool_red.rs"
 pending = false
 
 [[cases]]
+spec = "0066"
+phase = 1
+id = "human_task_recovery_vertical_e2e"
+description = "orphaned Runningを確認後Suspendedへ保存し既存resume経路で再開できる"
+test = "human_task_recovery_vertical_e2e"
+file_glob = "ai/tests/0066_human_task_recovery_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0066"
+phase = 1
+id = "human_task_recovery_continuing_to_result_pending"
+description = "stale Continuingをturn ID保持のResultPendingへ戻す"
+test = "human_task_recovery_continuing_to_result_pending"
+file_glob = "ai/tests/0066_human_task_recovery_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0066"
+phase = 1
+id = "human_task_recovery_status_guidance"
+description = "状態別にrecover/resume/cancel/force cleanupを案内する"
+test = "human_task_recovery_status_guidance"
+file_glob = "ai/tests/0066_human_task_recovery_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0066"
+phase = 1
+id = "human_task_recovery_force_invalid_cleanup"
+description = "invalid residueを自動削除せず明示確認付きforce操作だけで掃除する"
+test = "human_task_recovery_force_invalid_cleanup"
+file_glob = "ai/tests/0066_human_task_recovery_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0066"
+phase = 1
+id = "human_task_recovery_is_confirmed_and_locked"
+description = "確認拒否とbusy root lockではcheckpointを変更しない"
+test = "human_task_recovery_is_confirmed_and_locked"
+file_glob = "ai/tests/0066_human_task_recovery_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0066"
+phase = 1
+id = "human_task_recovery_preserves_existing_paths"
+description = "Suspended/ResultPending/Finishedをrecoverで上書きせず既存経路を案内する"
+test = "human_task_recovery_preserves_existing_paths"
+file_glob = "ai/tests/0066_human_task_recovery_hardening_red.rs"
+pending = false
+
+[[cases]]
 spec = "0063"
 phase = 1
 id = "human_task_suspend_checkpoint_vertical_e2e"

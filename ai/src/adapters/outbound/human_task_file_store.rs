@@ -236,7 +236,7 @@ impl HumanTaskStore for HumanTaskFileStore {
                 .file_name()
                 .into_string()
                 .map_err(|_| HumanTaskStoreError::Invalid)?;
-            if name == "lock" {
+            if name == "lock" || name == ".removing" {
                 continue;
             }
             let id = HumanTaskId::parse(name).map_err(|_| HumanTaskStoreError::Invalid)?;
@@ -326,5 +326,503 @@ impl HumanTaskStore for HumanTaskFileStore {
         })?;
         fs::remove_dir(path.parent().ok_or(HumanTaskStoreError::Unavailable)?)
             .map_err(|_| HumanTaskStoreError::Unavailable)
+    }
+
+    fn remove_invalid_active(&self) -> Result<String, HumanTaskStoreError> {
+        Self::ensure_dir(&self.root)?;
+        remove_invalid_active_pinned(&self.root)
+    }
+}
+
+/// Force-clean a single invalid task residue under `root` without following symlinks.
+///
+/// Pins the checkpoint root with `O_DIRECTORY|O_NOFOLLOW` and uses that fd for listing,
+/// `openat`, and `renameat`. Validates every child before any quarantine/delete so nested
+/// or foreign entries fail closed without changing the visible residue path.
+fn remove_invalid_active_pinned(root: &Path) -> Result<String, HumanTaskStoreError> {
+    use std::ffi::CString;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+
+    let root_c =
+        CString::new(root.as_os_str().as_bytes()).map_err(|_| HumanTaskStoreError::Invalid)?;
+    let root_fd = unsafe {
+        libc::open(
+            root_c.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if root_fd < 0 {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    let root_owned = unsafe { OwnedFd::from_raw_fd(root_fd) };
+    let euid = unsafe { libc::geteuid() };
+    let mut root_st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(root_owned.as_raw_fd(), &mut root_st) } != 0
+        || root_st.st_uid != euid
+        || (root_st.st_mode & 0o7777) != 0o700
+    {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    after_root_pin_hook(root);
+
+    let name = list_single_task_residue(root_owned.as_raw_fd())?;
+    let name_c = CString::new(name.as_str()).map_err(|_| HumanTaskStoreError::Invalid)?;
+
+    let path_fd = unsafe {
+        libc::openat(
+            root_owned.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if path_fd < 0 {
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    let path_owned = unsafe { OwnedFd::from_raw_fd(path_fd) };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(path_owned.as_raw_fd(), &mut st) } != 0 {
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    if st.st_uid != euid {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    let file_type = st.st_mode & libc::S_IFMT;
+    if file_type == libc::S_IFLNK {
+        if unsafe { libc::unlinkat(root_owned.as_raw_fd(), name_c.as_ptr(), 0) } != 0 {
+            return Err(HumanTaskStoreError::Unavailable);
+        }
+        return Ok(name);
+    }
+    if file_type != libc::S_IFDIR {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+
+    let original_mode = st.st_mode & 0o7777;
+    let mut mode_changed = false;
+    if original_mode != 0o700 {
+        chmod_via_proc(path_owned.as_raw_fd(), 0o700)?;
+        mode_changed = true;
+    }
+
+    let dot = CString::new(".").map_err(|_| HumanTaskStoreError::Invalid)?;
+    let dir_fd = unsafe {
+        libc::openat(
+            path_owned.as_raw_fd(),
+            dot.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dir_fd < 0 {
+        if mode_changed {
+            let _ = chmod_via_proc(path_owned.as_raw_fd(), original_mode);
+        }
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    let dir_owned = unsafe { OwnedFd::from_raw_fd(dir_fd) };
+
+    let children = match list_removable_children(dir_owned.as_raw_fd(), euid) {
+        Ok(children) => children,
+        Err(error) => {
+            if mode_changed {
+                let _ =
+                    unsafe { libc::fchmod(dir_owned.as_raw_fd(), original_mode as libc::mode_t) };
+            }
+            return Err(error);
+        }
+    };
+
+    let removing_owned = open_or_create_removing_dir(root_owned.as_raw_fd(), euid)?;
+    let quarantine = format!("{}.{}", std::process::id(), name);
+    let quarantine_c =
+        CString::new(quarantine.as_str()).map_err(|_| HumanTaskStoreError::Invalid)?;
+    if unsafe {
+        libc::renameat(
+            root_owned.as_raw_fd(),
+            name_c.as_ptr(),
+            removing_owned.as_raw_fd(),
+            quarantine_c.as_ptr(),
+        )
+    } != 0
+    {
+        if mode_changed {
+            let _ = unsafe { libc::fchmod(dir_owned.as_raw_fd(), original_mode as libc::mode_t) };
+        }
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    after_quarantine_hook(root, &quarantine);
+    after_directory_pin_hook(root, &quarantine);
+
+    for child in &children {
+        let child_c = CString::new(child.as_str()).map_err(|_| HumanTaskStoreError::Invalid)?;
+        if unsafe { libc::unlinkat(dir_owned.as_raw_fd(), child_c.as_ptr(), 0) } != 0 {
+            let _ = unsafe {
+                libc::renameat(
+                    removing_owned.as_raw_fd(),
+                    quarantine_c.as_ptr(),
+                    root_owned.as_raw_fd(),
+                    name_c.as_ptr(),
+                )
+            };
+            if mode_changed {
+                let _ =
+                    unsafe { libc::fchmod(dir_owned.as_raw_fd(), original_mode as libc::mode_t) };
+            }
+            return Err(HumanTaskStoreError::Unavailable);
+        }
+    }
+
+    // Empty quarantine directory may remain; shared-path AT_REMOVEDIR is intentionally avoided.
+    Ok(name)
+}
+
+fn chmod_via_proc(fd: libc::c_int, mode: u32) -> Result<(), HumanTaskStoreError> {
+    use std::ffi::CString;
+    let proc_path =
+        CString::new(format!("/proc/self/fd/{fd}")).map_err(|_| HumanTaskStoreError::Invalid)?;
+    if unsafe { libc::chmod(proc_path.as_ptr(), mode as libc::mode_t) } != 0 {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    Ok(())
+}
+
+fn open_or_create_removing_dir(
+    root_fd: libc::c_int,
+    euid: libc::uid_t,
+) -> Result<std::os::fd::OwnedFd, HumanTaskStoreError> {
+    use std::ffi::CString;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::io::AsRawFd;
+
+    let removing_c = CString::new(".removing").map_err(|_| HumanTaskStoreError::Invalid)?;
+    let open_removing = |flags| unsafe { libc::openat(root_fd, removing_c.as_ptr(), flags) };
+    let removing_fd =
+        open_removing(libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    if removing_fd >= 0 {
+        let owned = unsafe { OwnedFd::from_raw_fd(removing_fd) };
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(owned.as_raw_fd(), &mut st) } != 0
+            || st.st_uid != euid
+            || (st.st_mode & 0o7777) != 0o700
+        {
+            return Err(HumanTaskStoreError::PermissionDenied);
+        }
+        return Ok(owned);
+    }
+    if unsafe { libc::mkdirat(root_fd, removing_c.as_ptr(), 0o700) } != 0
+        && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST)
+    {
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    let fd = open_removing(libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    if fd < 0 {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(owned.as_raw_fd(), &mut st) } != 0
+        || st.st_uid != euid
+        || (st.st_mode & libc::S_IFMT) != libc::S_IFDIR
+        || (st.st_mode & 0o7777) != 0o700
+    {
+        return Err(HumanTaskStoreError::PermissionDenied);
+    }
+    Ok(owned)
+}
+
+fn list_single_task_residue(root_fd: libc::c_int) -> Result<String, HumanTaskStoreError> {
+    let list_fd = unsafe { libc::dup(root_fd) };
+    if list_fd < 0 {
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    let dirp = unsafe { libc::fdopendir(list_fd) };
+    if dirp.is_null() {
+        unsafe {
+            libc::close(list_fd);
+        }
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    let mut residue = None;
+    loop {
+        unsafe {
+            *libc::__errno_location() = 0;
+        }
+        let entry = unsafe { libc::readdir(dirp) };
+        if entry.is_null() {
+            let err = unsafe { *libc::__errno_location() };
+            unsafe {
+                libc::closedir(dirp);
+            }
+            if err != 0 {
+                return Err(HumanTaskStoreError::Unavailable);
+            }
+            break;
+        }
+        let d_name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let name = match d_name.to_str() {
+            Ok("." | ".." | "lock" | ".removing") => continue,
+            Ok(value) => value.to_string(),
+            Err(_) => {
+                unsafe {
+                    libc::closedir(dirp);
+                }
+                return Err(HumanTaskStoreError::Invalid);
+            }
+        };
+        if HumanTaskId::parse(&name).is_err() {
+            unsafe {
+                libc::closedir(dirp);
+            }
+            return Err(HumanTaskStoreError::Invalid);
+        }
+        if residue.replace(name).is_some() {
+            unsafe {
+                libc::closedir(dirp);
+            }
+            return Err(HumanTaskStoreError::Invalid);
+        }
+    }
+    residue.ok_or(HumanTaskStoreError::NotFound)
+}
+
+fn list_removable_children(
+    dir_fd: libc::c_int,
+    euid: libc::uid_t,
+) -> Result<Vec<String>, HumanTaskStoreError> {
+    use std::ffi::CString;
+
+    let list_fd = unsafe { libc::dup(dir_fd) };
+    if list_fd < 0 {
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    let dirp = unsafe { libc::fdopendir(list_fd) };
+    if dirp.is_null() {
+        unsafe {
+            libc::close(list_fd);
+        }
+        return Err(HumanTaskStoreError::Unavailable);
+    }
+    let mut child_names = Vec::new();
+    loop {
+        unsafe {
+            *libc::__errno_location() = 0;
+        }
+        let entry = unsafe { libc::readdir(dirp) };
+        if entry.is_null() {
+            let err = unsafe { *libc::__errno_location() };
+            unsafe {
+                libc::closedir(dirp);
+            }
+            if err != 0 {
+                return Err(HumanTaskStoreError::Unavailable);
+            }
+            break;
+        }
+        let d_name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let child = match d_name.to_str() {
+            Ok("." | "..") => continue,
+            Ok(value) => value.to_string(),
+            Err(_) => {
+                unsafe {
+                    libc::closedir(dirp);
+                }
+                return Err(HumanTaskStoreError::Invalid);
+            }
+        };
+        child_names.push(child);
+    }
+
+    for child in &child_names {
+        let child_c = CString::new(child.as_str()).map_err(|_| HumanTaskStoreError::Invalid)?;
+        let mut child_st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::fstatat(
+                dir_fd,
+                child_c.as_ptr(),
+                &mut child_st,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(HumanTaskStoreError::Unavailable);
+        }
+        let child_type = child_st.st_mode & libc::S_IFMT;
+        let removable =
+            child_type == libc::S_IFLNK || (child_type == libc::S_IFREG && child_st.st_uid == euid);
+        if !removable {
+            return Err(HumanTaskStoreError::PermissionDenied);
+        }
+    }
+    Ok(child_names)
+}
+
+fn after_root_pin_hook(_root: &Path) {
+    #[cfg(test)]
+    if let Ok(guard) = test_hooks::AFTER_ROOT_PIN.lock() {
+        if let Some(hook) = guard.as_ref() {
+            hook(_root);
+        }
+    }
+}
+
+fn after_quarantine_hook(_root: &Path, _quarantine_name: &str) {
+    #[cfg(test)]
+    if let Ok(guard) = test_hooks::AFTER_QUARANTINE.lock() {
+        if let Some(hook) = guard.as_ref() {
+            hook(_root, _quarantine_name);
+        }
+    }
+}
+
+fn after_directory_pin_hook(_root: &Path, _quarantine_name: &str) {
+    #[cfg(test)]
+    if let Ok(guard) = test_hooks::AFTER_DIRECTORY_PIN.lock() {
+        if let Some(hook) = guard.as_ref() {
+            hook(_root, _quarantine_name);
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod test_hooks {
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    type RootHook = Box<dyn Fn(&Path) + Send>;
+    type Hook = Box<dyn Fn(&Path, &str) + Send>;
+
+    pub static AFTER_ROOT_PIN: Mutex<Option<RootHook>> = Mutex::new(None);
+    pub static AFTER_QUARANTINE: Mutex<Option<Hook>> = Mutex::new(None);
+    pub static AFTER_DIRECTORY_PIN: Mutex<Option<Hook>> = Mutex::new(None);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn write_invalid_residue(history: &Path) -> PathBuf {
+        let root = history.join("human-tasks");
+        fs::create_dir_all(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let task_dir = root.join("ht-20260718-aabbcc");
+        fs::create_dir(&task_dir).unwrap();
+        fs::set_permissions(&task_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let checkpoint = task_dir.join("checkpoint.json");
+        fs::write(&checkpoint, b"not-json").unwrap();
+        fs::set_permissions(&checkpoint, fs::Permissions::from_mode(0o600)).unwrap();
+        task_dir
+    }
+
+    #[test]
+    fn remove_invalid_active_preserves_replacement_after_directory_pin() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let history = tempfile::tempdir().unwrap();
+        let task_dir = write_invalid_residue(history.path());
+        let outside = tempfile::tempdir().unwrap();
+        let store = HumanTaskFileStore::new(history.path().into());
+
+        *test_hooks::AFTER_DIRECTORY_PIN.lock().unwrap() = Some(Box::new({
+            let outside = outside.path().to_path_buf();
+            move |root, quarantine_name| {
+                let quarantine = root.join(".removing").join(quarantine_name);
+                let moved = outside.join("moved-residue");
+                fs::rename(&quarantine, &moved).unwrap();
+                fs::create_dir(&quarantine).unwrap();
+                fs::set_permissions(&quarantine, fs::Permissions::from_mode(0o700)).unwrap();
+                let keep = quarantine.join("keep-me.txt");
+                fs::write(&keep, b"do-not-delete").unwrap();
+                fs::set_permissions(&keep, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+        }));
+
+        let result = store.remove_invalid_active();
+        *test_hooks::AFTER_DIRECTORY_PIN.lock().unwrap() = None;
+        result.expect("cleanup should succeed without removing replacement");
+
+        assert!(!task_dir.exists());
+        let decoy = history
+            .path()
+            .join("human-tasks")
+            .join(".removing")
+            .read_dir()
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.join("keep-me.txt").exists())
+            .expect("replacement decoy must remain");
+        assert_eq!(
+            fs::read(decoy.join("keep-me.txt")).unwrap(),
+            b"do-not-delete"
+        );
+        let moved = outside.path().join("moved-residue");
+        assert!(moved.exists());
+        assert!(!moved.join("checkpoint.json").exists());
+    }
+
+    #[test]
+    fn remove_invalid_active_keeps_outer_tree_when_root_path_replaced() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let history = tempfile::tempdir().unwrap();
+        let _task_dir = write_invalid_residue(history.path());
+        let outside = tempfile::tempdir().unwrap();
+        let fake_root = outside.path().join("fake-human-tasks");
+        fs::create_dir_all(&fake_root).unwrap();
+        fs::set_permissions(&fake_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let fake_task = fake_root.join("ht-20260718-aabbcc");
+        fs::create_dir(&fake_task).unwrap();
+        fs::set_permissions(&fake_task, fs::Permissions::from_mode(0o700)).unwrap();
+        let keep = fake_task.join("keep-outside.txt");
+        fs::write(&keep, b"outer-secret").unwrap();
+        fs::set_permissions(&keep, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let store = HumanTaskFileStore::new(history.path().into());
+        *test_hooks::AFTER_ROOT_PIN.lock().unwrap() = Some(Box::new({
+            let history = history.path().to_path_buf();
+            let fake_root = fake_root.clone();
+            let parked = outside.path().join("parked-root");
+            move |root| {
+                assert_eq!(root, &history.join("human-tasks"));
+                fs::rename(root, &parked).unwrap();
+                symlink(&fake_root, root).unwrap();
+            }
+        }));
+
+        let result = store.remove_invalid_active();
+        *test_hooks::AFTER_ROOT_PIN.lock().unwrap() = None;
+        result.expect("pinned root cleanup should succeed");
+
+        assert_eq!(fs::read(&keep).unwrap(), b"outer-secret");
+        assert!(keep.exists());
+    }
+
+    #[test]
+    fn remove_invalid_active_rejects_nested_directory_without_mutating_residue() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let history = tempfile::tempdir().unwrap();
+        let task_dir = write_invalid_residue(history.path());
+        let nested = task_dir.join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
+        let checkpoint = task_dir.join("checkpoint.json");
+        let before = fs::read(&checkpoint).unwrap();
+
+        let store = HumanTaskFileStore::new(history.path().into());
+        assert_eq!(
+            store.remove_invalid_active(),
+            Err(HumanTaskStoreError::PermissionDenied)
+        );
+        assert!(task_dir.exists());
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
+        assert!(nested.exists());
+        assert!(!history
+            .path()
+            .join("human-tasks")
+            .join(".removing")
+            .exists());
     }
 }

@@ -16,6 +16,46 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0066"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 1
+scope_change_reason = "INITIAL: 0063-Eをmanual stale checkpoint recoveryに限定してScope Lock"
+scope_review = "approved"
+
+core_outcome = "クラッシュや中断後に残ったHuman Task checkpointをlocal CLIで安全に復旧または掃除し既存resume/continuationへ戻す"
+
+actors = 1
+state_machines = 1
+persistent_aggregates = 1
+external_effects = 1
+process_boundaries = 0
+
+novel_mechanisms = ["manual-stale-checkpoint-recovery"]
+integrations = ["human-task-status", "human-task-file-store", "existing-resume-continuation-lifecycle"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "automatic crash recovery, PID/lease/heartbeat/reconciler, schema migration, exactly-once, secondary agent loop, session-pruning product changes, and new bash/zsh E2E are deferred"
+
+vertical_slice_ac_id = "human_task_recovery_vertical_e2e"
+
+locked_ac_ids = [
+  "human_task_recovery_vertical_e2e",
+  "human_task_recovery_continuing_to_result_pending",
+  "human_task_recovery_status_guidance",
+  "human_task_recovery_force_invalid_cleanup",
+  "human_task_recovery_is_confirmed_and_locked",
+  "human_task_recovery_preserves_existing_paths",
+]
+
+[[features]]
 spec = "0065"
 status = "done"
 scope_class = "feature"

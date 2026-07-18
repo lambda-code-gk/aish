@@ -25,4 +25,4 @@
 
 ## 未実装
 
-- Continuingを含むprocess crash recovery / lease（0063-E）
+- Continuingを含む自動process crash recovery / lease（0066は明示local recoveryのみ）

@@ -152,6 +152,9 @@ fn run() -> anyhow::Result<ExitCode> {
         AiCommand::HumanTask {
             command: HumanTaskCommand::Cancel { yes },
         } => run_human_task_cancel(yes),
+        AiCommand::HumanTask {
+            command: HumanTaskCommand::Recover { force_invalid, yes },
+        } => run_human_task_recover(force_invalid, yes),
         AiCommand::Doctor {
             quiet,
             format,
@@ -304,6 +307,46 @@ fn run_human_task_cancel(yes: bool) -> anyhow::Result<ExitCode> {
         stdin.read_line(&mut answer).is_ok()
             && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
     })?;
+    print!("{output}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_human_task_recover(force_invalid: bool, yes: bool) -> anyhow::Result<ExitCode> {
+    let cfg = AiConfig::load();
+    let store = ai::adapters::outbound::HumanTaskFileStore::new(cfg.history_dir);
+    let output = ai::application::HumanTaskRecover::new(&store, current_time_ms()).execute(
+        force_invalid,
+        |checkpoint| {
+            if yes {
+                return true;
+            }
+            let stdin = std::io::stdin();
+            if !stdin.is_terminal() {
+                return false;
+            }
+            let description = checkpoint.map_or_else(
+                || "invalid Human Task residue".to_string(),
+                |checkpoint| {
+                    format!(
+                        "{} Human Task {}",
+                        match checkpoint.state {
+                            ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Running => "orphaned running",
+                            ai::domain::human_task_checkpoint::HumanTaskWorkflowState::Continuing => "stale continuing",
+                            _ => "non-recoverable",
+                        },
+                        checkpoint.task_id.as_str()
+                    )
+                },
+            );
+            eprint!("Recover {description}? [y/N] ");
+            if std::io::stderr().flush().is_err() {
+                return false;
+            }
+            let mut answer = String::new();
+            stdin.read_line(&mut answer).is_ok()
+                && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        },
+    )?;
     print!("{output}");
     Ok(ExitCode::SUCCESS)
 }

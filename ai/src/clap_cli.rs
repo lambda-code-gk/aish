@@ -62,6 +62,15 @@ pub enum HumanTaskCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Recover a stale local checkpoint without contacting aibe
+    Recover {
+        /// Remove a diagnosed invalid residue instead of changing workflow state
+        #[arg(long)]
+        force_invalid: bool,
+        /// Skip the interactive confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
