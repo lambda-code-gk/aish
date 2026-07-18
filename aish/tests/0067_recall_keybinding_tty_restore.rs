@@ -227,7 +227,7 @@ impl Drop for PtyShell {
 }
 
 #[test]
-fn handoff_recall_preserves_line_editor_navigation() {
+fn handoff_rc_recall_preserves_line_editor_navigation() {
     for shell in [Shell::Bash, Shell::Zsh] {
         for (shortcut_name, shortcut) in
             [("next", b"\x1b.".as_slice()), ("prev", b"\x1b,".as_slice())]

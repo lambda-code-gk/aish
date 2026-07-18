@@ -35,9 +35,9 @@ pending = false
 spec = "0067"
 phase = 1
 id = "handoff_recall_preserves_line_editor_navigation"
-description = "実PTYのbash/zsh Human Shellでhandoff recall後のcursor/historyとtermios一致を検証する"
+description = "outer PTYのai→aish実経路でbash/zshの通常CSIとhandoff recall後CSIを検証する"
 test = "handoff_recall_preserves_line_editor_navigation"
-file_glob = "aish/tests/0067_recall_keybinding_tty_restore.rs"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
 pending = false
 
 [[cases]]

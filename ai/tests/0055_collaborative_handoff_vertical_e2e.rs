@@ -542,13 +542,17 @@ fn collect_forbidden(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-fn write_aish_config(home: &Path, log_dir: &Path) -> PathBuf {
+fn write_aish_config(home: &Path, log_dir: &Path, shell: Option<&str>) -> PathBuf {
     let path = home.join("aish.toml");
+    let shell = shell
+        .map(|value| format!("shell = \"{}\"\n", value.replace('\\', "\\\\")))
+        .unwrap_or_default();
     fs::write(
         &path,
         format!(
-            "log_dir = \"{}\"\n",
-            log_dir.display().to_string().replace('\\', "\\\\")
+            "log_dir = \"{}\"\n{}",
+            log_dir.display().to_string().replace('\\', "\\\\"),
+            shell
         ),
     )
     .expect("write aish config");
@@ -593,6 +597,28 @@ fn run_collaborative_handoff(
         candidate_marker,
         shell_input,
         ExpectedHandoffDecision::Success,
+        None,
+    )
+}
+
+fn run_collaborative_handoff_for_shell(
+    ai_bin: &Path,
+    aish_bin: &Path,
+    home: &Path,
+    work: &Path,
+    candidate_marker: PathBuf,
+    shell_input: &[u8],
+    shell: &str,
+) -> HandoffRun {
+    run_collaborative_handoff_with_expected(
+        ai_bin,
+        aish_bin,
+        home,
+        work,
+        candidate_marker,
+        shell_input,
+        ExpectedHandoffDecision::Success,
+        Some(shell),
     )
 }
 
@@ -604,6 +630,7 @@ fn run_collaborative_handoff_with_expected(
     candidate_marker: PathBuf,
     shell_input: &[u8],
     expected: ExpectedHandoffDecision,
+    shell: Option<&str>,
 ) -> HandoffRun {
     let deadline = Instant::now() + e2e_timeout();
     let mut server = CollaborativeMockServer::spawn(candidate_marker, expected);
@@ -613,7 +640,7 @@ fn run_collaborative_handoff_with_expected(
     let ai_cfg = write_ai_config(home, &server.socket_path, &history_dir);
     let aibe_cfg = write_aibe_config(home);
     let aish_log = home.join("aish-sessions");
-    let aish_cfg = write_aish_config(home, &aish_log);
+    let aish_cfg = write_aish_config(home, &aish_log, shell);
 
     let mut master = -1;
     let mut slave = -1;
@@ -716,7 +743,7 @@ fn spawn_ai_collaborative_failure(
     fs::create_dir_all(&history_dir).expect("history");
     let ai_cfg = write_ai_config(home, socket_path, &history_dir);
     let aibe_cfg = write_aibe_config(home);
-    let aish_cfg = write_aish_config(home, &home.join("aish-sessions"));
+    let aish_cfg = write_aish_config(home, &home.join("aish-sessions"), None);
     let mut command = Command::new(ai_bin);
     command
         .args(["ask", "--collaborative", "--quiet", "--no-start", prompt])
@@ -784,6 +811,55 @@ fn no_persistent_handoff_state_is_created() {
 fn ai_to_aish_handoff_transport_pty_e2e() {
     let handoff = run_pty_handoff_with_burst_commands();
     assert_eq!(handoff["requested_command_completion"], "unknown");
+}
+
+/// 0067: outer PTY から実際の ai → aish → PtyShell 経路へ CSI を渡す。
+#[test]
+fn handoff_recall_preserves_line_editor_navigation() {
+    let ai_bin = PathBuf::from(env!("CARGO_BIN_EXE_ai"));
+    let aish_bin = require_test_binary("CARGO_BIN_EXE_aish", "aish");
+    for shell in ["bash", "zsh"] {
+        let home = tempfile::tempdir().expect("home");
+        let work = home.path().join("work");
+        fs::create_dir_all(&work).expect("work dir");
+        let candidate_marker = work.join("cursor-marker-XY");
+        let recalled_marker = work.join("cursor-marker-XOKY");
+
+        let mut shell_input = b"printf 'CSI-AB'".to_vec();
+        shell_input.extend_from_slice(b"\x1b[D\x1b[DX\n");
+        shell_input.extend_from_slice(b"\x1b.\x1b[D\x1b[DOK\nexit\n");
+
+        let run = run_collaborative_handoff_for_shell(
+            &ai_bin,
+            &aish_bin,
+            home.path(),
+            &work,
+            candidate_marker.clone(),
+            &shell_input,
+            shell,
+        );
+        let mut log = run.server.join(run.deadline);
+        log.ai_stderr = String::from_utf8_lossy(&run.output.stderr).into_owned();
+        log.child_exit = run.output.status.code();
+        log.aish_transcript_hint = String::from_utf8_lossy(&run.output.stdout).into_owned();
+
+        if !run.output.status.success() {
+            fail_with_diagnostics(&format!("0067 outer-PTY {shell} handoff failed"), log);
+        }
+        let stdout = String::from_utf8_lossy(&run.output.stdout);
+        assert!(
+            stdout.contains("CSI-AXB"),
+            "{shell}: plain CSI cursor input was not interpreted: {stdout}"
+        );
+        assert!(
+            recalled_marker.is_file(),
+            "{shell}: CSI after Alt+. must edit and execute the recalled command: {stdout}"
+        );
+        assert!(
+            !candidate_marker.exists(),
+            "{shell}: the unedited suggested command must not be executed"
+        );
+    }
 }
 
 /// 0061 vertical-slice AC 専用（受け入れレジストリと 1:1）。

@@ -28,7 +28,7 @@ flowchart LR
 
 | コンポーネント | 役割 | ネットワーク |
 |----------------|------|--------------|
-| **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。`openpty` 後に親 stdin の winsize を PTY master へ `TIOCSWINSZ` で同期し、セッション中の `SIGWINCH` も `signalfd` 経由で同様に伝播。PTY stdin は `dup(master)` + shutdown pipe + 親 TTY raw。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
+| **aish** | PTY/子プロセスでシェルを動かし、I/O をログに追記。親 stdin が TTY ならそれを、redirect 済みでも controlling TTY があれば `/dev/tty` を選び、同じ fd を raw 化・stdin relay・winsize 同期に使う。raw 化失敗は fail-closed とし、`stty sane` は使わない。`openpty` 後に `TIOCSWINSZ` で同期し、セッション中の `SIGWINCH` も `signalfd` 経由で同様に伝播。PTY stdin は `dup(master)` + shutdown pipe。fork 後セットアップ失敗時は `master` を閉じ子を kill/reap | なし（LLM・aibe へ接続しない） |
 | **aish-replay** | `aish replay` と `ai` が共有する replay parser / span 復元ロジック | なし |
 | **aibe-protocol** | wire DTO（NDJSON / serde）、`ToolName`、契約定数。leaf クレート | なし |
 | **aibe-client** | Unix socket transport（`ping` / `ensure_running` / `route_turn` / `agent_turn` + 承認往復）/ 既定 socket パス | なし（`aibe` バイナリ起動のみ） |
