@@ -50,6 +50,15 @@ file_glob = "ai/tests/0067_recall_keybinding_tty_restore.rs"
 pending = false
 
 [[cases]]
+spec = "0067"
+phase = 1
+id = "aish_shell_alt_period_preserves_csi_navigation"
+description = "aish shell（replay DEBUG）経路でAlt+.直後のCSI矢印がcaret挿入にならずline editor編集できる"
+test = "aish_shell_alt_period_preserves_csi_navigation"
+file_glob = "aish/tests/0067_aish_shell_alt_period_csi.rs"
+pending = false
+
+[[cases]]
 spec = "0058"
 phase = 1
 id = "doctor_health_checks_render_human_and_json"

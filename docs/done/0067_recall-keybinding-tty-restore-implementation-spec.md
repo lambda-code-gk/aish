@@ -81,6 +81,7 @@ locked AC は上記4件から増やさない。`BLOCKER_ORIGINAL_AC`、`REGRESSI
 | `recall_keybinding_pty_vertical_e2e` | 同名 / `ai/tests/0067_recall_keybinding_tty_restore.rs` | 実 PTY の bash / zsh × 両 shortcut × labeled outcome matrix、完全 CSI 後の cursor / history、stable prompt termios 一致 | stdin 境界 AC の次。これを vertical gate とする |
 | `recall_hooks_avoid_unobserved_terminal_reset` | 同名 / `ai/tests/0067_recall_keybinding_tty_restore.rs` | 生成される 0053 / 0055 hook に `stty sane`、固定値、無条件 reset がないこと。限定復元がある場合は観測値 / 差分属性だけを使うこと | vertical E2E 後。文字列検査だけで navigation AC を代用しない |
 | `handoff_recall_preserves_line_editor_navigation` | 同名 / `ai/tests/0055_collaborative_handoff_vertical_e2e.rs` | outer PTY の `ai → aish → PtyShell` 実経路で bash / zsh の通常 CSI と `Alt+.` 後 CSI を検証する。rcfile 単体の両 shortcut、history、termios、候補なし所有は aish 補助回帰で維持する | Phase 1B の最後 |
+| `aish_shell_alt_period_preserves_csi_navigation` | 同名 / `aish/tests/0067_aish_shell_alt_period_csi.rs` | 実 `aish shell`（replay DEBUG 有効）で `aabb` → Alt+. → CSI left ×3 → `X` が `aXabb` になり、`^[[D` が transcript に出ない | Issue #11 再発防止 |
 
 PTY 試験は Unix 専用とし、CI で必須の bash / zsh が見つからない場合に silent skip しない。待機は deadline 付き、transcript は bounded、子 process と FD は成功・panic の両経路で cleanup する。時間依存の固定 sleep だけで prompt 安定を判定しない。テスト都合の新しい製品 API、汎用 PTY framework、第三の binding 実装は追加しない。
 

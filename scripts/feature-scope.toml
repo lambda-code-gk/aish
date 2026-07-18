@@ -20,8 +20,8 @@ spec = "0067"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 3
-scope_change_reason = "PR #13 review blocker: 0055 ACをouter-PTY製品経路へ移し、親端末fdのraw化・relay不一致だけを修正"
+scope_revision = 4
+scope_change_reason = "Issue #11 実再現: aish shell の replay DEBUG が bind -x 中に動き CSI が壊れる経路を AC と hook 抑止へ追加（FUNCNAME 判定）。新規状態機械・recovery・PTY基盤は増やさない"
 scope_review = "approved"
 
 core_outcome = "bash/zshでAlt+./Alt+,による候補挿入後もcursor移動とhistory移動を継続できる"
@@ -51,6 +51,7 @@ locked_ac_ids = [
   "recall_subprocess_cannot_read_widget_input",
   "handoff_recall_preserves_line_editor_navigation",
   "recall_hooks_avoid_unobserved_terminal_reset",
+  "aish_shell_alt_period_preserves_csi_navigation",
 ]
 
 [[features]]

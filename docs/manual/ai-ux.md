@@ -43,12 +43,14 @@ export PATH="$PWD/target/debug:$PATH"
 9. 候補なし、cache ファイル不在、`ai recall` の失敗をそれぞれ作り、入力済み buffer が変わらず、その直後も左右 cursor と上下 history が動くことを確認する。
 10. `Alt+.` / `Alt+,` と矢印キーを間を空けずに連続入力し、完全な shortcut と CSI がそれぞれ解釈され、次の prompt 入力を継続できることを確認する。
 11. 0055 Human Shell を handoff 候補ありで起動し、bash / zsh の両方で `Alt+.` / `Alt+,` 挿入後の左右 cursor と上下 history を確認する。handoff 候補なしでは既存の通常 recall binding が上書きされないことも確認する。
+12. `aish shell` を起動した直後に（候補なしでも）`Alt+.` を押し、続けて左右矢印で既存入力を編集できること。`^[[D` / `^[[C` がそのまま入力欄に現れないこと。
 
 ### 期待結果
 
 - recall は prompt への挿入のみで、shell history を汚さない
 - `aish shell` と `ai complete` が同じ hook 文面を使う
 - recall subprocess は widget の stdin を消費せず、空・失敗後も line editor が入力可能な状態へ戻る
+- `aish shell` の replay DEBUG は `Alt+.` / `Alt+,`（bind -x）中に line editor を壊さない
 - zsh は候補挿入後に現在の ZLE buffer を再表示し、terminal 全体を固定値へ reset しない
 
 ## 期待結果
