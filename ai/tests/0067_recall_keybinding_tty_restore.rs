@@ -84,7 +84,7 @@ mode=$(cat {})
 case "$mode" in
   success) printf 'echo %s\n' "${{2}}_CAND" ;;
   empty) exit 0 ;;
-  failure) exit 23 ;;
+  failure) printf 'echo SHOULD_NOT_APPLY\n'; exit 23 ;;
   *) exit 64 ;;
 esac
 "#,
@@ -429,6 +429,13 @@ fn recall_subprocess_cannot_read_widget_input() {
                     "{} / {mode}: {stdout}",
                     shell.name()
                 );
+                if mode == "failure" {
+                    assert!(
+                        !stdout.contains("SHOULD_NOT_APPLY"),
+                        "{} / failure with stdout must keep buffer: {stdout}",
+                        shell.name()
+                    );
+                }
             }
             assert_eq!(
                 fs::read_to_string(&log).expect("stub log").trim(),

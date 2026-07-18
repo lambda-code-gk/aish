@@ -17,7 +17,11 @@ _ai_recall_next() {
   [[ -n "$cache" ]] || { unset _AISH_IN_READLINE_BIND; return 0; }
   local cmd
   # stdin は widget の入力ストリームから切り離す（0067 / Issue #11）
-  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall next </dev/null 2>/dev/null) || true
+  # 非0終了は stdout があっても候補にしない（成功かつ非空だけ更新）
+  if ! cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall next </dev/null 2>/dev/null); then
+    unset _AISH_IN_READLINE_BIND
+    return 0
+  fi
   unset _AISH_IN_READLINE_BIND
   [[ -n "$cmd" ]] || return 0
   _ai_recall_apply "$cmd"
@@ -27,7 +31,10 @@ _ai_recall_prev() {
   local cache="${AI_SUGGESTION_CACHE:-}"
   [[ -n "$cache" ]] || { unset _AISH_IN_READLINE_BIND; return 0; }
   local cmd
-  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall prev </dev/null 2>/dev/null) || true
+  if ! cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall prev </dev/null 2>/dev/null); then
+    unset _AISH_IN_READLINE_BIND
+    return 0
+  fi
   unset _AISH_IN_READLINE_BIND
   [[ -n "$cmd" ]] || return 0
   _ai_recall_apply "$cmd"
@@ -127,6 +134,13 @@ mod tests {
         assert!(BASH_RECALL_HOOK.contains("ai recall next </dev/null"));
         assert!(BASH_RECALL_HOOK.contains("ai recall prev </dev/null"));
         assert!(BASH_RECALL_HOOK.contains("_AISH_IN_READLINE_BIND=1"));
+        assert!(
+            BASH_RECALL_HOOK.contains(
+                "if ! cmd=$(AI_SUGGESTION_CACHE=\"$cache\" ai recall next </dev/null 2>/dev/null); then"
+            ),
+            "non-zero recall must not apply stdout"
+        );
+        assert!(!BASH_RECALL_HOOK.contains("|| true\n  unset _AISH_IN_READLINE_BIND"));
         assert!(!BASH_RECALL_HOOK.contains("history -s"));
         assert!(!BASH_RECALL_HOOK.contains("stty sane"));
     }
