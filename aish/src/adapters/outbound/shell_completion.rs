@@ -51,8 +51,19 @@ _aish_replay_emit() {
 _aish_replay_debug() {
   [[ -n "${AISH_CONTROL_FIFO:-}" ]] || return 0
   [[ -n "${_AISH_LINE_STARTED:-}" ]] && return 0
+  # bind -x（Alt+. / Alt+, recall 等）中に DEBUG が動くと readline が壊れ、
+  # 以降の CSI 矢印が ^[[D として挿入される（0067 / Issue #11）。
+  # DEBUG は各 simple command の「前」に走るため、関数内の flag 代入では間に合わない。
+  # FUNCNAME で recall / handoff widget の call stack を見て抑止する。
+  [[ -n "${_AISH_IN_READLINE_BIND:-}" ]] && return 0
+  local _aish_fn
+  for _aish_fn in "${FUNCNAME[@]}"; do
+    case "$_aish_fn" in
+      _ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_apply) return 0 ;;
+    esac
+  done
   case "$BASH_COMMAND" in
-    _aish_*|trap*|":" ) return ;;
+    _aish_*|_ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_apply|trap*|":" ) return ;;
   esac
   local line="${READLINE_LINE:-$BASH_COMMAND}"
   _aish_replay_emit "{\"event\":\"start\",\"command\":$(_aish_json_escape "$line")}"
@@ -119,10 +130,12 @@ fi
 const BASH_HANDOFF_RECALL_SNIPPET: &str = r#"
 # 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
 _aish_handoff_recall_apply() {
+  _AISH_IN_READLINE_BIND=1
   local cmd="${_AISH_HANDOFF_SUGGESTED_COMMAND:-}"
-  [[ -n "$cmd" ]] || return 0
+  [[ -n "$cmd" ]] || { unset _AISH_IN_READLINE_BIND; return 0; }
   READLINE_LINE="$cmd"
   READLINE_POINT=${#cmd}
+  unset _AISH_IN_READLINE_BIND
 }
 _aish_handoff_recall_install() {
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
@@ -244,7 +257,8 @@ _aish_handoff_recall_apply() {
   [[ -n "$cmd" ]] || return 0
   BUFFER="$cmd"
   CURSOR=${#cmd}
-  zle reset-prompt
+  # reset-prompt は prompt 再展開で line editor を乱し得るため、再描画のみ行う（0067）
+  zle -R
 }
 _aish_handoff_recall_install() {
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
@@ -283,11 +297,18 @@ pub fn detect_child_shell(shell_path: &str) -> ChildShellKind {
 /// bash / zsh 用の一時 rcfile を生成する。`Other` のときは `None`。
 pub fn prepare_interactive_rc(shell_path: &str) -> io::Result<Option<ShellRcLayout>> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    prepare_interactive_rc_with_home(shell_path, Path::new(&home))
+}
+
+fn prepare_interactive_rc_with_home(
+    shell_path: &str,
+    home: &Path,
+) -> io::Result<Option<ShellRcLayout>> {
     match detect_child_shell(shell_path) {
         ChildShellKind::Bash => {
             let dir = tempfile::tempdir()?;
             let rc = dir.path().join("aish-bashrc");
-            let user_rc = PathBuf::from(&home).join(".bashrc");
+            let user_rc = home.join(".bashrc");
             write_bash_wrapper(&rc, &user_rc)?;
             Ok(Some(ShellRcLayout {
                 _dir: dir,
@@ -311,7 +332,7 @@ pub fn prepare_interactive_rc(shell_path: &str) -> io::Result<Option<ShellRcLayo
                 ),
             )?;
             let zshrc = zdot.join(".zshrc");
-            let user_zshrc = PathBuf::from(&home).join(".zshrc");
+            let user_zshrc = home.join(".zshrc");
             write_zsh_wrapper(&zshrc, &user_zshrc)?;
             Ok(Some(ShellRcLayout {
                 _dir: dir,
@@ -453,6 +474,7 @@ mod tests {
         assert!(content.contains("AI_SUGGESTION_CACHE"));
         assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
         assert!(content.contains(r#"bind -x '"\e.": "_aish_handoff_recall_apply"'"#));
+        assert!(!content.contains("stty sane"));
     }
 
     #[test]
@@ -463,6 +485,9 @@ mod tests {
         let content = fs::read_to_string(zshrc).expect("read");
         assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
         assert!(content.contains(r#"bindkey '\e.' _aish_handoff_recall_apply"#));
+        assert!(content.contains("zle -R"));
+        assert!(!content.contains("zle reset-prompt"));
+        assert!(!content.contains("stty sane"));
     }
 
     #[test]
@@ -484,6 +509,20 @@ mod tests {
         assert!(
             content.contains(r#"PROMPT_COMMAND="_aish_replay_precmd;_aish_replay_install_hooks"#),
             "precmd must run before install_hooks so exit_code is preserved"
+        );
+        assert!(
+            content.contains(r#"[[ -n "${_AISH_IN_READLINE_BIND:-}" ]] && return 0"#),
+            "DEBUG trap must skip readline bind -x callbacks"
+        );
+        assert!(
+            content.contains(r#"for _aish_fn in "${FUNCNAME[@]}"; do"#),
+            "DEBUG trap must walk FUNCNAME (flag alone is too late for pre-command DEBUG)"
+        );
+        assert!(
+            content.contains(
+                "_ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_apply"
+            ),
+            "DEBUG trap must skip recall bind -x function names"
         );
     }
 

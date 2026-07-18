@@ -58,5 +58,7 @@ jobs:
         with:
           shared-key: "feature-off"
           cache-on-failure: true
+      - name: Install CI shell (zsh)
+        run: sudo apt-get update && sudo apt-get install -y zsh
       - run: cargo build --workspace --no-default-features
       - run: cargo test --workspace --no-default-features -j 4 -- --test-threads=1

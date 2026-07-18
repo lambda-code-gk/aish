@@ -14,6 +14,51 @@ file_glob = "ai/tests/phase_a_cli.rs"
 pending = false
 
 [[cases]]
+spec = "0067"
+phase = 1
+id = "recall_keybinding_pty_vertical_e2e"
+description = "実PTYのbash/zsh×両shortcutで成功・空・失敗・連続入力後のcursor/historyとtermios一致を検証する"
+test = "recall_keybinding_pty_vertical_e2e"
+file_glob = "ai/tests/0067_recall_keybinding_tty_restore.rs"
+pending = false
+
+[[cases]]
+spec = "0067"
+phase = 1
+id = "recall_subprocess_cannot_read_widget_input"
+description = "non-PTY shell統合でrecall subprocessのstdinがEOFとなり全return pathが完結する"
+test = "recall_subprocess_cannot_read_widget_input"
+file_glob = "ai/tests/0067_recall_keybinding_tty_restore.rs"
+pending = false
+
+[[cases]]
+spec = "0067"
+phase = 1
+id = "handoff_recall_preserves_line_editor_navigation"
+description = "outer PTYのai→aish実経路でbash/zshの通常CSIとhandoff recall後CSIを検証する"
+test = "handoff_recall_preserves_line_editor_navigation"
+file_glob = "ai/tests/0055_collaborative_handoff_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0067"
+phase = 1
+id = "recall_hooks_avoid_unobserved_terminal_reset"
+description = "0053/0055 hookが観測根拠のないstty sane・固定termios・無条件resetを含まない"
+test = "recall_hooks_avoid_unobserved_terminal_reset"
+file_glob = "ai/tests/0067_recall_keybinding_tty_restore.rs"
+pending = false
+
+[[cases]]
+spec = "0067"
+phase = 1
+id = "aish_shell_alt_period_preserves_csi_navigation"
+description = "aish shell（replay DEBUG）経路でAlt+.直後のCSI矢印がcaret挿入にならずline editor編集できる"
+test = "aish_shell_alt_period_preserves_csi_navigation"
+file_glob = "aish/tests/0067_aish_shell_alt_period_csi.rs"
+pending = false
+
+[[cases]]
 spec = "0058"
 phase = 1
 id = "doctor_health_checks_render_human_and_json"

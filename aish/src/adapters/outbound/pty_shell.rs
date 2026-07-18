@@ -377,8 +377,9 @@ impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
             .canonicalize()
             .map_err(|e| InteractiveShellError::Failed(e.to_string()))?;
 
+        let parent_terminal = ParentTerminal::open()?;
         let (master, slave) = open_pty_pair()?;
-        sync_pty_winsize_from_stdin(master)?;
+        sync_pty_winsize_from_fd(parent_terminal.fd(), master)?;
         let rc_layout = match crate::adapters::outbound::prepare_interactive_rc(shell) {
             Ok(layout) => layout,
             Err(err) => {
@@ -416,7 +417,14 @@ impl<L: SessionLog> InteractiveShellRunner for PtyShell<'_, L> {
                     set_fd_nonblocking(read_fd);
                     (read_fd, fifo_path)
                 });
-                run_shell_parent(master, child, self, control_read, replay_enabled)
+                run_shell_parent(
+                    master,
+                    child,
+                    self,
+                    control_read,
+                    replay_enabled,
+                    parent_terminal,
+                )
             }
         }
     }
@@ -428,24 +436,29 @@ fn run_shell_parent<L: SessionLog>(
     pty: &mut PtyShell<'_, L>,
     control_channel: Option<(RawFd, std::path::PathBuf)>,
     replay_enabled: bool,
+    mut parent_terminal: ParentTerminal,
 ) -> Result<i32, InteractiveShellError> {
     install_pty_cancel_handlers();
     PTY_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
 
     // 親 TTY のローカル echo と PTY 内シェルの echo が重ならないよう raw にする。
-    let _stdin_tty =
-        StdinTermiosGuard::enter_raw().map_err(|e| fail_after_fork(child, master, [], e))?;
+    parent_terminal
+        .enter_raw()
+        .map_err(|e| fail_after_fork(child, master, [], e))?;
 
     let stdin_master = dup_pty_master(master).map_err(|e| fail_after_fork(child, master, [], e))?;
+    let terminal_input = parent_terminal
+        .dup_input()
+        .map_err(|e| fail_after_fork(child, master, [stdin_master], e))?;
 
-    let (shutdown_read, shutdown_write) =
-        open_shutdown_pipe().map_err(|e| fail_after_fork(child, master, [stdin_master], e))?;
+    let (shutdown_read, shutdown_write) = open_shutdown_pipe()
+        .map_err(|e| fail_after_fork(child, master, [stdin_master, terminal_input], e))?;
 
     let (cancel_read, cancel_write) = open_shutdown_pipe().map_err(|e| {
         fail_after_fork(
             child,
             master,
-            [stdin_master, shutdown_read, shutdown_write],
+            [stdin_master, terminal_input, shutdown_read, shutdown_write],
             e,
         )
     })?;
@@ -454,7 +467,8 @@ fn run_shell_parent<L: SessionLog>(
     PTY_CANCEL_WRITE_FD.store(cancel_write, Ordering::SeqCst);
 
     let stdin_thread = std::thread::spawn(move || {
-        relay_stdin_to_pty(libc::STDIN_FILENO, stdin_master, shutdown_read);
+        relay_stdin_to_pty(terminal_input, stdin_master, shutdown_read);
+        close_raw_fd(terminal_input);
     });
 
     let control_read = control_channel.as_ref().map(|(fd, _)| *fd);
@@ -465,6 +479,7 @@ fn run_shell_parent<L: SessionLog>(
         control_read,
         cancel_read,
         replay_enabled,
+        parent_terminal.fd(),
     );
     PTY_CANCEL_WRITE_FD.store(-1, Ordering::SeqCst);
     close_raw_fd(cancel_read);
@@ -995,12 +1010,15 @@ fn child_die(msg: &str) -> ! {
     }
 }
 
-/// 親の実端末（stdin）の winsize を PTY master へコピーする。
+/// 親の実端末の winsize を PTY master へコピーする。
 ///
 /// `openpty` 直後は子シェル側の `stty size` が `0 0` になりうるため、fork 前に同期する。
-fn sync_pty_winsize_from_stdin(master: RawFd) -> Result<(), InteractiveShellError> {
+fn sync_pty_winsize_from_fd(
+    terminal_fd: RawFd,
+    master: RawFd,
+) -> Result<(), InteractiveShellError> {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::ioctl(libc::STDIN_FILENO, libc::TIOCGWINSZ, &mut ws) };
+    let rc = unsafe { libc::ioctl(terminal_fd, libc::TIOCGWINSZ, &mut ws) };
     if rc != 0 || ws.ws_col == 0 || ws.ws_row == 0 {
         return Ok(());
     }
@@ -1014,6 +1032,11 @@ fn sync_pty_winsize_from_stdin(master: RawFd) -> Result<(), InteractiveShellErro
     Ok(())
 }
 
+#[cfg(test)]
+fn sync_pty_winsize_from_stdin(master: RawFd) -> Result<(), InteractiveShellError> {
+    sync_pty_winsize_from_fd(libc::STDIN_FILENO, master)
+}
+
 /// `SIGWINCH` を `signalfd` で受け、親 TTY の winsize を PTY へ伝播する。
 struct WinchMonitor {
     fd: RawFd,
@@ -1021,9 +1044,11 @@ struct WinchMonitor {
 }
 
 impl WinchMonitor {
-    fn install() -> Result<Self, InteractiveShellError> {
-        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
-            return Err(InteractiveShellError::Failed("stdin is not a tty".into()));
+    fn install(terminal_fd: RawFd) -> Result<Self, InteractiveShellError> {
+        if unsafe { libc::isatty(terminal_fd) } == 0 {
+            return Err(InteractiveShellError::Failed(
+                "parent terminal is not a tty".into(),
+            ));
         }
 
         let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -1061,7 +1086,11 @@ impl WinchMonitor {
         self.fd
     }
 
-    fn drain_and_sync(&self, master: RawFd) -> Result<(), InteractiveShellError> {
+    fn drain_and_sync(
+        &self,
+        terminal_fd: RawFd,
+        master: RawFd,
+    ) -> Result<(), InteractiveShellError> {
         let mut info: libc::signalfd_siginfo = unsafe { std::mem::zeroed() };
         let size = std::mem::size_of::<libc::signalfd_siginfo>();
         loop {
@@ -1085,7 +1114,7 @@ impl WinchMonitor {
                 break;
             }
         }
-        sync_pty_winsize_from_stdin(master)
+        sync_pty_winsize_from_fd(terminal_fd, master)
     }
 }
 
@@ -1130,25 +1159,75 @@ fn dup_pty_master(master: RawFd) -> Result<RawFd, InteractiveShellError> {
     Ok(duped)
 }
 
-/// 対話 TTY 上の stdin を raw にし、PTY 経由の echo のみ表示する。非 TTY では何もしない。
-struct StdinTermiosGuard {
-    active: bool,
-    original: libc::termios,
+/// Human Shell の実入力端末。
+///
+/// stdin が redirect 済みでも controlling TTY があれば `/dev/tty` を使い、raw 化と
+/// relay が必ず同じ端末 fd を共有する。controlling TTY 自体がない non-interactive
+/// 実行だけは従来どおり stdin relay に退避する。
+struct ParentTerminal {
+    fd: RawFd,
+    owned: bool,
+    original: Option<libc::termios>,
 }
 
-impl StdinTermiosGuard {
-    fn enter_raw() -> Result<Self, InteractiveShellError> {
-        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+impl ParentTerminal {
+    fn open() -> Result<Self, InteractiveShellError> {
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } != 0 {
             return Ok(Self {
-                active: false,
-                original: unsafe { std::mem::zeroed() },
+                fd: libc::STDIN_FILENO,
+                owned: false,
+                original: None,
             });
         }
 
-        let mut original: libc::termios = unsafe { std::mem::zeroed() };
-        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut original) } != 0 {
+        let path = c"/dev/tty";
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
+        if fd >= 0 {
+            return Ok(Self {
+                fd,
+                owned: true,
+                original: None,
+            });
+        }
+
+        // 自動試験など controlling TTY を持たない明示的 non-interactive 経路。
+        if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENXIO) {
+            return Ok(Self {
+                fd: libc::STDIN_FILENO,
+                owned: false,
+                original: None,
+            });
+        }
+
+        Err(InteractiveShellError::Failed(format!(
+            "open(/dev/tty): {}",
+            std::io::Error::last_os_error()
+        )))
+    }
+
+    fn fd(&self) -> RawFd {
+        self.fd
+    }
+
+    fn dup_input(&self) -> Result<RawFd, InteractiveShellError> {
+        let fd = unsafe { libc::dup(self.fd) };
+        if fd < 0 {
             return Err(InteractiveShellError::Failed(format!(
-                "tcgetattr(stdin): {}",
+                "dup(parent terminal): {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        Ok(fd)
+    }
+
+    fn enter_raw(&mut self) -> Result<(), InteractiveShellError> {
+        if unsafe { libc::isatty(self.fd) } == 0 {
+            return Ok(());
+        }
+        let mut original: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(self.fd, &mut original) } != 0 {
+            return Err(InteractiveShellError::Failed(format!(
+                "tcgetattr(parent terminal): {}",
                 std::io::Error::last_os_error()
             )));
         }
@@ -1160,24 +1239,24 @@ impl StdinTermiosGuard {
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
 
-        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &raw) } != 0 {
+        if unsafe { libc::tcsetattr(self.fd, libc::TCSAFLUSH, &raw) } != 0 {
             return Err(InteractiveShellError::Failed(format!(
-                "tcsetattr(stdin, raw): {}",
+                "tcsetattr(parent terminal, raw): {}",
                 std::io::Error::last_os_error()
             )));
         }
-
-        Ok(Self {
-            active: true,
-            original,
-        })
+        self.original = Some(original);
+        Ok(())
     }
 }
 
-impl Drop for StdinTermiosGuard {
+impl Drop for ParentTerminal {
     fn drop(&mut self) {
-        if self.active {
-            let _ = unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &self.original) };
+        if let Some(original) = self.original.as_ref() {
+            let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSAFLUSH, original) };
+        }
+        if self.owned {
+            close_raw_fd(self.fd);
         }
     }
 }
@@ -1379,8 +1458,9 @@ fn relay_master_fd<L: SessionLog>(
     control_read: Option<RawFd>,
     cancel_read: RawFd,
     replay_enabled: bool,
+    terminal_fd: RawFd,
 ) -> Result<i32, InteractiveShellError> {
-    let winch = WinchMonitor::install().ok();
+    let winch = WinchMonitor::install(terminal_fd).ok();
     let mut cleanup = PtyRelayCleanup::new(child, unsafe { std::fs::File::from_raw_fd(master) });
     let mut stdout = std::io::stdout().lock();
     let mut buf = [0u8; 4096];
@@ -1480,7 +1560,7 @@ fn relay_master_fd<L: SessionLog>(
         if let Some(idx) = winch_index {
             if poll_fds[idx].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
                 if let Some(ref monitor) = winch {
-                    monitor.drain_and_sync(master_raw)?;
+                    monitor.drain_and_sync(terminal_fd, master_raw)?;
                 }
             }
         }
@@ -1829,7 +1909,7 @@ mod tests {
     #[test]
     fn winch_monitor_skips_install_when_stdin_not_tty() {
         let _stdin = NonTtyStdinGuard::install();
-        assert!(WinchMonitor::install().is_err());
+        assert!(WinchMonitor::install(libc::STDIN_FILENO).is_err());
     }
 
     #[test]

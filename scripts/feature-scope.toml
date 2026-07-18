@@ -16,6 +16,45 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0067"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 4
+scope_change_reason = "Issue #11 実再現: aish shell の replay DEBUG が bind -x 中に動き CSI が壊れる経路を AC と hook 抑止へ追加（FUNCNAME 判定）。新規状態機械・recovery・PTY基盤は増やさない"
+scope_review = "approved"
+
+core_outcome = "bash/zshでAlt+./Alt+,による候補挿入後もcursor移動とhistory移動を継続できる"
+
+actors = 1
+state_machines = 0
+persistent_aggregates = 0
+external_effects = 1
+process_boundaries = 1
+
+novel_mechanisms = []
+integrations = ["0053-recall-shell-hooks", "0055-human-shell-handoff-recall"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "0053 cache/UX redesign, narrow parent-terminal fd selection以外のPTY infrastructure changes, reedline integration, and terminal-emulator-specific ESC decoding are deferred"
+
+vertical_slice_ac_id = "recall_keybinding_pty_vertical_e2e"
+
+locked_ac_ids = [
+  "recall_keybinding_pty_vertical_e2e",
+  "recall_subprocess_cannot_read_widget_input",
+  "handoff_recall_preserves_line_editor_navigation",
+  "recall_hooks_avoid_unobserved_terminal_reset",
+  "aish_shell_alt_period_preserves_csi_navigation",
+]
+
+[[features]]
 spec = "0066"
 status = "done"
 scope_class = "feature"
