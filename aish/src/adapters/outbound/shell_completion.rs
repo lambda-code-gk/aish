@@ -244,7 +244,8 @@ _aish_handoff_recall_apply() {
   [[ -n "$cmd" ]] || return 0
   BUFFER="$cmd"
   CURSOR=${#cmd}
-  zle reset-prompt
+  # reset-prompt は prompt 再展開で line editor を乱し得るため、再描画のみ行う（0067）
+  zle -R
 }
 _aish_handoff_recall_install() {
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
@@ -283,11 +284,18 @@ pub fn detect_child_shell(shell_path: &str) -> ChildShellKind {
 /// bash / zsh 用の一時 rcfile を生成する。`Other` のときは `None`。
 pub fn prepare_interactive_rc(shell_path: &str) -> io::Result<Option<ShellRcLayout>> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    prepare_interactive_rc_with_home(shell_path, Path::new(&home))
+}
+
+fn prepare_interactive_rc_with_home(
+    shell_path: &str,
+    home: &Path,
+) -> io::Result<Option<ShellRcLayout>> {
     match detect_child_shell(shell_path) {
         ChildShellKind::Bash => {
             let dir = tempfile::tempdir()?;
             let rc = dir.path().join("aish-bashrc");
-            let user_rc = PathBuf::from(&home).join(".bashrc");
+            let user_rc = home.join(".bashrc");
             write_bash_wrapper(&rc, &user_rc)?;
             Ok(Some(ShellRcLayout {
                 _dir: dir,
@@ -311,7 +319,7 @@ pub fn prepare_interactive_rc(shell_path: &str) -> io::Result<Option<ShellRcLayo
                 ),
             )?;
             let zshrc = zdot.join(".zshrc");
-            let user_zshrc = PathBuf::from(&home).join(".zshrc");
+            let user_zshrc = home.join(".zshrc");
             write_zsh_wrapper(&zshrc, &user_zshrc)?;
             Ok(Some(ShellRcLayout {
                 _dir: dir,
@@ -453,6 +461,7 @@ mod tests {
         assert!(content.contains("AI_SUGGESTION_CACHE"));
         assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
         assert!(content.contains(r#"bind -x '"\e.": "_aish_handoff_recall_apply"'"#));
+        assert!(!content.contains("stty sane"));
     }
 
     #[test]
@@ -463,6 +472,9 @@ mod tests {
         let content = fs::read_to_string(zshrc).expect("read");
         assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
         assert!(content.contains(r#"bindkey '\e.' _aish_handoff_recall_apply"#));
+        assert!(content.contains("zle -R"));
+        assert!(!content.contains("zle reset-prompt"));
+        assert!(!content.contains("stty sane"));
     }
 
     #[test]

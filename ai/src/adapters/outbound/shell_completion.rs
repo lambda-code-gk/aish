@@ -14,14 +14,15 @@ _ai_recall_next() {
   local cache="${AI_SUGGESTION_CACHE:-}"
   [[ -n "$cache" ]] || return 0
   local cmd
-  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall next 2>/dev/null) || return 0
+  # stdin は widget の入力ストリームから切り離す（0067 / Issue #11）
+  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall next </dev/null 2>/dev/null) || return 0
   _ai_recall_apply "$cmd"
 }
 _ai_recall_prev() {
   local cache="${AI_SUGGESTION_CACHE:-}"
   [[ -n "$cache" ]] || return 0
   local cmd
-  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall prev 2>/dev/null) || return 0
+  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall prev </dev/null 2>/dev/null) || return 0
   _ai_recall_apply "$cmd"
 }
 _ai_recall_install() {
@@ -44,14 +45,16 @@ _ai_recall_apply() {
   [[ -n "$cmd" ]] || return 0
   BUFFER="$cmd"
   CURSOR=${#cmd}
-  zle reset-prompt
+  # reset-prompt は prompt 再展開で line editor を乱し得るため、再描画のみ行う（0067）
+  zle -R
 }
 _ai_recall_next() {
   emulate -L zsh
   local cache="${AI_SUGGESTION_CACHE:-}"
   [[ -n "$cache" ]] || return 0
   local cmd
-  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall next 2>/dev/null) || return 0
+  # stdin は ZLE 入力から切り離す（0067 / Issue #11）
+  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall next </dev/null 2>/dev/null) || return 0
   _ai_recall_apply "$cmd"
 }
 _ai_recall_prev() {
@@ -59,7 +62,7 @@ _ai_recall_prev() {
   local cache="${AI_SUGGESTION_CACHE:-}"
   [[ -n "$cache" ]] || return 0
   local cmd
-  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall prev 2>/dev/null) || return 0
+  cmd=$(AI_SUGGESTION_CACHE="$cache" ai recall prev </dev/null 2>/dev/null) || return 0
   _ai_recall_apply "$cmd"
 }
 _ai_recall_install() {
@@ -114,7 +117,10 @@ mod tests {
         assert!(BASH_RECALL_HOOK.contains(r#"bind -x '"\e.": "_ai_recall_next"'"#));
         assert!(BASH_RECALL_HOOK.contains(r#"bind -x '"\e,": "_ai_recall_prev"'"#));
         assert!(BASH_RECALL_HOOK.contains("READLINE_LINE"));
+        assert!(BASH_RECALL_HOOK.contains("ai recall next </dev/null"));
+        assert!(BASH_RECALL_HOOK.contains("ai recall prev </dev/null"));
         assert!(!BASH_RECALL_HOOK.contains("history -s"));
+        assert!(!BASH_RECALL_HOOK.contains("stty sane"));
     }
 
     #[test]
@@ -122,7 +128,11 @@ mod tests {
         assert!(ZSH_RECALL_HOOK.contains(r#"bindkey '\e.' _ai_recall_next"#));
         assert!(ZSH_RECALL_HOOK.contains(r#"bindkey '\e,' _ai_recall_prev"#));
         assert!(ZSH_RECALL_HOOK.contains("BUFFER="));
+        assert!(ZSH_RECALL_HOOK.contains("ai recall next </dev/null"));
+        assert!(ZSH_RECALL_HOOK.contains("zle -R"));
+        assert!(!ZSH_RECALL_HOOK.contains("zle reset-prompt"));
         assert!(!ZSH_RECALL_HOOK.contains("history -s"));
+        assert!(!ZSH_RECALL_HOOK.contains("stty sane"));
     }
 
     #[test]

@@ -61,12 +61,14 @@
 | 0064 | [0064_human-task-resume-spec.md](spec/0064_human-task-resume-spec.md) | 設計確定（実装済み） | Human Task resume（Suspended→再起動・複数segment・DoneはResultPendingへ保存） |
 | 0065 | [0065_human-task-agent-continuation-spec.md](spec/0065_human-task-agent-continuation-spec.md) | 設計確定（実装済み） | Human Task Agent Continuation（0063-D、ResultPending→新Collaborative Mode turn） |
 | 0066 | [0066_human-task-recovery-hardening-spec.md](spec/0066_human-task-recovery-hardening-spec.md) | 設計確定（実装済み） | Human Task Recovery Hardening（0063-E、明示 recovery / invalid cleanup） |
+| 0067 | [0067_recall-keybinding-tty-restore-spec.md](spec/0067_recall-keybinding-tty-restore-spec.md) | 設計確定（実装済み） | Recall Keybinding TTY Restore（Issue #11、0053 recall + 0055 handoff の bash / zsh line editor 状態復元、Yellow 承認） |
 
 ### 状態ラベルの意味
 
 | 状態 | 意味 |
 |------|------|
 | 設計確定 | spec のみ確定。実装は未着手または別途追跡 |
+| 設計確定（AC pending） | Scope Lock 済みで、`#[ignore]` の受け入れテストを実装待ちとして登録済み |
 | 設計確定（実装中 …） | 実装指示書が `docs/tasks/` にあり、受け入れ条件が未完了 |
 | 設計確定（実装済み） | `scripts/spec-acceptance.toml` の当該 spec がすべて `pending = false` かつ `docs/done/` へ移動済み |
 | 実装済み（Phase N） | 当該 Phase の受け入れテストが `pending = false` で緑 |
@@ -75,6 +77,7 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0067 | [0067_recall-keybinding-tty-restore-implementation-spec.md](done/0067_recall-keybinding-tty-restore-implementation-spec.md) | 実装済み | PTY 観測から 0053 recall / 0055 handoff の bash / zsh line editor 終了契約を修正する手順 |
 
 ## 実装済み指示書（docs/done/）
 

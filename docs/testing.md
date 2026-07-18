@@ -91,6 +91,12 @@ OOM を避けるため、**既定は直列**とする。
 
 `cargo test --workspace` はロジック・プロトコル・モック統合（例: `ai/tests/ask_integration.rs`、`aibe/tests/ai_ask_e2e.rs`）を広く網羅する。smoke は **CLI の `stdout` / `stderr` 契約** と設定ファイル参照・プロセス起動順を、テストでは拾いにくい経路で固定する。smoke は `cargo test` の代替ではない。
 
+### 0067 recall keybinding PTY 回帰
+
+`ai/tests/0067_recall_keybinding_tty_restore.rs` は、実 PTY の bash / zsh × `Alt+.` / `Alt+,` で成功・空・cache 不在・subprocess 非 0・連続 shortcut を labeled matrix として実行する。shortcut は完全な `ESC .` / `ESC ,`、cursor / history は完全な CSI を一括送信し、cursor 位置へ marker を挿入して実行した結果と、履歴を確定して実行した結果で line editor の状態を判定する。固定 sentinel prompt が再び観測された stable prompt 間で `c_iflag` / `c_oflag` / `c_cflag` / `c_lflag` / `c_cc` を比較し、入力待ち中の一時的な raw / cbreak は比較しない。
+
+同ファイルの non-PTY shell 統合は PATH 上の deterministic stub `ai` が stdin を read し、成功・空・非 0 の全経路で EOF となることと buffer の更新 / 非破壊を確認する。`aish/tests/0067_recall_keybinding_tty_restore.rs` は `prepare_interactive_rc` が生成する 0055 Human Shell rcfile を実 PTY で起動し、両 shell / shortcut の cursor・上下 history・termios、および handoff 候補なしでは既存 binding を上書きしないことを確認する。CI 前提の bash / zsh が無い場合は skip せず失敗する。いずれも 0055 / 0057 と同じ `openpty`、controlling TTY、期限付き read、子 process cleanup の形を局所的に再利用し、汎用 PTY framework は追加しない。
+
 ### 0038 Phase D basic build（feature matrix）
 
 設計: [spec/0038_contextual-memory-pack-phase-d-spec.md](spec/0038_contextual-memory-pack-phase-d-spec.md)。
