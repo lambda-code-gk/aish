@@ -406,6 +406,7 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 ### 0066 Human Task recovery hardening
 
 - `ai/tests/0066_human_task_recovery_hardening_red.rs`: orphaned Running→Suspended→既存resumeのvertical E2E、Continuing→ResultPendingのturn ID保持、状態別status案内、corrupt / unsupported相当 / mode不正 / checkpoint欠落残骸の明示force cleanup、confirmation拒否、root flock busy、既存recoverable状態の非上書きを実tempdir storeで検証する。
+- `ai` unit tests（`human_task_file_store`）: force cleanup の root path差し替え耐性、nested directory混在時のfail-closed（元residue非改変）、quarantine差し替え後のdecoy保全を検証する。
 - PID / lease / heartbeat / reconciler / schema migration / 自動crash recoveryはテストfixtureにも製品契約にも追加しない。bash / zshの新規実PTY確認は`docs/manual/0066_human-task-recovery-hardening.md`に限定する。
 
 - LLM HTTP は **統合/E2E では必ずモック**（wiremock、`httptest`、録画レスポンス等）
