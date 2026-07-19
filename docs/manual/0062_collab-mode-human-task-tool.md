@@ -21,6 +21,7 @@
 
 - `reason` がない場合は `Why this is a Human Task:` を表示しない。
 - `instructions` が空なら `Suggested actions:`、`completion_criteria` が空なら `Done when:` を表示しない。
+- `instructions` があるときは `Alt+.` / `Alt+,` で suggested action を prompt に挿入できる（実行はしない。Enter で実行）。複数あるときは巡回する。
 - `done` は作業達成や自動検証済みを意味しない。必要なら親 agent が環境を再観測する。
 - `AISH_HANDOFF_TASK_JSON` が子 shell 環境に残らないことを `env | rg AISH_HANDOFF` で確認する。
 - Human Shell 中は `ai: / running human_task…` スピナーが消え、対話プロンプトが見えること。

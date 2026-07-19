@@ -6,6 +6,7 @@ use aibe_protocol::{
     HumanTaskResult, ShellLogRange,
 };
 
+use crate::domain::suggested_command_from_instructions;
 use crate::ports::outbound::{
     EnvironmentObserver, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
 };
@@ -57,7 +58,7 @@ impl<'a> ExecuteHumanTask<'a> {
         let launch = HumanShellLaunchRequest {
             cwd,
             parent_request_summary: String::new(),
-            suggested_command: String::new(),
+            suggested_command: suggested_command_from_instructions(&task.instructions),
             runtime_dir,
             task_briefing: Some(HumanTaskBriefing::from(&task)),
         };

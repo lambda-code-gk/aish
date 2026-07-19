@@ -47,7 +47,8 @@ pub use history::{
     HistoryTurnInput,
 };
 pub use human_handoff::{
-    build_suggested_command, truncate_parent_request_summary, HANDOFF_ENV_KEYS,
+    build_suggested_command, suggested_command_from_instructions, truncate_parent_request_summary,
+    HANDOFF_ENV_KEYS,
 };
 pub use llm_profile::resolve_llm_profile;
 pub use log_tail::{resolve_log_tail_bytes, LogTailResolveError, DEFAULT_LOG_TAIL_BYTES};

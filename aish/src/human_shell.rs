@@ -24,6 +24,10 @@ pub const HANDOFF_ENV_KEYS: [&str; 5] = [
     "AISH_HANDOFF_TASK_JSON",
 ];
 
+/// Explicit `human_task` の `instructions` を Alt+. 候補として渡す NUL 区切りファイル名
+///（`AISH_HANDOFF_RUNTIME_DIR` 配下）。
+pub const HANDOFF_SUGGESTIONS_FILENAME: &str = "handoff_suggestions";
+
 const HUMAN_TASK_BRIEFING_MAX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -169,8 +173,56 @@ pub fn render_explicit_human_task(task: &HumanTaskBriefing) -> String {
             out.push('\n');
         }
     }
-    out.push_str("\nYou remain in control:\n  Press Ctrl+D or run `exit` to return control.\n");
+    out.push_str("\nYou remain in control:\n");
+    if !task.instructions.is_empty() {
+        out.push_str("  Edit, run, replace, or ignore the suggested actions.\n");
+        out.push_str("  Alt+. or Alt+, inserts a suggested action.\n");
+    }
+    out.push_str("  Press Ctrl+D or run `exit` to return control.\n");
     out
+}
+
+/// Alt+. 挿入対象として使える instruction だけを返す（空・NUL 含有は除外）。
+pub fn insertable_handoff_instructions(instructions: &[String]) -> Vec<&str> {
+    instructions
+        .iter()
+        .map(String::as_str)
+        .filter(|item| !item.is_empty() && !item.contains('\0'))
+        .collect()
+}
+
+/// NUL 区切りの handoff 候補ファイル本文を作る。
+pub fn encode_handoff_suggestions(candidates: &[&str]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for item in candidates {
+        bytes.extend_from_slice(item.as_bytes());
+        bytes.push(0);
+    }
+    bytes
+}
+
+/// Explicit Human Task の `instructions` を Alt+. / Alt+, 挿入候補へ種まきする。
+///
+/// - `AISH_HANDOFF_SUGGESTED_COMMAND` が空のときだけ先頭 instruction を設定する（旧経路は上書きしない）
+/// - runtime dir があるとき、全 instruction を NUL 区切りで `handoff_suggestions` に書く（複数候補の巡回用）
+pub fn seed_handoff_recall_from_task(task: &HumanTaskBriefing) {
+    let candidates = insertable_handoff_instructions(&task.instructions);
+    if candidates.is_empty() {
+        return;
+    }
+    let current = std::env::var("AISH_HANDOFF_SUGGESTED_COMMAND").unwrap_or_default();
+    if current.trim().is_empty() {
+        // 子 shell 起動前の process-local 環境。NUL は上で除外済み。
+        std::env::set_var("AISH_HANDOFF_SUGGESTED_COMMAND", candidates[0]);
+    }
+    let Ok(runtime) = std::env::var("AISH_HANDOFF_RUNTIME_DIR") else {
+        return;
+    };
+    if runtime.is_empty() {
+        return;
+    }
+    let path = Path::new(&runtime).join(HANDOFF_SUGGESTIONS_FILENAME);
+    let _ = fs::write(path, encode_handoff_suggestions(&candidates));
 }
 
 fn format_list_item(value: &str) -> String {
@@ -241,6 +293,7 @@ pub fn print_handoff_briefing() -> anyhow::Result<()> {
         let task = decode_explicit_briefing(&raw)?;
         let rendered = render_explicit_human_task(&task);
         write!(std::io::stderr(), "{rendered}")?;
+        seed_handoff_recall_from_task(&task);
         return Ok(());
     }
     let parent_request = std::env::var("AISH_HANDOFF_PARENT_REQUEST").unwrap_or_default();
@@ -569,5 +622,38 @@ mod tests {
         assert!(rendered.contains("Suggested actions:\n  - first\n    second"));
         assert!(rendered.contains("Done when:\n  - done\n    verified"));
         assert!(!rendered.contains("first\\nsecond"));
+    }
+
+    #[test]
+    fn explicit_human_task_mentions_alt_period_when_instructions_present() {
+        let with_actions = decode_explicit_briefing(
+            r#"{"version":1,"objective":"inspect","instructions":["cargo test"]}"#,
+        )
+        .unwrap();
+        let rendered = render_explicit_human_task(&with_actions);
+        assert!(rendered.contains("Alt+. or Alt+, inserts a suggested action."));
+        assert!(rendered.contains("Edit, run, replace, or ignore the suggested actions."));
+
+        let without = decode_explicit_briefing(r#"{"version":1,"objective":"inspect"}"#).unwrap();
+        let rendered = render_explicit_human_task(&without);
+        assert!(!rendered.contains("Alt+."));
+    }
+
+    #[test]
+    fn insertable_handoff_instructions_skips_empty_and_nul() {
+        let items = vec![
+            String::new(),
+            "cargo test".into(),
+            "bad\0cmd".into(),
+            "git status".into(),
+        ];
+        assert_eq!(
+            insertable_handoff_instructions(&items),
+            ["cargo test", "git status"]
+        );
+        assert_eq!(
+            encode_handoff_suggestions(&["cargo test", "git status"]),
+            b"cargo test\0git status\0"
+        );
     }
 }

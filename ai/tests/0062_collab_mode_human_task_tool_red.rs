@@ -217,6 +217,7 @@ fn execute_human_task_uses_existing_human_shell_ports() {
     );
     assert_eq!(result.status, HandoffExecutionOutcome::Done);
     let launch = launcher.request.lock().unwrap().clone().unwrap();
+    assert_eq!(launch.suggested_command, "review changes");
     assert_eq!(launch.task_briefing.unwrap().version, 1);
 }
 
