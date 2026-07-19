@@ -20,6 +20,7 @@ fn task() -> HumanTaskRequest {
         objective: "inspect workspace".into(),
         reason: Some("needs human judgment".into()),
         instructions: vec!["review changes".into()],
+        suggested_commands: vec!["git status".into(), "cargo test -j 1".into()],
         completion_criteria: vec!["review complete".into()],
     }
 }
@@ -167,6 +168,7 @@ fn human_task_schema_matches_request_contract() {
             objective: " x ".into(),
             reason: Some("  ".into()),
             instructions: vec![" y ".into()],
+            suggested_commands: vec![" git status ".into()],
             completion_criteria: vec![]
         }
         .normalized()
@@ -182,7 +184,28 @@ fn human_task_schema_matches_request_contract() {
         objective: "x".repeat(70_000),
         reason: None,
         instructions: vec![],
+        suggested_commands: vec![],
         completion_criteria: vec![]
+    }
+    .normalized()
+    .is_err());
+    for unsafe_command in ["echo one\necho two", "printf\tbad", "echo \u{1b}[31m"] {
+        assert!(HumanTaskRequest {
+            objective: "x".into(),
+            reason: None,
+            instructions: vec!["multiline\ninstruction is allowed".into()],
+            suggested_commands: vec![unsafe_command.into()],
+            completion_criteria: vec![],
+        }
+        .normalized()
+        .is_err());
+    }
+    assert!(HumanTaskRequest {
+        objective: "x".into(),
+        reason: None,
+        instructions: vec![],
+        suggested_commands: vec!["x".repeat(4097)],
+        completion_criteria: vec![],
     }
     .normalized()
     .is_err());
@@ -194,6 +217,7 @@ fn human_task_briefing_uses_task_labels_and_omits_empty_sections() {
         objective: "x".into(),
         reason: None,
         instructions: vec![],
+        suggested_commands: vec![],
         completion_criteria: vec![],
     });
     let json = serde_json::to_value(briefing).unwrap();
@@ -217,7 +241,14 @@ fn execute_human_task_uses_existing_human_shell_ports() {
     );
     assert_eq!(result.status, HandoffExecutionOutcome::Done);
     let launch = launcher.request.lock().unwrap().clone().unwrap();
-    assert_eq!(launch.task_briefing.unwrap().version, 1);
+    assert!(launch.suggested_command.is_empty());
+    let briefing = launch.task_briefing.unwrap();
+    assert_eq!(briefing.version, 1);
+    assert_eq!(briefing.instructions, ["review changes"]);
+    assert_eq!(
+        briefing.suggested_commands,
+        ["git status", "cargo test -j 1"]
+    );
 }
 
 #[test]

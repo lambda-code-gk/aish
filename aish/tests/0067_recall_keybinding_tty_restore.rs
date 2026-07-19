@@ -81,8 +81,16 @@ struct PtyShell {
 }
 
 impl PtyShell {
-    fn spawn(shell: Shell, home: &Path, suggestion: &str) -> Self {
+    fn spawn(shell: Shell, home: &Path, suggestions: &[&str]) -> Self {
         let layout = prepare_interactive_rc_under_home(shell.name(), home);
+        let runtime = home.join("handoff-runtime");
+        fs::create_dir_all(&runtime).expect("handoff runtime");
+        let mut encoded = Vec::new();
+        for suggestion in suggestions {
+            encoded.extend_from_slice(suggestion.as_bytes());
+            encoded.push(0);
+        }
+        fs::write(runtime.join("handoff_suggestions"), encoded).expect("handoff suggestions");
 
         let mut master = -1;
         let mut slave = -1;
@@ -119,7 +127,11 @@ impl PtyShell {
             .env("HOME", home)
             .env("PATH", "/usr/bin:/bin")
             .env("AISH_CONTROL_MODE", "human-shell")
-            .env("AISH_HANDOFF_SUGGESTED_COMMAND", suggestion)
+            .env(
+                "AISH_HANDOFF_SUGGESTED_COMMAND",
+                suggestions.first().copied().unwrap_or_default(),
+            )
+            .env("AISH_HANDOFF_RUNTIME_DIR", &runtime)
             .stdin(Stdio::from(slave_file.try_clone().expect("clone stdin")))
             .stdout(Stdio::from(slave_file.try_clone().expect("clone stdout")))
             .stderr(Stdio::from(slave_file));
@@ -249,7 +261,7 @@ fn handoff_rc_recall_preserves_line_editor_navigation() {
                 ),
             )
             .expect("zshrc");
-            let mut pty = PtyShell::spawn(shell, home.path(), "echo HANDOFF_CAND");
+            let mut pty = PtyShell::spawn(shell, home.path(), &["echo HANDOFF_CAND"]);
             let label = format!("{} / {shortcut_name}", shell.name());
 
             let mut cursor = shortcut.to_vec();
@@ -298,7 +310,7 @@ fn handoff_rc_recall_preserves_line_editor_navigation() {
             )
             .expect("zsh normal binding rc"),
         }
-        let mut pty = PtyShell::spawn(shell, home.path(), "");
+        let mut pty = PtyShell::spawn(shell, home.path(), &[]);
         pty.action(
             b"\x1b.\n",
             "NORMAL_BINDING",
@@ -307,5 +319,41 @@ fn handoff_rc_recall_preserves_line_editor_navigation() {
                 shell.name()
             ),
         );
+    }
+}
+
+#[test]
+fn handoff_multiple_suggested_commands_cycle_in_bash_and_zsh() {
+    for shell in [Shell::Bash, Shell::Zsh] {
+        for (shortcut_name, shortcut, expected) in [
+            (
+                "next",
+                b"\x1b.".as_slice(),
+                ["HANDOFF_FIRST", "HANDOFF_SECOND", "HANDOFF_FIRST"],
+            ),
+            (
+                "prev",
+                b"\x1b,".as_slice(),
+                ["HANDOFF_SECOND", "HANDOFF_FIRST", "HANDOFF_SECOND"],
+            ),
+        ] {
+            let home = tempfile::tempdir().expect("cycle HOME");
+            fs::write(home.path().join(".bashrc"), format!("PS1='{}'\n", PROMPT)).expect("bashrc");
+            fs::write(home.path().join(".zshrc"), format!("PROMPT='{}'\n", PROMPT)).expect("zshrc");
+            let mut pty = PtyShell::spawn(
+                shell,
+                home.path(),
+                &["echo HANDOFF_FIRST", "echo HANDOFF_SECOND"],
+            );
+            for (index, value) in expected.into_iter().enumerate() {
+                let mut input = shortcut.to_vec();
+                input.push(b'\n');
+                pty.action(
+                    &input,
+                    value,
+                    &format!("{} / {shortcut_name} / cycle {index}", shell.name()),
+                );
+            }
+        }
     }
 }

@@ -7,7 +7,10 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use aish::human_shell::{escape_for_handoff_display, render_human_task_briefing, HANDOFF_ENV_KEYS};
+use aish::human_shell::{
+    escape_for_handoff_display, render_human_task_briefing, HANDOFF_ENV_KEYS,
+    HANDOFF_SUGGESTIONS_FILENAME,
+};
 
 #[test]
 fn human_task_briefing_renders_collaborative_mode_header() {
@@ -197,6 +200,38 @@ fn human_task_briefing_uses_only_existing_env() {
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_SUGGESTED_COMMAND"));
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_RUNTIME_DIR"));
     assert!(HANDOFF_ENV_KEYS.contains(&"AISH_HANDOFF_TASK_JSON"));
+}
+
+#[test]
+fn explicit_human_task_seeds_alt_period_candidates_from_suggested_commands() {
+    if !Path::new("/bin/bash").is_file() {
+        panic!("human-shell tests require /bin/bash");
+    }
+    let home = private_temp_home();
+    let runtime = home.path().join("runtime");
+    std::fs::create_dir_all(&runtime).unwrap();
+    let mut perms = std::fs::metadata(&runtime).unwrap().permissions();
+    perms.set_mode(0o700);
+    std::fs::set_permissions(&runtime, perms).unwrap();
+    let task_json = r#"{"version":1,"objective":"inspect","instructions":["read the report","choose a fix"],"suggested_commands":["cargo test","git status"]}"#;
+    let (output, _) = run_human_shell_with(
+        b"exit\n",
+        home.path(),
+        "",
+        &[
+            ("AISH_HANDOFF_TASK_JSON", task_json),
+            (
+                "AISH_HANDOFF_RUNTIME_DIR",
+                runtime.to_str().expect("utf8 runtime"),
+            ),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Suggested actions:"));
+    assert!(stderr.contains("read the report"));
+    assert!(stderr.contains("Alt+. or Alt+, inserts a suggested command."));
+    let suggestions = std::fs::read(runtime.join(HANDOFF_SUGGESTIONS_FILENAME)).unwrap();
+    assert_eq!(suggestions, b"cargo test\0git status\0");
 }
 
 #[test]

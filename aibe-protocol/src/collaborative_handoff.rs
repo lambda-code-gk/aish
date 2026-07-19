@@ -14,6 +14,7 @@ pub enum HandoffExecutionOutcome {
 }
 
 pub const HUMAN_TASK_BRIEFING_MAX_BYTES: usize = 64 * 1024;
+pub const SUGGESTED_COMMAND_MAX_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +24,8 @@ pub struct HumanTaskRequest {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instructions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggested_commands: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completion_criteria: Vec<String>,
 }
@@ -38,6 +41,7 @@ impl HumanTaskRequest {
             (!value.is_empty()).then_some(value)
         });
         normalize_nonempty_items(&mut self.instructions)?;
+        normalize_suggested_commands(&mut self.suggested_commands)?;
         normalize_nonempty_items(&mut self.completion_criteria)?;
         let encoded = serde_json::to_vec(&HumanTaskBriefing::from(&self))
             .map_err(|_| "briefing serialization failed")?;
@@ -46,6 +50,22 @@ impl HumanTaskRequest {
         }
         Ok(self)
     }
+}
+
+fn normalize_suggested_commands(items: &mut [String]) -> Result<(), &'static str> {
+    for item in items {
+        *item = item.trim().to_string();
+        if !is_safe_suggested_command(item) {
+            return Err("suggested command must be nonempty, control-free, and at most 4 KiB");
+        }
+    }
+    Ok(())
+}
+
+pub fn is_safe_suggested_command(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= SUGGESTED_COMMAND_MAX_BYTES
+        && !value.chars().any(char::is_control)
 }
 
 fn normalize_nonempty_items(items: &mut [String]) -> Result<(), &'static str> {
@@ -68,6 +88,8 @@ pub struct HumanTaskBriefing {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instructions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggested_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completion_criteria: Vec<String>,
 }
 
@@ -78,6 +100,7 @@ impl From<&HumanTaskRequest> for HumanTaskBriefing {
             objective: value.objective.clone(),
             reason: value.reason.clone(),
             instructions: value.instructions.clone(),
+            suggested_commands: value.suggested_commands.clone(),
             completion_criteria: value.completion_criteria.clone(),
         }
     }
@@ -291,6 +314,7 @@ mod tests {
             objective: "x".into(),
             reason: None,
             instructions: Vec::new(),
+            suggested_commands: Vec::new(),
             completion_criteria: Vec::new(),
         };
         let blocked = HumanTaskResult {

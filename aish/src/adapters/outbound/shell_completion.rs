@@ -59,11 +59,11 @@ _aish_replay_debug() {
   local _aish_fn
   for _aish_fn in "${FUNCNAME[@]}"; do
     case "$_aish_fn" in
-      _ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_apply) return 0 ;;
+      _ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_next|_aish_handoff_recall_prev|_aish_handoff_recall_apply_at) return 0 ;;
     esac
   done
   case "$BASH_COMMAND" in
-    _aish_*|_ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_apply|trap*|":" ) return ;;
+    _aish_*|_ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_next|_aish_handoff_recall_prev|_aish_handoff_recall_apply_at|trap*|":" ) return ;;
   esac
   local line="${READLINE_LINE:-$BASH_COMMAND}"
   _aish_replay_emit "{\"event\":\"start\",\"command\":$(_aish_json_escape "$line")}"
@@ -122,28 +122,58 @@ const BASH_HANDOFF_ENV_STRIP_SNIPPET: &str = r#"
 if [[ "${AISH_CONTROL_MODE:-}" == human-shell ]]; then
   _AISH_HUMAN_SHELL=1
   [[ -n "${AISH_HANDOFF_TASK_JSON:-}" ]] && _AISH_EXPLICIT_HUMAN_TASK=1
-  _AISH_HANDOFF_SUGGESTED_COMMAND="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  _AISH_HANDOFF_CANDIDATES=()
+  _AISH_HANDOFF_CANDIDATE_IDX=-1
+  if [[ -n "${AISH_HANDOFF_RUNTIME_DIR:-}" && -r "${AISH_HANDOFF_RUNTIME_DIR}/handoff_suggestions" ]]; then
+    while IFS= read -r -d '' _aish_item || [[ -n "${_aish_item:-}" ]]; do
+      [[ -n "${_aish_item:-}" ]] && _AISH_HANDOFF_CANDIDATES+=("$_aish_item")
+    done < "${AISH_HANDOFF_RUNTIME_DIR}/handoff_suggestions"
+  fi
+  if [[ ${#_AISH_HANDOFF_CANDIDATES[@]} -eq 0 && -n "${AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]]; then
+    _AISH_HANDOFF_CANDIDATES=("${AISH_HANDOFF_SUGGESTED_COMMAND}")
+  fi
+  _AISH_HANDOFF_SUGGESTED_COMMAND="${_AISH_HANDOFF_CANDIDATES[0]:-}"
   unset AISH_CONTROL_MODE AISH_HANDOFF_PARENT_REQUEST AISH_HANDOFF_SUGGESTED_COMMAND AISH_HANDOFF_RUNTIME_DIR AISH_HANDOFF_TASK_JSON
+  unset _aish_item
 fi
 "#;
 
 const BASH_HANDOFF_RECALL_SNIPPET: &str = r#"
 # 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
-_aish_handoff_recall_apply() {
+_aish_handoff_recall_apply_at() {
   _AISH_IN_READLINE_BIND=1
-  local cmd="${_AISH_HANDOFF_SUGGESTED_COMMAND:-}"
-  [[ -n "$cmd" ]] || { unset _AISH_IN_READLINE_BIND; return 0; }
+  local n=${#_AISH_HANDOFF_CANDIDATES[@]}
+  [[ "$n" -gt 0 ]] || { unset _AISH_IN_READLINE_BIND; return 0; }
+  local idx=$1
+  (( idx < 0 )) && idx=$((n - 1))
+  (( idx >= n )) && idx=0
+  _AISH_HANDOFF_CANDIDATE_IDX=$idx
+  local cmd="${_AISH_HANDOFF_CANDIDATES[idx]}"
   READLINE_LINE="$cmd"
   READLINE_POINT=${#cmd}
   unset _AISH_IN_READLINE_BIND
 }
+_aish_handoff_recall_next() {
+  local n=${#_AISH_HANDOFF_CANDIDATES[@]}
+  [[ "$n" -gt 0 ]] || return 0
+  local next=$((_AISH_HANDOFF_CANDIDATE_IDX + 1))
+  (( next >= n )) && next=0
+  _aish_handoff_recall_apply_at "$next"
+}
+_aish_handoff_recall_prev() {
+  local n=${#_AISH_HANDOFF_CANDIDATES[@]}
+  [[ "$n" -gt 0 ]] || return 0
+  local prev=$((_AISH_HANDOFF_CANDIDATE_IDX - 1))
+  (( prev < 0 )) && prev=$((n - 1))
+  _aish_handoff_recall_apply_at "$prev"
+}
 _aish_handoff_recall_install() {
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
-  [[ -n "${_AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
+  [[ ${#_AISH_HANDOFF_CANDIDATES[@]} -gt 0 ]] || return 0
   [[ "${_AISH_HANDOFF_RECALL_READY:-}" == 1 ]] && return 0
   _AISH_HANDOFF_RECALL_READY=1
-  bind -x '"\e.": "_aish_handoff_recall_apply"' 2>/dev/null || true
-  bind -x '"\e,": "_aish_handoff_recall_apply"' 2>/dev/null || true
+  bind -x '"\e.": "_aish_handoff_recall_next"' 2>/dev/null || true
+  bind -x '"\e,": "_aish_handoff_recall_prev"' 2>/dev/null || true
 }
 if [[ $- == *i* ]]; then
   _aish_handoff_recall_install
@@ -244,30 +274,64 @@ const ZSH_HANDOFF_ENV_STRIP_SNIPPET: &str = r#"
 if [[ "${AISH_CONTROL_MODE:-}" == human-shell ]]; then
   _AISH_HUMAN_SHELL=1
   [[ -n "${AISH_HANDOFF_TASK_JSON:-}" ]] && _AISH_EXPLICIT_HUMAN_TASK=1
-  _AISH_HANDOFF_SUGGESTED_COMMAND="${AISH_HANDOFF_SUGGESTED_COMMAND:-}"
+  typeset -ga _AISH_HANDOFF_CANDIDATES
+  _AISH_HANDOFF_CANDIDATES=()
+  _AISH_HANDOFF_CANDIDATE_IDX=0
+  if [[ -n "${AISH_HANDOFF_RUNTIME_DIR:-}" && -r "${AISH_HANDOFF_RUNTIME_DIR}/handoff_suggestions" ]]; then
+    while IFS= read -r -d '' _aish_item || [[ -n "${_aish_item:-}" ]]; do
+      [[ -n "${_aish_item:-}" ]] && _AISH_HANDOFF_CANDIDATES+=("$_aish_item")
+    done < "${AISH_HANDOFF_RUNTIME_DIR}/handoff_suggestions"
+  fi
+  if [[ ${#_AISH_HANDOFF_CANDIDATES[@]} -eq 0 && -n "${AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]]; then
+    _AISH_HANDOFF_CANDIDATES=("${AISH_HANDOFF_SUGGESTED_COMMAND}")
+  fi
+  _AISH_HANDOFF_SUGGESTED_COMMAND="${_AISH_HANDOFF_CANDIDATES[1]:-}"
   unset AISH_CONTROL_MODE AISH_HANDOFF_PARENT_REQUEST AISH_HANDOFF_SUGGESTED_COMMAND AISH_HANDOFF_RUNTIME_DIR AISH_HANDOFF_TASK_JSON
+  unset _aish_item
 fi
 "#;
 
 const ZSH_HANDOFF_RECALL_SNIPPET: &str = r#"
 # 0055 minimal human handoff: suggested command を prompt へ挿入（実行はしない）
-_aish_handoff_recall_apply() {
+_aish_handoff_recall_apply_at() {
   emulate -L zsh
-  local cmd="${_AISH_HANDOFF_SUGGESTED_COMMAND:-}"
-  [[ -n "$cmd" ]] || return 0
+  local n=${#_AISH_HANDOFF_CANDIDATES[@]}
+  (( n > 0 )) || return 0
+  local idx=$1
+  (( idx < 1 )) && idx=$n
+  (( idx > n )) && idx=1
+  _AISH_HANDOFF_CANDIDATE_IDX=$idx
+  local cmd="${_AISH_HANDOFF_CANDIDATES[idx]}"
   BUFFER="$cmd"
   CURSOR=${#cmd}
   # reset-prompt は prompt 再展開で line editor を乱し得るため、再描画のみ行う（0067）
   zle -R
 }
+_aish_handoff_recall_next() {
+  emulate -L zsh
+  local n=${#_AISH_HANDOFF_CANDIDATES[@]}
+  (( n > 0 )) || return 0
+  local next=$((_AISH_HANDOFF_CANDIDATE_IDX + 1))
+  (( next > n )) && next=1
+  _aish_handoff_recall_apply_at "$next"
+}
+_aish_handoff_recall_prev() {
+  emulate -L zsh
+  local n=${#_AISH_HANDOFF_CANDIDATES[@]}
+  (( n > 0 )) || return 0
+  local prev=$((_AISH_HANDOFF_CANDIDATE_IDX - 1))
+  (( prev < 1 )) && prev=$n
+  _aish_handoff_recall_apply_at "$prev"
+}
 _aish_handoff_recall_install() {
   [[ "${_AISH_HUMAN_SHELL:-}" == 1 ]] || return 0
-  [[ -n "${_AISH_HANDOFF_SUGGESTED_COMMAND:-}" ]] || return 0
+  [[ ${#_AISH_HANDOFF_CANDIDATES[@]} -gt 0 ]] || return 0
   [[ "$_AISH_HANDOFF_RECALL_READY" == 1 ]] && return 0
   _AISH_HANDOFF_RECALL_READY=1
-  zle -N _aish_handoff_recall_apply
-  bindkey '\e.' _aish_handoff_recall_apply
-  bindkey '\e,' _aish_handoff_recall_apply
+  zle -N _aish_handoff_recall_next
+  zle -N _aish_handoff_recall_prev
+  bindkey '\e.' _aish_handoff_recall_next
+  bindkey '\e,' _aish_handoff_recall_prev
 }
 if [[ -o interactive ]]; then
   _aish_handoff_recall_install
@@ -473,7 +537,9 @@ mod tests {
         assert!(content.contains("aish complete bash"));
         assert!(content.contains("AI_SUGGESTION_CACHE"));
         assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
-        assert!(content.contains(r#"bind -x '"\e.": "_aish_handoff_recall_apply"'"#));
+        assert!(content.contains(r#"bind -x '"\e.": "_aish_handoff_recall_next"'"#));
+        assert!(content.contains(r#"bind -x '"\e,": "_aish_handoff_recall_prev"'"#));
+        assert!(content.contains("handoff_suggestions"));
         assert!(!content.contains("stty sane"));
     }
 
@@ -484,7 +550,9 @@ mod tests {
         write_zsh_wrapper(&zshrc, Path::new("/nonexistent/.zshrc")).expect("write");
         let content = fs::read_to_string(zshrc).expect("read");
         assert!(content.contains("AISH_HANDOFF_SUGGESTED_COMMAND"));
-        assert!(content.contains(r#"bindkey '\e.' _aish_handoff_recall_apply"#));
+        assert!(content.contains(r#"bindkey '\e.' _aish_handoff_recall_next"#));
+        assert!(content.contains(r#"bindkey '\e,' _aish_handoff_recall_prev"#));
+        assert!(content.contains("handoff_suggestions"));
         assert!(content.contains("zle -R"));
         assert!(!content.contains("zle reset-prompt"));
         assert!(!content.contains("stty sane"));
@@ -520,7 +588,7 @@ mod tests {
         );
         assert!(
             content.contains(
-                "_ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_apply"
+                "_ai_recall_next|_ai_recall_prev|_ai_recall_apply|_aish_handoff_recall_next|_aish_handoff_recall_prev|_aish_handoff_recall_apply_at"
             ),
             "DEBUG trap must skip recall bind -x function names"
         );

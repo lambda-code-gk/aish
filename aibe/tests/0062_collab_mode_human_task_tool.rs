@@ -128,6 +128,7 @@ impl LlmProvider for RecordingHumanTaskLlm {
                         "objective": "inspect workspace",
                         "reason": "needs human judgment",
                         "instructions": ["review changes"],
+                        "suggested_commands": ["git status", "cargo test -j 1"],
                         "completion_criteria": ["review complete"]
                     }),
                     provider_extras: None,
@@ -276,6 +277,7 @@ fn gate_task() -> HumanTaskRequest {
         objective: "inspect workspace".into(),
         reason: None,
         instructions: Vec::new(),
+        suggested_commands: Vec::new(),
         completion_criteria: Vec::new(),
     }
 }
