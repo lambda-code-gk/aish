@@ -37,16 +37,36 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
 fn human_task_definition() -> ToolDefinition {
     ToolDefinition {
         name: HUMAN_TASK.to_string(),
-        description: "Delegate a structured task to the human using the interactive Human Shell."
+        description: "Delegate a task to the human by opening an interactive Human Shell that the user drives directly. \
+                      Use this whenever finishing the request depends on the user acting, deciding, or providing input in their own terminal: \
+                      they must supply or point at files, paths, a selection, or other data you do not have yet; \
+                      they must run, inspect, edit, or confirm something interactively; the task needs their local environment or manual judgment; \
+                      or they explicitly ask for the Human Shell. Prefer this over stalling with a chat-only question when the missing information \
+                      or action is something the user would naturally provide by working in their shell. \
+                      Do not use it when you can fully answer with your own tools and context, or when only a single trivial clarification is needed."
             .into(),
         parameters: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "objective": { "type": "string" },
-                "reason": { "type": "string" },
-                "instructions": { "type": "array", "items": { "type": "string" } },
-                "completion_criteria": { "type": "array", "items": { "type": "string" } }
+                "objective": {
+                    "type": "string",
+                    "description": "Concrete goal the human should accomplish or provide in the Human Shell (for example, 'Provide the list of files to inspect')."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short explanation of why this needs the human (missing input, local action, or manual judgment)."
+                },
+                "instructions": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional suggested actions/commands shown to the human. They are candidates only and are never auto-executed; the human edits or runs them."
+                },
+                "completion_criteria": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional conditions describing when the human task is done."
+                }
             },
             "required": ["objective"]
         }),

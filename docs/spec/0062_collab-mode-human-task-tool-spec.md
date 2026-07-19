@@ -158,6 +158,7 @@ Collaborative Mode 専用 instruction は `ai` domain/application の純粋な p
 instruction は少なくとも次を伝える。
 
 - 人間への作業委譲には `human_task` を明示的に使う
+- 依頼の達成に、ユーザーが自分の端末で操作・判断・データ提示（ファイル/パス/選択などの入力提供、対話的な実行・確認）を行う必要があるなら、tool 名を明示されなくても `human_task` を使う。チャットでの単なる質問で止めない。自分のツールと文脈だけで完結できる場合や、対話作業を伴わない軽微な確認1回で足りる場合のみ通常回答する
 - AISH 自身が許可済み command を実行する場合は `shell_exec` を使い、両者を混同しない
 - `objective` は具体的に必須とし、任意 field は不明なら空または省略できる
 - `done`（`verified=false`）や command Evidence を自動検証済みとみなさず、独立再観測に成功するまで「完了した」「成功した」「インストールされた」と断定しない
