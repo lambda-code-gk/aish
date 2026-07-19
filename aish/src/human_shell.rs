@@ -24,11 +24,12 @@ pub const HANDOFF_ENV_KEYS: [&str; 5] = [
     "AISH_HANDOFF_TASK_JSON",
 ];
 
-/// Explicit `human_task` の `instructions` を Alt+. 候補として渡す NUL 区切りファイル名
+/// Explicit `human_task` の `suggested_commands` を Alt+. 候補として渡す NUL 区切りファイル名
 ///（`AISH_HANDOFF_RUNTIME_DIR` 配下）。
 pub const HANDOFF_SUGGESTIONS_FILENAME: &str = "handoff_suggestions";
 
 const HUMAN_TASK_BRIEFING_MAX_BYTES: usize = 64 * 1024;
+const SUGGESTED_COMMAND_MAX_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +40,8 @@ pub struct HumanTaskBriefing {
     reason: Option<String>,
     #[serde(default)]
     instructions: Vec<String>,
+    #[serde(default)]
+    suggested_commands: Vec<String>,
     #[serde(default)]
     completion_criteria: Vec<String>,
 }
@@ -159,6 +162,8 @@ pub fn render_explicit_human_task(task: &HumanTaskBriefing) -> String {
         out.push_str(&format_indented_block(reason));
         out.push('\n');
     }
+    let has_suggested_commands =
+        !insertable_handoff_suggestions(&task.suggested_commands).is_empty();
     if !task.instructions.is_empty() {
         out.push_str("\nSuggested actions:\n");
         for item in &task.instructions {
@@ -176,18 +181,26 @@ pub fn render_explicit_human_task(task: &HumanTaskBriefing) -> String {
     out.push_str("\nYou remain in control:\n");
     if !task.instructions.is_empty() {
         out.push_str("  Edit, run, replace, or ignore the suggested actions.\n");
-        out.push_str("  Alt+. or Alt+, inserts a suggested action.\n");
+    }
+    if has_suggested_commands {
+        out.push_str("  Alt+. or Alt+, inserts a suggested command.\n");
     }
     out.push_str("  Press Ctrl+D or run `exit` to return control.\n");
     out
 }
 
-/// Alt+. 挿入対象として使える instruction だけを返す（空・NUL 含有は除外）。
-pub fn insertable_handoff_instructions(instructions: &[String]) -> Vec<&str> {
-    instructions
+pub fn is_insertable_handoff_suggestion(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= SUGGESTED_COMMAND_MAX_BYTES
+        && !value.chars().any(char::is_control)
+}
+
+/// Alt+. 挿入対象として安全な `suggested_commands` だけを返す。
+pub fn insertable_handoff_suggestions(suggestions: &[String]) -> Vec<&str> {
+    suggestions
         .iter()
         .map(String::as_str)
-        .filter(|item| !item.is_empty() && !item.contains('\0'))
+        .filter(|item| is_insertable_handoff_suggestion(item))
         .collect()
 }
 
@@ -201,12 +214,12 @@ pub fn encode_handoff_suggestions(candidates: &[&str]) -> Vec<u8> {
     bytes
 }
 
-/// Explicit Human Task の `instructions` を Alt+. / Alt+, 挿入候補へ種まきする。
+/// Explicit Human Task の `suggested_commands` を Alt+. / Alt+, 挿入候補へ種まきする。
 ///
-/// - `AISH_HANDOFF_SUGGESTED_COMMAND` が空のときだけ先頭 instruction を設定する（旧経路は上書きしない）
-/// - runtime dir があるとき、全 instruction を NUL 区切りで `handoff_suggestions` に書く（複数候補の巡回用）
+/// - `AISH_HANDOFF_SUGGESTED_COMMAND` が空のときだけ先頭候補を設定する（旧経路は上書きしない）
+/// - runtime dir があるとき、全候補を NUL 区切りで `handoff_suggestions` に書く（複数候補の巡回用）
 pub fn seed_handoff_recall_from_task(task: &HumanTaskBriefing) {
-    let candidates = insertable_handoff_instructions(&task.instructions);
+    let candidates = insertable_handoff_suggestions(&task.suggested_commands);
     if candidates.is_empty() {
         return;
     }
@@ -625,30 +638,43 @@ mod tests {
     }
 
     #[test]
-    fn explicit_human_task_mentions_alt_period_when_instructions_present() {
+    fn explicit_human_task_mentions_alt_period_only_for_safe_suggested_commands() {
         let with_actions = decode_explicit_briefing(
-            r#"{"version":1,"objective":"inspect","instructions":["cargo test"]}"#,
+            r#"{"version":1,"objective":"inspect","instructions":["read the report"],"suggested_commands":["cargo test"]}"#,
         )
         .unwrap();
         let rendered = render_explicit_human_task(&with_actions);
-        assert!(rendered.contains("Alt+. or Alt+, inserts a suggested action."));
+        assert!(rendered.contains("Alt+. or Alt+, inserts a suggested command."));
         assert!(rendered.contains("Edit, run, replace, or ignore the suggested actions."));
 
-        let without = decode_explicit_briefing(r#"{"version":1,"objective":"inspect"}"#).unwrap();
-        let rendered = render_explicit_human_task(&without);
+        let instructions_only = decode_explicit_briefing(
+            r#"{"version":1,"objective":"inspect","instructions":["cargo test"]}"#,
+        )
+        .unwrap();
+        let rendered = render_explicit_human_task(&instructions_only);
         assert!(!rendered.contains("Alt+."));
+
+        let unsafe_candidate = decode_explicit_briefing(
+            r#"{"version":1,"objective":"inspect","suggested_commands":["echo one\necho two"]}"#,
+        )
+        .unwrap();
+        assert!(!render_explicit_human_task(&unsafe_candidate).contains("Alt+."));
     }
 
     #[test]
-    fn insertable_handoff_instructions_skips_empty_and_nul() {
+    fn insertable_handoff_suggestions_rejects_empty_controls_and_oversize() {
         let items = vec![
             String::new(),
             "cargo test".into(),
             "bad\0cmd".into(),
+            "bad\ncmd".into(),
+            "bad\tcmd".into(),
+            "bad\u{1b}cmd".into(),
+            "x".repeat(SUGGESTED_COMMAND_MAX_BYTES + 1),
             "git status".into(),
         ];
         assert_eq!(
-            insertable_handoff_instructions(&items),
+            insertable_handoff_suggestions(&items),
             ["cargo test", "git status"]
         );
         assert_eq!(

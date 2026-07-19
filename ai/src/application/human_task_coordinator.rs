@@ -10,7 +10,6 @@ use crate::domain::human_task_checkpoint::{
     HumanShellSegment, HumanShellSegmentEnd, HumanTaskCheckpointV1, HumanTaskContinuationState,
     HumanTaskParentContext, HumanTaskWorkflowState,
 };
-use crate::domain::suggested_command_from_instructions;
 use crate::ports::outbound::{
     EnvironmentObserver, HumanShellLaunchError, HumanShellLaunchRequest, HumanShellLauncher,
     HumanTaskIdentity, HumanTaskStore, HumanTaskStoreError,
@@ -110,7 +109,7 @@ impl<'a> HumanTaskCoordinator<'a> {
         let request = HumanShellLaunchRequest {
             cwd: parent.cwd.clone(),
             parent_request_summary: String::new(),
-            suggested_command: suggested_command_from_instructions(&task.instructions),
+            suggested_command: String::new(),
             runtime_dir: parent.runtime_dir,
             task_briefing: Some(HumanTaskBriefing::from(&task)),
         };

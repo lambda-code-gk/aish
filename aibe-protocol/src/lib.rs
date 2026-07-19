@@ -12,10 +12,10 @@ mod work;
 
 pub use client_tool_validation::{validate_client_tool_arguments, validate_client_tool_call};
 pub use collaborative_handoff::{
-    HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult, HumanTaskBriefing,
-    HumanTaskCommandEvidence, HumanTaskEvidence, HumanTaskRequest, HumanTaskResult,
-    PostHandoffObservation, RequestedCommandCompletion, ShellLogRange,
-    HUMAN_TASK_BRIEFING_MAX_BYTES,
+    is_safe_suggested_command, HandoffExecutionOutcome, HumanHandoffFailure, HumanHandoffResult,
+    HumanTaskBriefing, HumanTaskCommandEvidence, HumanTaskEvidence, HumanTaskRequest,
+    HumanTaskResult, PostHandoffObservation, RequestedCommandCompletion, ShellLogRange,
+    HUMAN_TASK_BRIEFING_MAX_BYTES, SUGGESTED_COMMAND_MAX_BYTES,
 };
 pub use executed_tool::{
     ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome, ShellExecApprovalOutcome,

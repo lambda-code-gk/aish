@@ -23,6 +23,7 @@ fn running_checkpoint(cwd: PathBuf) -> HumanTaskCheckpointV1 {
             objective: "recover deployment review".into(),
             reason: None,
             instructions: vec!["inspect".into()],
+            suggested_commands: vec!["git status".into()],
             completion_criteria: vec!["report".into()],
         },
         parent: HumanTaskParentContext {

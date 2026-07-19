@@ -206,7 +206,7 @@
 # Collaborative Mode Human Task（0062）
 
 - `human_task` は Collaborative Mode だけで公開し、aibe 側も `execution_mode` を検査して forged allowlist を `tool_not_allowed` とする。
-- request は未知 field、空 objective/配列要素、型不一致、正規化後 64 KiB 超を拒否する。
+- request は未知 field、空 objective/配列要素、型不一致、正規化後 64 KiB 超を拒否する。人間向け `instructions` は表示時に escape し shell 挿入へ使わない。`suggested_commands` は trim 後非空・全Unicode制御文字なし・4 KiB以下だけを受理し、aish でも候補ファイル生成前に同じ条件で再フィルタする。
 - 同一接続 callback は turn ID、tool call ID、prompt ID の全一致を要求し、不一致・重複・decode 失敗・待機 call 不在を別 call へ回送しない。
 - `AISH_HANDOFF_TASK_JSON` は 64 KiB 以下の既知 version だけを受理し、子 shell から unset する。JSON 本文、shell log、生の端末入力を通常 log/error に含めない。
 - `done` は人間から制御が戻った事実だけであり、criteria 達成や自動検証済みを意味しない。

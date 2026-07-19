@@ -258,8 +258,8 @@ spec = "0062"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 6
-scope_change_reason = "review: HumanTaskResult.verified=false + stronger collab instruction against unverified completion claims"
+scope_revision = 7
+scope_change_reason = "PR #15 review: split display-only instructions from safe suggested_commands used only for Alt+. / Alt+, insertion"
 scope_review = "approved"
 
 core_outcome = "ai collab で Collaborative Mode を正式起動し、LLM が独立 human_task tool で人間へ作業委譲して自動観測付き結果を受け取る"

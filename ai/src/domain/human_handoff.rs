@@ -39,16 +39,6 @@ pub fn build_suggested_command(command: &str, args: &[String]) -> String {
     }
 }
 
-/// Explicit `human_task.instructions` の先頭を Human Shell の Alt+. 候補にする。
-/// NUL を含む要素はスキップする（環境変数経由で渡せないため）。
-pub fn suggested_command_from_instructions(instructions: &[String]) -> String {
-    instructions
-        .iter()
-        .find(|item| !item.is_empty() && !item.contains('\0'))
-        .cloned()
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,20 +47,6 @@ mod tests {
     fn candidate_command_preserves_shell_operators_in_args() {
         let text = build_suggested_command("git", &["grep".into(), "-n".into(), "foo|bar".into()]);
         assert!(text.contains("'foo|bar'"));
-    }
-
-    #[test]
-    fn suggested_command_from_instructions_takes_first_insertable() {
-        assert_eq!(
-            suggested_command_from_instructions(&[
-                String::new(),
-                "bad\0".into(),
-                "cargo test".into(),
-                "git status".into(),
-            ]),
-            "cargo test"
-        );
-        assert!(suggested_command_from_instructions(&[]).is_empty());
     }
 
     #[test]

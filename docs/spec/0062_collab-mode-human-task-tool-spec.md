@@ -16,7 +16,7 @@ ai collab "依頼内容"
 → ExecutionMode::Collaborative
 → 通常の明示 tools を保持したまま human_task を自動公開
 → Collaborative Mode 専用 system instruction を合成
-→ LLM が human_task(objective, reason?, instructions[], completion_criteria[]) を呼ぶ
+→ LLM が human_task(objective, reason?, instructions[], suggested_commands[], completion_criteria[]) を呼ぶ
 → HumanTaskTool が同一接続の HumanTaskGate へ実行要求を送る
 → ai の ExecuteHumanTask が開始時コンテキストを構築
 → 0055/0057 の同期 Human Shell を開始して待機
@@ -69,25 +69,28 @@ LLM tool schema と domain request は次の一つの語彙を使う。
 HumanTaskRequest
   objective: String                # 必須、trim 後非空
   reason: Option<String>           # 任意
-  instructions: Vec<String>        # 任意、省略時は空 list
+  instructions: Vec<String>        # 任意、人間向け説明。multiline 可。省略時は空 list
+  suggested_commands: Vec<String>  # 任意、shell 挿入候補。省略時は空 list
   completion_criteria: Vec<String> # 任意、省略時は空 list
 ```
 
-JSON Schema は `objective` だけを `required` とし、`instructions` / `completion_criteria` は string array とする。未知 field は受理せず、型不一致、trim 後空の `objective`、空文字または trim 後空の array element、および正規化後の versioned briefing JSON が 64 KiB を超える request は `invalid_arguments` とする。trim 後空の `reason` は未指定へ正規化し、`instructions` と `completion_criteria` の未指定は空 list へ正規化する。LLM が情報を捏造して埋めることを要求しない。request 内容は開始時作業情報の正本であり、終了後に書き換えない。
+JSON Schema は `objective` だけを `required` とし、`instructions` / `suggested_commands` / `completion_criteria` は string array とする。未知 field は受理せず、型不一致、trim 後空の `objective`、空文字または trim 後空の array element、および正規化後の versioned briefing JSON が 64 KiB を超える request は `invalid_arguments` とする。trim 後空の `reason` は未指定へ正規化し、各 array の未指定は空 list へ正規化する。
+
+`instructions` は人間向け説明であり、multiline を許可し、`Suggested actions:` 表示だけに使う。`completion_criteria` も従来どおり表示用であり、両 field の制御文字は一律拒否せず表示時に escape する。`suggested_commands` だけを Alt+. / Alt+, の shell 挿入候補とし、各要素は trim 後非空、UTF-8 4 KiB 以下、かつ `char::is_control` に該当する文字（NUL / LF / CR / TAB / ESC を含む）がない場合だけ受理する。候補は自動実行しない。LLM が情報を捏造して埋めることを要求しない。request 内容は開始時作業情報の正本であり、終了後に書き換えない。
 
 ### 1.4 `ExecuteHumanTask` ユースケース
 
 `ExecuteHumanTask` は `ai` application 層に置き、次の順序だけを担う。
 
 1. `HumanTaskRequest` と turn の client cwd を受け取る
-2. objective / reason / instructions / completion criteria から構造化 `HumanTaskBriefing` を構築する
+2. objective / reason / instructions / suggested commands / completion criteria から構造化 `HumanTaskBriefing` を構築する
 3. 既存 `HumanShellLauncher::launch_and_wait` を同期実行する
 4. 既存 `EnvironmentObserver::observe` で終了直後を観測する
 5. 開始時 request、終了状態、観測、既存 lifecycle metadata から `HumanTaskResult` を構築する
 
 本ユースケースは新しい PTY launcher、observer、agent loop、永続 task aggregate を持たない。`AishHumanShellLauncher`、cleanup / cancel 処理、runtime dir guard、termios guard、`ProcessEnvironmentObserver` を再利用する。テストでは既存 `HumanShellLauncher` と `EnvironmentObserver` port の fake を注入し、実 shell を起動せず request → result を検証する。
 
-`HumanShellLaunchRequest` は既存の `parent_request_summary` / `suggested_command` 経路を壊さず、任意の構造化 `HumanTaskBriefing` を追加で受け取れるよう拡張する。明示 `human_task` 経路はこの構造化値を使い、旧 `shell_exec` handoff は従来の2文字列だけを使う。outbound launcher は構造化値を一つの versioned JSON として `AISH_HANDOFF_TASK_JSON` へ渡し、`aish human-shell` は 64 KiB 以下で decode できた場合だけ新表示モデルを選ぶ。欠落時は0060の旧表示へ戻し、不正 JSON、未知 version、上限超過は Human Shell を開始せず `blocked` にする。個別 field ごとの環境変数は追加しない。値は shell 起動直後に読み取って子 shell 環境から unset し、ログおよび error message へ出さない。
+`HumanShellLaunchRequest` は既存の `parent_request_summary` / `suggested_command` 経路を壊さず、任意の構造化 `HumanTaskBriefing` を追加で受け取れるよう拡張する。明示 `human_task` 経路はこの構造化値を使い、`suggested_command` は常に空とする。旧 `shell_exec` handoff だけが従来の2文字列を使う。outbound launcher は構造化値を一つの versioned JSON として `AISH_HANDOFF_TASK_JSON` へ渡し、`aish human-shell` は 64 KiB 以下で decode できた場合だけ新表示モデルを選ぶ。欠落時は0060の旧表示へ戻し、不正 JSON、未知 version、上限超過は Human Shell を開始せず `blocked` にする。個別 field ごとの環境変数は追加しない。値は shell 起動直後に読み取って子 shell 環境から unset し、ログおよび error message へ出さない。
 
 0060 の「既存 handoff 環境変数だけ」という回帰条件は旧経路の正本として維持しつつ、0062 は上記の構造化値1個だけを明示的に追加する。実装時に `HANDOFF_ENV_KEYS`、shell completion の unset、architecture / security docs、0060 回帰テストの期待値を同時に更新する。これは新しい process boundary や renderer ではなく、既存 Human Shell 起動境界へ briefing model を運ぶための拡張である。
 
@@ -111,7 +114,7 @@ HumanTaskTool
 
 0060 の Human Task briefing renderer、行単位 indentation、ANSI / C0 escape、stderr 表示を拡張して再利用し、別 renderer を並立させない。明示 `human_task` では `Objective:` に `objective`、`Why this is a Human Task:` に `reason`、`Suggested actions:` に `instructions` の各要素、`Done when:` に `completion_criteria` の各要素を表示する。これは 0060 の既存ラベル語彙と表示モデルを拡張するものであり、`Reason:` / `Instructions:` / `Completion criteria:` という二重の表示契約は作らない。`reason` が未指定、または各 list が空なら対応セクション自体を表示せず、fallback や推測内容で埋めない。`Objective:` は必須のため常に表示する。
 
-0055 の旧 `shell_exec` handoff は既存 parent request / suggested command briefing を維持できる。新経路は suggested command を生成せず、`instructions` を command として扱わず、自動実行もしない。終了後の status / summary 入力は追加しない。
+0055 の旧 `shell_exec` handoff は既存 parent request / suggested command briefing を維持できる。新経路は `instructions` から suggested command を生成せず、構造化 JSON の `suggested_commands` だけを aish が防御的に同じ安全 predicate で再フィルタして `handoff_suggestions` と、空の場合に限る `AISH_HANDOFF_SUGGESTED_COMMAND` の種まきへ使う。Alt ヒントは安全な候補が1件以上のときだけ表示する。いずれも自動実行せず、終了後の status / summary 入力は追加しない。
 
 ### 1.7 結果と終了状態
 
@@ -276,7 +279,7 @@ Normal Mode の system instruction にはこの本文を入れない。依頼文
 | `collab_legacy_flag_maps_to_same_mode` | 旧 `ai --collaborative "依頼内容"` が同じ Collaborative Mode へ変換され、依頼文や tool call から mode を推測しない |
 | `collab_preserves_explicit_tools_without_exec_requirement` | `ai collab` は `--tools @exec` なしで起動でき、`ai collab --tools @exec` 等の明示 tools を保持しつつ `human_task` を追加する |
 | `human_task_is_published_only_in_collaborative_mode` | tool registry / definition の共通構成点が `human_task` を Collaborative Mode だけで LLM へ公開し、Normal Mode と forged allowlist は fail-closed になる |
-| `human_task_schema_matches_request_contract` | schema が必須非空 objective、任意 reason、任意の string array である instructions / completion_criteria を持ち、空 reason を未指定、array 未指定を空 list へ正規化し、空 element、未知 field、型不一致、64 KiB 超の正規化 briefing を拒否する |
+| `human_task_schema_matches_request_contract` | schema が必須非空 objective、任意 reason、任意の string array である instructions / suggested_commands / completion_criteria を持つ。instructions は表示専用、suggested_commands は安全 predicate 通過時だけ shell 挿入専用とし、空 reason を未指定、array 未指定を空 list へ正規化し、空 element、suggested_commands の制御文字・4 KiB 超、未知 field、型不一致、64 KiB 超の正規化 briefing を拒否する |
 | `human_task_briefing_uses_task_labels_and_omits_empty_sections` | 0060 renderer を再利用し、`Objective:` / `Why this is a Human Task:` / `Suggested actions:` / `Done when:` に request を対応付け、未指定 reason と空 list のセクションは fallback なしで省略する |
 | `execute_human_task_uses_existing_human_shell_ports` | fake `HumanShellLauncher` / `EnvironmentObserver` により、request 受付、構造化 briefing 構築、同期開始・待機、結果返却の順序を検証できる。明示 task は versioned JSON 1個で既存起動境界を通り、旧 handoff は従来表示を維持する |
 | `human_task_result_reuses_status_and_observation_types` | `HumanTaskResult` が拡張した既存 `HandoffExecutionOutcome` の done/blocked/cancelled、開始時 `HumanTaskRequest`、0061 `PostHandoffObservation` と lifecycle metadata から構築され、status / error の排他不変条件に違反する payload を拒否する |
@@ -308,3 +311,4 @@ Normal Mode の system instruction にはこの本文を入れない。依頼文
 | 2 | CONTRACT | instructions / completion criteria を list 契約に修正し、表示ラベルと空 section 省略を固定。gate を tool と一体の同期 callback adapter と明記 | ユーザー要件、0060 の既存表示モデル、One Novelty Rule の整合を回復するため |
 | 3 | CONTRACT | 構造化 briefing を既存 Human Shell 起動境界へ運ぶ versioned JSON 1個を固定し、callback 相関 ID と result の排他不変条件を明記 | list field を本番表示へ到達させ、同一接続 callback の取り違えと矛盾 result を元の縦断 AC 内で fail-closed にするため |
 | 4 | GOVERNANCE | §9 の全16 ACを Scope Lock し、実装指示書・pending acceptance testを開始 | 設計契約を変更せず、実装開始時の受け入れ範囲を固定するため |
+| 7 | CONTRACT | 人間向け `instructions` と shell 挿入用 `suggested_commands` を分離し、候補に非空・全制御文字拒否・4 KiB 上限を適用 | instructions の shell command 化という契約違反を解消し、LLM 由来文字列を Readline / ZLE に安全に渡すため |

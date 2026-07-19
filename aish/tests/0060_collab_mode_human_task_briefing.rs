@@ -203,7 +203,7 @@ fn human_task_briefing_uses_only_existing_env() {
 }
 
 #[test]
-fn explicit_human_task_seeds_alt_period_candidates_from_instructions() {
+fn explicit_human_task_seeds_alt_period_candidates_from_suggested_commands() {
     if !Path::new("/bin/bash").is_file() {
         panic!("human-shell tests require /bin/bash");
     }
@@ -213,8 +213,7 @@ fn explicit_human_task_seeds_alt_period_candidates_from_instructions() {
     let mut perms = std::fs::metadata(&runtime).unwrap().permissions();
     perms.set_mode(0o700);
     std::fs::set_permissions(&runtime, perms).unwrap();
-    let task_json =
-        r#"{"version":1,"objective":"inspect","instructions":["cargo test","git status"]}"#;
+    let task_json = r#"{"version":1,"objective":"inspect","instructions":["read the report","choose a fix"],"suggested_commands":["cargo test","git status"]}"#;
     let (output, _) = run_human_shell_with(
         b"exit\n",
         home.path(),
@@ -229,7 +228,8 @@ fn explicit_human_task_seeds_alt_period_candidates_from_instructions() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Suggested actions:"));
-    assert!(stderr.contains("Alt+. or Alt+, inserts a suggested action."));
+    assert!(stderr.contains("read the report"));
+    assert!(stderr.contains("Alt+. or Alt+, inserts a suggested command."));
     let suggestions = std::fs::read(runtime.join(HANDOFF_SUGGESTIONS_FILENAME)).unwrap();
     assert_eq!(suggestions, b"cargo test\0git status\0");
 }

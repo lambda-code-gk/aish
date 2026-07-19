@@ -60,7 +60,12 @@ fn human_task_definition() -> ToolDefinition {
                 "instructions": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional suggested actions/commands shown to the human. They are candidates only and are never auto-executed; the human edits or runs them."
+                    "description": "Optional human-readable instructions shown under Suggested actions. They may be multiline and are never inserted into the shell prompt."
+                },
+                "suggested_commands": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional single-line shell command candidates for Alt+. / Alt+, insertion. Each must be non-empty, at most 4 KiB, and contain no control characters. They are never auto-executed; the human may edit, run, or ignore them."
                 },
                 "completion_criteria": {
                     "type": "array",
@@ -225,5 +230,26 @@ fn apply_patch_definition() -> ToolDefinition {
             },
             "required": ["path", "patch", "expected_sha256"]
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn human_task_schema_separates_instructions_and_suggested_commands() {
+        let schema = human_task_definition().parameters;
+        let properties = schema["properties"].as_object().expect("properties");
+        assert_eq!(properties["instructions"]["type"], "array");
+        assert_eq!(properties["suggested_commands"]["type"], "array");
+        assert!(properties["instructions"]["description"]
+            .as_str()
+            .expect("instructions description")
+            .contains("never inserted"));
+        assert!(properties["suggested_commands"]["description"]
+            .as_str()
+            .expect("suggested_commands description")
+            .contains("Alt+. / Alt+,"));
     }
 }

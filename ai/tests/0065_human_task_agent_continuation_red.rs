@@ -36,6 +36,7 @@ fn pending_checkpoint(cwd: PathBuf) -> HumanTaskCheckpointV1 {
         objective: "review deployment".into(),
         reason: Some("human judgment".into()),
         instructions: vec!["inspect state".into()],
+        suggested_commands: vec!["git status".into()],
         completion_criteria: vec!["report evidence".into()],
     };
     let range = ShellLogRange {

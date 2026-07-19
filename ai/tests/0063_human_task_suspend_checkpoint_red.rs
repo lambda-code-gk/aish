@@ -23,6 +23,7 @@ fn task() -> HumanTaskRequest {
         objective: "review deployment".into(),
         reason: None,
         instructions: vec!["inspect".into()],
+        suggested_commands: vec!["git status".into()],
         completion_criteria: vec!["report".into()],
     }
 }
