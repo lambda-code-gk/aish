@@ -311,4 +311,6 @@ Normal Mode の system instruction にはこの本文を入れない。依頼文
 | 2 | CONTRACT | instructions / completion criteria を list 契約に修正し、表示ラベルと空 section 省略を固定。gate を tool と一体の同期 callback adapter と明記 | ユーザー要件、0060 の既存表示モデル、One Novelty Rule の整合を回復するため |
 | 3 | CONTRACT | 構造化 briefing を既存 Human Shell 起動境界へ運ぶ versioned JSON 1個を固定し、callback 相関 ID と result の排他不変条件を明記 | list field を本番表示へ到達させ、同一接続 callback の取り違えと矛盾 result を元の縦断 AC 内で fail-closed にするため |
 | 4 | GOVERNANCE | §9 の全16 ACを Scope Lock し、実装指示書・pending acceptance testを開始 | 設計契約を変更せず、実装開始時の受け入れ範囲を固定するため |
+| 5 | GOVERNANCE | 全16 AC を緑にし実装完了として `status = "done"` を確定 | Scope Lock した受け入れ条件を満たし、実装指示書を完了扱いへ移すため |
+| 6 | CONTRACT | `HumanTaskResult.verified=false` を必須化し、Collaborative Mode instruction で完了断定を禁止 | Human Shell 復帰を要求達成と誤認しないよう、結果契約と親 LLM 指示を強化するため |
 | 7 | CONTRACT | 人間向け `instructions` と shell 挿入用 `suggested_commands` を分離し、候補に非空・全制御文字拒否・4 KiB 上限を適用 | instructions の shell command 化という契約違反を解消し、LLM 由来文字列を Readline / ZLE に安全に渡すため |
