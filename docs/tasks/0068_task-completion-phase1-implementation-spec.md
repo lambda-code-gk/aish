@@ -1,7 +1,7 @@
 # 0068 Task Completion Phase 1 実装指示書
 
-> **種別**: 実装指示書（`docs/done/`）  
-> **状態**: 実装済み  
+> **種別**: 実装指示書（`docs/tasks/`）  
+> **状態**: 進行中  
 > **正本**: [`0068_task-completion-phase1-spec.md`](../spec/0068_task-completion-phase1-spec.md)  
 > **関連**: [`feature-development-policy.md`](../feature-development-policy.md)、[`architecture.md`](../architecture.md)、[`security.md`](../security.md)
 
@@ -14,8 +14,8 @@
 ## 0.1 Scope Lock
 
 - Feature scope registry: `scripts/feature-scope.toml`
-- Status: `done`
-- Scope revision: `3`
+- Status: `locked`
+- Scope revision: `1`
 - Complexity class: Yellow（`scope_review = "approved"`）
 - Vertical slice AC ID: `task_completion_vertical_e2e`
 - Query budget: 固定値 `2`（config / env を追加しない）
