@@ -160,6 +160,7 @@ fn retry_structured_format_ignores_stream_chunks() {
                     content: "seed reply".to_string(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             }];
         }
         vec![
@@ -179,6 +180,7 @@ fn retry_structured_format_ignores_stream_chunks() {
                     content: "retry final".to_string(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             },
         ]
     });
@@ -282,6 +284,7 @@ fn chat_accumulates_transcript_and_records_conversation_id() {
                 content: content.to_string(),
             },
             tool_calls: vec![],
+            completion_report: None,
         }
     });
 
@@ -363,6 +366,7 @@ fn chat_rerun_restores_saved_transcript() {
                 content: content.to_string(),
             },
             tool_calls: vec![],
+            completion_report: None,
         }
     });
 
