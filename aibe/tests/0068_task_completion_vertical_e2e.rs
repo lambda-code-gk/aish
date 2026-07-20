@@ -355,6 +355,47 @@ async fn effect_tools_without_explicit_signal_keep_simple_question_inactive() {
 }
 
 #[tokio::test]
+async fn inactive_turn_passes_plain_text_mentioning_task_completion_marker() {
+    let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
+    let explanation = "Task Completion uses the aish_task_completion JSON envelope when enabled.";
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        explanation,
+    )]));
+    let service = request_service(llm, dir.path());
+    let response = service
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "inactive-marker-0068".into(),
+                messages: vec![ProtocolMessage {
+                    role: "user".into(),
+                    content: "explain Task Completion to me".into(),
+                }],
+                tools: vec![SHELL_EXEC.into()],
+                client_tools: vec![],
+                context: RequestContext {
+                    cwd: Some(dir.path().display().to_string()),
+                    ..Default::default()
+                },
+                llm_profile: None,
+            },
+            None,
+        )
+        .await;
+    let ClientResponse::AgentTurnResult {
+        status,
+        assistant_message,
+        completion_report,
+        ..
+    } = response
+    else {
+        panic!("inactive explanation must remain a normal agent turn")
+    };
+    assert_eq!(status, AgentTurnStatus::Ok);
+    assert_eq!(assistant_message.content, explanation);
+    assert!(completion_report.is_none());
+}
+
+#[tokio::test]
 async fn second_query_human_task_suspend_is_preserved() {
     let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
     let llm = Arc::new(ScriptedMockLlm::new(vec![

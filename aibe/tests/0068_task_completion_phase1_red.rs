@@ -160,6 +160,26 @@ fn task_contract_is_stable_and_structurally_complete() {
 }
 
 #[test]
+fn permissive_gate_ignores_marker_in_plain_assistant_text() {
+    let gate = ContractGate::permissive();
+    assert_eq!(
+        gate.inspect_before_tools(
+            "Task Completion uses the aish_task_completion JSON envelope when enabled.",
+            false,
+        )
+        .expect("inactive turn must not decode envelope"),
+        false
+    );
+    assert_eq!(gate.fixed_contract().expect("gate"), None);
+    assert_eq!(
+        gate.inspect_before_tools("tool request without a contract", true)
+            .expect("inactive turn allows tools without contract"),
+        false
+    );
+    assert_eq!(gate.fixed_contract().expect("gate"), None);
+}
+
+#[test]
 fn assistant_claim_is_not_verified_evidence() {
     let claim = "I completed and verified everything";
     assert!(decode_completion_envelope(claim)

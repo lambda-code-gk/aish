@@ -131,8 +131,16 @@ impl ContractGate {
         content: &str,
         will_execute_tools: bool,
     ) -> Result<bool, String> {
-        let envelope = decode_completion_envelope(content)?;
         let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        if !self.require_contract_before_tools {
+            // Inactive turn: never decode envelope. Plain explanations may mention
+            // `aish_task_completion` without being control JSON.
+            if will_execute_tools {
+                state.tool_execution_started = true;
+            }
+            return Ok(false);
+        }
+        let envelope = decode_completion_envelope(content)?;
         if let Some(envelope) = envelope {
             let contract = envelope.aish_task_completion.contract;
             if let Some(binding) = &self.request_binding {

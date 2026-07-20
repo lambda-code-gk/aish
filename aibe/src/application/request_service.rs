@@ -423,55 +423,56 @@ impl RequestService {
                     _ => None,
                 };
                 if let Some((content, mut cumulative_calls)) = first_payload {
-                    let parsed = decode_completion_envelope(&content);
-                    let fixed = contract_gate.fixed_contract();
-                    match (parsed, fixed) {
-                        (Err(message), _) | (_, Err(message)) => {
-                            response = ClientResponse::error(
-                                id.clone(),
-                                ErrorCode::InvalidRequest,
-                                message,
-                            );
-                        }
-                        (Ok(None), Ok(Some(fixed))) => {
-                            response = ClientResponse::error(
-                                id.clone(),
-                                ErrorCode::InvalidRequest,
-                                "task completion final envelope lacks evaluation",
-                            );
-                            let _ = fixed;
-                        }
-                        (Ok(Some(first_envelope)), Ok(_)) => {
-                            if let Err(message) = validate_contract_covers_request(
-                                &first_envelope.aish_task_completion.contract,
-                                eligibility,
-                                &user_request,
-                            ) {
+                    if matches!(eligibility, TaskCompletionEligibility::Active { .. }) {
+                        let parsed = decode_completion_envelope(&content);
+                        let fixed = contract_gate.fixed_contract();
+                        match (parsed, fixed) {
+                            (Err(message), _) | (_, Err(message)) => {
                                 response = ClientResponse::error(
                                     id.clone(),
                                     ErrorCode::InvalidRequest,
                                     message,
                                 );
-                            } else if let Err(message) =
-                                contract_gate.inspect_before_tools(&content, false)
-                            {
+                            }
+                            (Ok(None), Ok(Some(fixed))) => {
                                 response = ClientResponse::error(
                                     id.clone(),
                                     ErrorCode::InvalidRequest,
-                                    message,
+                                    "task completion final envelope lacks evaluation",
                                 );
-                            } else {
-                                let contract = first_envelope.aish_task_completion.contract;
-                                let evaluation = first_envelope.aish_task_completion.evaluation;
-                                if let Some(evaluation) = evaluation {
-                                    let mut evidence =
-                                        evidence_from_tools(&contract, &cumulative_calls);
-                                    evidence.extend(deliverable_evidence(
-                                        &contract,
-                                        &first_envelope.deliverable,
-                                        evidence.len() + 1,
-                                    ));
-                                    match build_report(&contract, &evidence, &evaluation, 1, false) {
+                                let _ = fixed;
+                            }
+                            (Ok(Some(first_envelope)), Ok(_)) => {
+                                if let Err(message) = validate_contract_covers_request(
+                                    &first_envelope.aish_task_completion.contract,
+                                    eligibility,
+                                    &user_request,
+                                ) {
+                                    response = ClientResponse::error(
+                                        id.clone(),
+                                        ErrorCode::InvalidRequest,
+                                        message,
+                                    );
+                                } else if let Err(message) =
+                                    contract_gate.inspect_before_tools(&content, false)
+                                {
+                                    response = ClientResponse::error(
+                                        id.clone(),
+                                        ErrorCode::InvalidRequest,
+                                        message,
+                                    );
+                                } else {
+                                    let contract = first_envelope.aish_task_completion.contract;
+                                    let evaluation = first_envelope.aish_task_completion.evaluation;
+                                    if let Some(evaluation) = evaluation {
+                                        let mut evidence =
+                                            evidence_from_tools(&contract, &cumulative_calls);
+                                        evidence.extend(deliverable_evidence(
+                                            &contract,
+                                            &first_envelope.deliverable,
+                                            evidence.len() + 1,
+                                        ));
+                                        match build_report(&contract, &evidence, &evaluation, 1, false) {
                                         Ok(report) => attach_completion_report(
                                             &mut response,
                                             first_envelope.deliverable,
@@ -533,17 +534,16 @@ impl RequestService {
                                             );
                                         }
                                     }
-                                } else {
-                                    response = ClientResponse::error(
-                                        id.clone(),
-                                        ErrorCode::InvalidRequest,
-                                        "task completion final envelope lacks evaluation",
-                                    );
+                                    } else {
+                                        response = ClientResponse::error(
+                                            id.clone(),
+                                            ErrorCode::InvalidRequest,
+                                            "task completion final envelope lacks evaluation",
+                                        );
+                                    }
                                 }
                             }
-                        }
-                        (Ok(None), Ok(None)) => {
-                            if matches!(eligibility, TaskCompletionEligibility::Active { .. }) {
+                            (Ok(None), Ok(None)) => {
                                 response = ClientResponse::error(
                                     id.clone(),
                                     ErrorCode::InvalidRequest,
