@@ -230,7 +230,7 @@
 ## Task Completion Evidence（0068）
 
 - assistant control envelope は untrusted provider output として unknown field、Contract 完全性、重複/欠落 criterion、Evidence 参照、矛盾終端を検査する。tool 実行開始後に初めて Contract が現れた場合は拒否し、不正 envelope の後に副作用を実行しない。
-- assistant の「完了」「検証済み」という自己申告、tool call 要求、write-like / shell tool の成功だけを verified Evidence にしない。effect 後の read-only observation または verification を要求する。
-- Evidence summary と fingerprint に raw tool output、arguments、command、path、file content、環境変数値を複製しない。summary / next objective / deliverable 表示は bounded とし、fingerprint は Evidence ID、source、順序属性、verified flag の canonical metadataだけを使う。
-- provider の streaming delta は envelope 検査まで request-local buffer に留め、control JSON を stdout / stderr へ表示しない。最終 report は sanitized summary と verified 状態だけを表示し、raw output は既存 `tool_calls` の明示 verbose 契約を越えて複製しない。
+- assistant の「完了」「検証済み」という自己申告、tool call 要求、write-like / arbitrary `shell_exec` の成功だけを verified Evidence にしない。Contract 指定の verifier は server 固定の `read_file` / `list_dir` / `grep` / `git_status` / `git_diff` との積集合に制限し、effect 後の trusted read-only observation または verification を要求する。
+- Evidence の matching target は raw 値ではなく `target:sha256:<digest>` とする。表示 summary と fingerprint に raw tool output、arguments、command、path、file content、環境変数値を複製しない。summary / next objective / deliverable 表示は bounded とし、fingerprint は Evidence ID、source、順序属性、verified flag の canonical metadataだけを使う。
+- Active request の provider streaming delta は envelope 検査まで request-local buffer に留め、control JSON を stdout / stderr へ表示しない。fail-closed error 時は buffered assistant content を破棄する。Inactive request は従来の逐次 streaming を維持する。最終 report は sanitized summary と verified 状態だけを表示し、raw output は既存 `tool_calls` の明示 verbose 契約を越えて複製しない。
 - Task Contract / Evidence ledger / evaluation history は request-local memory だけに保持する。永続 store、resume、cross-command correlation は Phase 1 の保証外である。

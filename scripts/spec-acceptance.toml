@@ -16,9 +16,9 @@ pending = false
 [[cases]]
 spec = "0068"
 phase = 1
-id = "task_contract_is_stable_and_complete"
-description = "初回tool実行前に完全なContractを固定し後続のcriterion集合変更を拒否する"
-test = "task_contract_is_stable_and_complete"
+id = "task_contract_is_stable_and_structurally_complete"
+description = "元要求とexpected_kindをtool前に検査し、構造完全なContractを固定して後続のcriterion集合変更を拒否する（意味的網羅は保証外）"
+test = "task_contract_is_stable_and_structurally_complete"
 file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
 pending = false
 

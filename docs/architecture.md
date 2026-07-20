@@ -142,7 +142,7 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
 
 `assistant_streaming`: 任意のデルタ通知。aibe の LLM プロバイダが streaming を返せる場合はそのデルタをそのまま流し、非対応プロバイダは synthetic 1 回のデルタを返す。`ai` は human 向け（`--format` 未指定かつ filter 無効）のときだけ delta を stdout に逐次表示する。`--format json|tsv|env` 時は delta を stdout に出さず、最終 `AgentTurnResult` を structured 形式で 1 回だけ出す（0033）。`AI_FILTER` / `[ask].filter` 有効時も同様に delta を stdout に出さず、turn 終了時に全文へ 1 回だけ filter を適用する（0048）。`streamed` は「chunk を stdout に実際に表示したか」の内部フラグであり、`progress` / `timeout` とは独立する。
 
-Task Completion の provider delta は request-local buffer に保持し、control envelope の decode と検査が終わるまで client へ流さない。Completion 成功時は `deliverable` だけを streaming / final 表示へ渡し、legacy 応答では保持した delta を従来どおり渡す。
+Task Completion Active request の provider delta だけを request-local buffer に保持し、control envelope の decode と検査が終わるまで client へ流さない。Completion 成功時は `deliverable` だけを streaming / final 表示へ渡し、fail-closed error 時は buffered assistant content を破棄する。Inactive request は buffer を介さず従来どおり逐次 delta を直接渡す。
 
 ### smart entry と `route_turn`
 
@@ -593,13 +593,13 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 
 通常の `agent_turn` では `RequestService` が既存 Query Loop の外側に request-local Task Completion Loop を置く。query budget はコード固定の 2 で、設定・環境変数はない。1 query は既存 `AgentTurnService` を1回開始する単位であり、Query Loop 内の provider/tool round 上限 `[tools] max_rounds` とは別である。既存 Query Loop、approval、timeout、cancel、Human Task、provider adapter は置換しない。
 
-適用は request 開始時の `classify_task_completion_eligibility` で決める。allowlist に `write_file` / `apply_patch` / `shell_exec` がある場合だけ Active（`ContractGate::strict()` + Task Completion system instruction）。それ以外は Inactive（permissive gate、instruction なし、Contract なしの通常応答）。Active で Contract なし終了は fail-closed。Human Task の中断は `AgentTurnStatus::Suspended`（typed）で TC 評価をスキップする。
+適用は request 開始時の `classify_task_completion_eligibility` で決める。allowlist に `write_file` / `apply_patch` / `shell_exec` がある場合だけ Active（元要求と eligibility を保持する strict `ContractGate` + Task Completion system instruction）。それ以外は Inactive（permissive gate、instruction なし、Contract なしの通常応答）。Active で Contract なし終了は fail-closed。Human Task の中断は `AgentTurnStatus::Suspended`（typed）で TC 評価をスキップする。
 
-各 Active assistant は JSON control envelope に `TaskContract`（`task_kind` / goal / stable criteria / `observes_targets` / constraints / deliverables / verification / `verification_tools`）を載せる。`ContractGate` は最初の tool 実行前に schema と criterion ID を検査して一度だけ固定し、tool 開始後の初出、後続の追加・削除・ID変更を fail-closed で拒否する。`validate_contract_covers_request` は eligibility と `task_kind` の対応を検査する（Plan-only で Execution 要求を満たしたことにしない）。英語キーワード検索は使わない。
+各 Active assistant は JSON control envelope に `TaskContract`（`task_kind` / goal / stable criteria / `observes_targets` / constraints / deliverables / verification / `verification_tools`）を載せる。`ContractGate` は同じ assistant step の最初の tool 実行前に schema、criterion ID、元要求の非空、eligibility の `expected_kind` との厳密一致を検査して一度だけ固定し、tool 開始後の初出、後続の追加・削除・ID変更を fail-closed で拒否する。Active Execution は Plan / Investigation Contract へ downgrade できない。Phase 1 は goal / criteria の自然言語上の意味的網羅をコード保証せず、Contract coverage は構造完全性に限定する。英語キーワード検索は使わない。
 
-`EvidenceRecord` は tool 実行順から request-local に生成し、bounded `target` を持つ。write-like 成功は effect の事実に留まり `verified=false`。同 target への後続 write は以前の observation/verification を `stale` にする。Execution では matching target の post-observation または `verification_tools` に含まれる検証コマンドだけが verified になり得る。Investigation では副作用なしの read-only 成功も Observation として verified になり得る。assistant の完了自己申告は Evidence にしない。計画文書そのものが Contract の deliverable である Plan criterion だけは bounded deliverable Evidence を許す。
+`EvidenceRecord` は tool 実行順から request-local に生成し、matching 専用 `target:sha256:<digest>` を持つ。raw path / command / args は target と表示 summary に入れない。write-like と arbitrary `shell_exec` の成功は effect / 候補 Evidence に留まり `verified=false`。Contract の `verification_tools` はそのまま信頼せず、server 固定の専用 read-only tools（`read_file` / `list_dir` / `grep` / `git_status` / `git_diff`）との積集合だけを trusted verifier とする。同 target への後続 write は以前の observation/verification を `stale` にする。Execution では matching target の post-observationかつ trusted verifier だけが verified になり得る。Investigation でも trusted read-only 成功だけが Observation として verified になり得る。assistant の完了自己申告は Evidence にしない。計画文書そのものが Contract の deliverable である Plan criterion だけは bounded deliverable Evidence を許す。
 
-未達で継続可能な場合、2回目は元要求を再送せず、固定 Contract、satisfied/unsatisfied、required Evidence、既存 Evidence（criterion / source / target / verified / stale）、単一 `next_objective` から構築する。終端順は全 criterion verified の `Done`、具体的なユーザー操作が必要な `NeedsUser`、解消不能または stall の `Blocked`、それ以外で2 query 到達の `BudgetExhausted`。Pack Composition は適用せず core application/domain 境界に置く。`ai` は一 request の送信と report 表示だけ、`aish` は変更なしである。
+未達で継続可能な場合、2回目は元要求を再送せず、固定 Contract、satisfied/unsatisfied、required Evidence、既存 Evidence（criterion / source / verified / stale。matching 用 target は非表示）、単一 `next_objective` から構築する。終端順は全 criterion verified の `Done`、具体的なユーザー操作が必要な `NeedsUser`、解消不能または stall の `Blocked`、それ以外で2 query 到達の `BudgetExhausted`。Pack Composition は適用せず core application/domain 境界に置く。`ai` は一 request の送信と report 表示だけ、`aish` は変更なしである。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
 

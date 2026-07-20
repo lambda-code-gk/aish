@@ -5,8 +5,8 @@ use aibe::application::task_completion::{
     build_continuation, build_report, deliverable_evidence, evidence_from_tools,
 };
 use aibe::domain::{
-    classify_task_completion_eligibility, progress_snapshot, terminal_outcome,
-    validate_contract_covers_request, validate_evaluation, CompletionCriterion,
+    bound_evidence_target, classify_task_completion_eligibility, progress_snapshot,
+    terminal_outcome, validate_contract_covers_request, validate_evaluation, CompletionCriterion,
     CompletionEvaluation, CompletionOutcome, CriterionEvaluation, CriterionStatus, EvidenceRecord,
     EvidenceSource, TaskCompletionEligibility, TaskContract, TaskKind, STALL_TERMINAL_REASON,
     TASK_COMPLETION_QUERY_BUDGET,
@@ -63,11 +63,11 @@ fn envelope(contract: &TaskContract, evaluation: Option<&CompletionEvaluation>) 
 }
 
 #[test]
-fn task_contract_is_stable_and_complete() {
+fn task_contract_is_stable_and_structurally_complete() {
     let eligibility = TaskCompletionEligibility::Active {
         expected_kind: TaskKind::Execution,
     };
-    let gate = ContractGate::strict();
+    let gate = ContractGate::strict(eligibility, "please change artifact.txt and verify");
     let fixed = contract();
     validate_contract_covers_request(&fixed, eligibility, "please change artifact.txt and verify")
         .expect("covers request");
@@ -83,7 +83,7 @@ fn task_contract_is_stable_and_complete() {
         .unwrap_err()
         .contains("changed"));
 
-    let missing_gate = ContractGate::strict();
+    let missing_gate = ContractGate::strict(eligibility, "please change artifact.txt and verify");
     assert!(missing_gate
         .inspect_before_tools("tool request without a contract", true)
         .unwrap_err()
@@ -114,7 +114,26 @@ fn task_contract_is_stable_and_complete() {
         "please change artifact.txt and verify"
     )
     .unwrap_err()
-    .contains("plan-only"));
+    .contains("requires task_kind=Execution"));
+    let wrong_kind_gate =
+        ContractGate::strict(eligibility, "please change artifact.txt and verify");
+    assert!(wrong_kind_gate
+        .inspect_before_tools(&envelope(&plan, None), true)
+        .unwrap_err()
+        .contains("requires task_kind=Execution"));
+    assert_eq!(wrong_kind_gate.fixed_contract().expect("gate"), None);
+
+    let investigation = TaskContract {
+        task_kind: TaskKind::Investigation,
+        ..contract()
+    };
+    assert!(validate_contract_covers_request(
+        &investigation,
+        eligibility,
+        "please change artifact.txt and verify"
+    )
+    .unwrap_err()
+    .contains("requires task_kind=Execution"));
 
     assert!(matches!(
         classify_task_completion_eligibility(&["read_file"]),
@@ -188,7 +207,8 @@ fn side_effect_requires_post_observation() {
     );
     assert!(evidence[1].verified);
     assert!(evidence[1].observed_after_effect);
-    assert_eq!(evidence[1].target.as_deref(), Some("artifact.txt"));
+    assert_eq!(evidence[1].target, bound_evidence_target("artifact.txt"));
+    assert!(!evidence[1].summary.contains("artifact.txt"));
     assert!(validate_evaluation(
         &contract(),
         &evidence,
@@ -351,7 +371,7 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
         criterion_ids: vec!["c1".into()],
         source: EvidenceSource::Tool,
         observed_after_effect: false,
-        summary: "apply_patch status=Ok target=artifact.txt".into(),
+        summary: "apply_patch status=Ok".into(),
         verified: false,
         target: Some("artifact.txt".into()),
         stale: false,
@@ -368,7 +388,7 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
     assert!(continuation.contains("Fixed contract:"));
     assert!(continuation.contains("Existing evidence:"));
     assert!(continuation.contains("criteria=[c1]"));
-    assert!(continuation.contains("target=artifact.txt"));
+    assert!(!continuation.contains("target=artifact.txt"));
 
     let plan_contract = TaskContract {
         goal: "produce a plan".into(),
@@ -496,7 +516,7 @@ fn progress_and_stall_are_bounded() {
 }
 
 #[test]
-fn shell_verification_can_be_verified_without_prior_write() {
+fn shell_verification_is_never_trusted_from_contract() {
     use aibe_protocol::SHELL_EXEC;
     let c = TaskContract {
         goal: "run check".into(),
@@ -524,8 +544,15 @@ fn shell_verification_can_be_verified_without_prior_write() {
         false,
     )];
     let evidence = evidence_from_tools(&c, &calls);
-    assert_eq!(evidence[0].source, EvidenceSource::Verification);
-    assert!(evidence[0].verified, "{:?}", evidence[0]);
+    assert!(c.effective_verification_tools().is_empty());
+    assert_eq!(evidence[0].source, EvidenceSource::Tool);
+    assert!(!evidence[0].verified, "{:?}", evidence[0]);
+    assert!(!evidence[0].summary.contains("echo"));
+    assert!(!evidence[0].summary.contains("hi"));
+    assert!(evidence[0]
+        .target
+        .as_deref()
+        .is_some_and(|target| target.starts_with("target:sha256:")));
     assert!(validate_evaluation(
         &c,
         &evidence,
@@ -542,5 +569,5 @@ fn shell_verification_can_be_verified_without_prior_write() {
             failure: None,
         },
     )
-    .is_ok());
+    .is_err());
 }

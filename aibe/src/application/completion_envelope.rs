@@ -4,12 +4,14 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{CompletionEvaluation, TaskContract};
+use crate::domain::{
+    validate_contract_covers_request, CompletionEvaluation, TaskCompletionEligibility, TaskContract,
+};
 
 pub const TASK_COMPLETION_MARKER: &str = "aish_task_completion";
 
 /// テスト用の最小 Contract envelope（tool 前固定）。本番の完了判定バイパスには使わない。
-pub const MINIMAL_CONTRACT_BEFORE_TOOLS: &str = r#"{"aish_task_completion":{"contract":{"goal":"execute tools","task_kind":"execution","criteria":[{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file","shell_exec"]}},"deliverable":""}"#;
+pub const MINIMAL_CONTRACT_BEFORE_TOOLS: &str = r#"{"aish_task_completion":{"contract":{"goal":"execute tools","task_kind":"execution","criteria":[{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file"]}},"deliverable":""}"#;
 
 /// テスト用: 最小 Contract + Done evaluation。
 pub fn minimal_done_envelope(deliverable: &str, evidence_ids: &[&str]) -> String {
@@ -19,7 +21,7 @@ pub fn minimal_done_envelope(deliverable: &str, evidence_ids: &[&str]) -> String
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        r#"{{"aish_task_completion":{{"contract":{{"goal":"execute tools","task_kind":"execution","criteria":[{{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file","shell_exec"]}},"evaluation":{{"criteria":[{{"criterion_id":"c1","status":"satisfied","evidence_ids":[{ids}],"required_evidence":[]}}]}}}},"deliverable":{}}}"#,
+        r#"{{"aish_task_completion":{{"contract":{{"goal":"execute tools","task_kind":"execution","criteria":[{{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file"]}},"evaluation":{{"criteria":[{{"criterion_id":"c1","status":"satisfied","evidence_ids":[{ids}],"required_evidence":[]}}]}}}},"deliverable":{}}}"#,
         serde_json::to_string(deliverable).unwrap_or_else(|_| "\"ok\"".into())
     )
 }
@@ -27,7 +29,7 @@ pub fn minimal_done_envelope(deliverable: &str, evidence_ids: &[&str]) -> String
 /// テスト用: 最小 Contract + Blocked 終端（tool 成否に依存せず評価を閉じる）。
 pub fn minimal_blocked_envelope(deliverable: &str) -> String {
     format!(
-        r#"{{"aish_task_completion":{{"contract":{{"goal":"execute tools","task_kind":"execution","criteria":[{{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file","shell_exec"]}},"evaluation":{{"criteria":[{{"criterion_id":"c1","status":"unsatisfied","evidence_ids":[],"required_evidence":["fixture"]}}],"blocked":"test fixture closed"}}}},"deliverable":{}}}"#,
+        r#"{{"aish_task_completion":{{"contract":{{"goal":"execute tools","task_kind":"execution","criteria":[{{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file"]}},"evaluation":{{"criteria":[{{"criterion_id":"c1","status":"unsatisfied","evidence_ids":[],"required_evidence":["fixture"]}}],"blocked":"test fixture closed"}}}},"deliverable":{}}}"#,
         serde_json::to_string(deliverable).unwrap_or_else(|_| "\"ok\"".into())
     )
 }
@@ -79,6 +81,13 @@ pub fn decode_completion_envelope(content: &str) -> Result<Option<CompletionEnve
 pub struct ContractGate {
     state: Mutex<ContractGateState>,
     require_contract_before_tools: bool,
+    request_binding: Option<RequestBinding>,
+}
+
+#[derive(Debug)]
+struct RequestBinding {
+    eligibility: TaskCompletionEligibility,
+    user_request: String,
 }
 
 impl Default for ContractGate {
@@ -93,14 +102,19 @@ impl ContractGate {
         Self {
             state: Mutex::new(ContractGateState::default()),
             require_contract_before_tools: false,
+            request_binding: None,
         }
     }
 
     /// Task Completion 対象 turn: 最初の tool 前に Contract 必須。
-    pub fn strict() -> Self {
+    pub fn strict(eligibility: TaskCompletionEligibility, user_request: impl Into<String>) -> Self {
         Self {
             state: Mutex::new(ContractGateState::default()),
             require_contract_before_tools: true,
+            request_binding: Some(RequestBinding {
+                eligibility,
+                user_request: user_request.into(),
+            }),
         }
     }
 }
@@ -121,6 +135,13 @@ impl ContractGate {
         let mut state = self.state.lock().map_err(|error| error.to_string())?;
         if let Some(envelope) = envelope {
             let contract = envelope.aish_task_completion.contract;
+            if let Some(binding) = &self.request_binding {
+                validate_contract_covers_request(
+                    &contract,
+                    binding.eligibility,
+                    &binding.user_request,
+                )?;
+            }
             match state.fixed.as_ref() {
                 None if state.tool_execution_started => {
                     return Err("task contract appeared after tool execution started".into())

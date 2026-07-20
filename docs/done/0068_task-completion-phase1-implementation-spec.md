@@ -21,7 +21,7 @@
 - Query budget: 固定値 `2`（config / env を追加しない）
 - Locked AC IDs:
   - `task_completion_vertical_e2e`
-  - `task_contract_is_stable_and_complete`
+  - `task_contract_is_stable_and_structurally_complete`
   - `assistant_claim_is_not_verified_evidence`
   - `side_effect_requires_post_observation`
   - `completion_evaluator_is_structured_and_fail_closed`
@@ -36,7 +36,7 @@ Scope Lock 後の指摘は `BLOCKER_ORIGINAL_AC` / `REGRESSION` / `SAFETY_WITHIN
 
 | Phase | 内容 | 対応 AC | ゲート |
 |-------|------|---------|--------|
-| 1 | Domain invariant、assistant envelope、初回 tool 前 Contract gate、Evidence ledger、既存 Query Loop 2回直列再利用、gap-driven Done の最小縦断 | `task_completion_vertical_e2e`、`task_contract_is_stable_and_complete`、`side_effect_requires_post_observation`、`completion_evaluator_is_structured_and_fail_closed`、`continuation_is_gap_driven_and_detects_plan_only` | Vertical Slice AC を含む5件を実テストへ置換して緑にし、各 `pending=false` / `#[ignore]` 解除後のみ Phase 2へ進む |
+| 1 | Domain invariant、assistant envelope、初回 tool 前 Contract gate、Evidence ledger、既存 Query Loop 2回直列再利用、gap-driven Done の最小縦断 | `task_completion_vertical_e2e`、`task_contract_is_stable_and_structurally_complete`、`side_effect_requires_post_observation`、`completion_evaluator_is_structured_and_fail_closed`、`continuation_is_gap_driven_and_detects_plan_only` | Vertical Slice AC を含む5件を実テストへ置換して緑にし、各 `pending=false` / `#[ignore]` 解除後のみ Phase 2へ進む |
 | 2 | 自己申告排除、4終端、budget / stall、全終端report、sanitize、既存経路regression | `assistant_claim_is_not_verified_evidence`、`terminal_outcomes_are_distinct`、`progress_and_stall_are_bounded`、`final_report_lists_evidence_and_unverified_items` | 残る4件を緑にし、0068の pending を全解除する |
 | 3 | docs / protocol 正本同期、必要なsmoke、全体検証、完了処理 | 新規 AC は追加しない | `./scripts/verify.sh` 成功後のみ `docs/done/` へ移動する |
 
@@ -167,7 +167,7 @@ cargo test -p ai --test ask_integration -j 1 -- --test-threads=1
 | ID | Phase | テストファイル | 現在 | 解除条件 |
 |----|-------|----------------|------|----------|
 | `task_completion_vertical_e2e` | 1 | `aibe/tests/0068_task_completion_vertical_e2e.rs` | 実装済み / non-ignored | 本番compositionの一command E2Eが2 query、gap prompt、post-observation、Doneを検証 |
-| `task_contract_is_stable_and_complete` | 1 | `aibe/tests/0068_task_completion_phase1_red.rs` | 実装済み / non-ignored | 完全Contract、tool前固定、ID改変拒否、専用provider callなしを検証 |
+| `task_contract_is_stable_and_structurally_complete` | 1 | `aibe/tests/0068_task_completion_phase1_red.rs` | 実装済み / non-ignored | 構造完全Contract、Execution kind厳密一致、tool前固定、ID改変拒否、専用provider callなしを検証。自然言語上の意味的網羅は保証外 |
 | `side_effect_requires_post_observation` | 1 | 同上 | 実装済み / non-ignored | effectのみ未達、effect後read-only observationで充足を検証 |
 | `completion_evaluator_is_structured_and_fail_closed` | 1 | 同上 | 実装済み / non-ignored | invalid envelope表、機械判定優先、追加provider callなしを検証 |
 | `continuation_is_gap_driven_and_detects_plan_only` | 1 | 同上 | 実装済み / non-ignored | gap prompt、元要求非再送、plan deliverable対照例を検証 |

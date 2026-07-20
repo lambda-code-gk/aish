@@ -20,8 +20,8 @@ spec = "0068"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 4
-scope_change_reason = "PR #23 レビュー対応後、全9 AC pending=false で done"
+scope_revision = 5
+scope_change_reason = "PR #23 再レビュー: Contract coverage を構造完全性へ縮小し、tool前検査・trusted verifier・Active限定buffer・opaque Evidence targetを明確化"
 scope_review = "approved"
 
 core_outcome = "一つのaiコマンド内でLLM終了文ではなく完了条件ごとのEvidenceを根拠に未達gapを埋め達成または理由付き非達成まで既存Agent loopを継続する"
@@ -49,7 +49,7 @@ vertical_slice_ac_id = "task_completion_vertical_e2e"
 # 全9 AC は pending=false。実装完了後 status=done。
 locked_ac_ids = [
   "task_completion_vertical_e2e",
-  "task_contract_is_stable_and_complete",
+  "task_contract_is_stable_and_structurally_complete",
   "assistant_claim_is_not_verified_evidence",
   "side_effect_requires_post_observation",
   "completion_evaluator_is_structured_and_fail_closed",

@@ -341,26 +341,6 @@ impl RequestService {
                     active.insert(turn_id.clone(), Arc::clone(&effective_cancellation));
                 }
 
-                let contract_gate = Arc::new(match eligibility {
-                    TaskCompletionEligibility::Active { .. } => ContractGate::strict(),
-                    TaskCompletionEligibility::Inactive => ContractGate::permissive(),
-                });
-                let executor = ToolRoundExecutor::new(
-                    Arc::clone(llm),
-                    Arc::clone(&self.tool_registry),
-                    self.tools_config.clone(),
-                    Arc::clone(&self.llm_tracer),
-                )
-                .with_contract_gate(Arc::clone(&contract_gate));
-                let agent_turn = AgentTurnService::with_capability_policy(
-                    Arc::clone(llm),
-                    executor,
-                    Arc::clone(&self.terminator),
-                    termination_capability,
-                    Arc::clone(&self.capability_policy),
-                    Arc::clone(&self.turn_hook),
-                    Arc::clone(&self.llm_tracer),
-                );
                 let mut run_messages = messages.clone();
                 if let (Some(session_id), Some(conv_id)) = (&ai_session_id, &conversation_id) {
                     if let Ok(Some(snapshot)) =
@@ -384,16 +364,34 @@ impl RequestService {
                 // ConversationStore へ保存すると、継続 turn ごとに内部 prompt が履歴へ累積する。
                 let conversation_record_messages = run_messages.clone();
                 let user_request = last_user_request(&conversation_record_messages);
+                let contract_gate = Arc::new(match eligibility {
+                    TaskCompletionEligibility::Active { .. } => {
+                        ContractGate::strict(eligibility, user_request.clone())
+                    }
+                    TaskCompletionEligibility::Inactive => ContractGate::permissive(),
+                });
+                let executor = ToolRoundExecutor::new(
+                    Arc::clone(llm),
+                    Arc::clone(&self.tool_registry),
+                    self.tools_config.clone(),
+                    Arc::clone(&self.llm_tracer),
+                )
+                .with_contract_gate(Arc::clone(&contract_gate));
+                let agent_turn = AgentTurnService::with_capability_policy(
+                    Arc::clone(llm),
+                    executor,
+                    Arc::clone(&self.terminator),
+                    termination_capability,
+                    Arc::clone(&self.capability_policy),
+                    Arc::clone(&self.turn_hook),
+                    Arc::clone(&self.llm_tracer),
+                );
                 if let TaskCompletionEligibility::Active { expected_kind } = eligibility {
                     run_messages.insert(0, ChatMessage::system(system_instruction(expected_kind)));
                 }
 
-                let completion_event_buffer = events
-                    .as_ref()
-                    .map(|sink| CompletionEventBuffer::new(Arc::clone(sink)));
-                let buffered_events: Option<Arc<dyn TurnEventSink>> = completion_event_buffer
-                    .as_ref()
-                    .map(|buffer| Arc::clone(buffer) as Arc<dyn TurnEventSink>);
+                let (completion_event_buffer, buffered_events) =
+                    completion_event_sink(eligibility, events.clone());
 
                 let mut response = agent_turn
                     .run_with_client_tools_and_events(
@@ -745,6 +743,25 @@ fn last_user_request(messages: &[ChatMessage]) -> String {
         .unwrap_or_default()
 }
 
+fn completion_event_sink(
+    eligibility: TaskCompletionEligibility,
+    events: Option<Arc<dyn TurnEventSink>>,
+) -> (
+    Option<Arc<CompletionEventBuffer>>,
+    Option<Arc<dyn TurnEventSink>>,
+) {
+    match eligibility {
+        TaskCompletionEligibility::Active { .. } => {
+            let buffer = events.map(CompletionEventBuffer::new);
+            let sink = buffer
+                .as_ref()
+                .map(|buffer| Arc::clone(buffer) as Arc<dyn TurnEventSink>);
+            (buffer, sink)
+        }
+        TaskCompletionEligibility::Inactive => (None, events),
+    }
+}
+
 fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientCwdError> {
     match context.cwd.as_deref() {
         Some(raw) => ClientCwd::parse(raw).map(|_| ()),
@@ -823,7 +840,69 @@ impl ClientRequestHandler for RequestService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::TaskKind;
     use aibe_protocol::{ClientProvidedToolSpec, ToolRiskClass};
+
+    #[derive(Default)]
+    struct RecordingSink {
+        deltas: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TurnEventSink for RecordingSink {
+        async fn progress(
+            &self,
+            _id: &str,
+            _phase: aibe_protocol::ProgressPhase,
+            _message: Option<String>,
+        ) {
+        }
+
+        async fn assistant_streaming(&self, _id: &str, delta: String) {
+            self.deltas.lock().expect("lock").push(delta);
+        }
+
+        async fn final_response(&self, _id: &str) {}
+    }
+
+    #[tokio::test]
+    async fn completion_streaming_buffer_is_active_only() {
+        let inactive_sink = Arc::new(RecordingSink::default());
+        let (buffer, selected) = completion_event_sink(
+            TaskCompletionEligibility::Inactive,
+            Some(Arc::clone(&inactive_sink) as Arc<dyn TurnEventSink>),
+        );
+        assert!(buffer.is_none());
+        selected
+            .expect("inactive direct sink")
+            .assistant_streaming("turn", "direct".into())
+            .await;
+        assert_eq!(
+            inactive_sink.deltas.lock().expect("lock").as_slice(),
+            &["direct"]
+        );
+
+        let active_sink = Arc::new(RecordingSink::default());
+        let (buffer, selected) = completion_event_sink(
+            TaskCompletionEligibility::Active {
+                expected_kind: TaskKind::Execution,
+            },
+            Some(Arc::clone(&active_sink) as Arc<dyn TurnEventSink>),
+        );
+        let buffer = buffer.expect("active buffer");
+        selected
+            .expect("active buffered sink")
+            .assistant_streaming("turn", "buffered".into())
+            .await;
+        assert!(active_sink.deltas.lock().expect("lock").is_empty());
+        buffer
+            .flush_for_response(
+                "turn",
+                &ClientResponse::error("turn".into(), ErrorCode::InvalidRequest, "fail closed"),
+            )
+            .await;
+        assert!(active_sink.deltas.lock().expect("lock").is_empty());
+    }
 
     #[test]
     fn validate_client_tools_accepts_read_only_aish_namespace() {

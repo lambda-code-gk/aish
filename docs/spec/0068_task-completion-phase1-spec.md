@@ -136,9 +136,9 @@ Issue #18 の方針どおり、単純な質問・説明依頼は通常の1 turn 
 
 | 判定 | 主体 | 時点 | 結果 |
 |------|------|------|------|
-| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | `ContractGate::strict()` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
+| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | 元要求と eligibility を渡した strict `ContractGate` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
 | Task Completion **対象外** | 同上 | allowlist に上記 effect tool がない | `ContractGate::permissive()`。system instruction を挿入しない。Contract なしの通常 `AgentTurnStatus::Ok` を通す |
-| Contract 出現後の評価 | request 終端検査 | assistant envelope に Contract がある | `task_kind` と eligibility の対応、evaluation 必須、criterion 集合不変を検査する |
+| Contract の固定前検査 | `ContractGate` | assistant envelope を受け、同じ step の tool を実行する前 | schema、criterion 集合、元要求の非空、eligibility の `expected_kind` との厳密一致を検査する。Active Execution で Plan / Investigation へ downgrade しない |
 | Human Task suspend | `AgentTurnStatus::Suspended` | Human Task が Suspended で turn 終了 | 本文 prefix ではなく typed status で TC 評価をスキップする |
 | plan-only **迂回禁止** | domain `task_kind` | Contract 固定時 | `TaskKind::Plan` と execution criteria の混在を拒否する。英語キーワード検索は使わない |
 
@@ -149,7 +149,7 @@ Issue #18 の方針どおり、単純な質問・説明依頼は通常の1 turn 
 | ID | 条件 |
 |----|------|
 | `task_completion_vertical_e2e` | deterministic mock provider / tools を使う一つの `ai` command の縦断試験で、初回 query の副作用後に criterion が未達となり、同一質問ではなく `next_objective` と不足 Evidence を含む2回目 query が再観測を行い、全 criterion の verified Evidence を伴う Done を返す |
-| `task_contract_is_stable_and_complete` | Goal / Completion Criteria（安定 ID）/ Constraints / Deliverables / Verification を持つ Contract が初回 Query Loop の最初の assistant envelope で最初の tool 実行前に生成・固定され、後続 envelope で criterion の追加・削除・ID 変更を拒否する。Contract 生成専用の Query Loop / provider 呼び出しは発生しない |
+| `task_contract_is_stable_and_structurally_complete` | Goal / Completion Criteria（安定 ID）/ Constraints / Deliverables / Verification を持つ Contract が初回 Query Loop の最初の assistant envelope で最初の tool 実行前に生成され、元要求の非空と `expected_kind` との厳密一致を検査して固定される。後続 envelope で criterion の追加・削除・ID 変更を拒否する。Phase 1 は goal / criteria が自然言語上元要求を意味的に網羅することは保証せず、unrelated / narrowed 内容の意味判定を AC に含めない。Contract 生成専用の Query Loop / provider 呼び出しは発生しない |
 | `assistant_claim_is_not_verified_evidence` | tool result のない assistant 終了文、完了自己申告、tool 未実行の計画を入力しても Evidence は `verified=false` のままで Done にならない |
 | `side_effect_requires_post_observation` | 変更系 tool の成功だけでは対応 criterion を satisfied にせず、その副作用より後の read-only 観測または verification result を参照した場合だけ verified Evidence として満たせる |
 | `completion_evaluator_is_structured_and_fail_closed` | 各 Query Loop の最終 assistant envelope が criterion ごとの `satisfied` / `unsatisfied`、`required_evidence`、`next_objective`、Evidence 参照を返し、未知 ID、欠落 ID、存在しない Evidence 参照、矛盾する終端をコードが拒否する。評価専用の Query Loop / provider 呼び出しを開始せず、機械判定可能な query 上限、集合整合、tool status は LLM 判定で上書きできない |
@@ -175,7 +175,7 @@ Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（tool / observ
 | AC | 主なテストレベル | 観測可能な判定点 |
 |----|------------------|------------------|
 | `task_completion_vertical_e2e` | mock socket / provider / tool の command E2E | query 数、2回目 prompt、tool 順序、Done、Evidence |
-| `task_contract_is_stable_and_complete` | domain / application 単体 | field、ID集合、Contract 固定と最初の tool 実行の順序、provider 呼び出し回数、改変拒否 |
+| `task_contract_is_stable_and_structurally_complete` | domain / application 単体 | field、ID集合、Execution kind 厳密一致、Plan / Investigation の negative case、Contract 固定と最初の tool 実行の順序、provider 呼び出し回数、改変拒否 |
 | `assistant_claim_is_not_verified_evidence` | Evaluator 境界単体 | verified=false、非Done |
 | `side_effect_requires_post_observation` | application 統合 | effect / observation の順序、criterion 状態 |
 | `completion_evaluator_is_structured_and_fail_closed` | schema / domain table test | invalid output の各拒否理由、機械判定優先 |
@@ -203,6 +203,7 @@ Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（tool / observ
 | 2 | BLOCKER_ORIGINAL_AC / NEW_REQUIREMENT 除外 | Contract 固定を初回 tool 実行前へ明確化し、Evaluator を各 Query Loop の assistant envelope に限定。query budget は固定値 2 とし公開設定を Deferred へ移動 | Contract より先に副作用が起きる曖昧さと、評価専用呼び出し・設定追加が hidden scope になる余地をなくすため |
 | 3 | BLOCKER_ORIGINAL_AC | Task Completion 適用境界（対象判定・対象外の通過・evaluation 必須・plan-only 迂回禁止）を §8.1 として固定 | docs-only PR レビュー指摘: 全 turn 共通 core と読める曖昧さを解消するため |
 | 4 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | eligibility を request 開始時に固定、`task_kind` 構造化、Evidence target/stale/Verification、`AgentTurnStatus::Suspended`、Contract↔要求対応検査 | PR #23 レビュー: 全 turn 強制・英語キーワード依存・read-only/検証未達・Evidence 対応不足 |
+| 5 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | coverage AC を構造完全性へ明示縮小。ContractGate の tool 前 request 検査、server trusted verifier との積集合、Active 限定 streaming buffer、opaque target と sanitized summary を固定 | PR #23 再レビュー 4734475755 の5 blocker。自然言語の意味的網羅や arbitrary shell の信頼を Phase 1 の保証に含めないため |
 
 ## 12. `docs/architecture.md` への影響
 

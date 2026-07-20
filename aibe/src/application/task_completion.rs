@@ -32,7 +32,8 @@ optional aish_task_completion.evaluation (criteria with criterion_id/status/evid
 Fix the contract before requesting the first tool. Every later envelope must repeat it unchanged. \
 Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order. \
 Write-like success is not verified until a later matching observation or verification tool on the same target. \
-Investigation read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
+Only server-trusted dedicated read-only tools may verify; shell_exec never verifies. \
+Investigation trusted read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
     )
 }
 
@@ -98,12 +99,7 @@ pub fn append_evidence_from_tools(
             criterion_ids,
             source,
             observed_after_effect,
-            summary: bounded(&format!(
-                "{} status={:?} target={}",
-                call.name,
-                call.status,
-                target.as_deref().unwrap_or("-")
-            )),
+            summary: bounded(&format!("{} status={:?}", call.name, call.status)),
             verified,
             target,
             stale: false,
@@ -130,22 +126,6 @@ fn classify_evidence(
         return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
     }
 
-    if shell && verification_tool && ok {
-        let after_effect = has_prior_effect(ledger, target);
-        let criterion_ids = if after_effect {
-            matching_criterion_ids(contract, ledger, execution_ids, target, true, true)
-        } else {
-            // 副作用のない検証コマンド（テスト実行など）は単独で Verification になる。
-            execution_ids.to_vec()
-        };
-        return (
-            EvidenceSource::Verification,
-            after_effect,
-            criterion_ids.clone(),
-            !criterion_ids.is_empty(),
-        );
-    }
-
     if read_only && ok {
         match contract.task_kind {
             TaskKind::Investigation => {
@@ -155,7 +135,7 @@ fn classify_evidence(
                     EvidenceSource::Observation,
                     false,
                     criterion_ids.clone(),
-                    !criterion_ids.is_empty() || execution_ids.len() == 1,
+                    verification_tool && (!criterion_ids.is_empty() || execution_ids.len() == 1),
                 );
             }
             TaskKind::Execution => {
@@ -237,7 +217,8 @@ fn matching_criterion_ids(
                 criterion
                     .observes_targets
                     .iter()
-                    .any(|expected| expected == value || value.ends_with(expected.as_str()))
+                    .filter_map(|expected| bound_evidence_target(expected))
+                    .any(|expected| expected == value)
             })
         })
         .cloned()
@@ -355,13 +336,12 @@ pub fn build_continuation(
         .iter()
         .map(|record| {
             format!(
-                "- {} criteria=[{}] source={:?} verified={} stale={} target={}: {}",
+                "- {} criteria=[{}] source={:?} verified={} stale={}: {}",
                 record.evidence_id,
                 record.criterion_ids.join(","),
                 record.source,
                 record.verified,
                 record.stale,
-                record.target.as_deref().unwrap_or("-"),
                 bounded(&record.summary)
             )
         })
@@ -503,7 +483,10 @@ impl CompletionEventBuffer {
                         .await;
                 }
             }
-            _ => {
+            aibe_protocol::ClientResponse::AgentTurnResult {
+                status: aibe_protocol::AgentTurnStatus::Suspended,
+                ..
+            } => {
                 let mut deltas = self.deltas.lock().await;
                 let contains_control = deltas
                     .join("")
@@ -514,6 +497,11 @@ impl CompletionEventBuffer {
                     }
                 }
                 deltas.clear();
+            }
+            _ => {
+                // Active request の fail-closed 応答では、検査前に生成された assistant
+                // 本文を表示経路へ流さない。
+                self.deltas.lock().await.clear();
             }
         }
         self.inner.final_response(id).await;

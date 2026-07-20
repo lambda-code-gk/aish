@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::sha256_hex;
+
 pub const TASK_COMPLETION_QUERY_BUDGET: u8 = 2;
 pub const STALL_TERMINAL_REASON: &str = "no progress between queries";
 pub const CONTRACT_TEXT_MAX_BYTES: usize = 8 * 1024;
@@ -11,7 +13,8 @@ pub const CONTRACT_MAX_CRITERIA: usize = 32;
 pub const CONTRACT_MAX_LIST_ITEMS: usize = 32;
 pub const EVALUATION_MAX_EVIDENCE_IDS: usize = 64;
 pub const EVALUATION_MAX_REQUIRED_EVIDENCE: usize = 32;
-pub const EVIDENCE_TARGET_MAX_BYTES: usize = 256;
+const TRUSTED_VERIFICATION_TOOLS: &[&str] =
+    &["read_file", "list_dir", "grep", "git_status", "git_diff"];
 
 /// Contract 全体の作業種別。英語キーワードではなく構造化フィールドで安全境界を表す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -82,7 +85,7 @@ pub struct EvidenceRecord {
     pub summary: String,
     #[serde(default)]
     pub verified: bool,
-    /// path / command digest 等の bounded target。
+    /// matching 専用の opaque path / command digest。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     /// 後続の同 target 副作用で無効化された観測。
@@ -192,21 +195,25 @@ impl TaskContract {
     }
 
     pub fn effective_verification_tools(&self) -> Vec<String> {
-        if !self.verification_tools.is_empty() {
-            return self.verification_tools.clone();
-        }
-        match self.task_kind {
-            TaskKind::Plan => Vec::new(),
-            TaskKind::Investigation => vec![
-                "read_file".into(),
-                "list_dir".into(),
-                "grep".into(),
-                "git_status".into(),
-                "git_diff".into(),
-                "shell_exec".into(),
-            ],
-            TaskKind::Execution => vec!["read_file".into(), "git_diff".into(), "shell_exec".into()],
-        }
+        let requested = if !self.verification_tools.is_empty() {
+            self.verification_tools.clone()
+        } else {
+            match self.task_kind {
+                TaskKind::Plan => Vec::new(),
+                TaskKind::Investigation => vec![
+                    "read_file".into(),
+                    "list_dir".into(),
+                    "grep".into(),
+                    "git_status".into(),
+                    "git_diff".into(),
+                ],
+                TaskKind::Execution => vec!["read_file".into(), "git_diff".into()],
+            }
+        };
+        requested
+            .into_iter()
+            .filter(|name| TRUSTED_VERIFICATION_TOOLS.contains(&name.as_str()))
+            .collect()
     }
 }
 
@@ -270,7 +277,10 @@ pub fn classify_task_completion_eligibility(
     }
 }
 
-/// 元要求に対する Contract の対応検査（構造化 task_kind と goal の非空を下限とする）。
+/// 元要求に対する Contract の構造対応検査。
+///
+/// Phase 1 は自然言語上の意味的網羅を保証しない。Active Execution で task_kind を
+/// 厳密に一致させ、schema 上の必須 field が揃うことだけを fail-closed に保証する。
 pub fn validate_contract_covers_request(
     contract: &TaskContract,
     eligibility: TaskCompletionEligibility,
@@ -284,15 +294,11 @@ pub fn validate_contract_covers_request(
     match eligibility {
         TaskCompletionEligibility::Inactive => Ok(()),
         TaskCompletionEligibility::Active { expected_kind } => {
-            if contract.task_kind == TaskKind::Plan && expected_kind == TaskKind::Execution {
-                return Err(
-                    "execution-eligible request cannot use a plan-only task contract".into(),
-                );
-            }
-            if expected_kind == TaskKind::Execution && contract.task_kind == TaskKind::Investigation
-            {
-                // Investigation Contract は effect tool allowlist 上でも許容するが、
-                // write/shell 成功を verified にしない（Evidence 側で担保）。
+            if contract.task_kind != expected_kind {
+                return Err(format!(
+                    "active request requires task_kind={expected_kind:?}, got {:?}",
+                    contract.task_kind
+                ));
             }
             if contract.goal.trim().len() < 3 {
                 return Err("contract goal is too short to cover the user request".into());
@@ -525,5 +531,6 @@ pub fn bound_evidence_target(raw: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    Some(trimmed.chars().take(EVIDENCE_TARGET_MAX_BYTES).collect())
+    let digest = sha256_hex(trimmed.as_bytes());
+    Some(format!("target:sha256:{digest}"))
 }
