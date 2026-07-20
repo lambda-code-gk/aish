@@ -112,6 +112,7 @@ fn run_approval_flow(stream: std::os::unix::net::UnixStream, expect_approved: bo
             },
         },
         tool_calls: vec![],
+        completion_report: None,
     };
     writeln!(
         writer,

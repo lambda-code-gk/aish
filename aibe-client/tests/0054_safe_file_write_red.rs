@@ -118,6 +118,7 @@ fn run_mock_server(mut server: UnixStream) {
             content: "done".into(),
         },
         tool_calls: vec![],
+        completion_report: None,
     };
     writeln!(
         server,

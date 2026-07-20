@@ -127,6 +127,7 @@ impl NormalShellExecMock {
                     content: "echo ok".into(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             };
             writeln!(writer, "{}", serde_json::to_string(&result).expect("json")).expect("write");
         });

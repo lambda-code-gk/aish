@@ -144,6 +144,7 @@ fn history_retry_and_rerun_use_their_expected_sources() {
             content: "ok".to_string(),
         },
         tool_calls: vec![],
+        completion_report: None,
     });
 
     let home = tempfile::tempdir().expect("home");

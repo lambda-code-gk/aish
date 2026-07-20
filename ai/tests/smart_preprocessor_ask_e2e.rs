@@ -116,6 +116,7 @@ impl MockSocketServer {
                                 content: "preprocessor ok".into(),
                             },
                             tool_calls: vec![],
+                            completion_report: None,
                         }
                     }
                     other => panic!("unexpected request: {other:?}"),

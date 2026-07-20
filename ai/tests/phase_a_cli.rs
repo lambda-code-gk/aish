@@ -47,6 +47,7 @@ impl MockSocketServer {
                         content: assistant.to_string(),
                     },
                     tool_calls: vec![],
+                    completion_report: None,
                 }
             }
             other => panic!("unexpected request: {other:?}"),
@@ -143,6 +144,7 @@ impl MockSocketServer {
                         content: final_content.to_string(),
                     },
                     tool_calls: vec![],
+                    completion_report: None,
                 });
                 responses
             }
@@ -462,6 +464,7 @@ fn non_tty_ask_skips_route_turn_and_injects_ai_session_id() {
                     content: "assistant says hi".to_string(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             }
         }
         other => panic!("unexpected request: {other:?}"),
@@ -574,6 +577,7 @@ fn no_console_hint_skips_system_instruction_on_agent_turn() {
                     content: "ok".to_string(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             }
         }
         other => panic!("unexpected request: {other:?}"),
@@ -649,6 +653,7 @@ fn agent_turn_sends_memory_space_id_from_env_context() {
                     content: "ok".to_string(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             }
         }
         other => panic!("unexpected request: {other:?}"),

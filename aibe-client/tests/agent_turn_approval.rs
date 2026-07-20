@@ -79,6 +79,7 @@ fn run_mock_server(mut server: UnixStream, expect_approved: bool) {
             },
         },
         tool_calls: vec![],
+        completion_report: None,
     };
     let payload = serde_json::to_string(&final_resp).expect("serialize final");
     writeln!(server, "{payload}").expect("write final");
