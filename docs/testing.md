@@ -97,6 +97,10 @@ OOM を避けるため、**既定は直列**とする。
 
 同ファイルの non-PTY shell 統合は PATH 上の deterministic stub `ai` が stdin を read し、成功・空・非 0 の全経路で EOF となることと buffer の更新 / 非破壊を確認する。0067 の Human Shell AC は `ai/tests/0055_collaborative_handoff_vertical_e2e.rs` の outer-PTY E2E で `CollaborativeMockServer`、実 `ai`、実 `aish human-shell`、製品 `PtyShell::run_shell` を通し、bash / zsh の通常 CSI cursor と `Alt+.` 後の CSI cursor がコマンドを意図した位置で編集することを確認する。`aish/tests/0067_recall_keybinding_tty_restore.rs` は一時 rcfile 単体の両 shortcut、cursor・上下 history・termios、候補なし時の binding 所有を補助回帰として維持する。`aish/tests/0067_aish_shell_alt_period_csi.rs` は実 `aish shell`（replay DEBUG）で `Alt+.` 直後の CSI が caret 挿入にならないことを確認する。CI 前提の bash / zsh が無い場合は skip せず失敗し、`feature-off` job も zsh を install する。いずれも 0055 / 0057 と同じ `openpty`、controlling TTY、期限付き read、子 process cleanup の形を局所的に再利用し、汎用 PTY framework は追加しない。
 
+### 0068 Task Completion vertical E2E
+
+`aibe/tests/0068_task_completion_vertical_e2e.rs` は一つの `Ask` command を pre-connected Unix socket の本番 NDJSON connection handler と `RequestService` composition へ送り、明示 opt-in、1回目の既知 write effect、gap-driven 2回目の read-only post-observation、verified Evidence 付き Done を検証する。同じ本番 service で、effect tool 利用可能でも opt-in なしの単純質問が通常 turn のままであることと、初回未達から2回目 Query の `human_task` suspend が typed `AgentTurnStatus::Suspended` のまま返ることも縦断検証する。Unix socket syscall 自体を sandbox が `EPERM` で拒否する環境では同じ本番 `RequestService` handler を直接使用し、Task Completion 専用 facade へ切り替えない。通常環境の bind / framing は既存 socket integration と `smoke-mock`、手動 0068 checklist でも確認する。`aibe/tests/0068_task_completion_phase1_red.rs` は Contract gate、Evaluator fail-closed table、KnownWriteEffect / UnknownShellEffect を含む Evidence provenance、4終端、budget/stall を wall-clock や永続 store なしで固定し、`ai/tests/0068_task_completion_phase1_red.rs` は human / JSON / TSV / env report を検査する。
+
 ### 0038 Phase D basic build（feature matrix）
 
 設計: [spec/0038_contextual-memory-pack-phase-d-spec.md](spec/0038_contextual-memory-pack-phase-d-spec.md)。

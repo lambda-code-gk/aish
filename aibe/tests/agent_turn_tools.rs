@@ -21,7 +21,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
 
     let steps = vec![
         LlmStepResult::with_tool_calls(
-            "",
+            "reading",
             vec![ToolCall {
                 id: "call_1".into(),
                 name: READ_FILE.to_string(),

@@ -16,6 +16,7 @@ pub struct RequestContextInput {
     pub collaborative_handoff: bool,
     pub execution_mode: ExecutionMode,
     pub continuation_turn: bool,
+    pub task_completion: bool,
 }
 
 impl RequestContextInput {
@@ -30,6 +31,7 @@ impl RequestContextInput {
             collaborative_handoff: self.collaborative_handoff,
             execution_mode: self.execution_mode.into(),
             continuation_turn: self.continuation_turn,
+            task_completion: self.task_completion,
         }
     }
 }
@@ -65,6 +67,16 @@ mod tests {
         }
         .into_wire();
         assert_eq!(ctx.system_instruction.as_deref(), Some("be brief"));
+    }
+
+    #[test]
+    fn into_wire_includes_task_completion_opt_in() {
+        let ctx = RequestContextInput {
+            task_completion: true,
+            ..Default::default()
+        }
+        .into_wire();
+        assert!(ctx.task_completion);
     }
 
     #[test]

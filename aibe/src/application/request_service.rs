@@ -4,11 +4,18 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
+use crate::application::completion_envelope::{decode_completion_envelope, ContractGate};
 use crate::application::route_turn::RouteTurnService;
+use crate::application::task_completion::{
+    append_evidence_from_tools, build_continuation, build_report, deliverable_evidence,
+    evidence_from_tools, system_instruction, CompletionEventBuffer,
+};
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
-    parse_tool_names, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError,
-    FeatureEligibilityContext, FeatureRegistry,
+    classify_task_completion_eligibility, is_stalled, parse_tool_names, progress_snapshot,
+    validate_contract_covers_request, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError,
+    CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext, FeatureRegistry,
+    TaskCompletionEligibility, TaskContract,
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
@@ -17,8 +24,8 @@ use crate::ports::outbound::{
     ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
-    ClientProvidedToolSpec, ClientRequest, ClientResponse, ErrorCode, MemorySubscribeRequestBody,
-    ProtocolMessage, RequestContext, ToolRiskClass,
+    ClientProvidedToolSpec, ClientRequest, ClientResponse, CompletionReport, ErrorCode,
+    MemorySubscribeRequestBody, ProtocolMessage, RequestContext, ToolRiskClass,
 };
 use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
@@ -300,6 +307,10 @@ impl RequestService {
                         return ClientResponse::error(id, ErrorCode::ToolNotAllowed, e.to_string());
                     }
                 };
+                let eligibility = classify_task_completion_eligibility(
+                    context.task_completion,
+                    &tools.iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+                );
                 let client_tools = match validate_client_tools(client_tools) {
                     Ok(tools) => tools,
                     Err(message) => {
@@ -331,21 +342,6 @@ impl RequestService {
                     active.insert(turn_id.clone(), Arc::clone(&effective_cancellation));
                 }
 
-                let executor = ToolRoundExecutor::new(
-                    Arc::clone(llm),
-                    Arc::clone(&self.tool_registry),
-                    self.tools_config.clone(),
-                    Arc::clone(&self.llm_tracer),
-                );
-                let agent_turn = AgentTurnService::with_capability_policy(
-                    Arc::clone(llm),
-                    executor,
-                    Arc::clone(&self.terminator),
-                    termination_capability,
-                    Arc::clone(&self.capability_policy),
-                    Arc::clone(&self.turn_hook),
-                    Arc::clone(&self.llm_tracer),
-                );
                 let mut run_messages = messages.clone();
                 if let (Some(session_id), Some(conv_id)) = (&ai_session_id, &conversation_id) {
                     if let Ok(Some(snapshot)) =
@@ -365,21 +361,201 @@ impl RequestService {
                     }
                 }
 
-                let response = agent_turn
+                // Task Completion の内部制御 instruction は対象 turn にだけ挿入する。
+                // ConversationStore へ保存すると、継続 turn ごとに内部 prompt が履歴へ累積する。
+                let conversation_record_messages = run_messages.clone();
+                let user_request = last_user_request(&conversation_record_messages);
+                let contract_gate = Arc::new(match eligibility {
+                    TaskCompletionEligibility::Active { .. } => {
+                        ContractGate::strict(eligibility, user_request.clone())
+                    }
+                    TaskCompletionEligibility::Inactive => ContractGate::permissive(),
+                });
+                let executor = ToolRoundExecutor::new(
+                    Arc::clone(llm),
+                    Arc::clone(&self.tool_registry),
+                    self.tools_config.clone(),
+                    Arc::clone(&self.llm_tracer),
+                )
+                .with_contract_gate(Arc::clone(&contract_gate));
+                let agent_turn = AgentTurnService::with_capability_policy(
+                    Arc::clone(llm),
+                    executor,
+                    Arc::clone(&self.terminator),
+                    termination_capability,
+                    Arc::clone(&self.capability_policy),
+                    Arc::clone(&self.turn_hook),
+                    Arc::clone(&self.llm_tracer),
+                );
+                if let TaskCompletionEligibility::Active { expected_kind } = eligibility {
+                    run_messages.insert(0, ChatMessage::system(system_instruction(expected_kind)));
+                }
+
+                let (completion_event_buffer, buffered_events) =
+                    completion_event_sink(eligibility, events.clone());
+
+                let mut response = agent_turn
                     .run_with_client_tools_and_events(
-                        id,
+                        id.clone(),
                         run_messages.clone(),
-                        tools,
+                        tools.clone(),
                         client_tools.clone(),
-                        ctx,
-                        approval_gate,
-                        tool_approval_gate,
-                        client_tool_gate,
-                        human_task_gate,
-                        events,
+                        ctx.clone(),
+                        approval_gate.clone(),
+                        tool_approval_gate.clone(),
+                        client_tool_gate.clone(),
+                        human_task_gate.clone(),
+                        buffered_events.clone(),
                         Some(Arc::clone(&effective_cancellation)),
                     )
                     .await;
+
+                let first_payload = match &response {
+                    ClientResponse::AgentTurnResult {
+                        status: aibe_protocol::AgentTurnStatus::Suspended,
+                        ..
+                    } => None,
+                    ClientResponse::AgentTurnResult {
+                        assistant_message,
+                        tool_calls,
+                        ..
+                    } => Some((assistant_message.content.clone(), tool_calls.clone())),
+                    _ => None,
+                };
+                if let Some((content, mut cumulative_calls)) = first_payload {
+                    if matches!(eligibility, TaskCompletionEligibility::Active { .. }) {
+                        let parsed = decode_completion_envelope(&content);
+                        let fixed = contract_gate.fixed_contract();
+                        match (parsed, fixed) {
+                            (Err(message), _) | (_, Err(message)) => {
+                                response = ClientResponse::error(
+                                    id.clone(),
+                                    ErrorCode::InvalidRequest,
+                                    message,
+                                );
+                            }
+                            (Ok(None), Ok(Some(fixed))) => {
+                                response = ClientResponse::error(
+                                    id.clone(),
+                                    ErrorCode::InvalidRequest,
+                                    "task completion final envelope lacks evaluation",
+                                );
+                                let _ = fixed;
+                            }
+                            (Ok(Some(first_envelope)), Ok(_)) => {
+                                if let Err(message) = validate_contract_covers_request(
+                                    &first_envelope.aish_task_completion.contract,
+                                    eligibility,
+                                    &user_request,
+                                ) {
+                                    response = ClientResponse::error(
+                                        id.clone(),
+                                        ErrorCode::InvalidRequest,
+                                        message,
+                                    );
+                                } else if let Err(message) =
+                                    contract_gate.inspect_before_tools(&content, false)
+                                {
+                                    response = ClientResponse::error(
+                                        id.clone(),
+                                        ErrorCode::InvalidRequest,
+                                        message,
+                                    );
+                                } else {
+                                    let contract = first_envelope.aish_task_completion.contract;
+                                    let evaluation = first_envelope.aish_task_completion.evaluation;
+                                    if let Some(evaluation) = evaluation {
+                                        let mut evidence =
+                                            evidence_from_tools(&contract, &cumulative_calls);
+                                        evidence.extend(deliverable_evidence(
+                                            &contract,
+                                            &first_envelope.deliverable,
+                                            evidence.len() + 1,
+                                        ));
+                                        match build_report(&contract, &evidence, &evaluation, 1, false) {
+                                        Ok(report) => attach_completion_report(
+                                            &mut response,
+                                            first_envelope.deliverable,
+                                            cumulative_calls,
+                                            report,
+                                        ),
+                                        Err(message)
+                                            if message
+                                                == "completion evaluation requires another query" =>
+                                        {
+                                            let continuation = build_continuation(
+                                                &contract,
+                                                &evaluation,
+                                                &evidence,
+                                            );
+                                            let mut second_messages =
+                                                vec![ChatMessage::user(continuation)];
+                                            if let TaskCompletionEligibility::Active {
+                                                expected_kind,
+                                            } = eligibility
+                                            {
+                                                second_messages.insert(
+                                                    0,
+                                                    ChatMessage::system(system_instruction(
+                                                        expected_kind,
+                                                    )),
+                                                );
+                                            }
+                                            let second = agent_turn
+                                                .run_with_client_tools_and_events(
+                                                    id.clone(),
+                                                    second_messages,
+                                                    tools.clone(),
+                                                    client_tools.clone(),
+                                                    ctx.clone(),
+                                                    approval_gate.clone(),
+                                                    tool_approval_gate.clone(),
+                                                    client_tool_gate.clone(),
+                                                    human_task_gate.clone(),
+                                                    buffered_events.clone(),
+                                                    Some(Arc::clone(&effective_cancellation)),
+                                                )
+                                                .await;
+                                            response = finish_second_query(
+                                                id.clone(),
+                                                second,
+                                                &contract_gate,
+                                                &contract,
+                                                &evaluation,
+                                                &evidence,
+                                                &mut cumulative_calls,
+                                            );
+                                        }
+                                        Err(message) => {
+                                            response = ClientResponse::error(
+                                                id.clone(),
+                                                ErrorCode::InvalidRequest,
+                                                message,
+                                            );
+                                        }
+                                    }
+                                    } else {
+                                        response = ClientResponse::error(
+                                            id.clone(),
+                                            ErrorCode::InvalidRequest,
+                                            "task completion final envelope lacks evaluation",
+                                        );
+                                    }
+                                }
+                            }
+                            (Ok(None), Ok(None)) => {
+                                response = ClientResponse::error(
+                                    id.clone(),
+                                    ErrorCode::InvalidRequest,
+                                    "task completion contract required for this request",
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Some(buffer) = completion_event_buffer {
+                    buffer.flush_for_response(&id, &response).await;
+                }
                 if let (Some(conversation_id), Some(ai_session_id)) =
                     (conversation_id, ai_session_id)
                 {
@@ -387,7 +563,7 @@ impl RequestService {
                         assistant_message, ..
                     } = &response
                     {
-                        let wire_messages: Vec<ProtocolMessage> = run_messages
+                        let wire_messages: Vec<ProtocolMessage> = conversation_record_messages
                             .iter()
                             .map(|m| ProtocolMessage {
                                 role: m.role.to_string(),
@@ -462,11 +638,133 @@ impl RequestService {
     }
 }
 
+fn attach_completion_report(
+    response: &mut ClientResponse,
+    deliverable: String,
+    tool_calls: Vec<aibe_protocol::ExecutedToolCall>,
+    report: CompletionReport,
+) {
+    if let ClientResponse::AgentTurnResult {
+        assistant_message,
+        tool_calls: response_calls,
+        completion_report,
+        ..
+    } = response
+    {
+        assistant_message.content = deliverable;
+        *response_calls = tool_calls;
+        *completion_report = Some(report);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_second_query(
+    id: String,
+    mut response: ClientResponse,
+    contract_gate: &ContractGate,
+    contract: &TaskContract,
+    previous_evaluation: &CompletionEvaluation,
+    previous_evidence: &[EvidenceRecord],
+    cumulative_calls: &mut Vec<aibe_protocol::ExecutedToolCall>,
+) -> ClientResponse {
+    let (content, second_calls) = match &response {
+        ClientResponse::AgentTurnResult {
+            status: aibe_protocol::AgentTurnStatus::Suspended,
+            ..
+        } => return response,
+        ClientResponse::AgentTurnResult {
+            assistant_message,
+            tool_calls,
+            ..
+        } => (assistant_message.content.clone(), tool_calls.clone()),
+        _ => return response,
+    };
+    let envelope = match decode_completion_envelope(&content) {
+        Ok(Some(envelope)) => envelope,
+        Ok(None) => {
+            return ClientResponse::error(
+                id,
+                ErrorCode::InvalidRequest,
+                "task completion second query lacks envelope",
+            )
+        }
+        Err(message) => return ClientResponse::error(id, ErrorCode::InvalidRequest, message),
+    };
+    if let Err(message) = contract_gate.inspect_before_tools(&content, false) {
+        return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
+    }
+    if &envelope.aish_task_completion.contract != contract {
+        return ClientResponse::error(
+            id,
+            ErrorCode::InvalidRequest,
+            "task contract changed in second query",
+        );
+    }
+    let Some(evaluation) = envelope.aish_task_completion.evaluation else {
+        return ClientResponse::error(
+            id,
+            ErrorCode::InvalidRequest,
+            "task completion second query lacks evaluation",
+        );
+    };
+    let mut evidence = append_evidence_from_tools(contract, previous_evidence, &second_calls);
+    cumulative_calls.extend(second_calls);
+    evidence.extend(deliverable_evidence(
+        contract,
+        &envelope.deliverable,
+        evidence.len() + 1,
+    ));
+    let stalled = is_stalled(
+        &progress_snapshot(previous_evaluation, previous_evidence),
+        &progress_snapshot(&evaluation, &evidence),
+    );
+    match build_report(contract, &evidence, &evaluation, 2, stalled) {
+        Ok(report) => {
+            attach_completion_report(
+                &mut response,
+                envelope.deliverable,
+                cumulative_calls.clone(),
+                report,
+            );
+            response
+        }
+        Err(message) => ClientResponse::error(id, ErrorCode::InvalidRequest, message),
+    }
+}
+
 fn current_time_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn last_user_request(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == crate::domain::MessageRole::User)
+        .map(|message| message.content.clone())
+        .unwrap_or_default()
+}
+
+fn completion_event_sink(
+    eligibility: TaskCompletionEligibility,
+    events: Option<Arc<dyn TurnEventSink>>,
+) -> (
+    Option<Arc<CompletionEventBuffer>>,
+    Option<Arc<dyn TurnEventSink>>,
+) {
+    match eligibility {
+        TaskCompletionEligibility::Active { .. } => {
+            let buffer = events.map(CompletionEventBuffer::new);
+            let sink = buffer
+                .as_ref()
+                .map(|buffer| Arc::clone(buffer) as Arc<dyn TurnEventSink>);
+            (buffer, sink)
+        }
+        TaskCompletionEligibility::Inactive => (None, events),
+    }
 }
 
 fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientCwdError> {
@@ -547,7 +845,69 @@ impl ClientRequestHandler for RequestService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::TaskKind;
     use aibe_protocol::{ClientProvidedToolSpec, ToolRiskClass};
+
+    #[derive(Default)]
+    struct RecordingSink {
+        deltas: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TurnEventSink for RecordingSink {
+        async fn progress(
+            &self,
+            _id: &str,
+            _phase: aibe_protocol::ProgressPhase,
+            _message: Option<String>,
+        ) {
+        }
+
+        async fn assistant_streaming(&self, _id: &str, delta: String) {
+            self.deltas.lock().expect("lock").push(delta);
+        }
+
+        async fn final_response(&self, _id: &str) {}
+    }
+
+    #[tokio::test]
+    async fn completion_streaming_buffer_is_active_only() {
+        let inactive_sink = Arc::new(RecordingSink::default());
+        let (buffer, selected) = completion_event_sink(
+            TaskCompletionEligibility::Inactive,
+            Some(Arc::clone(&inactive_sink) as Arc<dyn TurnEventSink>),
+        );
+        assert!(buffer.is_none());
+        selected
+            .expect("inactive direct sink")
+            .assistant_streaming("turn", "direct".into())
+            .await;
+        assert_eq!(
+            inactive_sink.deltas.lock().expect("lock").as_slice(),
+            &["direct"]
+        );
+
+        let active_sink = Arc::new(RecordingSink::default());
+        let (buffer, selected) = completion_event_sink(
+            TaskCompletionEligibility::Active {
+                expected_kind: TaskKind::Execution,
+            },
+            Some(Arc::clone(&active_sink) as Arc<dyn TurnEventSink>),
+        );
+        let buffer = buffer.expect("active buffer");
+        selected
+            .expect("active buffered sink")
+            .assistant_streaming("turn", "buffered".into())
+            .await;
+        assert!(active_sink.deltas.lock().expect("lock").is_empty());
+        buffer
+            .flush_for_response(
+                "turn",
+                &ClientResponse::error("turn".into(), ErrorCode::InvalidRequest, "fail closed"),
+            )
+            .await;
+        assert!(active_sink.deltas.lock().expect("lock").is_empty());
+    }
 
     #[test]
     fn validate_client_tools_accepts_read_only_aish_namespace() {

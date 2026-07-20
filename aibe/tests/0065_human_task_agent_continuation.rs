@@ -127,7 +127,7 @@ async fn aibe_allows_retry_after_max_tool_rounds_continuation() {
     };
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
-            "",
+            "need human",
             vec![ToolCall {
                 id: "c1".into(),
                 name: READ_FILE.to_string(),

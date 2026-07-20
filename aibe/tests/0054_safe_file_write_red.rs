@@ -1488,6 +1488,7 @@ fn mixed_shell_and_write_approval_in_one_turn() {
                 content: "mixed approvals handled".into(),
             },
             tool_calls: vec![],
+            completion_report: None,
         };
         writeln!(
             server,

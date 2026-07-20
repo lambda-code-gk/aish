@@ -226,3 +226,11 @@
 - continuation中は同じroot flockを保持し、別ai processの二重開始を防ぐ。aibeは`continuation_turn=true`のactive IDと`AgentTurnStatus::Ok`完了IDをprocess memoryだけで拒否する。MaxToolRoundsは完了扱いしない。永続dedup正本、aibe再起動跨ぎexactly-once、Continuingの自動crash recoveryは提供しない。
 - 0066の`recover`はroot flock取得とユーザー確認後だけRunning / Continuingを既存の復帰可能状態へ保存する。PID、elapsed time、checkpoint本文からowner消失を推測せず、active ownerがlockを保持中ならbusyで無変更にする。
 - invalid residueはstatus診断だけでは削除せず、`recover --force-invalid`と確認（または明示`--yes`）の組合せを要求する。force cleanupはcheckpoint rootを`O_DIRECTORY|O_NOFOLLOW`でpinし、同じfdで列挙から`openat`/`renameat`まで行う。子entryは全件検証してからquarantineへ移し、nested directory / 所有外fileがあれば元pathを変えずに`PermissionDenied`で拒否する。削除はpinned directory fd上の子`unlinkat`のみで、共有pathへの`AT_REMOVEDIR`は行わない。symlinkをfollowせず、checkpoint root外へ再帰しない。本文を表示・logせず、schema migrationやJSON修復は行わない。
+
+## Task Completion Evidence（0068）
+
+- assistant control envelope は untrusted provider output として unknown field、Contract 完全性、重複/欠落 criterion、Evidence 参照、矛盾終端を検査する。tool 実行開始後に初めて Contract が現れた場合は拒否し、不正 envelope の後に副作用を実行しない。
+- assistant の「完了」「検証済み」という自己申告、tool call 要求、write-like / arbitrary `shell_exec` の成功だけを verified Evidence にしない。Contract 指定の verifier は server 固定の `read_file` / `list_dir` / `grep` / `git_status` / `git_diff` との積集合に制限し、effect 後の trusted read-only observation または verification を要求する。
+- Evidence の matching target は raw 値ではなく `target:sha256:<digest>` とする。表示 summary と fingerprint に raw tool output、arguments、command、path、file content、環境変数値を複製しない。summary / next objective / deliverable 表示は bounded とし、fingerprint は Evidence ID、source、順序属性、verified flag の canonical metadataだけを使う。
+- Active request の provider streaming delta は envelope 検査まで request-local buffer に留め、control JSON を stdout / stderr へ表示しない。fail-closed error 時は buffered assistant content を破棄する。Inactive request は従来の逐次 streaming を維持する。最終 report は sanitized summary と verified 状態だけを表示し、raw output は既存 `tool_calls` の明示 verbose 契約を越えて複製しない。
+- Task Contract / Evidence ledger / evaluation history は request-local memory だけに保持する。永続 store、resume、cross-command correlation は Phase 1 の保証外である。

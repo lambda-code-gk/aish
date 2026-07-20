@@ -143,6 +143,7 @@ mod tests {
                     content: "ok".into(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             })
         }
     }

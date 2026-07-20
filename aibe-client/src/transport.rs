@@ -588,6 +588,7 @@ mod tests {
                     content: "done".into(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             };
             writeln!(
                 writer,

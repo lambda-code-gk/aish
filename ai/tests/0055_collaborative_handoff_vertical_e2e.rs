@@ -222,6 +222,7 @@ impl CollaborativeMockServer {
                             content: "handoff complete".into(),
                         },
                         tool_calls: vec![],
+                        completion_report: None,
                     };
                     let final_json = serde_json::to_string(&final_resp).expect("final json");
                     log_thread
@@ -266,6 +267,7 @@ impl CollaborativeMockServer {
                                     content: "should not win".into(),
                                 },
                                 tool_calls: vec![],
+                                completion_report: None,
                             };
                             let final_json =
                                 serde_json::to_string(&final_resp).expect("final json");

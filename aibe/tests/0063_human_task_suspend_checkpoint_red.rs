@@ -134,7 +134,7 @@ impl LlmProvider for ScriptedLlm {
             "only one LLM call"
         );
         Ok(LlmStepResult::with_tool_calls(
-            "",
+            "need human",
             vec![
                 ToolCall {
                     id: "human".into(),
@@ -317,7 +317,7 @@ async fn human_task_suspend_checkpoint_vertical_e2e() {
     else {
         panic!("expected agent turn result")
     };
-    assert_eq!(status, AgentTurnStatus::Ok);
+    assert_eq!(status, AgentTurnStatus::Suspended);
     assert!(assistant_message
         .content
         .starts_with("Human Task suspended."));

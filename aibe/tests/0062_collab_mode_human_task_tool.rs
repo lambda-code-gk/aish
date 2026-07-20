@@ -120,7 +120,7 @@ impl LlmProvider for RecordingHumanTaskLlm {
         ));
         if calls.len() == 1 {
             return Ok(LlmStepResult::with_tool_calls(
-                "",
+                "need human",
                 vec![ToolCall {
                     id: "human-call-1".into(),
                     name: HUMAN_TASK.into(),

@@ -339,6 +339,7 @@ mod tests {
             no_console_hint: false,
             trace_route: false,
             collaborative: false,
+            task_completion: false,
         };
         let out =
             execute_feature_actions_mvp(&actions, "user", None, "sess_001", turn, &client, true);
@@ -380,6 +381,7 @@ mod tests {
             no_console_hint: false,
             trace_route: false,
             collaborative: false,
+            task_completion: false,
         };
 
         // memory actions are not present; memory_context not needed.
@@ -434,6 +436,7 @@ mod tests {
             no_console_hint: false,
             trace_route: false,
             collaborative: false,
+            task_completion: false,
         };
 
         let out = execute_feature_actions_mvp(

@@ -143,6 +143,9 @@ pub struct TurnOptions {
     /// 親 agent の shell_exec を human shell handoff へ変換する（0055 minimal）
     #[arg(long, global = true)]
     pub collaborative: bool,
+    /// Task Completion Contract をこの turn だけ明示的に有効化する（0068 Phase 1 opt-in）
+    #[arg(long)]
+    pub task_completion: bool,
 }
 
 #[derive(Parser)]

@@ -34,6 +34,7 @@ pub async fn finish_after_max_tool_rounds(
                 status: AgentTurnStatus::MaxToolRounds,
                 assistant_message: protocol_message_out_from_chat(&result.assistant),
                 tool_calls: executed,
+                completion_report: None,
             }
         }
         Err(e) => client_response_for_llm_error(id, e),

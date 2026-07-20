@@ -54,7 +54,7 @@ impl AibeUnixClient {
         &self.socket_path
     }
 
-    fn to_client_request(request: &AskRequest) -> ClientRequest {
+    pub fn to_client_request(request: &AskRequest) -> ClientRequest {
         ClientRequest::AgentTurn {
             id: correlation_id(),
             messages: vec![ProtocolMessage {

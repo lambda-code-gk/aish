@@ -1,0 +1,545 @@
+//! 既存 Query Loop の外側で使う request-local Task Completion helpers。
+
+use aibe_protocol::{
+    CompletionCriterionReport, CompletionEvidenceReport, CompletionEvidenceSource,
+    CompletionOutcome as WireOutcome, CompletionReport, ExecutedToolCall, ExecutedToolStatus,
+    ToolRiskClass, APPLY_PATCH, SHELL_EXEC, WRITE_FILE,
+};
+use async_trait::async_trait;
+use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use crate::domain::{
+    bound_evidence_target, terminal_outcome, validate_evaluation, CompletionEvaluation,
+    CompletionOutcome, CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract, TaskKind,
+    STALL_TERMINAL_REASON,
+};
+use crate::ports::outbound::TurnEventSink;
+
+const SUMMARY_LIMIT: usize = 240;
+
+pub fn system_instruction(expected_kind: TaskKind) -> String {
+    let kind = match expected_kind {
+        TaskKind::Plan => "plan",
+        TaskKind::Investigation => "investigation",
+        TaskKind::Execution => "execution",
+    };
+    format!(
+        "Task completion control for a {kind} request: respond with one JSON object and no surrounding markdown. \
+The object must have aish_task_completion.contract (goal, task_kind={kind}, criteria with stable id/description/deliverable_is_plan/observes_targets, constraints, deliverables, verification, verification_tools), \
+optional aish_task_completion.evaluation (criteria with criterion_id/status/evidence_ids/required_evidence, next_objective, needs_user, blocked, failure), and deliverable. \
+Fix the contract before requesting the first tool. Every later envelope must repeat it unchanged. \
+Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order. \
+Write-like success is not verified until a later matching observation or verification tool on the same target. \
+Only server-trusted dedicated read-only tools may verify; shell_exec never verifies. \
+Investigation trusted read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
+    )
+}
+
+pub fn evidence_from_tools(
+    contract: &TaskContract,
+    calls: &[ExecutedToolCall],
+) -> Vec<EvidenceRecord> {
+    append_evidence_from_tools(contract, &[], calls)
+}
+
+pub fn append_evidence_from_tools(
+    contract: &TaskContract,
+    existing: &[EvidenceRecord],
+    new_calls: &[ExecutedToolCall],
+) -> Vec<EvidenceRecord> {
+    let mut ledger = existing.to_vec();
+    let execution_ids = contract.execution_criterion_ids();
+    let verification_tools = contract.effective_verification_tools();
+    let mut next_index = existing.len();
+
+    for call in new_calls {
+        next_index += 1;
+        let target = tool_target(call);
+        let read_only = call.risk_class == Some(ToolRiskClass::ReadOnly);
+        let write_like = call.risk_class == Some(ToolRiskClass::WriteLike)
+            || matches!(call.name.as_str(), WRITE_FILE | APPLY_PATCH);
+        let shell =
+            call.risk_class == Some(ToolRiskClass::DangerousShell) || call.name == SHELL_EXEC;
+        let ok = call.status == ExecutedToolStatus::Ok;
+        let verification_tool = verification_tools.iter().any(|name| name == &call.name);
+
+        if shell && ok {
+            // 任意 shell command は変更対象を信頼して限定できないため、過去の観測を
+            // 保守的にすべて無効化する。
+            for record in &mut ledger {
+                if matches!(
+                    record.source,
+                    EvidenceSource::Observation | EvidenceSource::Verification
+                ) {
+                    record.verified = false;
+                    record.stale = true;
+                }
+            }
+        } else if write_like && ok {
+            if let Some(target) = target.as_ref() {
+                for record in &mut ledger {
+                    if record.target.as_ref() == Some(target)
+                        && matches!(
+                            record.source,
+                            EvidenceSource::Observation | EvidenceSource::Verification
+                        )
+                    {
+                        record.verified = false;
+                        record.stale = true;
+                    }
+                }
+            }
+        }
+
+        let (source, observed_after_effect, criterion_ids, verified) = classify_evidence(
+            contract,
+            &ledger,
+            &execution_ids,
+            call,
+            target.as_deref(),
+            read_only,
+            write_like,
+            shell,
+            ok,
+            verification_tool,
+        );
+
+        ledger.push(EvidenceRecord {
+            evidence_id: format!("e{next_index}"),
+            criterion_ids,
+            source,
+            observed_after_effect,
+            summary: bounded(&format!("{} status={:?}", call.name, call.status)),
+            verified,
+            target,
+            stale: false,
+        });
+    }
+
+    ledger
+}
+
+#[allow(clippy::too_many_arguments)]
+fn classify_evidence(
+    contract: &TaskContract,
+    ledger: &[EvidenceRecord],
+    execution_ids: &[String],
+    _call: &ExecutedToolCall,
+    target: Option<&str>,
+    read_only: bool,
+    write_like: bool,
+    shell: bool,
+    ok: bool,
+    verification_tool: bool,
+) -> (EvidenceSource, bool, Vec<String>, bool) {
+    if write_like {
+        return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
+    }
+
+    if read_only && ok {
+        match contract.task_kind {
+            TaskKind::Investigation => {
+                let criterion_ids =
+                    matching_criterion_ids(contract, ledger, execution_ids, target, false, false);
+                return (
+                    EvidenceSource::Observation,
+                    false,
+                    criterion_ids.clone(),
+                    verification_tool && (!criterion_ids.is_empty() || execution_ids.len() == 1),
+                );
+            }
+            TaskKind::Execution => {
+                let after_effect = has_prior_effect(ledger, target);
+                let criterion_ids = matching_criterion_ids(
+                    contract,
+                    ledger,
+                    execution_ids,
+                    target,
+                    true,
+                    after_effect,
+                );
+                let verified = after_effect && !criterion_ids.is_empty() && verification_tool;
+                return (
+                    EvidenceSource::Observation,
+                    after_effect,
+                    criterion_ids,
+                    verified,
+                );
+            }
+            TaskKind::Plan => {
+                return (EvidenceSource::Observation, false, Vec::new(), false);
+            }
+        }
+    }
+
+    if shell {
+        return (
+            EvidenceSource::UnknownShellEffect,
+            false,
+            execution_ids.to_vec(),
+            false,
+        );
+    }
+
+    (
+        if read_only {
+            EvidenceSource::Observation
+        } else {
+            EvidenceSource::Tool
+        },
+        false,
+        execution_ids.to_vec(),
+        false,
+    )
+}
+
+fn matching_criterion_ids(
+    contract: &TaskContract,
+    ledger: &[EvidenceRecord],
+    execution_ids: &[String],
+    target: Option<&str>,
+    require_pending_effect: bool,
+    after_effect: bool,
+) -> Vec<String> {
+    execution_ids
+        .iter()
+        .filter(|criterion_id| {
+            let criterion = contract
+                .criteria
+                .iter()
+                .find(|item| item.id == **criterion_id);
+            let Some(criterion) = criterion else {
+                return false;
+            };
+            if require_pending_effect {
+                let pending = ledger.iter().any(|record| {
+                    record.criterion_ids.contains(criterion_id)
+                        && record.source == EvidenceSource::Tool
+                        && !record.verified
+                        && !record.stale
+                        && (target.is_none()
+                            || record.target.is_none()
+                            || record.target.as_deref() == target)
+                });
+                if !pending || !after_effect {
+                    return false;
+                }
+            }
+            if criterion.observes_targets.is_empty() {
+                return true;
+            }
+            target.is_some_and(|value| {
+                criterion
+                    .observes_targets
+                    .iter()
+                    .filter_map(|expected| bound_evidence_target(expected))
+                    .any(|expected| expected == value)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+fn has_prior_effect(ledger: &[EvidenceRecord], target: Option<&str>) -> bool {
+    ledger.iter().any(|record| {
+        record.source == EvidenceSource::Tool
+            && !record.stale
+            && record.summary.contains("status=Ok")
+            && (target.is_none() || record.target.is_none() || record.target.as_deref() == target)
+    })
+}
+
+fn tool_target(call: &ExecutedToolCall) -> Option<String> {
+    let args = &call.arguments;
+    if let Some(path) = args
+        .get("path")
+        .or_else(|| args.get("file"))
+        .or_else(|| args.get("file_path"))
+        .and_then(|value| value.as_str())
+    {
+        return bound_evidence_target(path);
+    }
+    if call.name == SHELL_EXEC {
+        if let Some(path) = args
+            .get("args")
+            .and_then(|value| value.as_array())
+            .and_then(|items| {
+                items
+                    .iter()
+                    .rev()
+                    .find_map(|item| item.as_str().filter(|text| text.contains('/')))
+                    .or_else(|| items.iter().rev().find_map(|item| item.as_str()))
+            })
+        {
+            return bound_evidence_target(path);
+        }
+        if let Some(command) = args.get("command").and_then(|value| value.as_str()) {
+            return bound_evidence_target(command);
+        }
+    }
+    None
+}
+
+pub fn deliverable_evidence(
+    contract: &TaskContract,
+    deliverable: &str,
+    next_index: usize,
+) -> Vec<EvidenceRecord> {
+    if deliverable.trim().is_empty() {
+        return Vec::new();
+    }
+    if contract.task_kind != TaskKind::Plan {
+        return Vec::new();
+    }
+    let plan_ids = contract.plan_criterion_ids();
+    if plan_ids.is_empty() {
+        return Vec::new();
+    }
+    plan_ids
+        .into_iter()
+        .enumerate()
+        .map(|(offset, criterion_id)| EvidenceRecord {
+            evidence_id: format!("e{}", next_index + offset),
+            criterion_ids: vec![criterion_id],
+            source: EvidenceSource::Deliverable,
+            observed_after_effect: false,
+            summary: bounded(deliverable),
+            verified: true,
+            target: None,
+            stale: false,
+        })
+        .collect()
+}
+
+pub fn build_continuation(
+    contract: &TaskContract,
+    evaluation: &CompletionEvaluation,
+    evidence: &[EvidenceRecord],
+) -> String {
+    let contract_json = serde_json::to_string(&json!({
+        "aish_task_completion": { "contract": contract },
+        "deliverable": ""
+    }))
+    .unwrap_or_else(|_| "{}".into());
+    let unsatisfied = evaluation
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
+        .map(|criterion| {
+            format!(
+                "- {}: required evidence: {}",
+                criterion.criterion_id,
+                criterion.required_evidence.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let satisfied = evaluation
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.status == CriterionStatus::Satisfied)
+        .map(|criterion| {
+            format!(
+                "- {}: evidence {}",
+                criterion.criterion_id,
+                criterion.evidence_ids.join(",")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let evidence_lines = evidence
+        .iter()
+        .map(|record| {
+            format!(
+                "- {} criteria=[{}] source={:?} verified={} stale={}: {}",
+                record.evidence_id,
+                record.criterion_ids.join(","),
+                record.source,
+                record.verified,
+                record.stale,
+                bounded(&record.summary)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "[task completion continuation]\nFixed contract:\n{contract_json}\nSatisfied criteria:\n{satisfied}\nUnsatisfied criteria:\n{unsatisfied}\nExisting evidence:\n{evidence_lines}\nNext evidence id: e{}\nNext objective: {}",
+        evidence.len() + 1,
+        bounded(evaluation.next_objective.as_deref().unwrap_or("resolve the stated gap"))
+    )
+}
+
+pub fn build_report(
+    contract: &TaskContract,
+    evidence: &[EvidenceRecord],
+    evaluation: &CompletionEvaluation,
+    queries_used: u8,
+    stalled: bool,
+) -> Result<CompletionReport, String> {
+    validate_evaluation(contract, evidence, evaluation)?;
+    let outcome = terminal_outcome(evaluation, queries_used, stalled)
+        .ok_or_else(|| "completion evaluation requires another query".to_string())?;
+    let criteria = evaluation
+        .criteria
+        .iter()
+        .map(|criterion| CompletionCriterionReport {
+            criterion_id: criterion.criterion_id.clone(),
+            satisfied: criterion.status == CriterionStatus::Satisfied,
+            evidence: criterion
+                .evidence_ids
+                .iter()
+                .filter_map(|id| evidence.iter().find(|record| &record.evidence_id == id))
+                .map(to_wire_evidence)
+                .collect(),
+        })
+        .collect();
+    let unsatisfied_criteria = evaluation
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
+        .map(|criterion| criterion.criterion_id.clone())
+        .collect();
+    let mut unverified_items: Vec<String> = evidence
+        .iter()
+        .filter(|record| !record.verified || record.stale)
+        .map(|record| {
+            format!(
+                "{}{}: {}",
+                record.evidence_id,
+                if record.stale { " (stale)" } else { "" },
+                record.summary
+            )
+        })
+        .collect();
+    unverified_items.extend(
+        evaluation
+            .criteria
+            .iter()
+            .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
+            .flat_map(|criterion| {
+                criterion.required_evidence.iter().map(|required| {
+                    bounded(&format!(
+                        "{}: required evidence: {}",
+                        criterion.criterion_id, required
+                    ))
+                })
+            }),
+    );
+    let terminal_reason = evaluation
+        .needs_user
+        .as_deref()
+        .or(evaluation.blocked.as_deref())
+        .or(if stalled && outcome == CompletionOutcome::Blocked {
+            evaluation
+                .failure
+                .as_deref()
+                .or(Some(STALL_TERMINAL_REASON))
+        } else {
+            None
+        })
+        .map(bounded);
+    Ok(CompletionReport {
+        outcome: match outcome {
+            CompletionOutcome::Done => WireOutcome::Done,
+            CompletionOutcome::NeedsUser => WireOutcome::NeedsUser,
+            CompletionOutcome::Blocked => WireOutcome::Blocked,
+            CompletionOutcome::BudgetExhausted => WireOutcome::BudgetExhausted,
+        },
+        terminal_reason,
+        criteria,
+        unsatisfied_criteria,
+        unverified_items,
+        queries_used,
+    })
+}
+
+fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
+    CompletionEvidenceReport {
+        evidence_id: record.evidence_id.clone(),
+        source: match record.source {
+            EvidenceSource::Tool => CompletionEvidenceSource::Tool,
+            EvidenceSource::UnknownShellEffect => CompletionEvidenceSource::UnknownShellEffect,
+            EvidenceSource::Observation => CompletionEvidenceSource::Observation,
+            EvidenceSource::Verification => CompletionEvidenceSource::Verification,
+            EvidenceSource::Deliverable => CompletionEvidenceSource::Deliverable,
+        },
+        summary: bounded(&record.summary),
+        verified: record.verified && !record.stale,
+    }
+}
+
+fn bounded(value: &str) -> String {
+    value.chars().take(SUMMARY_LIMIT).collect()
+}
+
+/// provider delta を最終 envelope 判定まで保持し、control JSON を client へ流さない。
+pub struct CompletionEventBuffer {
+    inner: Arc<dyn TurnEventSink>,
+    deltas: Mutex<Vec<String>>,
+}
+
+impl CompletionEventBuffer {
+    pub fn new(inner: Arc<dyn TurnEventSink>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            deltas: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub async fn flush_for_response(&self, id: &str, response: &aibe_protocol::ClientResponse) {
+        match response {
+            aibe_protocol::ClientResponse::AgentTurnResult {
+                assistant_message,
+                completion_report: Some(_),
+                ..
+            } => {
+                if !assistant_message.content.is_empty() {
+                    self.inner
+                        .assistant_streaming(id, assistant_message.content.clone())
+                        .await;
+                }
+            }
+            aibe_protocol::ClientResponse::AgentTurnResult {
+                status: aibe_protocol::AgentTurnStatus::Suspended,
+                ..
+            } => {
+                let mut deltas = self.deltas.lock().await;
+                let contains_control = deltas
+                    .join("")
+                    .contains(crate::application::completion_envelope::TASK_COMPLETION_MARKER);
+                if !contains_control {
+                    for delta in deltas.drain(..) {
+                        self.inner.assistant_streaming(id, delta).await;
+                    }
+                }
+                deltas.clear();
+            }
+            _ => {
+                // Active request の fail-closed 応答では、検査前に生成された assistant
+                // 本文を表示経路へ流さない。
+                self.deltas.lock().await.clear();
+            }
+        }
+        self.inner.final_response(id).await;
+    }
+}
+
+#[async_trait]
+impl TurnEventSink for CompletionEventBuffer {
+    async fn progress(
+        &self,
+        id: &str,
+        phase: aibe_protocol::ProgressPhase,
+        message: Option<String>,
+    ) {
+        self.inner.progress(id, phase, message).await;
+    }
+
+    async fn assistant_streaming(&self, _id: &str, delta: String) {
+        self.deltas.lock().await.push(delta);
+    }
+
+    async fn final_response(&self, _id: &str) {}
+}

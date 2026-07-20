@@ -51,6 +51,7 @@ impl AgentClient for RecordingClient {
                 content: "ok".into(),
             },
             tool_calls: vec![],
+            completion_report: None,
         })
     }
 }
@@ -126,6 +127,7 @@ fn presenter_max_tool_rounds_and_verbose_tools_contract() {
                 json!({"path": "/etc/passwd"}),
                 huge,
             )],
+            completion_report: None,
         },
         true,
         ShellExecRenderOptions::default(),

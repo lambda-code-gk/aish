@@ -18,6 +18,7 @@ mod memory_space;
 mod memory_subscription;
 mod message;
 mod shell_log_tail;
+mod task_completion;
 pub mod test_support;
 mod tool;
 mod tool_execution_summary;
@@ -84,6 +85,14 @@ pub use memory_subscription::{
 };
 pub use message::{ChatMessage, MessageRole, UnknownMessageRole};
 pub use shell_log_tail::ShellLogTail;
+pub use task_completion::{
+    bound_evidence_target, classify_task_completion_eligibility, is_stalled, progress_snapshot,
+    terminal_outcome, validate_contract_covers_request, validate_evaluation, CompletionCriterion,
+    CompletionEvaluation, CompletionOutcome, CriterionEvaluation, CriterionStatus, EvidenceRecord,
+    EvidenceSource, ProgressSnapshot, TaskCompletionEligibility, TaskContract, TaskKind,
+    CONTRACT_MAX_CRITERIA, CONTRACT_MAX_LIST_ITEMS, CONTRACT_TEXT_MAX_BYTES, STALL_TERMINAL_REASON,
+    TASK_COMPLETION_QUERY_BUDGET,
+};
 pub use tool::{ToolCall, ToolResult};
 pub use tool_execution_summary::ToolExecutionSummary;
 #[cfg(feature = "memory")]

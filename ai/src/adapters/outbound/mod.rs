@@ -91,7 +91,7 @@ pub use smart_preprocessor_observation::{
 pub use smart_preprocessor_trace::smart_preprocessor_trace_enabled;
 pub use stdout_presenter::{
     format_shell_exec_executed_summary, format_tool_call_line, render_response,
-    ShellExecRenderOptions, StdoutPresenter,
+    render_response_structured, ShellExecRenderOptions, StdoutPresenter,
 };
 pub use suggested_command_recall_store::{
     default_suggestion_cache_path, resolve_suggestion_cache_path, FileSuggestedCommandRecallStore,

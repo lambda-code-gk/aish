@@ -10,6 +10,9 @@ use aibe::adapters::outbound::{
     StaticCapabilityPolicy,
 };
 use aibe::application::build_default_tool_registry;
+use aibe::application::completion_envelope::{
+    minimal_blocked_envelope, MINIMAL_CONTRACT_BEFORE_TOOLS,
+};
 use aibe::application::contextual_pack_arc;
 use aibe::application::memory_service::MemoryService;
 use aibe::application::memory_subscribe_service::MemorySubscribeService;
@@ -318,7 +321,7 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
     let dir = tempdir().expect("tempdir");
     let steps = vec![
         LlmStepResult::with_tool_calls(
-            "",
+            MINIMAL_CONTRACT_BEFORE_TOOLS,
             vec![ToolCall {
                 id: "call_1".into(),
                 name: SHELL_EXEC.to_string(),
@@ -326,7 +329,7 @@ async fn shell_execute_is_independent_from_memory_capabilities() {
                 provider_extras: None,
             }],
         ),
-        LlmStepResult::text_only("done"),
+        LlmStepResult::text_only(minimal_blocked_envelope("done")),
     ];
     let llm = Arc::new(aibe::adapters::outbound::ScriptedMockLlm::new(steps));
     let mut tools_cfg = ToolsConfig::default();
@@ -398,7 +401,7 @@ async fn memory_only_profile_denies_shell_execute() {
     let dir = tempdir().expect("tempdir");
     let steps = vec![
         LlmStepResult::with_tool_calls(
-            "",
+            MINIMAL_CONTRACT_BEFORE_TOOLS,
             vec![ToolCall {
                 id: "call_1".into(),
                 name: SHELL_EXEC.to_string(),
@@ -406,7 +409,7 @@ async fn memory_only_profile_denies_shell_execute() {
                 provider_extras: None,
             }],
         ),
-        LlmStepResult::text_only("done"),
+        LlmStepResult::text_only(minimal_blocked_envelope("done")),
     ];
     let llm = Arc::new(aibe::adapters::outbound::ScriptedMockLlm::new(steps));
     let mut tools_cfg = ToolsConfig::default();

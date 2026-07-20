@@ -5,6 +5,96 @@
 # pending = false … テストが存在し、#[ignore] であってはならない（verify で実行される想定）。
 
 [[cases]]
+spec = "0068"
+phase = 1
+id = "task_completion_vertical_e2e"
+description = "明示opt-inの一つのai commandで初回副作用からgap-driven再観測を経てverified Evidence付きDoneへ至り、opt-inなし通常turnと2回目Human Task suspendも保つ"
+test = "task_completion_vertical_e2e"
+file_glob = "aibe/tests/0068_task_completion_vertical_e2e.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "task_contract_is_stable_and_structurally_complete"
+description = "元要求とexpected_kindをtool前に検査し、構造完全なContractを固定して後続のcriterion集合変更を拒否する（意味的網羅は保証外）"
+test = "task_contract_is_stable_and_structurally_complete"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "assistant_claim_is_not_verified_evidence"
+description = "assistant自己申告や未実行計画だけではverified EvidenceまたはDoneにしない"
+test = "assistant_claim_is_not_verified_evidence"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "side_effect_requires_post_observation"
+description = "既知変更tool成功は副作用後の再観測なしにcriterionを満たさず、UnknownShellEffectは古い観測をstale化して既知prior effectにならない"
+test = "side_effect_requires_post_observation"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "completion_evaluator_is_structured_and_fail_closed"
+description = "Evaluator envelopeのID・Evidence参照・終端矛盾をコードでfail-closed検査する"
+test = "completion_evaluator_is_structured_and_fail_closed"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "continuation_is_gap_driven_and_detects_plan_only"
+description = "未達continuationはgapと単一next_objectiveを使いplan-onlyを未達として扱う"
+test = "continuation_is_gap_driven_and_detects_plan_only"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "terminal_outcomes_are_distinct"
+description = "Done・NeedsUser・Blocked・BudgetExhaustedを不変条件の優先順で一意に判定する"
+test = "terminal_outcomes_are_distinct"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "progress_and_stall_are_bounded"
+description = "query開始を2回に制限しEvidence・criterion・failure fingerprintから停滞を検出する"
+test = "progress_and_stall_are_bounded"
+file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "final_report_lists_evidence_and_unverified_items"
+description = "全終端表示にcriterion別Evidence・未達・未検証事項・query使用数を含める"
+test = "final_report_lists_evidence_and_unverified_items"
+file_glob = "ai/tests/0068_task_completion_phase1_red.rs"
+pending = false
+
+[[cases]]
+spec = "0068"
+phase = 1
+id = "task_completion_cli_opt_in"
+description = "ai ask --task-completion が production composition から context.task_completion=true を設定する"
+test = "ai_ask_parses_task_completion_flag"
+file_glob = "ai/tests/0068_task_completion_cli_opt_in.rs"
+pending = false
+
+[[cases]]
 spec = "0058"
 phase = 0
 id = "doctor_alias_uses_doctor_command_name"
