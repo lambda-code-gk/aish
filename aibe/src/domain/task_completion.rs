@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 pub const TASK_COMPLETION_QUERY_BUDGET: u8 = 2;
+pub const STALL_TERMINAL_REASON: &str = "no progress between queries";
 pub const CONTRACT_TEXT_MAX_BYTES: usize = 8 * 1024;
 pub const CONTRACT_MAX_CRITERIA: usize = 32;
 pub const CONTRACT_MAX_LIST_ITEMS: usize = 32;
@@ -130,7 +131,24 @@ impl TaskContract {
                 return Err(format!("duplicate criterion id: {}", criterion.id));
             }
         }
+        validate_plan_criteria(self)?;
         Ok(())
+    }
+
+    pub fn execution_criterion_ids(&self) -> Vec<String> {
+        self.criteria
+            .iter()
+            .filter(|criterion| !criterion.deliverable_is_plan)
+            .map(|criterion| criterion.id.clone())
+            .collect()
+    }
+
+    pub fn plan_criterion_ids(&self) -> Vec<String> {
+        self.criteria
+            .iter()
+            .filter(|criterion| criterion.deliverable_is_plan)
+            .map(|criterion| criterion.id.clone())
+            .collect()
     }
 
     pub fn ids(&self) -> BTreeSet<String> {
@@ -187,6 +205,40 @@ fn validate_bounded_text(field: &str, value: &str) -> Result<(), String> {
         return Err(format!("{field} exceeds {CONTRACT_TEXT_MAX_BYTES} bytes"));
     }
     Ok(())
+}
+
+fn validate_plan_criteria(contract: &TaskContract) -> Result<(), String> {
+    let has_plan = contract
+        .criteria
+        .iter()
+        .any(|criterion| criterion.deliverable_is_plan);
+    let has_execution = contract
+        .criteria
+        .iter()
+        .any(|criterion| !criterion.deliverable_is_plan);
+    if has_plan && has_execution {
+        return Err(
+            "deliverable_is_plan cannot be combined with execution criteria in one contract".into(),
+        );
+    }
+    if has_plan && verification_implies_execution(&contract.verification) {
+        return Err(
+            "deliverable_is_plan is incompatible with execution-oriented verification".into(),
+        );
+    }
+    Ok(())
+}
+
+fn verification_implies_execution(verification: &[String]) -> bool {
+    verification.iter().any(|item| {
+        let lower = item.to_lowercase();
+        [
+            "read", "change", "write", "after", "observe", "verify", "create", "update", "delete",
+            "modify", "execute", "run",
+        ]
+        .iter()
+        .any(|keyword| lower.contains(keyword))
+    })
 }
 
 fn validate_string_list(field: &str, values: &[String]) -> Result<(), String> {

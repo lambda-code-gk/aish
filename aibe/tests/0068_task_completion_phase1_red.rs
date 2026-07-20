@@ -2,12 +2,13 @@
 
 use aibe::application::completion_envelope::{decode_completion_envelope, ContractGate};
 use aibe::application::task_completion::{
-    build_continuation, build_report, deliverable_evidence, evidence_from_tools,
+    append_evidence_from_tools, build_continuation, build_report, deliverable_evidence,
+    evidence_from_tools,
 };
 use aibe::domain::{
     progress_snapshot, terminal_outcome, validate_evaluation, CompletionCriterion,
     CompletionEvaluation, CompletionOutcome, CriterionEvaluation, CriterionStatus, EvidenceRecord,
-    EvidenceSource, TaskContract, TASK_COMPLETION_QUERY_BUDGET,
+    EvidenceSource, TaskContract, TASK_COMPLETION_QUERY_BUDGET, STALL_TERMINAL_REASON,
 };
 use aibe_protocol::{ExecutedToolCall, ToolApprovalState, ToolRiskClass, APPLY_PATCH, READ_FILE};
 use serde_json::json;
@@ -98,6 +99,12 @@ fn assistant_claim_is_not_verified_evidence() {
     )
     .unwrap_err()
     .contains("requires evidence"));
+
+    let mut mixed = contract();
+    mixed.criteria[0].deliverable_is_plan = true;
+    assert!(mixed.validate().unwrap_err().contains("deliverable_is_plan"));
+    let plan_evidence = deliverable_evidence(&contract(), "plan only", 1);
+    assert!(plan_evidence.is_empty(), "execution task rejects plan evidence");
 }
 
 #[test]
@@ -138,6 +145,20 @@ fn side_effect_requires_post_observation() {
     assert!(
         !pre_observation[0].verified,
         "an observation before the effect cannot verify a change criterion"
+    );
+
+    let unrelated_read = vec![
+        calls[0].clone(),
+        ExecutedToolCall::ok("pwd".into(), "pwd", json!({}), "/tmp".into()).with_audit(
+            ToolRiskClass::ReadOnly,
+            ToolApprovalState::NotRequired,
+            false,
+        ),
+    ];
+    let unrelated_evidence = evidence_from_tools(&contract(), &unrelated_read);
+    assert!(
+        !unrelated_evidence[1].verified,
+        "unrelated read-only observation must not verify the change criterion"
     );
 }
 
@@ -203,9 +224,21 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
     assert!(continuation.contains("c1"));
     assert!(continuation.contains("post-change read"));
     assert!(continuation.contains("Next objective: read the changed file"));
+    assert!(continuation.contains("Fixed contract:"));
+    assert!(continuation.contains("Existing evidence:"));
 
-    let mut plan_contract = contract();
-    plan_contract.criteria[0].deliverable_is_plan = true;
+    let plan_contract = TaskContract {
+        goal: "produce a plan".into(),
+        criteria: vec![CompletionCriterion {
+            id: "c1".into(),
+            description: "plan document".into(),
+            deliverable_is_plan: true,
+        }],
+        constraints: vec![],
+        deliverables: vec!["plan".into()],
+        verification: vec!["plan content present".into()],
+    };
+    plan_contract.validate().expect("plan-only contract");
     let plan_evidence = deliverable_evidence(&plan_contract, "1. inspect\n2. change", 1);
     assert_eq!(plan_evidence.len(), 1);
     assert!(plan_evidence[0].verified);
@@ -237,6 +270,18 @@ fn terminal_outcomes_are_distinct() {
     assert_eq!(
         terminal_outcome(&evaluation(CriterionStatus::Unsatisfied, &[]), 1, true),
         Some(CompletionOutcome::Blocked)
+    );
+    let stall_report = build_report(
+        &contract(),
+        &[],
+        &evaluation(CriterionStatus::Unsatisfied, &[]),
+        1,
+        true,
+    )
+    .expect("stall report");
+    assert_eq!(
+        stall_report.terminal_reason.as_deref(),
+        Some(STALL_TERMINAL_REASON)
     );
     assert_eq!(
         terminal_outcome(&evaluation(CriterionStatus::Unsatisfied, &[]), 2, false),
@@ -272,6 +317,30 @@ fn progress_and_stall_are_bounded() {
         &progress_snapshot(&repeated_a, &evidence),
         &progress_snapshot(&repeated_b, &more_evidence),
     ));
+    let first_pass = evidence_from_tools(&contract(), &[ExecutedToolCall::ok(
+        "w1".into(),
+        APPLY_PATCH,
+        json!({}),
+        "changed".into(),
+    )
+    .with_audit(
+        ToolRiskClass::WriteLike,
+        ToolApprovalState::ExplicitClientOptIn,
+        false,
+    )]);
+    let second_pass = append_evidence_from_tools(
+        &contract(),
+        &first_pass,
+        &[ExecutedToolCall::ok("r1".into(), READ_FILE, json!({}), "new".into()).with_audit(
+            ToolRiskClass::ReadOnly,
+            ToolApprovalState::NotRequired,
+            false,
+        )],
+    );
+    assert!(!first_pass[0].verified);
+    assert_eq!(second_pass[0].evidence_id, first_pass[0].evidence_id);
+    assert_eq!(second_pass[0].verified, first_pass[0].verified);
+    assert!(second_pass[1].verified);
     assert!(build_report(
         &contract(),
         &evidence,

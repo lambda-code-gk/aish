@@ -6,12 +6,13 @@ use aibe_protocol::{
     ToolRiskClass,
 };
 use async_trait::async_trait;
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::domain::{
     terminal_outcome, validate_evaluation, CompletionEvaluation, CompletionOutcome,
-    CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract,
+    CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract, STALL_TERMINAL_REASON,
 };
 use crate::ports::outbound::TurnEventSink;
 
@@ -29,37 +30,93 @@ pub fn evidence_from_tools(
     contract: &TaskContract,
     calls: &[ExecutedToolCall],
 ) -> Vec<EvidenceRecord> {
-    let criterion_ids: Vec<_> = contract.ids().into_iter().collect();
-    let has_successful_effect = calls.iter().any(|call| {
-        call.risk_class != Some(ToolRiskClass::ReadOnly) && call.status == ExecutedToolStatus::Ok
+    append_evidence_from_tools(contract, &[], calls)
+}
+
+pub fn append_evidence_from_tools(
+    contract: &TaskContract,
+    existing: &[EvidenceRecord],
+    new_calls: &[ExecutedToolCall],
+) -> Vec<EvidenceRecord> {
+    let mut ledger = existing.to_vec();
+    let mut effect_seen = existing.iter().any(|record| {
+        record.source == EvidenceSource::Tool && record.summary.contains("status=Ok")
     });
-    let mut effect_seen = false;
-    calls
+    let execution_ids = contract.execution_criterion_ids();
+    let mut next_index = existing.len();
+
+    for call in new_calls {
+        next_index += 1;
+        let read_only = call.risk_class == Some(ToolRiskClass::ReadOnly);
+        let ok = call.status == ExecutedToolStatus::Ok;
+        let source = if read_only {
+            EvidenceSource::Observation
+        } else {
+            EvidenceSource::Tool
+        };
+        let observed_after_effect = read_only && effect_seen;
+        let criterion_ids = if read_only && observed_after_effect {
+            pending_post_observation_criterion_ids(&ledger, contract, &call.name, &execution_ids)
+        } else if read_only {
+            execution_ids.clone()
+        } else {
+            execution_ids.clone()
+        };
+        let verified = read_only
+            && ok
+            && observed_after_effect
+            && !criterion_ids.is_empty();
+        if !read_only && ok {
+            effect_seen = true;
+        }
+        ledger.push(EvidenceRecord {
+            evidence_id: format!("e{next_index}"),
+            criterion_ids,
+            source,
+            observed_after_effect,
+            summary: bounded(&format!("{} status={:?}", call.name, call.status)),
+            verified,
+        });
+    }
+
+    ledger
+}
+
+fn pending_post_observation_criterion_ids(
+    ledger: &[EvidenceRecord],
+    contract: &TaskContract,
+    tool_name: &str,
+    execution_ids: &[String],
+) -> Vec<String> {
+    execution_ids
         .iter()
-        .enumerate()
-        .map(|(index, call)| {
-            let read_only = call.risk_class == Some(ToolRiskClass::ReadOnly);
-            let ok = call.status == ExecutedToolStatus::Ok;
-            let observed_after_effect = read_only && effect_seen;
-            let source = if read_only {
-                EvidenceSource::Observation
-            } else {
-                EvidenceSource::Tool
-            };
-            let verified = read_only && ok && (!has_successful_effect || observed_after_effect);
-            if !read_only && ok {
-                effect_seen = true;
-            }
-            EvidenceRecord {
-                evidence_id: format!("e{}", index + 1),
-                criterion_ids: criterion_ids.clone(),
-                source,
-                observed_after_effect,
-                summary: bounded(&format!("{} status={:?}", call.name, call.status)),
-                verified,
-            }
+        .filter(|criterion_id| {
+            ledger.iter().any(|record| {
+                record.criterion_ids.contains(criterion_id)
+                    && record.source == EvidenceSource::Tool
+                    && !record.verified
+            }) && read_observation_matches_criterion(contract, criterion_id, tool_name)
         })
+        .cloned()
         .collect()
+}
+
+fn read_observation_matches_criterion(
+    contract: &TaskContract,
+    criterion_id: &str,
+    tool_name: &str,
+) -> bool {
+    if !contract
+        .criteria
+        .iter()
+        .any(|criterion| criterion.id == *criterion_id)
+    {
+        return false;
+    }
+    let verification = contract.verification.join(" ").to_lowercase();
+    let tool_lower = tool_name.to_lowercase();
+    verification.contains(&tool_lower)
+        || (tool_lower == "read_file" && verification.contains("read"))
 }
 
 pub fn deliverable_evidence(
@@ -70,14 +127,16 @@ pub fn deliverable_evidence(
     if deliverable.trim().is_empty() {
         return Vec::new();
     }
-    contract
-        .criteria
-        .iter()
-        .filter(|criterion| criterion.deliverable_is_plan)
+    let plan_ids = contract.plan_criterion_ids();
+    if plan_ids.is_empty() {
+        return Vec::new();
+    }
+    plan_ids
+        .into_iter()
         .enumerate()
-        .map(|(offset, criterion)| EvidenceRecord {
+        .map(|(offset, criterion_id)| EvidenceRecord {
             evidence_id: format!("e{}", next_index + offset),
-            criterion_ids: vec![criterion.id.clone()],
+            criterion_ids: vec![criterion_id],
             source: EvidenceSource::Deliverable,
             observed_after_effect: false,
             summary: bounded(deliverable),
@@ -91,6 +150,11 @@ pub fn build_continuation(
     evaluation: &CompletionEvaluation,
     evidence: &[EvidenceRecord],
 ) -> String {
+    let contract_json = serde_json::to_string(&json!({
+        "aish_task_completion": { "contract": contract },
+        "deliverable": ""
+    }))
+    .unwrap_or_else(|_| "{}".into());
     let unsatisfied = evaluation
         .criteria
         .iter()
@@ -104,16 +168,19 @@ pub fn build_continuation(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let evidence_ids = evidence
+    let evidence_lines = evidence
         .iter()
-        .map(|record| record.evidence_id.as_str())
+        .map(|record| {
+            format!(
+                "- {} (verified={}): {}",
+                record.evidence_id, record.verified, bounded(&record.summary)
+            )
+        })
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("\n");
     format!(
-        "[task completion continuation]\nFixed goal: {}\nUnsatisfied criteria:\n{}\nAvailable evidence ids: {}\nNext objective: {}",
-        bounded(&contract.goal),
-        unsatisfied,
-        evidence_ids,
+        "[task completion continuation]\nFixed contract:\n{contract_json}\nUnsatisfied criteria:\n{unsatisfied}\nExisting evidence:\n{evidence_lines}\nNext evidence id: e{}\nNext objective: {}",
+        evidence.len() + 1,
         bounded(evaluation.next_objective.as_deref().unwrap_or("resolve the stated gap"))
     )
 }
@@ -167,6 +234,19 @@ pub fn build_report(
                 })
             }),
     );
+    let terminal_reason = evaluation
+        .needs_user
+        .as_deref()
+        .or(evaluation.blocked.as_deref())
+        .or(if stalled && outcome == CompletionOutcome::Blocked {
+            evaluation
+                .failure
+                .as_deref()
+                .or(Some(STALL_TERMINAL_REASON))
+        } else {
+            None
+        })
+        .map(bounded);
     Ok(CompletionReport {
         outcome: match outcome {
             CompletionOutcome::Done => WireOutcome::Done,
@@ -174,11 +254,7 @@ pub fn build_report(
             CompletionOutcome::Blocked => WireOutcome::Blocked,
             CompletionOutcome::BudgetExhausted => WireOutcome::BudgetExhausted,
         },
-        terminal_reason: evaluation
-            .needs_user
-            .as_deref()
-            .or(evaluation.blocked.as_deref())
-            .map(bounded),
+        terminal_reason,
         criteria,
         unsatisfied_criteria,
         unverified_items,

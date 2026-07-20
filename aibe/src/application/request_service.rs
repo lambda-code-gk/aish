@@ -8,7 +8,7 @@ use crate::application::completion_envelope::{decode_completion_envelope, Contra
 use crate::application::route_turn::RouteTurnService;
 use crate::application::task_completion::{
     build_continuation, build_report, deliverable_evidence, evidence_from_tools,
-    system_instruction, CompletionEventBuffer,
+    append_evidence_from_tools, system_instruction, CompletionEventBuffer,
 };
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
@@ -421,8 +421,15 @@ impl RequestService {
                             );
                         }
                         (Ok(None), Ok(Some(_))) => {
-                            // Contract は tool 実行前に固定済みだが、最終 assistant 出力は
-                            // completion envelope ではない（Human Task suspend 等）。通常応答のまま返す。
+                            if content.starts_with("Human Task suspended.") {
+                                // Contract は固定済みだが Human Task suspend は通常応答のまま返す。
+                            } else {
+                                response = ClientResponse::error(
+                                    id.clone(),
+                                    ErrorCode::InvalidRequest,
+                                    "task completion final envelope lacks evaluation",
+                                );
+                            }
                         }
                         (Ok(Some(first_envelope)), Ok(_)) => {
                             if let Err(message) =
@@ -658,8 +665,8 @@ fn finish_second_query(
             "task completion second query lacks evaluation",
         );
     };
+    let mut evidence = append_evidence_from_tools(contract, previous_evidence, &second_calls);
     cumulative_calls.extend(second_calls);
-    let mut evidence = evidence_from_tools(contract, cumulative_calls);
     evidence.extend(deliverable_evidence(
         contract,
         &envelope.deliverable,

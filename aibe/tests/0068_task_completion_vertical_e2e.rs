@@ -232,6 +232,8 @@ fn task_completion_vertical_e2e() {
         .join("\n");
     assert!(second_query.contains("Next objective: read artifact.txt now"));
     assert!(second_query.contains("post-change read"));
+    assert!(second_query.contains("Fixed contract:"));
+    assert!(second_query.contains("Existing evidence:"));
     assert!(!second_query.contains("create artifact\n"));
     let snapshot = conversation_store
         .load_snapshot("session-0068", "conversation-0068")
