@@ -9,13 +9,30 @@ use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
 
 pub struct ScriptedMockLlm {
     steps: Mutex<Vec<LlmStepResult>>,
+    calls: Mutex<Vec<Vec<ChatMessage>>>,
 }
 
 impl ScriptedMockLlm {
     pub fn new(steps: Vec<LlmStepResult>) -> Self {
         Self {
             steps: Mutex::new(steps),
+            calls: Mutex::new(Vec::new()),
         }
+    }
+
+    pub fn recorded_calls(&self) -> Vec<Vec<ChatMessage>> {
+        self.calls
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default()
+    }
+
+    fn record_call(&self, messages: &[ChatMessage]) -> Result<(), LlmError> {
+        self.calls
+            .lock()
+            .map_err(|error| LlmError::Provider(error.to_string()))?
+            .push(messages.to_vec());
+        Ok(())
     }
 
     fn pop_step(&self) -> Result<LlmStepResult, LlmError> {
@@ -34,16 +51,18 @@ impl ScriptedMockLlm {
 
 #[async_trait]
 impl LlmProvider for ScriptedMockLlm {
-    async fn complete(&self, _messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
+    async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
+        self.record_call(messages)?;
         let step = self.pop_step()?;
         Ok(step.assistant)
     }
 
     async fn complete_with_tools(
         &self,
-        _messages: &[ChatMessage],
+        messages: &[ChatMessage],
         _tools: &[ToolDefinition],
     ) -> Result<LlmStepResult, LlmError> {
+        self.record_call(messages)?;
         self.pop_step()
     }
 }

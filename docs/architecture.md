@@ -118,13 +118,31 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
   "status": "ok",
   "assistant_message": { "role": "assistant", "content": "..." },
   "tool_calls": [],
-  "artifacts": null
+  "completion_report": {
+    "outcome": "done",
+    "terminal_reason": null,
+    "criteria": [{
+      "criterion_id": "c1",
+      "satisfied": true,
+      "evidence": [{
+        "evidence_id": "e2",
+        "source": "observation",
+        "summary": "read_file status=Ok",
+        "verified": true
+      }]
+    }],
+    "unsatisfied_criteria": [],
+    "unverified_items": ["e1: shell_exec status=Ok"],
+    "queries_used": 2
+  }
 }
 ```
 
-`artifacts`: 0024 / 0025 の非採用案で検討した拡張。0026 の外部コマンド経路では付与しない。HTTP ツールループでは `null` のままでよい。
+`completion_report` は optional additive DTO で、Task Completion envelope を返さない旧 provider 応答では省略する。`outcome` は `done` / `needs_user` / `blocked` / `budget_exhausted`。`terminal_reason` は NeedsUser / Blocked の具体的理由を保持する。各 criterion の Evidence、未達 ID、未検証事項（不足している required Evidence を含む）、使用 query 数を同じ DTO から human / structured 表示する。新 RPC は追加しない。
 
 `assistant_streaming`: 任意のデルタ通知。aibe の LLM プロバイダが streaming を返せる場合はそのデルタをそのまま流し、非対応プロバイダは synthetic 1 回のデルタを返す。`ai` は human 向け（`--format` 未指定かつ filter 無効）のときだけ delta を stdout に逐次表示する。`--format json|tsv|env` 時は delta を stdout に出さず、最終 `AgentTurnResult` を structured 形式で 1 回だけ出す（0033）。`AI_FILTER` / `[ask].filter` 有効時も同様に delta を stdout に出さず、turn 終了時に全文へ 1 回だけ filter を適用する（0048）。`streamed` は「chunk を stdout に実際に表示したか」の内部フラグであり、`progress` / `timeout` とは独立する。
+
+Task Completion の provider delta は request-local buffer に保持し、control envelope の decode と検査が終わるまで client へ流さない。Completion 成功時は `deliverable` だけを streaming / final 表示へ渡し、legacy 応答では保持した delta を従来どおり渡す。
 
 ### smart entry と `route_turn`
 
@@ -570,6 +588,16 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 - ツール失敗は turn 全体を止めず **tool result として LLM に返し**、同一 turn 内で再推論する。詳細は `docs/done/0001_aibe-tool-agent-loop-spec.md`。
 - cwd 必須化・ドメイン型・レイヤー分割は `docs/done/0003_architecture-review-refactor-spec.md`。
 - ループ 1 ラウンド（LLM step + tool 実行 + conversation 更新）は `application/tool_round/ToolRoundExecutor`（0007）。`AgentTurnService` は前処理・for-loop・max-round 時の `ToolRoundTerminator` 委譲。composition root は `application/server.rs`。
+
+#### Task Completion Loop（0068 Phase 1）
+
+通常の `agent_turn` では `RequestService` が既存 Query Loop の外側に request-local Task Completion Loop を置く。query budget はコード固定の 2 で、設定・環境変数はない。1 query は既存 `AgentTurnService` を1回開始する単位であり、Query Loop 内の provider/tool round 上限 `[tools] max_rounds` とは別である。既存 Query Loop、approval、timeout、cancel、Human Task、provider adapter は置換しない。
+
+各 assistant は JSON control envelope に `TaskContract`（goal / stable criteria / constraints / deliverables / verification）を載せる。`ContractGate` は最初の tool 実行前に schema と criterion ID を検査して一度だけ固定し、tool 開始後の初出、後続の追加・削除・ID変更を fail-closed で拒否する。Contract 生成・Completion 評価専用の provider call はなく、各 Query Loop の最終 assistant envelope が criterion ごとの評価を兼ねる。
+
+`EvidenceRecord` は tool 実行順から request-local に生成する。write-like / shell 成功は effect の事実に留まり `verified=false`、その後の read-only observation は `observed_after_effect=true` の候補となる。assistant の完了自己申告や未実行計画は Evidence にしない。計画文書そのものが Contract の deliverable である criterion だけは bounded deliverable Evidence を許す。Evaluator の satisfied 判定は、コードで検査した criterion 集合・存在する Evidence 参照・verified provenance を上書きできない。
+
+未達で継続可能な場合、2回目は元要求を再送せず、固定 Contract、unsatisfied criteria、required Evidence、既存 Evidence ID、単一 `next_objective` から構築する。終端順は全 criterion verified の `Done`、具体的なユーザー操作が必要な `NeedsUser`、解消不能または stall の `Blocked`、それ以外で2 query 到達の `BudgetExhausted`。stall は unsatisfied 集合と canonical Evidence fingerprint の不変、または空白・大小文字を正規化した同一 `failure` の2回目で検出する。Contract、ledger、評価履歴、fingerprint は一 request / 一 process のみに保持し、永続化・resume・並列・二次 agent・Human Task 新統合は行わない。Pack Composition は適用せず core application/domain 境界に置く。`ai` は一 request の送信と report 表示だけ、`aish` は変更なしである。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
 

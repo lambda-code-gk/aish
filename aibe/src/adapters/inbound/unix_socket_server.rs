@@ -209,6 +209,16 @@ async fn serve_connection(
     Ok(())
 }
 
+/// 既に確立済みの Unix stream を通常の NDJSON connection handler へ渡す。
+/// socketpair を使う組み込み環境でも bind 経路と同じ protocol/application composition を使う。
+pub async fn serve_connected_stream(
+    stream: UnixStream,
+    handler: Arc<dyn ClientRequestHandler>,
+    shutdown: Arc<ShutdownCoordinator>,
+) -> anyhow::Result<()> {
+    serve_connection(stream, handler, shutdown).await
+}
+
 struct ConnectionEventSink {
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
 }
