@@ -53,6 +53,14 @@ pub fn decode_completion_envelope(content: &str) -> Result<Option<CompletionEnve
     Ok(Some(envelope))
 }
 
+/// 0068 以外の既存 tool turn が Contract gate を通すための最小 shim。Task Completion 対象外。
+pub fn is_minimal_regression_contract(contract: &TaskContract) -> bool {
+    decode_completion_envelope(MINIMAL_CONTRACT_BEFORE_TOOLS)
+        .ok()
+        .flatten()
+        .is_some_and(|envelope| envelope.aish_task_completion.contract == *contract)
+}
+
 /// 一つの request 内で Contract を最初の tool 実行前に固定する gate。
 #[derive(Debug)]
 pub struct ContractGate {

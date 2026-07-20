@@ -57,15 +57,10 @@ pub fn append_evidence_from_tools(
         let observed_after_effect = read_only && effect_seen;
         let criterion_ids = if read_only && observed_after_effect {
             pending_post_observation_criterion_ids(&ledger, contract, &call.name, &execution_ids)
-        } else if read_only {
-            execution_ids.clone()
         } else {
             execution_ids.clone()
         };
-        let verified = read_only
-            && ok
-            && observed_after_effect
-            && !criterion_ids.is_empty();
+        let verified = read_only && ok && observed_after_effect && !criterion_ids.is_empty();
         if !read_only && ok {
             effect_seen = true;
         }
@@ -173,7 +168,9 @@ pub fn build_continuation(
         .map(|record| {
             format!(
                 "- {} (verified={}): {}",
-                record.evidence_id, record.verified, bounded(&record.summary)
+                record.evidence_id,
+                record.verified,
+                bounded(&record.summary)
             )
         })
         .collect::<Vec<_>>()

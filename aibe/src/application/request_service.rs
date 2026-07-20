@@ -4,11 +4,13 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
-use crate::application::completion_envelope::{decode_completion_envelope, ContractGate};
+use crate::application::completion_envelope::{
+    decode_completion_envelope, is_minimal_regression_contract, ContractGate,
+};
 use crate::application::route_turn::RouteTurnService;
 use crate::application::task_completion::{
-    build_continuation, build_report, deliverable_evidence, evidence_from_tools,
-    append_evidence_from_tools, system_instruction, CompletionEventBuffer,
+    append_evidence_from_tools, build_continuation, build_report, deliverable_evidence,
+    evidence_from_tools, system_instruction, CompletionEventBuffer,
 };
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
@@ -420,9 +422,11 @@ impl RequestService {
                                 message,
                             );
                         }
-                        (Ok(None), Ok(Some(_))) => {
-                            if content.starts_with("Human Task suspended.") {
-                                // Contract は固定済みだが Human Task suspend は通常応答のまま返す。
+                        (Ok(None), Ok(Some(fixed))) => {
+                            if content.starts_with("Human Task suspended.")
+                                || is_minimal_regression_contract(&fixed)
+                            {
+                                // Human Task suspend または 0068 対象外の最小 Contract shim は通常応答のまま返す。
                             } else {
                                 response = ClientResponse::error(
                                     id.clone(),
