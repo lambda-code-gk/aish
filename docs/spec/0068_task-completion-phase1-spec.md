@@ -136,7 +136,7 @@ Issue #18 の方針どおり、単純な質問・説明依頼は通常の1 turn 
 
 | 判定 | 主体 | 時点 | 結果 |
 |------|------|------|------|
-| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（`context.task_completion=true` かつ allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | 元要求と eligibility を渡した strict `ContractGate` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
+| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（`context.task_completion=true`（CLI: `ai ask --task-completion` 等）かつ allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | 元要求と eligibility を渡した strict `ContractGate` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
 | Task Completion **対象外** | 同上 | 明示 signal がない、または effect tool がない | `ContractGate::permissive()`。system instruction を挿入しない。effect tool の availability は権限であって task intent ではなく、allowlist だけで Active にしない。Contract なしの通常 `AgentTurnStatus::Ok` を通す |
 | Contract の固定前検査 | `ContractGate` | assistant envelope を受け、同じ step の tool を実行する前 | schema、criterion 集合、元要求の非空、eligibility の `expected_kind` との厳密一致を検査する。Active Execution で Plan / Investigation へ downgrade しない |
 | Human Task suspend | `AgentTurnStatus::Suspended` | 初回または2回目 Query の Human Task が Suspended で turn 終了 | 本文 prefix ではなく typed status をそのまま返し、TC envelope 評価をスキップする |
@@ -206,6 +206,7 @@ Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（known write t
 | 4 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | eligibility を request 開始時に固定、`task_kind` 構造化、Evidence target/stale/Verification、`AgentTurnStatus::Suspended`、Contract↔要求対応検査 | PR #23 レビュー: 全 turn 強制・英語キーワード依存・read-only/検証未達・Evidence 対応不足 |
 | 5 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | coverage AC を構造完全性へ明示縮小。ContractGate の tool 前 request 検査、server trusted verifier との積集合、Active 限定 streaming buffer、opaque target と sanitized summary を固定 | PR #23 再レビュー 4734475755 の5 blocker。自然言語の意味的網羅や arbitrary shell の信頼を Phase 1 の保証に含めないため |
 | 6 | REGRESSION / SAFETY_WITHIN_FAULT_MODEL | request 単位の明示 opt-in、UnknownShellEffect、2回目 Query の typed suspend 保持を固定 | PR #23 再々レビュー 4734829012 の3 blocker。tool availability と intent、任意 shell と既知 write effect、suspend と envelope failure を分離するため |
+| 7 | REGRESSION | production composition から `context.task_completion` を設定する CLI 入口（`--task-completion`）と公開経路テスト | PR #23 再レビュー 4735125926: vertical E2E だけでは `ai ask` から到達不能だったため |
 
 ## 12. `docs/architecture.md` への影響
 

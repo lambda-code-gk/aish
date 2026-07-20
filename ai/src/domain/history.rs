@@ -60,6 +60,9 @@ pub struct HistoryPayload {
     /// `execution_mode` とは独立（`ai collab` は Mode のみでこのフラグは立てない）。
     #[serde(default)]
     pub collaborative_handoff: bool,
+    /// Task Completion Contract の明示 opt-in（0068）。省略時は false。
+    #[serde(default)]
+    pub task_completion: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,6 +115,11 @@ pub fn execution_mode_for_rerun(cli_collaborative: bool, saved: ExecutionMode) -
 /// `execution_mode` から導出しない（`ai collab` 再実行で shell_exec を誤って Human Shell 化しない）。
 pub fn collaborative_handoff_for_rerun(cli_collaborative: bool, saved: bool) -> bool {
     cli_collaborative || saved
+}
+
+/// `ai rerun` の Task Completion opt-in。保存値を復元し、CLI `--task-completion` で true へ昇格できる。
+pub fn task_completion_for_rerun(cli_task_completion: bool, saved: bool) -> bool {
+    cli_task_completion || saved
 }
 
 /// `ai retry` の execution_mode。履歴は使わず、現在の CLI 指定だけを正とする。
@@ -387,6 +395,7 @@ mod tests {
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
             collaborative_handoff: false,
+            task_completion: false,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
@@ -440,6 +449,14 @@ mod tests {
         );
         assert_eq!(execution_mode_for_retry(false), ExecutionMode::Normal);
         assert_eq!(execution_mode_for_retry(true), ExecutionMode::Collaborative);
+    }
+
+    #[test]
+    fn task_completion_for_rerun_restores_saved_or_cli_flag() {
+        assert!(!task_completion_for_rerun(false, false));
+        assert!(task_completion_for_rerun(true, false));
+        assert!(task_completion_for_rerun(false, true));
+        assert!(task_completion_for_rerun(true, true));
     }
 
     #[test]

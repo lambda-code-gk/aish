@@ -49,12 +49,12 @@ use ai::domain::smart_preprocessor::{
 use ai::domain::{
     collaborative_handoff_for_rerun, execution_mode_for_rerun, resolve_console_hints,
     resolve_llm_profile, resolve_log_tail_bytes, resolve_output_filter, resolve_progress,
-    resolve_tools, tools_cli_for_rerun, validate_ask_arg_order, AskArgOrderError, AskInput,
-    AskInvocationSource, AskRequestError, ConfigToolsTokens, ConsoleHintReport, ExecutionMode,
-    HistoryIndexFilter, HistoryMessage, HistoryPayload, HistoryRecordKind, HistoryRecordStatus,
-    LogTailResolveError, OutputFormat, OutputFormatError, PromptAcquisitionResult,
-    RequestContextInput, ShellExecSessionState, ShellExecTier, ShellLogChoice,
-    ShellLogResolveError, ToolsResolveError,
+    resolve_tools, task_completion_for_rerun, tools_cli_for_rerun, validate_ask_arg_order,
+    AskArgOrderError, AskInput, AskInvocationSource, AskRequestError, ConfigToolsTokens,
+    ConsoleHintReport, ExecutionMode, HistoryIndexFilter, HistoryMessage, HistoryPayload,
+    HistoryRecordKind, HistoryRecordStatus, LogTailResolveError, OutputFormat, OutputFormatError,
+    PromptAcquisitionResult, RequestContextInput, ShellExecSessionState, ShellExecTier,
+    ShellLogChoice, ShellLogResolveError, ToolsResolveError,
 };
 use ai::domain::{
     CheckStatus, DiagnosticsReport, DoctorReport, DryRunReport, FilterMetadata, HealthCheck,
@@ -398,6 +398,7 @@ struct ResolvedTurnSettings {
     trace_route: bool,
     collaborative: bool,
     execution_mode: ExecutionMode,
+    task_completion: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -743,6 +744,8 @@ fn run_rerun(turn: TurnOptions, history_id: String) -> anyhow::Result<ExitCode> 
         execution_mode_for_rerun(merged_turn.collaborative, payload.execution_mode);
     settings.collaborative =
         collaborative_handoff_for_rerun(merged_turn.collaborative, payload.collaborative_handoff);
+    settings.task_completion =
+        task_completion_for_rerun(merged_turn.task_completion, payload.task_completion);
     let response = execute_turn(
         &cfg,
         "rerun",
@@ -1034,6 +1037,7 @@ fn execute_turn_with_id(
     );
     request.request_context.collaborative_handoff = settings.collaborative;
     request.request_context.execution_mode = settings.execution_mode;
+    request.request_context.task_completion = settings.task_completion;
     request.request_context.continuation_turn = turn_id_override.is_some();
     request.request_context.system_instruction = ai::domain::append_collaborative_instruction(
         request.request_context.system_instruction.take(),
@@ -1050,6 +1054,7 @@ fn execute_turn_with_id(
     {
         ctx.collaborative_handoff = settings.collaborative;
         ctx.execution_mode = settings.execution_mode.into();
+        ctx.task_completion = settings.task_completion;
     }
 
     let yes_exec_effective =
@@ -1169,6 +1174,7 @@ fn execute_turn_with_id(
         tools: tool_names,
         execution_mode: settings.execution_mode,
         collaborative_handoff: settings.collaborative,
+        task_completion: settings.task_completion,
         llm_profile: settings.llm_profile.clone(),
         preset: settings.preset_name.clone(),
         session_id: settings.session_id.clone(),
@@ -2187,6 +2193,7 @@ fn turn_has_cli_overrides(turn: &TurnOptions) -> bool {
         || turn.log_tail.is_some()
         || turn.yes_exec
         || turn.new
+        || turn.task_completion
 }
 
 fn build_preprocess_config(
@@ -2981,6 +2988,7 @@ fn resolve_turn_settings(
         trace_route: turn.trace_route,
         collaborative: turn.collaborative,
         execution_mode: ExecutionMode::from_legacy_flag(turn.collaborative),
+        task_completion: turn.task_completion,
     })
 }
 
@@ -4008,6 +4016,7 @@ mod cli_tests {
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
             collaborative_handoff: false,
+            task_completion: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -4038,6 +4047,7 @@ mod cli_tests {
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
             collaborative_handoff: false,
+            task_completion: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -4067,6 +4077,7 @@ mod cli_tests {
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
             collaborative_handoff: false,
+            task_completion: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -4099,6 +4110,7 @@ mod cli_tests {
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
             collaborative_handoff: false,
+            task_completion: false,
             llm_profile: None,
             preset: None,
             session_id: None,
@@ -4147,6 +4159,7 @@ mod cli_tests {
             trace_route: false,
             collaborative: false,
             execution_mode: ExecutionMode::Normal,
+            task_completion: false,
         };
         let turn = crate::TurnOptions::default();
         let hints = crate::RouteTurnHints {
@@ -4198,6 +4211,7 @@ mod cli_tests {
             trace_route: false,
             collaborative: false,
             execution_mode: ExecutionMode::Normal,
+            task_completion: false,
         };
         let turn = crate::TurnOptions {
             new: true,
@@ -4270,6 +4284,7 @@ mod cli_tests {
             tools: vec![],
             execution_mode: ExecutionMode::Normal,
             collaborative_handoff: false,
+            task_completion: false,
             llm_profile: None,
             preset: None,
             session_id: Some("sess".into()),
@@ -4413,6 +4428,68 @@ mod cli_tests {
     }
 
     #[test]
+    fn turn_options_parse_task_completion_flag() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        #[command(name = "test")]
+        struct Cli {
+            #[command(flatten)]
+            turn: TurnOptions,
+        }
+
+        let turn = Cli::try_parse_from(["test", "--task-completion"])
+            .expect("parse")
+            .turn;
+        assert!(turn.task_completion);
+
+        let turn = Cli::try_parse_from(["test"]).expect("parse").turn;
+        assert!(!turn.task_completion);
+    }
+
+    #[test]
+    fn task_completion_cli_opt_in_reaches_wire_context() {
+        use std::collections::HashMap;
+
+        let cfg = AiConfig {
+            socket_path: default_socket_path(),
+            context_current: None,
+            memory_enabled: true,
+            ask_tools: ConfigToolsTokens::default(),
+            ask_default_profile: None,
+            ask_filter: None,
+            ask_console_hints: None,
+            ask_progress: None,
+            shell_log_mode: None,
+            history_dir: PathBuf::from("/tmp/ai-history-test"),
+            history_max_entries: 500,
+            log_tail_bytes: None,
+            suggested_command_recall: true,
+            suggested_command_recall_hint: true,
+            suggested_command_recall_max_items: 8,
+            presets: HashMap::new(),
+            smart_preprocessor: None,
+        };
+        let turn = TurnOptions {
+            task_completion: true,
+            ..Default::default()
+        };
+        let settings = crate::resolve_turn_settings(&cfg, &turn).expect("resolve");
+        assert!(settings.task_completion);
+        let mut ctx = crate::build_request_context(
+            None,
+            None,
+            settings.ai_session_id.clone(),
+            None,
+            &settings.console_hint,
+            None,
+            None,
+        );
+        ctx.task_completion = settings.task_completion;
+        assert!(ctx.into_wire().task_completion);
+    }
+
+    #[test]
     fn apply_route_plan_ignores_unknown_preset_and_maps_tools() {
         use std::collections::HashMap;
 
@@ -4549,6 +4626,7 @@ mod cli_tests {
             trace_route: false,
             collaborative: false,
             execution_mode: ExecutionMode::Normal,
+            task_completion: false,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,
@@ -4642,6 +4720,7 @@ mod cli_tests {
             trace_route: false,
             collaborative: false,
             execution_mode: ExecutionMode::Normal,
+            task_completion: false,
         };
         let prep = crate::apply_smart_route_and_features(
             &cfg,

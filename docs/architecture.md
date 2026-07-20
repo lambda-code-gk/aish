@@ -107,7 +107,7 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
 | `llm_profile` | 任意。使用する LLM プロファイル名（`docs/done/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
-| `context.task_completion` | Task Completion Contract の request 単位 opt-in。省略時 / `false` は通常 turn。tool allowlist は権限であり task intent ではないため、effect tool が利用可能でもこの signal なしでは Active にしない |
+| `context.task_completion` | Task Completion Contract の request 単位 opt-in。省略時 / `false` は通常 turn。CLI では `ai ask --task-completion` で明示有効化。tool allowlist は権限であり task intent ではないため、effect tool が利用可能でもこの signal なしでは Active にしない |
 | `context.system_instruction` | 任意。この turn のみ LLM に前置する system 本文。クライアント（`ai`）が turn 解決後に組み立て、aibe は解釈せず注入する。console hint（端末サイズに応じた整形指示）は `ai` の `resolve_console_hints` で on/off を決め、有効時のみ TTY サイズから生成する。CLI `--console-hint` / `-H` / `--no-console-hint` / `-N`、設定 `[ask].console_hints`、preset `[presets.*].console_hints` で制御（優先順位: CLI > preset > config > 既定 `true`）。非 TTY または `--format`（tsv / json / env）指定時は付与しない。`aibe_client` は policy を持たず、解決済み context を serialize するのみ。長すぎる場合は `aibe_protocol::SYSTEM_INSTRUCTION_MAX_BYTES` で切り詰める |
 | turn 進行表示 | `ai` の `resolve_progress` で on/off（優先順位: CLI `--progress` / `--no-progress` > preset > `[ask].progress` > 既定 **TTY stderr なら `true`**）。有効時は aibe の progress event を受け、TTY stderr では単行スピナー（`\r` 上書き）で表示し assistant streaming 開始時に行を消す。非 TTY では `ai: progress: …` 行（`--progress` 明示時のみ有効）。`--quiet` で抑制。**`--format`（tsv / json / env）は stdout 契約のみを決め、stderr progress の有効/無効には使わない**（0033）。turn スコープの spinner は `ProgressGuard`（RAII）で必ず停止する |
 

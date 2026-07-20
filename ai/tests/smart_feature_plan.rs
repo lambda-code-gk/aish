@@ -100,6 +100,7 @@ fn default_turn() -> TurnOptions {
         no_console_hint: false,
         trace_route: false,
         collaborative: false,
+        task_completion: false,
     }
 }
 

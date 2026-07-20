@@ -263,6 +263,7 @@ fn memory_query_forwards_user_input_as_user_query() {
         no_console_hint: false,
         trace_route: false,
         collaborative: false,
+        task_completion: false,
     };
     let _ = execute_feature_actions_mvp(
         &actions,

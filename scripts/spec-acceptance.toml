@@ -86,6 +86,15 @@ file_glob = "ai/tests/0068_task_completion_phase1_red.rs"
 pending = false
 
 [[cases]]
+spec = "0068"
+phase = 1
+id = "task_completion_cli_opt_in"
+description = "ai ask --task-completion が production composition から context.task_completion=true を設定する"
+test = "ai_ask_parses_task_completion_flag"
+file_glob = "ai/tests/0068_task_completion_cli_opt_in.rs"
+pending = false
+
+[[cases]]
 spec = "0058"
 phase = 0
 id = "doctor_alias_uses_doctor_command_name"
