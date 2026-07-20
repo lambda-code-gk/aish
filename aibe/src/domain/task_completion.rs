@@ -11,11 +11,33 @@ pub const CONTRACT_MAX_CRITERIA: usize = 32;
 pub const CONTRACT_MAX_LIST_ITEMS: usize = 32;
 pub const EVALUATION_MAX_EVIDENCE_IDS: usize = 64;
 pub const EVALUATION_MAX_REQUIRED_EVIDENCE: usize = 32;
+pub const EVIDENCE_TARGET_MAX_BYTES: usize = 256;
+
+/// Contract 全体の作業種別。英語キーワードではなく構造化フィールドで安全境界を表す。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    Plan,
+    Investigation,
+    #[default]
+    Execution,
+}
+
+/// request 開始時にコードが決める Task Completion 適用可否。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskCompletionEligibility {
+    /// 単純な質問・説明。既存 Query Loop のまま通す。
+    Inactive,
+    /// 副作用・検証・調査を伴う依頼。Contract 必須。
+    Active { expected_kind: TaskKind },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskContract {
     pub goal: String,
+    #[serde(default)]
+    pub task_kind: TaskKind,
     pub criteria: Vec<CompletionCriterion>,
     #[serde(default)]
     pub constraints: Vec<String>,
@@ -23,6 +45,9 @@ pub struct TaskContract {
     pub deliverables: Vec<String>,
     #[serde(default)]
     pub verification: Vec<String>,
+    /// 検証 Evidence を生成できる tool 名。空なら task_kind 既定を使う。
+    #[serde(default)]
+    pub verification_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +57,9 @@ pub struct CompletionCriterion {
     pub description: String,
     #[serde(default)]
     pub deliverable_is_plan: bool,
+    /// この criterion が観測・検証すべき対象（path 等）。空なら tool target 一致を要求しない。
+    #[serde(default)]
+    pub observes_targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +82,12 @@ pub struct EvidenceRecord {
     pub summary: String,
     #[serde(default)]
     pub verified: bool,
+    /// path / command digest 等の bounded target。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// 後続の同 target 副作用で無効化された観測。
+    #[serde(default)]
+    pub stale: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,10 +154,12 @@ impl TaskContract {
         validate_string_list("constraints", &self.constraints)?;
         validate_string_list("deliverables", &self.deliverables)?;
         validate_string_list("verification", &self.verification)?;
+        validate_string_list("verification_tools", &self.verification_tools)?;
         let mut ids = BTreeSet::new();
         for criterion in &self.criteria {
             validate_bounded_text("criterion id", &criterion.id)?;
             validate_bounded_text("criterion description", &criterion.description)?;
+            validate_string_list("observes_targets", &criterion.observes_targets)?;
             if criterion.id.trim().is_empty() || criterion.description.trim().is_empty() {
                 return Err("criterion id and description must not be empty".into());
             }
@@ -131,7 +167,7 @@ impl TaskContract {
                 return Err(format!("duplicate criterion id: {}", criterion.id));
             }
         }
-        validate_plan_criteria(self)?;
+        validate_task_kind_consistency(self)?;
         Ok(())
     }
 
@@ -153,6 +189,24 @@ impl TaskContract {
 
     pub fn ids(&self) -> BTreeSet<String> {
         self.criteria.iter().map(|c| c.id.clone()).collect()
+    }
+
+    pub fn effective_verification_tools(&self) -> Vec<String> {
+        if !self.verification_tools.is_empty() {
+            return self.verification_tools.clone();
+        }
+        match self.task_kind {
+            TaskKind::Plan => Vec::new(),
+            TaskKind::Investigation => vec![
+                "read_file".into(),
+                "list_dir".into(),
+                "grep".into(),
+                "git_status".into(),
+                "git_diff".into(),
+                "shell_exec".into(),
+            ],
+            TaskKind::Execution => vec!["read_file".into(), "git_diff".into(), "shell_exec".into()],
+        }
     }
 }
 
@@ -200,6 +254,54 @@ impl CompletionEvaluation {
     }
 }
 
+/// write / shell を含む allowlist は Execution 対象。それ以外は Inactive（任意で Contract 可）。
+pub fn classify_task_completion_eligibility(
+    tool_names: &[impl AsRef<str>],
+) -> TaskCompletionEligibility {
+    let has_effect = tool_names
+        .iter()
+        .any(|name| matches!(name.as_ref(), "write_file" | "apply_patch" | "shell_exec"));
+    if has_effect {
+        TaskCompletionEligibility::Active {
+            expected_kind: TaskKind::Execution,
+        }
+    } else {
+        TaskCompletionEligibility::Inactive
+    }
+}
+
+/// 元要求に対する Contract の対応検査（構造化 task_kind と goal の非空を下限とする）。
+pub fn validate_contract_covers_request(
+    contract: &TaskContract,
+    eligibility: TaskCompletionEligibility,
+    user_request: &str,
+) -> Result<(), String> {
+    contract.validate()?;
+    let request = user_request.trim();
+    if request.is_empty() {
+        return Err("user request is empty".into());
+    }
+    match eligibility {
+        TaskCompletionEligibility::Inactive => Ok(()),
+        TaskCompletionEligibility::Active { expected_kind } => {
+            if contract.task_kind == TaskKind::Plan && expected_kind == TaskKind::Execution {
+                return Err(
+                    "execution-eligible request cannot use a plan-only task contract".into(),
+                );
+            }
+            if expected_kind == TaskKind::Execution && contract.task_kind == TaskKind::Investigation
+            {
+                // Investigation Contract は effect tool allowlist 上でも許容するが、
+                // write/shell 成功を verified にしない（Evidence 側で担保）。
+            }
+            if contract.goal.trim().len() < 3 {
+                return Err("contract goal is too short to cover the user request".into());
+            }
+            Ok(())
+        }
+    }
+}
+
 fn validate_bounded_text(field: &str, value: &str) -> Result<(), String> {
     if value.len() > CONTRACT_TEXT_MAX_BYTES {
         return Err(format!("{field} exceeds {CONTRACT_TEXT_MAX_BYTES} bytes"));
@@ -207,7 +309,7 @@ fn validate_bounded_text(field: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_plan_criteria(contract: &TaskContract) -> Result<(), String> {
+fn validate_task_kind_consistency(contract: &TaskContract) -> Result<(), String> {
     let has_plan = contract
         .criteria
         .iter()
@@ -216,29 +318,24 @@ fn validate_plan_criteria(contract: &TaskContract) -> Result<(), String> {
         .criteria
         .iter()
         .any(|criterion| !criterion.deliverable_is_plan);
-    if has_plan && has_execution {
-        return Err(
-            "deliverable_is_plan cannot be combined with execution criteria in one contract".into(),
-        );
-    }
-    if has_plan && verification_implies_execution(&contract.verification) {
-        return Err(
-            "deliverable_is_plan is incompatible with execution-oriented verification".into(),
-        );
+    match contract.task_kind {
+        TaskKind::Plan => {
+            if has_execution {
+                return Err("plan task_kind cannot include non-plan criteria".into());
+            }
+            if !has_plan {
+                return Err("plan task_kind requires deliverable_is_plan criteria".into());
+            }
+        }
+        TaskKind::Investigation | TaskKind::Execution => {
+            if has_plan {
+                return Err(
+                    "execution/investigation task_kind cannot set deliverable_is_plan".into(),
+                );
+            }
+        }
     }
     Ok(())
-}
-
-fn verification_implies_execution(verification: &[String]) -> bool {
-    verification.iter().any(|item| {
-        let lower = item.to_lowercase();
-        [
-            "read", "change", "write", "after", "observe", "verify", "create", "update", "delete",
-            "modify", "execute", "run",
-        ]
-        .iter()
-        .any(|keyword| lower.contains(keyword))
-    })
 }
 
 fn validate_string_list(field: &str, values: &[String]) -> Result<(), String> {
@@ -286,6 +383,9 @@ pub fn validate_evaluation(
             let record = evidence_by_id
                 .get(evidence_id.as_str())
                 .ok_or_else(|| format!("unknown evidence id: {evidence_id}"))?;
+            if record.stale {
+                return Err(format!("evidence {evidence_id} is stale"));
+            }
             if !record.criterion_ids.contains(&criterion.criterion_id) {
                 return Err(format!("evidence {evidence_id} is not linked to criterion"));
             }
@@ -297,7 +397,7 @@ pub fn validate_evaluation(
             if criterion.evidence_ids.iter().any(|id| {
                 evidence_by_id
                     .get(id.as_str())
-                    .is_none_or(|record| !record.verified)
+                    .is_none_or(|record| !record.verified || record.stale)
             }) {
                 return Err("satisfied criterion references unverified evidence".into());
             }
@@ -381,8 +481,13 @@ pub fn progress_snapshot(
         .iter()
         .map(|record| {
             format!(
-                "{}:{:?}:{}:{}",
-                record.evidence_id, record.source, record.observed_after_effect, record.verified
+                "{}:{:?}:{}:{}:{}:{}",
+                record.evidence_id,
+                record.source,
+                record.observed_after_effect,
+                record.verified,
+                record.stale,
+                record.target.as_deref().unwrap_or("")
             )
         })
         .collect::<Vec<_>>()
@@ -413,4 +518,12 @@ pub fn is_stalled(previous: &ProgressSnapshot, current: &ProgressSnapshot) -> bo
                 .as_ref()
                 .zip(current.normalized_failure.as_ref())
                 .is_some_and(|(left, right)| left == right))
+}
+
+pub fn bound_evidence_target(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.chars().take(EVIDENCE_TARGET_MAX_BYTES).collect())
 }

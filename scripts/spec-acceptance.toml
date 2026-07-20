@@ -20,7 +20,7 @@ id = "task_contract_is_stable_and_complete"
 description = "初回tool実行前に完全なContractを固定し後続のcriterion集合変更を拒否する"
 test = "task_contract_is_stable_and_complete"
 file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
-pending = true
+pending = false
 
 [[cases]]
 spec = "0068"

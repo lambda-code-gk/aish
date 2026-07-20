@@ -17,11 +17,11 @@ red_integrations = 4
 
 [[features]]
 spec = "0068"
-status = "locked"
+status = "done"
 scope_class = "feature"
 
-scope_revision = 3
-scope_change_reason = "task_contract_is_stable_and_complete の complete 検証は未達のため locked に戻す"
+scope_revision = 4
+scope_change_reason = "PR #23 レビュー対応後、全9 AC pending=false で done"
 scope_review = "approved"
 
 core_outcome = "一つのaiコマンド内でLLM終了文ではなく完了条件ごとのEvidenceを根拠に未達gapを埋め達成または理由付き非達成まで既存Agent loopを継続する"

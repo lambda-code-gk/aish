@@ -14,7 +14,6 @@ use ai::ports::outbound::{
 };
 use aibe::adapters::inbound::connection_human_task::ConnectionHumanTaskGate;
 use aibe::adapters::outbound::MockLlm;
-use aibe::application::completion_envelope::MINIMAL_CONTRACT_BEFORE_TOOLS;
 use aibe::application::server;
 use aibe::domain::{ChatMessage, LlmStepResult, MessageRole, ToolCall};
 use aibe::ports::outbound::{
@@ -121,7 +120,7 @@ impl LlmProvider for RecordingHumanTaskLlm {
         ));
         if calls.len() == 1 {
             return Ok(LlmStepResult::with_tool_calls(
-                MINIMAL_CONTRACT_BEFORE_TOOLS,
+                "need human",
                 vec![ToolCall {
                     id: "human-call-1".into(),
                     name: HUMAN_TASK.into(),

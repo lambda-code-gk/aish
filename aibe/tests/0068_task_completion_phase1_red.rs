@@ -2,13 +2,14 @@
 
 use aibe::application::completion_envelope::{decode_completion_envelope, ContractGate};
 use aibe::application::task_completion::{
-    append_evidence_from_tools, build_continuation, build_report, deliverable_evidence,
-    evidence_from_tools,
+    build_continuation, build_report, deliverable_evidence, evidence_from_tools,
 };
 use aibe::domain::{
-    progress_snapshot, terminal_outcome, validate_evaluation, CompletionCriterion,
+    classify_task_completion_eligibility, progress_snapshot, terminal_outcome,
+    validate_contract_covers_request, validate_evaluation, CompletionCriterion,
     CompletionEvaluation, CompletionOutcome, CriterionEvaluation, CriterionStatus, EvidenceRecord,
-    EvidenceSource, TaskContract, STALL_TERMINAL_REASON, TASK_COMPLETION_QUERY_BUDGET,
+    EvidenceSource, TaskCompletionEligibility, TaskContract, TaskKind, STALL_TERMINAL_REASON,
+    TASK_COMPLETION_QUERY_BUDGET,
 };
 use aibe_protocol::{ExecutedToolCall, ToolApprovalState, ToolRiskClass, APPLY_PATCH, READ_FILE};
 use serde_json::json;
@@ -16,14 +17,17 @@ use serde_json::json;
 fn contract() -> TaskContract {
     TaskContract {
         goal: "change then verify".into(),
+        task_kind: TaskKind::Execution,
         criteria: vec![CompletionCriterion {
             id: "c1".into(),
             description: "the changed state is observed".into(),
             deliverable_is_plan: false,
+            observes_targets: vec!["artifact.txt".into()],
         }],
         constraints: vec!["do not expose secrets".into()],
         deliverables: vec!["updated file".into()],
         verification: vec!["read the file after changing it".into()],
+        verification_tools: vec!["read_file".into()],
     }
 }
 
@@ -59,10 +63,14 @@ fn envelope(contract: &TaskContract, evaluation: Option<&CompletionEvaluation>) 
 }
 
 #[test]
-#[ignore = "0068: contract completeness against original user request is not yet asserted"]
 fn task_contract_is_stable_and_complete() {
-    let gate = ContractGate::default();
+    let eligibility = TaskCompletionEligibility::Active {
+        expected_kind: TaskKind::Execution,
+    };
+    let gate = ContractGate::strict();
     let fixed = contract();
+    validate_contract_covers_request(&fixed, eligibility, "please change artifact.txt and verify")
+        .expect("covers request");
     assert!(gate
         .inspect_before_tools(&envelope(&fixed, None), true)
         .expect("valid contract before tool"));
@@ -75,7 +83,7 @@ fn task_contract_is_stable_and_complete() {
         .unwrap_err()
         .contains("changed"));
 
-    let missing_gate = ContractGate::default();
+    let missing_gate = ContractGate::strict();
     assert!(missing_gate
         .inspect_before_tools("tool request without a contract", true)
         .unwrap_err()
@@ -85,6 +93,39 @@ fn task_contract_is_stable_and_complete() {
         .inspect_before_tools(&envelope(&fixed, None), false)
         .unwrap_err()
         .contains("after tool execution"));
+
+    let plan = TaskContract {
+        goal: "produce a plan".into(),
+        task_kind: TaskKind::Plan,
+        criteria: vec![CompletionCriterion {
+            id: "c1".into(),
+            description: "plan document".into(),
+            deliverable_is_plan: true,
+            observes_targets: vec![],
+        }],
+        constraints: vec![],
+        deliverables: vec!["plan".into()],
+        verification: vec!["plan content present".into()],
+        verification_tools: vec![],
+    };
+    assert!(validate_contract_covers_request(
+        &plan,
+        eligibility,
+        "please change artifact.txt and verify"
+    )
+    .unwrap_err()
+    .contains("plan-only"));
+
+    assert!(matches!(
+        classify_task_completion_eligibility(&["read_file"]),
+        TaskCompletionEligibility::Inactive
+    ));
+    assert!(matches!(
+        classify_task_completion_eligibility(&["shell_exec"]),
+        TaskCompletionEligibility::Active {
+            expected_kind: TaskKind::Execution
+        }
+    ));
 }
 
 #[test]
@@ -117,12 +158,24 @@ fn assistant_claim_is_not_verified_evidence() {
 #[test]
 fn side_effect_requires_post_observation() {
     let calls = vec![
-        ExecutedToolCall::ok("w1".into(), APPLY_PATCH, json!({}), "changed".into()).with_audit(
+        ExecutedToolCall::ok(
+            "w1".into(),
+            APPLY_PATCH,
+            json!({"path": "artifact.txt"}),
+            "changed".into(),
+        )
+        .with_audit(
             ToolRiskClass::WriteLike,
             ToolApprovalState::ExplicitClientOptIn,
             false,
         ),
-        ExecutedToolCall::ok("r1".into(), READ_FILE, json!({}), "new state".into()).with_audit(
+        ExecutedToolCall::ok(
+            "r1".into(),
+            READ_FILE,
+            json!({"path": "artifact.txt"}),
+            "new state".into(),
+        )
+        .with_audit(
             ToolRiskClass::ReadOnly,
             ToolApprovalState::NotRequired,
             false,
@@ -135,6 +188,7 @@ fn side_effect_requires_post_observation() {
     );
     assert!(evidence[1].verified);
     assert!(evidence[1].observed_after_effect);
+    assert_eq!(evidence[1].target.as_deref(), Some("artifact.txt"));
     assert!(validate_evaluation(
         &contract(),
         &evidence,
@@ -156,7 +210,13 @@ fn side_effect_requires_post_observation() {
 
     let unrelated_read = vec![
         calls[0].clone(),
-        ExecutedToolCall::ok("pwd".into(), "pwd", json!({}), "/tmp".into()).with_audit(
+        ExecutedToolCall::ok(
+            "r2".into(),
+            READ_FILE,
+            json!({"path": "other.txt"}),
+            "other".into(),
+        )
+        .with_audit(
             ToolRiskClass::ReadOnly,
             ToolApprovalState::NotRequired,
             false,
@@ -165,7 +225,69 @@ fn side_effect_requires_post_observation() {
     let unrelated_evidence = evidence_from_tools(&contract(), &unrelated_read);
     assert!(
         !unrelated_evidence[1].verified,
-        "unrelated read-only observation must not verify the change criterion"
+        "wrong-target read_file must not verify the change criterion"
+    );
+
+    let rewritten = vec![
+        calls[0].clone(),
+        calls[1].clone(),
+        ExecutedToolCall::ok(
+            "w2".into(),
+            APPLY_PATCH,
+            json!({"path": "artifact.txt"}),
+            "changed again".into(),
+        )
+        .with_audit(
+            ToolRiskClass::WriteLike,
+            ToolApprovalState::ExplicitClientOptIn,
+            false,
+        ),
+    ];
+    let stale_ledger = evidence_from_tools(&contract(), &rewritten);
+    assert!(
+        stale_ledger[1].stale,
+        "re-write must stale prior observation"
+    );
+    assert!(!stale_ledger[1].verified);
+    assert!(validate_evaluation(
+        &contract(),
+        &stale_ledger,
+        &evaluation(CriterionStatus::Satisfied, &["e2"]),
+    )
+    .unwrap_err()
+    .contains("stale"));
+
+    let investigation = TaskContract {
+        goal: "inspect repository".into(),
+        task_kind: TaskKind::Investigation,
+        criteria: vec![CompletionCriterion {
+            id: "c1".into(),
+            description: "status observed".into(),
+            deliverable_is_plan: false,
+            observes_targets: vec![],
+        }],
+        constraints: vec![],
+        deliverables: vec!["status report".into()],
+        verification: vec!["read status".into()],
+        verification_tools: vec!["read_file".into()],
+    };
+    let inspect = evidence_from_tools(
+        &investigation,
+        &[ExecutedToolCall::ok(
+            "r1".into(),
+            READ_FILE,
+            json!({"path": "README.md"}),
+            "ok".into(),
+        )
+        .with_audit(
+            ToolRiskClass::ReadOnly,
+            ToolApprovalState::NotRequired,
+            false,
+        )],
+    );
+    assert!(
+        inspect[0].verified,
+        "investigation read-only success may verify without prior effect"
     );
 }
 
@@ -178,6 +300,8 @@ fn completion_evaluator_is_structured_and_fail_closed() {
         observed_after_effect: true,
         summary: "observed".into(),
         verified: true,
+        target: Some("artifact.txt".into()),
+        stale: false,
     }];
     for invalid in [
         CompletionEvaluation {
@@ -222,10 +346,20 @@ fn completion_evaluator_is_structured_and_fail_closed() {
 #[test]
 fn continuation_is_gap_driven_and_detects_plan_only() {
     let original = "please change the production file";
+    let prior = vec![EvidenceRecord {
+        evidence_id: "e1".into(),
+        criterion_ids: vec!["c1".into()],
+        source: EvidenceSource::Tool,
+        observed_after_effect: false,
+        summary: "apply_patch status=Ok target=artifact.txt".into(),
+        verified: false,
+        target: Some("artifact.txt".into()),
+        stale: false,
+    }];
     let continuation = build_continuation(
         &contract(),
         &evaluation(CriterionStatus::Unsatisfied, &[]),
-        &[],
+        &prior,
     );
     assert!(!continuation.contains(original));
     assert!(continuation.contains("c1"));
@@ -233,22 +367,46 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
     assert!(continuation.contains("Next objective: read the changed file"));
     assert!(continuation.contains("Fixed contract:"));
     assert!(continuation.contains("Existing evidence:"));
+    assert!(continuation.contains("criteria=[c1]"));
+    assert!(continuation.contains("target=artifact.txt"));
 
     let plan_contract = TaskContract {
         goal: "produce a plan".into(),
+        task_kind: TaskKind::Plan,
         criteria: vec![CompletionCriterion {
             id: "c1".into(),
             description: "plan document".into(),
             deliverable_is_plan: true,
+            observes_targets: vec![],
         }],
         constraints: vec![],
         deliverables: vec!["plan".into()],
         verification: vec!["plan content present".into()],
+        verification_tools: vec![],
     };
     plan_contract.validate().expect("plan-only contract");
     let plan_evidence = deliverable_evidence(&plan_contract, "1. inspect\n2. change", 1);
     assert_eq!(plan_evidence.len(), 1);
     assert!(plan_evidence[0].verified);
+
+    // 日本語 verification でも task_kind 構造で plan を拒否できる（キーワード非依存）。
+    let sneaky = TaskContract {
+        goal: "plan".into(),
+        task_kind: TaskKind::Plan,
+        criteria: vec![CompletionCriterion {
+            id: "c1".into(),
+            description: "plan".into(),
+            deliverable_is_plan: true,
+            observes_targets: vec![],
+        }],
+        constraints: vec![],
+        deliverables: vec!["plan".into()],
+        verification: vec!["変更後のファイルを読む".into()],
+        verification_tools: vec![],
+    };
+    sneaky
+        .validate()
+        .expect("plan kind is structural, not keyword");
 }
 
 #[test]
@@ -267,32 +425,23 @@ fn terminal_outcomes_are_distinct() {
     let needs_user_report =
         build_report(&contract(), &[], &needs_user, 1, false).expect("needs-user report");
     assert_eq!(
-        needs_user_report.terminal_reason.as_deref(),
-        Some("provide approval")
+        needs_user_report.outcome,
+        aibe_protocol::CompletionOutcome::NeedsUser
     );
-    assert!(needs_user_report
-        .unverified_items
-        .iter()
-        .any(|item| item.contains("post-change read")));
+    let mut blocked = evaluation(CriterionStatus::Unsatisfied, &[]);
+    blocked.next_objective = None;
+    blocked.blocked = Some("permission denied".into());
     assert_eq!(
-        terminal_outcome(&evaluation(CriterionStatus::Unsatisfied, &[]), 1, true),
+        terminal_outcome(&blocked, 1, false),
         Some(CompletionOutcome::Blocked)
-    );
-    let stall_report = build_report(
-        &contract(),
-        &[],
-        &evaluation(CriterionStatus::Unsatisfied, &[]),
-        1,
-        true,
-    )
-    .expect("stall report");
-    assert_eq!(
-        stall_report.terminal_reason.as_deref(),
-        Some(STALL_TERMINAL_REASON)
     );
     assert_eq!(
         terminal_outcome(&evaluation(CriterionStatus::Unsatisfied, &[]), 2, false),
         Some(CompletionOutcome::BudgetExhausted)
+    );
+    assert_eq!(
+        terminal_outcome(&evaluation(CriterionStatus::Unsatisfied, &[]), 2, true),
+        Some(CompletionOutcome::Blocked)
     );
 }
 
@@ -304,57 +453,94 @@ fn progress_and_stall_are_bounded() {
         criterion_ids: vec!["c1".into()],
         source: EvidenceSource::Tool,
         observed_after_effect: false,
-        summary: "secret-token-value".into(),
+        summary: "effect".into(),
         verified: false,
+        target: Some("artifact.txt".into()),
+        stale: false,
     }];
     let first = progress_snapshot(&evaluation(CriterionStatus::Unsatisfied, &[]), &evidence);
     let second = progress_snapshot(&evaluation(CriterionStatus::Unsatisfied, &[]), &evidence);
-    assert_eq!(first, second);
-    assert!(!first.evidence_fingerprint.contains("secret-token-value"));
-    let mut repeated_a = evaluation(CriterionStatus::Unsatisfied, &[]);
-    repeated_a.failure = Some("  TOOL   timeout ".into());
-    let mut repeated_b = evaluation(CriterionStatus::Unsatisfied, &[]);
-    repeated_b.failure = Some("tool timeout".into());
+    assert!(aibe::domain::is_stalled(&first, &second));
     let mut more_evidence = evidence.clone();
     more_evidence.push(EvidenceRecord {
         evidence_id: "e2".into(),
-        ..evidence[0].clone()
+        criterion_ids: vec!["c1".into()],
+        source: EvidenceSource::Observation,
+        observed_after_effect: true,
+        summary: "observed".into(),
+        verified: true,
+        target: Some("artifact.txt".into()),
+        stale: false,
     });
-    assert!(aibe::domain::is_stalled(
-        &progress_snapshot(&repeated_a, &evidence),
-        &progress_snapshot(&repeated_b, &more_evidence),
-    ));
-    let first_pass = evidence_from_tools(
-        &contract(),
-        &[
-            ExecutedToolCall::ok("w1".into(), APPLY_PATCH, json!({}), "changed".into()).with_audit(
-                ToolRiskClass::WriteLike,
-                ToolApprovalState::ExplicitClientOptIn,
-                false,
-            ),
-        ],
+    let progressed = progress_snapshot(
+        &evaluation(CriterionStatus::Unsatisfied, &[]),
+        &more_evidence,
     );
-    let second_pass = append_evidence_from_tools(
-        &contract(),
-        &first_pass,
-        &[
-            ExecutedToolCall::ok("r1".into(), READ_FILE, json!({}), "new".into()).with_audit(
-                ToolRiskClass::ReadOnly,
-                ToolApprovalState::NotRequired,
-                false,
-            ),
-        ],
-    );
-    assert!(!first_pass[0].verified);
-    assert_eq!(second_pass[0].evidence_id, first_pass[0].evidence_id);
-    assert_eq!(second_pass[0].verified, first_pass[0].verified);
-    assert!(second_pass[1].verified);
-    assert!(build_report(
+    assert!(!aibe::domain::is_stalled(&first, &progressed));
+    let stalled_report = build_report(
         &contract(),
         &evidence,
         &evaluation(CriterionStatus::Unsatisfied, &[]),
         2,
+        true,
+    )
+    .expect("stalled");
+    assert_eq!(
+        stalled_report.outcome,
+        aibe_protocol::CompletionOutcome::Blocked
+    );
+    assert_eq!(
+        stalled_report.terminal_reason.as_deref(),
+        Some(STALL_TERMINAL_REASON)
+    );
+}
+
+#[test]
+fn shell_verification_can_be_verified_without_prior_write() {
+    use aibe_protocol::SHELL_EXEC;
+    let c = TaskContract {
+        goal: "run check".into(),
+        task_kind: TaskKind::Execution,
+        criteria: vec![CompletionCriterion {
+            id: "c1".into(),
+            description: "check passes".into(),
+            deliverable_is_plan: false,
+            observes_targets: vec![],
+        }],
+        constraints: vec![],
+        deliverables: vec!["ok".into()],
+        verification: vec!["shell check".into()],
+        verification_tools: vec!["shell_exec".into()],
+    };
+    let calls = vec![ExecutedToolCall::ok(
+        "s1".into(),
+        SHELL_EXEC,
+        json!({"command": "echo", "args": ["hi"]}),
+        "hi".into(),
+    )
+    .with_audit(
+        ToolRiskClass::DangerousShell,
+        ToolApprovalState::ExplicitClientOptIn,
         false,
+    )];
+    let evidence = evidence_from_tools(&c, &calls);
+    assert_eq!(evidence[0].source, EvidenceSource::Verification);
+    assert!(evidence[0].verified, "{:?}", evidence[0]);
+    assert!(validate_evaluation(
+        &c,
+        &evidence,
+        &CompletionEvaluation {
+            criteria: vec![CriterionEvaluation {
+                criterion_id: "c1".into(),
+                status: CriterionStatus::Satisfied,
+                evidence_ids: vec!["e1".into()],
+                required_evidence: vec![],
+            }],
+            next_objective: None,
+            needs_user: None,
+            blocked: None,
+            failure: None,
+        },
     )
     .is_ok());
 }

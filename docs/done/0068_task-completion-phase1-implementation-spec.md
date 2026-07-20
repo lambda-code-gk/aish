@@ -1,7 +1,7 @@
 # 0068 Task Completion Phase 1 実装指示書
 
-> **種別**: 実装指示書（`docs/tasks/`）  
-> **状態**: 進行中  
+> **種別**: 実装指示書（`docs/done/`）  
+> **状態**: 実装済み  
 > **正本**: [`0068_task-completion-phase1-spec.md`](../spec/0068_task-completion-phase1-spec.md)  
 > **関連**: [`feature-development-policy.md`](../feature-development-policy.md)、[`architecture.md`](../architecture.md)、[`security.md`](../security.md)
 

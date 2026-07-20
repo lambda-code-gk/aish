@@ -129,6 +129,8 @@ pub enum ClientResponse {
 pub enum AgentTurnStatus {
     Ok,
     MaxToolRounds,
+    /// Human Task が Suspended で turn を終えた（本文 prefix ではなく typed outcome）。
+    Suspended,
 }
 
 /// Task Completion の request-local 最終結果。

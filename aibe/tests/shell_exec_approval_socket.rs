@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::ScriptedMockLlm;
-use aibe::application::completion_envelope::MINIMAL_CONTRACT_BEFORE_TOOLS;
+use aibe::application::completion_envelope::{
+    minimal_blocked_envelope, MINIMAL_CONTRACT_BEFORE_TOOLS,
+};
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, SHELL_EXEC};
 use aibe::ports::outbound::{
@@ -34,7 +36,7 @@ async fn shell_exec_approval_denied_over_socket_continues_turn() {
                 provider_extras: None,
             }],
         ),
-        LlmStepResult::text_only("user denied shell_exec"),
+        LlmStepResult::text_only(minimal_blocked_envelope("user denied shell_exec")),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
     let tools_cfg = ToolsConfig {
@@ -169,7 +171,7 @@ async fn run_approval_audit_case(
                 provider_extras: None,
             }],
         ),
-        LlmStepResult::text_only("done"),
+        LlmStepResult::text_only(minimal_blocked_envelope("done")),
     ];
     let llm = Arc::new(ScriptedMockLlm::new(steps));
     let tools_cfg = ToolsConfig {

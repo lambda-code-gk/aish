@@ -136,12 +136,13 @@ Issue #18 の方針どおり、単純な質問・説明依頼は通常の1 turn 
 
 | 判定 | 主体 | 時点 | 結果 |
 |------|------|------|------|
-| Task Completion **対象** | `aibe` request 処理（Contract gate） | 初回 assistant 応答に Task Contract envelope があり、最初の tool 実行前に Contract が固定されたとき | 同一 request 内で Contract / Evidence ledger / Evaluator を有効化する |
-| Task Completion **対象外** | 同上 | 初回 assistant 応答に Contract envelope がない、または tool 実行前に Contract を固定できなかったとき | 既存 Query Loop の `AgentTurnStatus::Ok` をそのまま返す。`completion_report` は付与しない |
-| Contract 固定後の **evaluation 必須** | request 終端検査 | 各 Query Loop の最終 assistant 応答 | Contract 固定済み turn では最終 envelope に evaluation が必須。欠落時は fail-closed（Human Task suspend 等、明示的な例外のみ許可） |
-| plan-only **迂回禁止** | domain Contract 検証 | Contract 固定時 | assistant が `deliverable_is_plan=true` を自己宣言しても、execution 系 verification がある Contract は拒否する。plan-only は Contract 全体が plan-only である場合のみ有効 |
+| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | `ContractGate::strict()` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
+| Task Completion **対象外** | 同上 | allowlist に上記 effect tool がない | `ContractGate::permissive()`。system instruction を挿入しない。Contract なしの通常 `AgentTurnStatus::Ok` を通す |
+| Contract 出現後の評価 | request 終端検査 | assistant envelope に Contract がある | `task_kind` と eligibility の対応、evaluation 必須、criterion 集合不変を検査する |
+| Human Task suspend | `AgentTurnStatus::Suspended` | Human Task が Suspended で turn 終了 | 本文 prefix ではなく typed status で TC 評価をスキップする |
+| plan-only **迂回禁止** | domain `task_kind` | Contract 固定時 | `TaskKind::Plan` と execution criteria の混在を拒否する。英語キーワード検索は使わない |
 
-対象外 turn は `(Ok(None), Ok(None))` 経路で通常応答を通す。一度 Contract を固定した turn で最終 evaluation が欠落した場合は Done へ fail-open せずエラーとする。PlanOnly 回答が Task Completion 自体を選ばないことで迂回できないよう、Contract 固定前に plan-only と execution 系を混在させない検証を domain に置く。
+対象外 turn は `(Ok(None), Ok(None))` 経路で通常応答を通す。Execution 対象 turn で Contract が無い場合は Done へ fail-open せずエラーとする。
 
 ## 9. Acceptance Criteria
 
@@ -201,6 +202,7 @@ Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（tool / observ
 | 1 | INITIAL | Issue #18 を command-local Task Contract / Evidence / Evaluator、query budget 2、既存 Query Loop の直列再利用に限定して仮 Scope Lock | Phase 1 の gap-driven completion vertical slice を成立させつつ、永続化・委譲・並列・Human Task 統合を後続へ分離するため |
 | 2 | BLOCKER_ORIGINAL_AC / NEW_REQUIREMENT 除外 | Contract 固定を初回 tool 実行前へ明確化し、Evaluator を各 Query Loop の assistant envelope に限定。query budget は固定値 2 とし公開設定を Deferred へ移動 | Contract より先に副作用が起きる曖昧さと、評価専用呼び出し・設定追加が hidden scope になる余地をなくすため |
 | 3 | BLOCKER_ORIGINAL_AC | Task Completion 適用境界（対象判定・対象外の通過・evaluation 必須・plan-only 迂回禁止）を §8.1 として固定 | docs-only PR レビュー指摘: 全 turn 共通 core と読める曖昧さを解消するため |
+| 4 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | eligibility を request 開始時に固定、`task_kind` 構造化、Evidence target/stale/Verification、`AgentTurnStatus::Suspended`、Contract↔要求対応検査 | PR #23 レビュー: 全 turn 強制・英語キーワード依存・read-only/検証未達・Evidence 対応不足 |
 
 ## 12. `docs/architecture.md` への影響
 

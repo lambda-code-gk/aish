@@ -3,7 +3,7 @@
 use aibe_protocol::{
     CompletionCriterionReport, CompletionEvidenceReport, CompletionEvidenceSource,
     CompletionOutcome as WireOutcome, CompletionReport, ExecutedToolCall, ExecutedToolStatus,
-    ToolRiskClass,
+    ToolRiskClass, APPLY_PATCH, SHELL_EXEC, WRITE_FILE,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -11,19 +11,29 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::domain::{
-    terminal_outcome, validate_evaluation, CompletionEvaluation, CompletionOutcome,
-    CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract, STALL_TERMINAL_REASON,
+    bound_evidence_target, terminal_outcome, validate_evaluation, CompletionEvaluation,
+    CompletionOutcome, CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract, TaskKind,
+    STALL_TERMINAL_REASON,
 };
 use crate::ports::outbound::TurnEventSink;
 
 const SUMMARY_LIMIT: usize = 240;
 
-pub fn system_instruction() -> &'static str {
-    "Task completion control: respond with one JSON object and no surrounding markdown. \
-The object must have aish_task_completion.contract (goal, criteria with stable id/description/deliverable_is_plan, constraints, deliverables, verification), \
+pub fn system_instruction(expected_kind: TaskKind) -> String {
+    let kind = match expected_kind {
+        TaskKind::Plan => "plan",
+        TaskKind::Investigation => "investigation",
+        TaskKind::Execution => "execution",
+    };
+    format!(
+        "Task completion control for a {kind} request: respond with one JSON object and no surrounding markdown. \
+The object must have aish_task_completion.contract (goal, task_kind={kind}, criteria with stable id/description/deliverable_is_plan/observes_targets, constraints, deliverables, verification, verification_tools), \
 optional aish_task_completion.evaluation (criteria with criterion_id/status/evidence_ids/required_evidence, next_objective, needs_user, blocked, failure), and deliverable. \
 Fix the contract before requesting the first tool. Every later envelope must repeat it unchanged. \
-Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order; write-like success is not verified and needs a later read-only observation."
+Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order. \
+Write-like success is not verified until a later matching observation or verification tool on the same target. \
+Investigation read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
+    )
 }
 
 pub fn evidence_from_tools(
@@ -39,79 +49,239 @@ pub fn append_evidence_from_tools(
     new_calls: &[ExecutedToolCall],
 ) -> Vec<EvidenceRecord> {
     let mut ledger = existing.to_vec();
-    let mut effect_seen = existing.iter().any(|record| {
-        record.source == EvidenceSource::Tool && record.summary.contains("status=Ok")
-    });
     let execution_ids = contract.execution_criterion_ids();
+    let verification_tools = contract.effective_verification_tools();
     let mut next_index = existing.len();
 
     for call in new_calls {
         next_index += 1;
+        let target = tool_target(call);
         let read_only = call.risk_class == Some(ToolRiskClass::ReadOnly);
+        let write_like = call.risk_class == Some(ToolRiskClass::WriteLike)
+            || matches!(call.name.as_str(), WRITE_FILE | APPLY_PATCH);
+        let shell =
+            call.risk_class == Some(ToolRiskClass::DangerousShell) || call.name == SHELL_EXEC;
         let ok = call.status == ExecutedToolStatus::Ok;
-        let source = if read_only {
-            EvidenceSource::Observation
-        } else {
-            EvidenceSource::Tool
-        };
-        let observed_after_effect = read_only && effect_seen;
-        let criterion_ids = if read_only && observed_after_effect {
-            pending_post_observation_criterion_ids(&ledger, contract, &call.name, &execution_ids)
-        } else {
-            execution_ids.clone()
-        };
-        let verified = read_only && ok && observed_after_effect && !criterion_ids.is_empty();
-        if !read_only && ok {
-            effect_seen = true;
+        let verification_tool = verification_tools.iter().any(|name| name == &call.name);
+
+        if write_like && ok {
+            if let Some(target) = target.as_ref() {
+                for record in &mut ledger {
+                    if record.target.as_ref() == Some(target)
+                        && matches!(
+                            record.source,
+                            EvidenceSource::Observation | EvidenceSource::Verification
+                        )
+                    {
+                        record.verified = false;
+                        record.stale = true;
+                    }
+                }
+            }
         }
+
+        let (source, observed_after_effect, criterion_ids, verified) = classify_evidence(
+            contract,
+            &ledger,
+            &execution_ids,
+            call,
+            target.as_deref(),
+            read_only,
+            write_like,
+            shell,
+            ok,
+            verification_tool,
+        );
+
         ledger.push(EvidenceRecord {
             evidence_id: format!("e{next_index}"),
             criterion_ids,
             source,
             observed_after_effect,
-            summary: bounded(&format!("{} status={:?}", call.name, call.status)),
+            summary: bounded(&format!(
+                "{} status={:?} target={}",
+                call.name,
+                call.status,
+                target.as_deref().unwrap_or("-")
+            )),
             verified,
+            target,
+            stale: false,
         });
     }
 
     ledger
 }
 
-fn pending_post_observation_criterion_ids(
-    ledger: &[EvidenceRecord],
+#[allow(clippy::too_many_arguments)]
+fn classify_evidence(
     contract: &TaskContract,
-    tool_name: &str,
+    ledger: &[EvidenceRecord],
     execution_ids: &[String],
+    _call: &ExecutedToolCall,
+    target: Option<&str>,
+    read_only: bool,
+    write_like: bool,
+    shell: bool,
+    ok: bool,
+    verification_tool: bool,
+) -> (EvidenceSource, bool, Vec<String>, bool) {
+    if write_like {
+        return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
+    }
+
+    if shell && verification_tool && ok {
+        let after_effect = has_prior_effect(ledger, target);
+        let criterion_ids = if after_effect {
+            matching_criterion_ids(contract, ledger, execution_ids, target, true, true)
+        } else {
+            // 副作用のない検証コマンド（テスト実行など）は単独で Verification になる。
+            execution_ids.to_vec()
+        };
+        return (
+            EvidenceSource::Verification,
+            after_effect,
+            criterion_ids.clone(),
+            !criterion_ids.is_empty(),
+        );
+    }
+
+    if read_only && ok {
+        match contract.task_kind {
+            TaskKind::Investigation => {
+                let criterion_ids =
+                    matching_criterion_ids(contract, ledger, execution_ids, target, false, false);
+                return (
+                    EvidenceSource::Observation,
+                    false,
+                    criterion_ids.clone(),
+                    !criterion_ids.is_empty() || execution_ids.len() == 1,
+                );
+            }
+            TaskKind::Execution => {
+                let after_effect = has_prior_effect(ledger, target);
+                let criterion_ids = matching_criterion_ids(
+                    contract,
+                    ledger,
+                    execution_ids,
+                    target,
+                    true,
+                    after_effect,
+                );
+                let verified = after_effect && !criterion_ids.is_empty() && verification_tool;
+                return (
+                    EvidenceSource::Observation,
+                    after_effect,
+                    criterion_ids,
+                    verified,
+                );
+            }
+            TaskKind::Plan => {
+                return (EvidenceSource::Observation, false, Vec::new(), false);
+            }
+        }
+    }
+
+    if shell {
+        return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
+    }
+
+    (
+        if read_only {
+            EvidenceSource::Observation
+        } else {
+            EvidenceSource::Tool
+        },
+        false,
+        execution_ids.to_vec(),
+        false,
+    )
+}
+
+fn matching_criterion_ids(
+    contract: &TaskContract,
+    ledger: &[EvidenceRecord],
+    execution_ids: &[String],
+    target: Option<&str>,
+    require_pending_effect: bool,
+    after_effect: bool,
 ) -> Vec<String> {
     execution_ids
         .iter()
         .filter(|criterion_id| {
-            ledger.iter().any(|record| {
-                record.criterion_ids.contains(criterion_id)
-                    && record.source == EvidenceSource::Tool
-                    && !record.verified
-            }) && read_observation_matches_criterion(contract, criterion_id, tool_name)
+            let criterion = contract
+                .criteria
+                .iter()
+                .find(|item| item.id == **criterion_id);
+            let Some(criterion) = criterion else {
+                return false;
+            };
+            if require_pending_effect {
+                let pending = ledger.iter().any(|record| {
+                    record.criterion_ids.contains(criterion_id)
+                        && record.source == EvidenceSource::Tool
+                        && !record.verified
+                        && !record.stale
+                        && (target.is_none()
+                            || record.target.is_none()
+                            || record.target.as_deref() == target)
+                });
+                if !pending || !after_effect {
+                    return false;
+                }
+            }
+            if criterion.observes_targets.is_empty() {
+                return true;
+            }
+            target.is_some_and(|value| {
+                criterion
+                    .observes_targets
+                    .iter()
+                    .any(|expected| expected == value || value.ends_with(expected.as_str()))
+            })
         })
         .cloned()
         .collect()
 }
 
-fn read_observation_matches_criterion(
-    contract: &TaskContract,
-    criterion_id: &str,
-    tool_name: &str,
-) -> bool {
-    if !contract
-        .criteria
-        .iter()
-        .any(|criterion| criterion.id == *criterion_id)
+fn has_prior_effect(ledger: &[EvidenceRecord], target: Option<&str>) -> bool {
+    ledger.iter().any(|record| {
+        record.source == EvidenceSource::Tool
+            && !record.stale
+            && record.summary.contains("status=Ok")
+            && (target.is_none() || record.target.is_none() || record.target.as_deref() == target)
+    })
+}
+
+fn tool_target(call: &ExecutedToolCall) -> Option<String> {
+    let args = &call.arguments;
+    if let Some(path) = args
+        .get("path")
+        .or_else(|| args.get("file"))
+        .or_else(|| args.get("file_path"))
+        .and_then(|value| value.as_str())
     {
-        return false;
+        return bound_evidence_target(path);
     }
-    let verification = contract.verification.join(" ").to_lowercase();
-    let tool_lower = tool_name.to_lowercase();
-    verification.contains(&tool_lower)
-        || (tool_lower == "read_file" && verification.contains("read"))
+    if call.name == SHELL_EXEC {
+        if let Some(path) = args
+            .get("args")
+            .and_then(|value| value.as_array())
+            .and_then(|items| {
+                items
+                    .iter()
+                    .rev()
+                    .find_map(|item| item.as_str().filter(|text| text.contains('/')))
+                    .or_else(|| items.iter().rev().find_map(|item| item.as_str()))
+            })
+        {
+            return bound_evidence_target(path);
+        }
+        if let Some(command) = args.get("command").and_then(|value| value.as_str()) {
+            return bound_evidence_target(command);
+        }
+    }
+    None
 }
 
 pub fn deliverable_evidence(
@@ -120,6 +290,9 @@ pub fn deliverable_evidence(
     next_index: usize,
 ) -> Vec<EvidenceRecord> {
     if deliverable.trim().is_empty() {
+        return Vec::new();
+    }
+    if contract.task_kind != TaskKind::Plan {
         return Vec::new();
     }
     let plan_ids = contract.plan_criterion_ids();
@@ -136,6 +309,8 @@ pub fn deliverable_evidence(
             observed_after_effect: false,
             summary: bounded(deliverable),
             verified: true,
+            target: None,
+            stale: false,
         })
         .collect()
 }
@@ -163,20 +338,37 @@ pub fn build_continuation(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let satisfied = evaluation
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.status == CriterionStatus::Satisfied)
+        .map(|criterion| {
+            format!(
+                "- {}: evidence {}",
+                criterion.criterion_id,
+                criterion.evidence_ids.join(",")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let evidence_lines = evidence
         .iter()
         .map(|record| {
             format!(
-                "- {} (verified={}): {}",
+                "- {} criteria=[{}] source={:?} verified={} stale={} target={}: {}",
                 record.evidence_id,
+                record.criterion_ids.join(","),
+                record.source,
                 record.verified,
+                record.stale,
+                record.target.as_deref().unwrap_or("-"),
                 bounded(&record.summary)
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "[task completion continuation]\nFixed contract:\n{contract_json}\nUnsatisfied criteria:\n{unsatisfied}\nExisting evidence:\n{evidence_lines}\nNext evidence id: e{}\nNext objective: {}",
+        "[task completion continuation]\nFixed contract:\n{contract_json}\nSatisfied criteria:\n{satisfied}\nUnsatisfied criteria:\n{unsatisfied}\nExisting evidence:\n{evidence_lines}\nNext evidence id: e{}\nNext objective: {}",
         evidence.len() + 1,
         bounded(evaluation.next_objective.as_deref().unwrap_or("resolve the stated gap"))
     )
@@ -214,8 +406,15 @@ pub fn build_report(
         .collect();
     let mut unverified_items: Vec<String> = evidence
         .iter()
-        .filter(|record| !record.verified)
-        .map(|record| format!("{}: {}", record.evidence_id, record.summary))
+        .filter(|record| !record.verified || record.stale)
+        .map(|record| {
+            format!(
+                "{}{}: {}",
+                record.evidence_id,
+                if record.stale { " (stale)" } else { "" },
+                record.summary
+            )
+        })
         .collect();
     unverified_items.extend(
         evaluation
@@ -269,7 +468,7 @@ fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
             EvidenceSource::Deliverable => CompletionEvidenceSource::Deliverable,
         },
         summary: bounded(&record.summary),
-        verified: record.verified,
+        verified: record.verified && !record.stale,
     }
 }
 

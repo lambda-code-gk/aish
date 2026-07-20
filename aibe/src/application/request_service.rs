@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
-use crate::application::completion_envelope::{
-    decode_completion_envelope, is_minimal_regression_contract, ContractGate,
-};
+use crate::application::completion_envelope::{decode_completion_envelope, ContractGate};
 use crate::application::route_turn::RouteTurnService;
 use crate::application::task_completion::{
     append_evidence_from_tools, build_continuation, build_report, deliverable_evidence,
@@ -14,9 +12,10 @@ use crate::application::task_completion::{
 };
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
-    is_stalled, parse_tool_names, progress_snapshot, AgentTurnContext, ChatMessage, ClientCwd,
-    ClientCwdError, CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext,
-    FeatureRegistry, TaskContract,
+    classify_task_completion_eligibility, is_stalled, parse_tool_names, progress_snapshot,
+    validate_contract_covers_request, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError,
+    CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext, FeatureRegistry,
+    TaskCompletionEligibility, TaskContract,
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
@@ -308,6 +307,9 @@ impl RequestService {
                         return ClientResponse::error(id, ErrorCode::ToolNotAllowed, e.to_string());
                     }
                 };
+                let eligibility = classify_task_completion_eligibility(
+                    &tools.iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+                );
                 let client_tools = match validate_client_tools(client_tools) {
                     Ok(tools) => tools,
                     Err(message) => {
@@ -339,7 +341,10 @@ impl RequestService {
                     active.insert(turn_id.clone(), Arc::clone(&effective_cancellation));
                 }
 
-                let contract_gate = Arc::new(ContractGate::default());
+                let contract_gate = Arc::new(match eligibility {
+                    TaskCompletionEligibility::Active { .. } => ContractGate::strict(),
+                    TaskCompletionEligibility::Inactive => ContractGate::permissive(),
+                });
                 let executor = ToolRoundExecutor::new(
                     Arc::clone(llm),
                     Arc::clone(&self.tool_registry),
@@ -375,10 +380,13 @@ impl RequestService {
                     }
                 }
 
-                // Task Completion の内部制御 instruction は provider 呼び出し時だけに使う。
+                // Task Completion の内部制御 instruction は対象 turn にだけ挿入する。
                 // ConversationStore へ保存すると、継続 turn ごとに内部 prompt が履歴へ累積する。
                 let conversation_record_messages = run_messages.clone();
-                run_messages.insert(0, ChatMessage::system(system_instruction()));
+                let user_request = last_user_request(&conversation_record_messages);
+                if let TaskCompletionEligibility::Active { expected_kind } = eligibility {
+                    run_messages.insert(0, ChatMessage::system(system_instruction(expected_kind)));
+                }
 
                 let completion_event_buffer = events
                     .as_ref()
@@ -405,6 +413,10 @@ impl RequestService {
 
                 let first_payload = match &response {
                     ClientResponse::AgentTurnResult {
+                        status: aibe_protocol::AgentTurnStatus::Suspended,
+                        ..
+                    } => None,
+                    ClientResponse::AgentTurnResult {
                         assistant_message,
                         tool_calls,
                         ..
@@ -423,20 +435,25 @@ impl RequestService {
                             );
                         }
                         (Ok(None), Ok(Some(fixed))) => {
-                            if content.starts_with("Human Task suspended.")
-                                || is_minimal_regression_contract(&fixed)
-                            {
-                                // Human Task suspend または 0068 対象外の最小 Contract shim は通常応答のまま返す。
-                            } else {
+                            response = ClientResponse::error(
+                                id.clone(),
+                                ErrorCode::InvalidRequest,
+                                "task completion final envelope lacks evaluation",
+                            );
+                            let _ = fixed;
+                        }
+                        (Ok(Some(first_envelope)), Ok(_)) => {
+                            if let Err(message) = validate_contract_covers_request(
+                                &first_envelope.aish_task_completion.contract,
+                                eligibility,
+                                &user_request,
+                            ) {
                                 response = ClientResponse::error(
                                     id.clone(),
                                     ErrorCode::InvalidRequest,
-                                    "task completion final envelope lacks evaluation",
+                                    message,
                                 );
-                            }
-                        }
-                        (Ok(Some(first_envelope)), Ok(_)) => {
-                            if let Err(message) =
+                            } else if let Err(message) =
                                 contract_gate.inspect_before_tools(&content, false)
                             {
                                 response = ClientResponse::error(
@@ -471,13 +488,23 @@ impl RequestService {
                                                 &evaluation,
                                                 &evidence,
                                             );
+                                            let mut second_messages =
+                                                vec![ChatMessage::user(continuation)];
+                                            if let TaskCompletionEligibility::Active {
+                                                expected_kind,
+                                            } = eligibility
+                                            {
+                                                second_messages.insert(
+                                                    0,
+                                                    ChatMessage::system(system_instruction(
+                                                        expected_kind,
+                                                    )),
+                                                );
+                                            }
                                             let second = agent_turn
                                                 .run_with_client_tools_and_events(
                                                     id.clone(),
-                                                    vec![
-                                                        ChatMessage::system(system_instruction()),
-                                                        ChatMessage::user(continuation),
-                                                    ],
+                                                    second_messages,
                                                     tools.clone(),
                                                     client_tools.clone(),
                                                     ctx.clone(),
@@ -516,7 +543,15 @@ impl RequestService {
                                 }
                             }
                         }
-                        (Ok(None), Ok(None)) => {}
+                        (Ok(None), Ok(None)) => {
+                            if matches!(eligibility, TaskCompletionEligibility::Active { .. }) {
+                                response = ClientResponse::error(
+                                    id.clone(),
+                                    ErrorCode::InvalidRequest,
+                                    "task completion contract required for this request",
+                                );
+                            }
+                        }
                     }
                 }
                 if let Some(buffer) = completion_event_buffer {
@@ -699,6 +734,15 @@ fn current_time_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn last_user_request(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role == crate::domain::MessageRole::User)
+        .map(|message| message.content.clone())
+        .unwrap_or_default()
 }
 
 fn validate_client_cwd_for_tools(context: &RequestContext) -> Result<(), ClientCwdError> {

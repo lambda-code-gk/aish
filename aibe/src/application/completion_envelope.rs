@@ -8,8 +8,29 @@ use crate::domain::{CompletionEvaluation, TaskContract};
 
 pub const TASK_COMPLETION_MARKER: &str = "aish_task_completion";
 
-/// RequestService 経由で tool を伴う provider step に載せる最小 Contract（回帰テスト用）。
-pub const MINIMAL_CONTRACT_BEFORE_TOOLS: &str = r#"{"aish_task_completion":{"contract":{"goal":"execute tools","criteria":[{"id":"c1","description":"tool step completes","deliverable_is_plan":false}],"constraints":[],"deliverables":["result"],"verification":["observe result"]}},"deliverable":""}"#;
+/// テスト用の最小 Contract envelope（tool 前固定）。本番の完了判定バイパスには使わない。
+pub const MINIMAL_CONTRACT_BEFORE_TOOLS: &str = r#"{"aish_task_completion":{"contract":{"goal":"execute tools","task_kind":"execution","criteria":[{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file","shell_exec"]}},"deliverable":""}"#;
+
+/// テスト用: 最小 Contract + Done evaluation。
+pub fn minimal_done_envelope(deliverable: &str, evidence_ids: &[&str]) -> String {
+    let ids = evidence_ids
+        .iter()
+        .map(|id| format!("\"{id}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        r#"{{"aish_task_completion":{{"contract":{{"goal":"execute tools","task_kind":"execution","criteria":[{{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file","shell_exec"]}},"evaluation":{{"criteria":[{{"criterion_id":"c1","status":"satisfied","evidence_ids":[{ids}],"required_evidence":[]}}]}}}},"deliverable":{}}}"#,
+        serde_json::to_string(deliverable).unwrap_or_else(|_| "\"ok\"".into())
+    )
+}
+
+/// テスト用: 最小 Contract + Blocked 終端（tool 成否に依存せず評価を閉じる）。
+pub fn minimal_blocked_envelope(deliverable: &str) -> String {
+    format!(
+        r#"{{"aish_task_completion":{{"contract":{{"goal":"execute tools","task_kind":"execution","criteria":[{{"id":"c1","description":"tool step completes","deliverable_is_plan":false,"observes_targets":[]}}],"constraints":[],"deliverables":["result"],"verification":["observe result"],"verification_tools":["read_file","shell_exec"]}},"evaluation":{{"criteria":[{{"criterion_id":"c1","status":"unsatisfied","evidence_ids":[],"required_evidence":["fixture"]}}],"blocked":"test fixture closed"}}}},"deliverable":{}}}"#,
+        serde_json::to_string(deliverable).unwrap_or_else(|_| "\"ok\"".into())
+    )
+}
 
 pub const ENVELOPE_MAX_BYTES: usize = 64 * 1024;
 
@@ -53,14 +74,6 @@ pub fn decode_completion_envelope(content: &str) -> Result<Option<CompletionEnve
     Ok(Some(envelope))
 }
 
-/// 0068 以外の既存 tool turn が Contract gate を通すための最小 shim。Task Completion 対象外。
-pub fn is_minimal_regression_contract(contract: &TaskContract) -> bool {
-    decode_completion_envelope(MINIMAL_CONTRACT_BEFORE_TOOLS)
-        .ok()
-        .flatten()
-        .is_some_and(|envelope| envelope.aish_task_completion.contract == *contract)
-}
-
 /// 一つの request 内で Contract を最初の tool 実行前に固定する gate。
 #[derive(Debug)]
 pub struct ContractGate {
@@ -70,11 +83,20 @@ pub struct ContractGate {
 
 impl Default for ContractGate {
     fn default() -> Self {
-        Self::strict()
+        Self::permissive()
     }
 }
 
 impl ContractGate {
+    /// Task Completion 非対象 turn: Contract なしでも tool を許可する。
+    pub fn permissive() -> Self {
+        Self {
+            state: Mutex::new(ContractGateState::default()),
+            require_contract_before_tools: false,
+        }
+    }
+
+    /// Task Completion 対象 turn: 最初の tool 前に Contract 必須。
     pub fn strict() -> Self {
         Self {
             state: Mutex::new(ContractGateState::default()),

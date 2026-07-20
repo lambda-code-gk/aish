@@ -543,6 +543,7 @@ impl ResponseView {
                     status: Some(match status {
                         AgentTurnStatus::Ok => "ok".to_string(),
                         AgentTurnStatus::MaxToolRounds => "max_tool_rounds".to_string(),
+                        AgentTurnStatus::Suspended => "suspended".to_string(),
                     }),
                     assistant_message: Some(assistant_message),
                     tool_calls: tool_calls.clone(),

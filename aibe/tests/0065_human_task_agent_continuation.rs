@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::{ConversationStore, ScriptedMockLlm, StaticCapabilityPolicy};
-use aibe::application::completion_envelope::MINIMAL_CONTRACT_BEFORE_TOOLS;
 use aibe::application::{basic_pack_arc, build_default_tool_registry, RequestService};
 use aibe::domain::{ChatMessage, FeatureRegistry, LlmStepResult, ToolCall, READ_FILE};
 use aibe::ports::outbound::{
@@ -128,7 +127,7 @@ async fn aibe_allows_retry_after_max_tool_rounds_continuation() {
     };
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
-            MINIMAL_CONTRACT_BEFORE_TOOLS,
+            "need human",
             vec![ToolCall {
                 id: "c1".into(),
                 name: READ_FILE.to_string(),

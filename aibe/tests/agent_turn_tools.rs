@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::ScriptedMockLlm;
-use aibe::application::completion_envelope::MINIMAL_CONTRACT_BEFORE_TOOLS;
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, READ_FILE};
 use aibe::ports::outbound::{MemoryConfig, ProfileRegistry, TerminationCapability, ToolsConfig};
@@ -22,7 +21,7 @@ async fn tool_loop_over_socket_returns_final_and_tool_calls() {
 
     let steps = vec![
         LlmStepResult::with_tool_calls(
-            MINIMAL_CONTRACT_BEFORE_TOOLS,
+            "reading",
             vec![ToolCall {
                 id: "call_1".into(),
                 name: READ_FILE.to_string(),

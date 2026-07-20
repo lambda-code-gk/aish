@@ -489,7 +489,7 @@ impl AgentTurnService {
                     }
                     return ClientResponse::AgentTurnResult {
                         id,
-                        status: AgentTurnStatus::Ok,
+                        status: AgentTurnStatus::Suspended,
                         assistant_message: protocol_message_out_from_chat(&crate::domain::ChatMessage::assistant(format!(
                             "Human Task suspended.\n\nTask:\n  {task_id}\n\nResume:\n  ai human-task resume\n\nCancel:\n  ai human-task cancel --yes\n"
                         ))),

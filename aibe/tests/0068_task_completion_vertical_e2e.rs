@@ -63,14 +63,17 @@ impl Presenter for NoopPresenter {
 fn contract() -> serde_json::Value {
     json!({
         "goal": "create and observe artifact.txt",
+        "task_kind": "execution",
         "criteria": [{
             "id": "c1",
             "description": "artifact is observed after creation",
-            "deliverable_is_plan": false
+            "deliverable_is_plan": false,
+            "observes_targets": ["artifact.txt"]
         }],
         "constraints": ["request local"],
         "deliverables": ["artifact.txt"],
-        "verification": ["read artifact.txt after creation"]
+        "verification": ["read artifact.txt after creation"],
+        "verification_tools": ["read_file"]
     })
 }
 
