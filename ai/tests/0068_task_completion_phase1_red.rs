@@ -62,6 +62,9 @@ fn final_report_lists_evidence_and_unverified_items() {
         if outcome == CompletionOutcome::Blocked {
             assert!(rendered.contains("Reason: same failure repeated"));
         }
+        if outcome == CompletionOutcome::BudgetExhausted {
+            assert!(rendered.contains("Queries used: 2"));
+        }
         assert!(!rendered.contains("API_KEY"));
 
         for (format, expected) in [
