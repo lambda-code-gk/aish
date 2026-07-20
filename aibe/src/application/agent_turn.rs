@@ -378,6 +378,7 @@ impl AgentTurnService {
                 status: AgentTurnStatus::Ok,
                 assistant_message: protocol_message_out_from_chat(&assistant),
                 tool_calls: vec![],
+                completion_report: None,
             },
             Err(e) => client_response_for_llm_error(id, e),
         }
@@ -446,6 +447,7 @@ impl AgentTurnService {
                         status: AgentTurnStatus::Ok,
                         assistant_message: protocol_message_out_from_chat(&assistant),
                         tool_calls: round_executed,
+                        completion_report: None,
                     };
                 }
                 Ok(RoundOutcome::Continue {
@@ -492,6 +494,7 @@ impl AgentTurnService {
                             "Human Task suspended.\n\nTask:\n  {task_id}\n\nResume:\n  ai human-task resume\n\nCancel:\n  ai human-task cancel --yes\n"
                         ))),
                         tool_calls: executed,
+                        completion_report: None,
                     };
                 }
                 Err(e) => return client_response_for_llm_error(id, e),

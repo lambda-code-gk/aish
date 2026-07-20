@@ -76,6 +76,7 @@ impl MockPromptServer {
                                 content: "ok".into(),
                             },
                             tool_calls: vec![],
+                            completion_report: None,
                         }
                     }
                     other => panic!("unexpected request: {other:?}"),

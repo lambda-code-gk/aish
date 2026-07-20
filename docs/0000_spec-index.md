@@ -62,6 +62,7 @@
 | 0065 | [0065_human-task-agent-continuation-spec.md](spec/0065_human-task-agent-continuation-spec.md) | 設計確定（実装済み） | Human Task Agent Continuation（0063-D、ResultPending→新Collaborative Mode turn） |
 | 0066 | [0066_human-task-recovery-hardening-spec.md](spec/0066_human-task-recovery-hardening-spec.md) | 設計確定（実装済み） | Human Task Recovery Hardening（0063-E、明示 recovery / invalid cleanup） |
 | 0067 | [0067_recall-keybinding-tty-restore-spec.md](spec/0067_recall-keybinding-tty-restore-spec.md) | 設計確定（実装済み） | Recall Keybinding TTY Restore（Issue #11、0053 recall + 0055 handoff の bash / zsh line editor 状態復元、Yellow 承認） |
+| 0068 | [0068_task-completion-phase1-spec.md](spec/0068_task-completion-phase1-spec.md) | 設計確定（AC pending） | Task Completion Phase 1（Issue #18、Task Contract / Evidence / gap-driven continuation、Yellow 承認） |
 
 ### 状態ラベルの意味
 
@@ -77,12 +78,13 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
-| 0067 | [0067_recall-keybinding-tty-restore-implementation-spec.md](done/0067_recall-keybinding-tty-restore-implementation-spec.md) | 実装済み | PTY 観測から 0053 recall / 0055 handoff の bash / zsh line editor 終了契約を修正する手順 |
+| 0068 | [0068_task-completion-phase1-implementation-spec.md](tasks/0068_task-completion-phase1-implementation-spec.md) | 進行中 | Contract固定、Evidence ledger、gap-driven continuation、4終端を既存 Query Loop外側へ追加する手順 |
 
 ## 実装済み指示書（docs/done/）
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0067 | [0067_recall-keybinding-tty-restore-implementation-spec.md](done/0067_recall-keybinding-tty-restore-implementation-spec.md) | 実装済み | PTY 観測から 0053 recall / 0055 handoff の bash / zsh line editor 終了契約を修正する手順 |
 | 0065 | [0065_human-task-agent-continuation-implementation-spec.md](done/0065_human-task-agent-continuation-implementation-spec.md) | 実装済み | Human Task Agent Continuation（ResultPending→Collaborative Mode turn） |
 | 0066 | [0066_human-task-recovery-hardening-implementation-spec.md](done/0066_human-task-recovery-hardening-implementation-spec.md) | 実装済み | Human Task の手動 stale recovery と invalid residue cleanup |
 | 0064 | [0064_human-task-resume-implementation-spec.md](done/0064_human-task-resume-implementation-spec.md) | 実装済み | Human Task resume（local CLI・segment追記・Done fail-closed） |

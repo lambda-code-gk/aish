@@ -335,6 +335,7 @@ mod phase8_file_write_approval_ui {
                 },
             },
             tool_calls: vec![],
+            completion_report: None,
         };
         writeln!(
             server,

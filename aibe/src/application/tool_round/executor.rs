@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::application::client_tool_defs::limit_client_tool_result;
+use crate::application::completion_envelope::ContractGate;
 use crate::application::tool_defs::{client_tool_definitions, definitions_for};
 use crate::application::tool_round::rejected::rejected_tool_result;
 use crate::domain::logical_tool_name;
@@ -44,6 +45,7 @@ pub struct ToolRoundExecutor {
     registry: Arc<dyn ToolRegistry>,
     tools_config: ToolsConfig,
     llm_tracer: Arc<dyn LlmCallTracer>,
+    contract_gate: Option<Arc<ContractGate>>,
 }
 
 fn classify_tool(name: &str) -> (ToolRiskClass, ToolApprovalState) {
@@ -78,7 +80,13 @@ impl ToolRoundExecutor {
             registry,
             tools_config,
             llm_tracer,
+            contract_gate: None,
         }
+    }
+
+    pub fn with_contract_gate(mut self, contract_gate: Arc<ContractGate>) -> Self {
+        self.contract_gate = Some(contract_gate);
+        self
     }
 
     pub fn tools_config(&self) -> &ToolsConfig {
@@ -171,6 +179,12 @@ impl ToolRoundExecutor {
         };
         self.llm_tracer
             .end("tool_round", started.elapsed().as_millis() as u64, true);
+
+        if let Some(contract_gate) = &self.contract_gate {
+            contract_gate
+                .inspect_before_tools(&step.assistant.content, !step.tool_calls.is_empty())
+                .map_err(LlmError::Provider)?;
+        }
 
         let mut executed = executed_so_far.to_vec();
 

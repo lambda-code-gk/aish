@@ -435,6 +435,7 @@ fn human_task_continuation_turn_success_requires_ok_status() {
             content: "done".into(),
         },
         tool_calls: vec![],
+        completion_report: None,
     };
     let max_rounds = ClientResponse::AgentTurnResult {
         id: "t1".into(),
@@ -444,6 +445,7 @@ fn human_task_continuation_turn_success_requires_ok_status() {
             content: "stopped".into(),
         },
         tool_calls: vec![],
+        completion_report: None,
     };
     assert!(continuation_turn_succeeded(&ok));
     assert!(!continuation_turn_succeeded(&max_rounds));

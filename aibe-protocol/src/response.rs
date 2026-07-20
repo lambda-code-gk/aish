@@ -38,6 +38,8 @@ pub enum ClientResponse {
         status: AgentTurnStatus,
         assistant_message: ProtocolMessageOut,
         tool_calls: Vec<ExecutedToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completion_report: Option<CompletionReport>,
     },
     /// `shell_exec` 実行前にクライアントへ yes/no を求める。
     ShellExecApprovalPrompt {
@@ -127,6 +129,51 @@ pub enum ClientResponse {
 pub enum AgentTurnStatus {
     Ok,
     MaxToolRounds,
+}
+
+/// Task Completion の request-local 最終結果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletionReport {
+    pub outcome: CompletionOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+    pub criteria: Vec<CompletionCriterionReport>,
+    pub unsatisfied_criteria: Vec<String>,
+    pub unverified_items: Vec<String>,
+    pub queries_used: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionOutcome {
+    Done,
+    NeedsUser,
+    Blocked,
+    BudgetExhausted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletionCriterionReport {
+    pub criterion_id: String,
+    pub satisfied: bool,
+    pub evidence: Vec<CompletionEvidenceReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletionEvidenceReport {
+    pub evidence_id: String,
+    pub source: CompletionEvidenceSource,
+    pub summary: String,
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionEvidenceSource {
+    Tool,
+    Observation,
+    Verification,
+    Deliverable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,6 +445,7 @@ mod tests {
                 serde_json::json!({"path": "a.md"}),
                 "out".into(),
             )],
+            completion_report: None,
         };
         let json = serde_json::to_string(&resp).expect("serialize");
         assert!(json.contains(r#""type":"agent_turn_result""#));
@@ -408,6 +456,7 @@ mod tests {
                 status,
                 assistant_message,
                 tool_calls,
+                ..
             } => {
                 assert_eq!(id, "t1");
                 assert_eq!(status, AgentTurnStatus::Ok);

@@ -1,6 +1,7 @@
 pub mod agent_turn;
 pub mod basic_memory_pack;
 pub mod client_tool_defs;
+pub mod completion_envelope;
 pub mod file_change_service;
 pub mod llm_call_trace;
 pub mod llm_error;
@@ -10,6 +11,7 @@ pub mod protocol_convert;
 pub mod request_service;
 pub mod route_turn;
 pub mod server;
+pub mod task_completion;
 pub mod tool_defs;
 pub mod tool_round;
 pub mod tool_round_terminator;

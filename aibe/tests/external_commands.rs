@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aibe::adapters::outbound::ScriptedMockLlm;
+use aibe::application::completion_envelope::MINIMAL_CONTRACT_BEFORE_TOOLS;
 use aibe::application::server;
 use aibe::domain::{LlmStepResult, ToolCall, SHELL_EXEC};
 use aibe::ports::outbound::{
@@ -24,7 +25,7 @@ async fn external_command_runs_via_shell_exec() {
 
     let steps = vec![
         LlmStepResult::with_tool_calls(
-            "",
+            MINIMAL_CONTRACT_BEFORE_TOOLS,
             vec![ToolCall {
                 id: "call_ext".into(),
                 name: SHELL_EXEC.to_string(),
@@ -134,7 +135,7 @@ async fn external_command_not_in_allowlist_is_denied() {
 
     let steps = vec![
         LlmStepResult::with_tool_calls(
-            "",
+            MINIMAL_CONTRACT_BEFORE_TOOLS,
             vec![ToolCall {
                 id: "call_ext".into(),
                 name: SHELL_EXEC.to_string(),

@@ -16,6 +16,50 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0068"
+status = "locked"
+scope_class = "feature"
+
+scope_revision = 3
+scope_change_reason = "task_contract_is_stable_and_complete の complete 検証は未達のため locked に戻す"
+scope_review = "approved"
+
+core_outcome = "一つのaiコマンド内でLLM終了文ではなく完了条件ごとのEvidenceを根拠に未達gapを埋め達成または理由付き非達成まで既存Agent loopを継続する"
+
+actors = 2
+state_machines = 2
+persistent_aggregates = 0
+external_effects = 2
+process_boundaries = 1
+
+novel_mechanisms = ["task-completion-loop"]
+integrations = ["existing-query-loop"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "persistent store/resume, agent delegation, Human Task integration, parallelism, workflow state machine, Planner DSL, watcher, reconciler, and exactly-once are deferred"
+
+vertical_slice_ac_id = "task_completion_vertical_e2e"
+
+# 全9 AC は pending=false。実装完了後 status=done。
+locked_ac_ids = [
+  "task_completion_vertical_e2e",
+  "task_contract_is_stable_and_complete",
+  "assistant_claim_is_not_verified_evidence",
+  "side_effect_requires_post_observation",
+  "completion_evaluator_is_structured_and_fail_closed",
+  "continuation_is_gap_driven_and_detects_plan_only",
+  "terminal_outcomes_are_distinct",
+  "progress_and_stall_are_bounded",
+  "final_report_lists_evidence_and_unverified_items",
+]
+
+[[features]]
 spec = "0067"
 status = "done"
 scope_class = "feature"
