@@ -68,7 +68,10 @@ pub struct CompletionCriterion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceSource {
+    /// 対象と副作用を安全に特定できる write-like tool。
     Tool,
+    /// 任意 command のため、既知 write effect として扱えない shell 実行。
+    UnknownShellEffect,
     Observation,
     Verification,
     Deliverable,
@@ -261,14 +264,19 @@ impl CompletionEvaluation {
     }
 }
 
-/// write / shell を含む allowlist は Execution 対象。それ以外は Inactive（任意で Contract 可）。
+/// 明示 opt-in かつ effect tool を含む request だけを Execution 対象にする。
+///
+/// tool availability は権限であって task intent ではないため、allowlist だけでは
+/// Active にしない。shell_exec の実行結果を既知 write effect として扱うかは Evidence
+/// 分類で別に判定する。
 pub fn classify_task_completion_eligibility(
+    task_completion_requested: bool,
     tool_names: &[impl AsRef<str>],
 ) -> TaskCompletionEligibility {
     let has_effect = tool_names
         .iter()
         .any(|name| matches!(name.as_ref(), "write_file" | "apply_patch" | "shell_exec"));
-    if has_effect {
+    if task_completion_requested && has_effect {
         TaskCompletionEligibility::Active {
             expected_kind: TaskKind::Execution,
         }

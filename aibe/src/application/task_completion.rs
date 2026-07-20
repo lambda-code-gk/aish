@@ -65,7 +65,19 @@ pub fn append_evidence_from_tools(
         let ok = call.status == ExecutedToolStatus::Ok;
         let verification_tool = verification_tools.iter().any(|name| name == &call.name);
 
-        if write_like && ok {
+        if shell && ok {
+            // 任意 shell command は変更対象を信頼して限定できないため、過去の観測を
+            // 保守的にすべて無効化する。
+            for record in &mut ledger {
+                if matches!(
+                    record.source,
+                    EvidenceSource::Observation | EvidenceSource::Verification
+                ) {
+                    record.verified = false;
+                    record.stale = true;
+                }
+            }
+        } else if write_like && ok {
             if let Some(target) = target.as_ref() {
                 for record in &mut ledger {
                     if record.target.as_ref() == Some(target)
@@ -163,7 +175,12 @@ fn classify_evidence(
     }
 
     if shell {
-        return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
+        return (
+            EvidenceSource::UnknownShellEffect,
+            false,
+            execution_ids.to_vec(),
+            false,
+        );
     }
 
     (
@@ -443,6 +460,7 @@ fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
         evidence_id: record.evidence_id.clone(),
         source: match record.source {
             EvidenceSource::Tool => CompletionEvidenceSource::Tool,
+            EvidenceSource::UnknownShellEffect => CompletionEvidenceSource::UnknownShellEffect,
             EvidenceSource::Observation => CompletionEvidenceSource::Observation,
             EvidenceSource::Verification => CompletionEvidenceSource::Verification,
             EvidenceSource::Deliverable => CompletionEvidenceSource::Deliverable,

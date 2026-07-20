@@ -173,6 +173,7 @@ pub struct CompletionEvidenceReport {
 #[serde(rename_all = "snake_case")]
 pub enum CompletionEvidenceSource {
     Tool,
+    UnknownShellEffect,
     Observation,
     Verification,
     Deliverable,

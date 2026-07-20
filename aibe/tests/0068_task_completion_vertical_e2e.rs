@@ -13,12 +13,17 @@ use ai::ports::outbound::{AgentClient, AgentError, Presenter};
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
 use aibe::adapters::outbound::{ConversationStore, ScriptedMockLlm, StaticCapabilityPolicy};
 use aibe::application::{basic_pack_arc, build_default_tool_registry, RequestService};
-use aibe::domain::{FeatureRegistry, LlmStepResult, ToolCall, READ_FILE, SHELL_EXEC};
+use aibe::domain::{FeatureRegistry, LlmStepResult, ToolCall, READ_FILE, SHELL_EXEC, WRITE_FILE};
 use aibe::ports::inbound::{ClientRequestHandler, ShutdownCoordinator};
 use aibe::ports::outbound::{
-    ProfileRegistry, ShellExecApprovalMode, ShellExecConfig, TerminationCapability, ToolsConfig,
+    FileWriteApprovalMode, HumanTaskGate, ProfileRegistry, TerminationCapability, ToolsConfig,
 };
-use aibe_protocol::ClientResponse;
+use aibe_protocol::{
+    AgentTurnStatus, ClientRequest, ClientResponse, ExecutionMode, HandoffExecutionOutcome,
+    HumanTaskRequest, HumanTaskResult, PostHandoffObservation, ProtocolMessage, RequestContext,
+    ShellLogRange, HUMAN_TASK,
+};
+use async_trait::async_trait;
 use serde_json::json;
 
 struct PairClient {
@@ -106,6 +111,59 @@ fn evaluated(status: &str, evidence_ids: &[&str], next: Option<&str>, body: &str
     .to_string()
 }
 
+fn request_service(llm: Arc<ScriptedMockLlm>, root: &std::path::Path) -> RequestService {
+    let profiles =
+        ProfileRegistry::single("default", llm, TerminationCapability::summary_prompt_only());
+    let tools = ToolsConfig::default();
+    let strategy = tools.termination_strategy;
+    let (rpc_extension, turn_hook) = basic_pack_arc();
+    RequestService::new(
+        profiles,
+        build_default_tool_registry(&tools, &[]),
+        tools,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        "default".into(),
+        Arc::new(ConversationStore::new(root.join("conversations"))),
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::empty(),
+    )
+}
+
+struct SuspendedHumanTaskGate;
+
+#[async_trait]
+impl HumanTaskGate for SuspendedHumanTaskGate {
+    async fn execute_human_task(&self, _: &str, task: HumanTaskRequest) -> Option<HumanTaskResult> {
+        Some(HumanTaskResult {
+            status: HandoffExecutionOutcome::Suspended,
+            task,
+            verified: false,
+            human_shell_exit_code: Some(0),
+            final_shell_cwd: Some("/tmp".into()),
+            shell_log_range: Some(ShellLogRange {
+                start: 1,
+                end: Some(2),
+            }),
+            observation: Some(PostHandoffObservation {
+                cwd_exists: true,
+                cwd: "/tmp".into(),
+                git_head: None,
+                git_branch: None,
+                git_status: None,
+                shell_log_tail: None,
+                shell_log_truncated: None,
+                observation_errors: vec![],
+                human_task_evidence: None,
+            }),
+            error: None,
+            task_id: Some("ht-20260720-abcdef".into()),
+            suspend_reason: Some("human review required".into()),
+        })
+    }
+}
+
 #[test]
 fn task_completion_vertical_e2e() {
     let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
@@ -114,8 +172,12 @@ fn task_completion_vertical_e2e() {
             contract_only(),
             vec![ToolCall {
                 id: "write".into(),
-                name: SHELL_EXEC.into(),
-                arguments: json!({"command": "touch", "args": ["artifact.txt"]}),
+                name: WRITE_FILE.into(),
+                arguments: json!({
+                    "path": "artifact.txt",
+                    "mode": "create",
+                    "content": "created\n"
+                }),
                 provider_extras: None,
             }],
         ),
@@ -142,10 +204,9 @@ fn task_completion_vertical_e2e() {
         TerminationCapability::summary_prompt_only(),
     );
     let tools = ToolsConfig {
-        shell_exec: ShellExecConfig {
-            enabled: true,
-            allowed_commands: vec!["touch".into()],
-            approval: ShellExecApprovalMode::Always,
+        file_write: aibe::ports::outbound::FileWriteConfig {
+            allowed_roots: vec![dir.path().to_path_buf()],
+            approval: FileWriteApprovalMode::Always,
             ..Default::default()
         },
         read_file: aibe::ports::outbound::ReadFileConfig {
@@ -200,7 +261,7 @@ fn task_completion_vertical_e2e() {
             "create artifact".into(),
             AskRunOptions {
                 resolved_tools: resolve_tools(
-                    Some("shell_exec,read_file"),
+                    Some("write_file,read_file"),
                     &ConfigToolsTokens::default(),
                 )
                 .expect("tools"),
@@ -214,7 +275,10 @@ fn task_completion_vertical_e2e() {
                 client_tools: vec![],
                 replay_events: vec![],
                 replay_manifest_block: None,
-                request_context: RequestContextInput::default(),
+                request_context: RequestContextInput {
+                    task_completion: true,
+                    ..Default::default()
+                },
             },
         )
         .expect("one ai Ask command");
@@ -248,4 +312,98 @@ fn task_completion_vertical_e2e() {
         .all(|message| !message.content.contains("Task completion control:")));
     drop(client);
     server.join().expect("server thread");
+}
+
+#[tokio::test]
+async fn effect_tools_without_explicit_signal_keep_simple_question_inactive() {
+    let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
+    let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::text_only(
+        "plain answer",
+    )]));
+    let service = request_service(llm, dir.path());
+    let response = service
+        .handle(
+            ClientRequest::AgentTurn {
+                id: "inactive-0068".into(),
+                messages: vec![ProtocolMessage {
+                    role: "user".into(),
+                    content: "what is this project?".into(),
+                }],
+                tools: vec![SHELL_EXEC.into()],
+                client_tools: vec![],
+                context: RequestContext {
+                    cwd: Some(dir.path().display().to_string()),
+                    ..Default::default()
+                },
+                llm_profile: None,
+            },
+            None,
+        )
+        .await;
+    let ClientResponse::AgentTurnResult {
+        status,
+        assistant_message,
+        completion_report,
+        ..
+    } = response
+    else {
+        panic!("simple question must remain a normal agent turn")
+    };
+    assert_eq!(status, AgentTurnStatus::Ok);
+    assert_eq!(assistant_message.content, "plain answer");
+    assert!(completion_report.is_none());
+}
+
+#[tokio::test]
+async fn second_query_human_task_suspend_is_preserved() {
+    let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
+    let llm = Arc::new(ScriptedMockLlm::new(vec![
+        LlmStepResult::text_only(evaluated(
+            "unsatisfied",
+            &[],
+            Some("ask a human to finish verification"),
+            "verification pending",
+        )),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "human".into(),
+                name: HUMAN_TASK.into(),
+                arguments: json!({"objective": "verify artifact manually"}),
+                provider_extras: None,
+            }],
+        ),
+    ]));
+    let service = request_service(llm.clone(), dir.path());
+    let response = service
+        .handle_with_events(
+            ClientRequest::AgentTurn {
+                id: "suspend-second-0068".into(),
+                messages: vec![ProtocolMessage {
+                    role: "user".into(),
+                    content: "create and verify artifact".into(),
+                }],
+                tools: vec![SHELL_EXEC.into(), HUMAN_TASK.into()],
+                client_tools: vec![],
+                context: RequestContext {
+                    cwd: Some(dir.path().display().to_string()),
+                    execution_mode: ExecutionMode::Collaborative,
+                    task_completion: true,
+                    ..Default::default()
+                },
+                llm_profile: None,
+            },
+            None,
+            None,
+            None,
+            Some(Arc::new(SuspendedHumanTaskGate)),
+            None,
+            None,
+        )
+        .await;
+    let ClientResponse::AgentTurnResult { status, .. } = response else {
+        panic!("typed suspension must not become InvalidRequest")
+    };
+    assert_eq!(status, AgentTurnStatus::Suspended);
+    assert_eq!(llm.recorded_calls().len(), 2);
 }

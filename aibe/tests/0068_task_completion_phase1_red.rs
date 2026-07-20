@@ -11,7 +11,9 @@ use aibe::domain::{
     EvidenceSource, TaskCompletionEligibility, TaskContract, TaskKind, STALL_TERMINAL_REASON,
     TASK_COMPLETION_QUERY_BUDGET,
 };
-use aibe_protocol::{ExecutedToolCall, ToolApprovalState, ToolRiskClass, APPLY_PATCH, READ_FILE};
+use aibe_protocol::{
+    ExecutedToolCall, ToolApprovalState, ToolRiskClass, APPLY_PATCH, READ_FILE, SHELL_EXEC,
+};
 use serde_json::json;
 
 fn contract() -> TaskContract {
@@ -136,11 +138,21 @@ fn task_contract_is_stable_and_structurally_complete() {
     .contains("requires task_kind=Execution"));
 
     assert!(matches!(
-        classify_task_completion_eligibility(&["read_file"]),
+        classify_task_completion_eligibility(true, &["read_file"]),
         TaskCompletionEligibility::Inactive
     ));
     assert!(matches!(
-        classify_task_completion_eligibility(&["shell_exec"]),
+        classify_task_completion_eligibility(false, &["write_file", "shell_exec"]),
+        TaskCompletionEligibility::Inactive
+    ));
+    assert!(matches!(
+        classify_task_completion_eligibility(true, &["shell_exec"]),
+        TaskCompletionEligibility::Active {
+            expected_kind: TaskKind::Execution
+        }
+    ));
+    assert!(matches!(
+        classify_task_completion_eligibility(true, &["write_file", "shell_exec"]),
         TaskCompletionEligibility::Active {
             expected_kind: TaskKind::Execution
         }
@@ -276,6 +288,48 @@ fn side_effect_requires_post_observation() {
     )
     .unwrap_err()
     .contains("stale"));
+
+    let shell_rewrite = vec![
+        calls[0].clone(),
+        calls[1].clone(),
+        ExecutedToolCall::ok(
+            "s1".into(),
+            SHELL_EXEC,
+            json!({"command": "sed", "args": ["artifact.txt"]}),
+            "changed through shell".into(),
+        )
+        .with_audit(
+            ToolRiskClass::DangerousShell,
+            ToolApprovalState::ExplicitClientOptIn,
+            false,
+        ),
+    ];
+    let shell_stale_ledger = evidence_from_tools(&contract(), &shell_rewrite);
+    assert_eq!(
+        shell_stale_ledger[2].source,
+        EvidenceSource::UnknownShellEffect
+    );
+    assert!(shell_stale_ledger[1].stale);
+    assert!(!shell_stale_ledger[1].verified);
+    assert!(validate_evaluation(
+        &contract(),
+        &shell_stale_ledger,
+        &evaluation(CriterionStatus::Satisfied, &["e2"]),
+    )
+    .unwrap_err()
+    .contains("stale"));
+
+    let shell_then_read =
+        evidence_from_tools(&contract(), &[shell_rewrite[2].clone(), calls[1].clone()]);
+    assert_eq!(
+        shell_then_read[0].source,
+        EvidenceSource::UnknownShellEffect
+    );
+    assert!(!shell_then_read[1].observed_after_effect);
+    assert!(
+        !shell_then_read[1].verified,
+        "shell success is not a known prior write effect"
+    );
 
     let investigation = TaskContract {
         goal: "inspect repository".into(),
@@ -545,7 +599,7 @@ fn shell_verification_is_never_trusted_from_contract() {
     )];
     let evidence = evidence_from_tools(&c, &calls);
     assert!(c.effective_verification_tools().is_empty());
-    assert_eq!(evidence[0].source, EvidenceSource::Tool);
+    assert_eq!(evidence[0].source, EvidenceSource::UnknownShellEffect);
     assert!(!evidence[0].verified, "{:?}", evidence[0]);
     assert!(!evidence[0].summary.contains("echo"));
     assert!(!evidence[0].summary.contains("hi"));

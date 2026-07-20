@@ -99,7 +99,7 @@ OOM を避けるため、**既定は直列**とする。
 
 ### 0068 Task Completion vertical E2E
 
-`aibe/tests/0068_task_completion_vertical_e2e.rs` は一つの `Ask` command を pre-connected Unix socket の本番 NDJSON connection handler と `RequestService` composition へ送り、scripted provider の1回目で shell effect、gap-driven 2回目で read-only post-observation、verified Evidence 付き Done を検証する。Unix socket syscall 自体を sandbox が `EPERM` で拒否する環境では同じ本番 `RequestService` handler を直接使用し、Task Completion 専用 facade へ切り替えない。通常環境の bind / framing は既存 socket integration と `smoke-mock`、手動 0068 checklist でも確認する。`aibe/tests/0068_task_completion_phase1_red.rs` は Contract gate、Evaluator fail-closed table、Evidence provenance、4終端、budget/stall を wall-clock や永続 store なしで固定し、`ai/tests/0068_task_completion_phase1_red.rs` は human / JSON / TSV / env report を検査する。
+`aibe/tests/0068_task_completion_vertical_e2e.rs` は一つの `Ask` command を pre-connected Unix socket の本番 NDJSON connection handler と `RequestService` composition へ送り、明示 opt-in、1回目の既知 write effect、gap-driven 2回目の read-only post-observation、verified Evidence 付き Done を検証する。同じ本番 service で、effect tool 利用可能でも opt-in なしの単純質問が通常 turn のままであることと、初回未達から2回目 Query の `human_task` suspend が typed `AgentTurnStatus::Suspended` のまま返ることも縦断検証する。Unix socket syscall 自体を sandbox が `EPERM` で拒否する環境では同じ本番 `RequestService` handler を直接使用し、Task Completion 専用 facade へ切り替えない。通常環境の bind / framing は既存 socket integration と `smoke-mock`、手動 0068 checklist でも確認する。`aibe/tests/0068_task_completion_phase1_red.rs` は Contract gate、Evaluator fail-closed table、KnownWriteEffect / UnknownShellEffect を含む Evidence provenance、4終端、budget/stall を wall-clock や永続 store なしで固定し、`ai/tests/0068_task_completion_phase1_red.rs` は human / JSON / TSV / env report を検査する。
 
 ### 0038 Phase D basic build（feature matrix）
 

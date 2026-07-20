@@ -136,10 +136,10 @@ Issue #18 の方針どおり、単純な質問・説明依頼は通常の1 turn 
 
 | 判定 | 主体 | 時点 | 結果 |
 |------|------|------|------|
-| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | 元要求と eligibility を渡した strict `ContractGate` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
-| Task Completion **対象外** | 同上 | allowlist に上記 effect tool がない | `ContractGate::permissive()`。system instruction を挿入しない。Contract なしの通常 `AgentTurnStatus::Ok` を通す |
+| Task Completion **対象** | `classify_task_completion_eligibility` | request 開始時（`context.task_completion=true` かつ allowlist に `write_file` / `apply_patch` / `shell_exec` がある） | 元要求と eligibility を渡した strict `ContractGate` と Task Completion system instruction を有効化する。Contract なしの終了は fail-closed |
+| Task Completion **対象外** | 同上 | 明示 signal がない、または effect tool がない | `ContractGate::permissive()`。system instruction を挿入しない。effect tool の availability は権限であって task intent ではなく、allowlist だけで Active にしない。Contract なしの通常 `AgentTurnStatus::Ok` を通す |
 | Contract の固定前検査 | `ContractGate` | assistant envelope を受け、同じ step の tool を実行する前 | schema、criterion 集合、元要求の非空、eligibility の `expected_kind` との厳密一致を検査する。Active Execution で Plan / Investigation へ downgrade しない |
-| Human Task suspend | `AgentTurnStatus::Suspended` | Human Task が Suspended で turn 終了 | 本文 prefix ではなく typed status で TC 評価をスキップする |
+| Human Task suspend | `AgentTurnStatus::Suspended` | 初回または2回目 Query の Human Task が Suspended で turn 終了 | 本文 prefix ではなく typed status をそのまま返し、TC envelope 評価をスキップする |
 | plan-only **迂回禁止** | domain `task_kind` | Contract 固定時 | `TaskKind::Plan` と execution criteria の混在を拒否する。英語キーワード検索は使わない |
 
 対象外 turn は `(Ok(None), Ok(None))` 経路で通常応答を通す。Execution 対象 turn で Contract が無い場合は Done へ fail-open せずエラーとする。
@@ -168,7 +168,7 @@ Issue #18 の方針どおり、単純な質問・説明依頼は通常の1 turn 
 6. 上記以外で query budget に達したら `BudgetExhausted` とする。
 7. いずれにも達せず進展可能なら、Evaluator の単一 `next_objective` で次 query を開始する。
 
-Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（tool / observation / verification / deliverable）、`observed_after_effect`、`summary`、`verified` を持つ。`verified=true` は、コードが provenance・tool status・effect 後の順序を検査でき、かつ Evaluator が当該 criterion との意味的充足を認めたことを表す。外界の真実を LLM の自己申告だけで保証する印ではない。`source=deliverable` は Contract が assistant 生成本文そのものを Deliverable とする場合に限り、本文の存在・内容を Evidence にできるが、その本文中の完了自己申告や未実行の検証結果を Evidence に昇格させない。tool output 全文や秘密値を無条件に最終表示へ複製せず、既存の sanitize / bounded output 契約を維持する。
+Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（known write tool / unknown shell effect / observation / verification / deliverable）、`observed_after_effect`、`summary`、`verified` を持つ。arbitrary `shell_exec` 成功は `UnknownShellEffect` とし、KnownWriteEffect や post-observation の根拠にしない。また変更対象を限定できないため、後続 shell 成功は既存の全 observation/verification を保守的に stale 化する。`verified=true` は、コードが provenance・tool status・effect 後の順序を検査でき、かつ Evaluator が当該 criterion との意味的充足を認めたことを表す。外界の真実を LLM の自己申告だけで保証する印ではない。`source=deliverable` は Contract が assistant 生成本文そのものを Deliverable とする場合に限り、本文の存在・内容を Evidence にできるが、その本文中の完了自己申告や未実行の検証結果を Evidence に昇格させない。tool output 全文や秘密値を無条件に最終表示へ複製せず、既存の sanitize / bounded output 契約を維持する。
 
 ### 9.2 AC のテスト可能性自己点検
 
@@ -194,6 +194,7 @@ Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（tool / observ
 - watcher / reconciler による外部状態の継続監視
 - 副作用の exactly-once、transaction、結果不明状態の durable recovery
 - Planner DSL、開発工程 state machine、汎用 workflow engine
+- Investigation の要求 intent に基づく自動 Task Completion 有効化（Phase 1 は明示 opt-in のみ）
 
 ## 11. Scope change log
 
@@ -204,6 +205,7 @@ Evidence は最低限 `evidence_id`、`criterion_ids`、`source`（tool / observ
 | 3 | BLOCKER_ORIGINAL_AC | Task Completion 適用境界（対象判定・対象外の通過・evaluation 必須・plan-only 迂回禁止）を §8.1 として固定 | docs-only PR レビュー指摘: 全 turn 共通 core と読める曖昧さを解消するため |
 | 4 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | eligibility を request 開始時に固定、`task_kind` 構造化、Evidence target/stale/Verification、`AgentTurnStatus::Suspended`、Contract↔要求対応検査 | PR #23 レビュー: 全 turn 強制・英語キーワード依存・read-only/検証未達・Evidence 対応不足 |
 | 5 | BLOCKER_ORIGINAL_AC / REGRESSION / SAFETY_WITHIN_FAULT_MODEL | coverage AC を構造完全性へ明示縮小。ContractGate の tool 前 request 検査、server trusted verifier との積集合、Active 限定 streaming buffer、opaque target と sanitized summary を固定 | PR #23 再レビュー 4734475755 の5 blocker。自然言語の意味的網羅や arbitrary shell の信頼を Phase 1 の保証に含めないため |
+| 6 | REGRESSION / SAFETY_WITHIN_FAULT_MODEL | request 単位の明示 opt-in、UnknownShellEffect、2回目 Query の typed suspend 保持を固定 | PR #23 再々レビュー 4734829012 の3 blocker。tool availability と intent、任意 shell と既知 write effect、suspend と envelope failure を分離するため |
 
 ## 12. `docs/architecture.md` への影響
 

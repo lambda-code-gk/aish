@@ -8,7 +8,7 @@
 spec = "0068"
 phase = 1
 id = "task_completion_vertical_e2e"
-description = "一つのai commandで初回副作用からgap-driven再観測を経てverified Evidence付きDoneへ至る"
+description = "明示opt-inの一つのai commandで初回副作用からgap-driven再観測を経てverified Evidence付きDoneへ至り、opt-inなし通常turnと2回目Human Task suspendも保つ"
 test = "task_completion_vertical_e2e"
 file_glob = "aibe/tests/0068_task_completion_vertical_e2e.rs"
 pending = false
@@ -35,7 +35,7 @@ pending = false
 spec = "0068"
 phase = 1
 id = "side_effect_requires_post_observation"
-description = "変更系tool成功は副作用後の再観測なしにcriterionを満たさない"
+description = "既知変更tool成功は副作用後の再観測なしにcriterionを満たさず、UnknownShellEffectは古い観測をstale化して既知prior effectにならない"
 test = "side_effect_requires_post_observation"
 file_glob = "aibe/tests/0068_task_completion_phase1_red.rs"
 pending = false

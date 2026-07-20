@@ -92,7 +92,8 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
   "context": {
     "shell_log_tail": "...",
     "cwd": "/abs/path/to/ai/cwd",
-    "system_instruction": "..."
+    "system_instruction": "...",
+    "task_completion": false
   }
 }
 ```
@@ -106,6 +107,7 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
 | `llm_profile` | 任意。使用する LLM プロファイル名（`docs/done/0011_llm-profiles-spec.md`）。省略時は aibe 設定の `default_profile` |
 | `context` | aish ログ由来など、クライアントが渡す付加コンテキスト |
 | `context.cwd` | クライアントのカレントディレクトリ（絶対パス）。`ai` は起動時の `std::env::current_dir()` を送る。`read_file` の相対パスと `allowed_roots` の `.` は **aibe プロセスの cwd ではなくこの値** を基準にする |
+| `context.task_completion` | Task Completion Contract の request 単位 opt-in。省略時 / `false` は通常 turn。tool allowlist は権限であり task intent ではないため、effect tool が利用可能でもこの signal なしでは Active にしない |
 | `context.system_instruction` | 任意。この turn のみ LLM に前置する system 本文。クライアント（`ai`）が turn 解決後に組み立て、aibe は解釈せず注入する。console hint（端末サイズに応じた整形指示）は `ai` の `resolve_console_hints` で on/off を決め、有効時のみ TTY サイズから生成する。CLI `--console-hint` / `-H` / `--no-console-hint` / `-N`、設定 `[ask].console_hints`、preset `[presets.*].console_hints` で制御（優先順位: CLI > preset > config > 既定 `true`）。非 TTY または `--format`（tsv / json / env）指定時は付与しない。`aibe_client` は policy を持たず、解決済み context を serialize するのみ。長すぎる場合は `aibe_protocol::SYSTEM_INSTRUCTION_MAX_BYTES` で切り詰める |
 | turn 進行表示 | `ai` の `resolve_progress` で on/off（優先順位: CLI `--progress` / `--no-progress` > preset > `[ask].progress` > 既定 **TTY stderr なら `true`**）。有効時は aibe の progress event を受け、TTY stderr では単行スピナー（`\r` 上書き）で表示し assistant streaming 開始時に行を消す。非 TTY では `ai: progress: …` 行（`--progress` 明示時のみ有効）。`--quiet` で抑制。**`--format`（tsv / json / env）は stdout 契約のみを決め、stderr progress の有効/無効には使わない**（0033）。turn スコープの spinner は `ProgressGuard`（RAII）で必ず停止する |
 
@@ -593,11 +595,11 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 
 通常の `agent_turn` では `RequestService` が既存 Query Loop の外側に request-local Task Completion Loop を置く。query budget はコード固定の 2 で、設定・環境変数はない。1 query は既存 `AgentTurnService` を1回開始する単位であり、Query Loop 内の provider/tool round 上限 `[tools] max_rounds` とは別である。既存 Query Loop、approval、timeout、cancel、Human Task、provider adapter は置換しない。
 
-適用は request 開始時の `classify_task_completion_eligibility` で決める。allowlist に `write_file` / `apply_patch` / `shell_exec` がある場合だけ Active（元要求と eligibility を保持する strict `ContractGate` + Task Completion system instruction）。それ以外は Inactive（permissive gate、instruction なし、Contract なしの通常応答）。Active で Contract なし終了は fail-closed。Human Task の中断は `AgentTurnStatus::Suspended`（typed）で TC 評価をスキップする。
+適用は request 開始時の `classify_task_completion_eligibility` で決める。`context.task_completion=true` の明示 signal と、allowlist の `write_file` / `apply_patch` / `shell_exec` の両方がある場合だけ Active（元要求と eligibility を保持する strict `ContractGate` + Task Completion system instruction）。effect tool の allowlist は権限であり task intent ではないため、signal なしでは Inactive（permissive gate、instruction なし、Contract なしの通常応答）。Active で Contract なし終了は fail-closed。Phase 1 では Investigation の自動有効化を行わず Deferred とする。Human Task の中断は初回・2回目とも `AgentTurnStatus::Suspended`（typed）のまま返し、TC envelope 評価をスキップする。
 
 各 Active assistant は JSON control envelope に `TaskContract`（`task_kind` / goal / stable criteria / `observes_targets` / constraints / deliverables / verification / `verification_tools`）を載せる。`ContractGate` は同じ assistant step の最初の tool 実行前に schema、criterion ID、元要求の非空、eligibility の `expected_kind` との厳密一致を検査して一度だけ固定し、tool 開始後の初出、後続の追加・削除・ID変更を fail-closed で拒否する。Active Execution は Plan / Investigation Contract へ downgrade できない。Phase 1 は goal / criteria の自然言語上の意味的網羅をコード保証せず、Contract coverage は構造完全性に限定する。英語キーワード検索は使わない。
 
-`EvidenceRecord` は tool 実行順から request-local に生成し、matching 専用 `target:sha256:<digest>` を持つ。raw path / command / args は target と表示 summary に入れない。write-like と arbitrary `shell_exec` の成功は effect / 候補 Evidence に留まり `verified=false`。Contract の `verification_tools` はそのまま信頼せず、server 固定の専用 read-only tools（`read_file` / `list_dir` / `grep` / `git_status` / `git_diff`）との積集合だけを trusted verifier とする。同 target への後続 write は以前の observation/verification を `stale` にする。Execution では matching target の post-observationかつ trusted verifier だけが verified になり得る。Investigation でも trusted read-only 成功だけが Observation として verified になり得る。assistant の完了自己申告は Evidence にしない。計画文書そのものが Contract の deliverable である Plan criterion だけは bounded deliverable Evidence を許す。
+`EvidenceRecord` は tool 実行順から request-local に生成し、matching 専用 `target:sha256:<digest>` を持つ。raw path / command / args は target と表示 summary に入れない。対象を特定できる write-like 成功は `Tool`（KnownWriteEffect）、arbitrary `shell_exec` 成功は `UnknownShellEffect` と分離し、いずれも単独では `verified=false`。`UnknownShellEffect` は post-observation の prior effect 根拠にせず、成功時は変更対象を安全に限定できないため既存の全 observation/verification を保守的に `stale` 化する。Contract の `verification_tools` はそのまま信頼せず、server 固定の専用 read-only tools（`read_file` / `list_dir` / `grep` / `git_status` / `git_diff`）との積集合だけを trusted verifier とする。同 target への後続 write は以前の observation/verification を `stale` にする。Execution では matching target の post-observationかつ trusted verifier だけが verified になり得る。Investigation でも trusted read-only 成功だけが Observation として verified になり得る。assistant の完了自己申告は Evidence にしない。計画文書そのものが Contract の deliverable である Plan criterion だけは bounded deliverable Evidence を許す。
 
 未達で継続可能な場合、2回目は元要求を再送せず、固定 Contract、satisfied/unsatisfied、required Evidence、既存 Evidence（criterion / source / verified / stale。matching 用 target は非表示）、単一 `next_objective` から構築する。終端順は全 criterion verified の `Done`、具体的なユーザー操作が必要な `NeedsUser`、解消不能または stall の `Blocked`、それ以外で2 query 到達の `BudgetExhausted`。Pack Composition は適用せず core application/domain 境界に置く。`ai` は一 request の送信と report 表示だけ、`aish` は変更なしである。
 
@@ -613,7 +615,7 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 | **`ai` の責務** | ツール有効時は起動時の `std::env::current_dir()`（絶対パス）を `context.cwd` に載せる。`AskInput` → `AskRequest` 変換で検証する |
 | **既存** | `read_file` / `list_dir` / `grep` / `git_diff` / `git_status` / `shell_exec` / `write_file` / `apply_patch` は上記に準拠 |
 
-実装の正本: **wire** — `aibe-protocol`（`ClientRequest` / `ClientResponse` / `ToolName` / `ExecutedToolCall` / `KNOWN_TOOLS` / 契約定数）。**server 内部** — `aibe::domain::{ClientCwd, AgentTurnContext, ShellLogTail, ChatMessage, ToolCall}`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context` 形は従来どおり。`RequestService` は `aibe_protocol::RequestContext` を `application/protocol_convert` の `TryFrom` で `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。会話メッセージは wire 上 `messages[].role` 文字列のまま受け取り、内部は `MessageRole` enum（0008）。`ai` の allowlist は `aibe_protocol::ToolName` を使用する。
+実装の正本: **wire** — `aibe-protocol`（`ClientRequest` / `ClientResponse` / `ToolName` / `ExecutedToolCall` / `KNOWN_TOOLS` / 契約定数）。**server 内部** — `aibe::domain::{ClientCwd, AgentTurnContext, ShellLogTail, ChatMessage, ToolCall}`、`aibe::ports::outbound::ToolExecutionContext`（`tool_context.rs`）。wire JSON の `context.task_completion` は request 単位 opt-in で、省略時は `false`。`RequestService` は eligibility を判定後、`aibe_protocol::RequestContext` を `application/protocol_convert` の `TryFrom` で `AgentTurnContext` に変換してから `AgentTurnService` へ渡す。会話メッセージは wire 上 `messages[].role` 文字列のまま受け取り、内部は `MessageRole` enum（0008）。`ai` の allowlist は `aibe_protocol::ToolName` を使用する。
 
 #### エラーコード（`type: error`）
 

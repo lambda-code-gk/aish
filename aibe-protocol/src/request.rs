@@ -152,6 +152,9 @@ pub struct RequestContext {
     /// Durable Human Task result から開始する新規 turn。aibe process 内の同一 ID 再受理を拒否する。
     #[serde(default)]
     pub continuation_turn: bool,
+    /// Task Completion Contract をこの request で明示的に有効化する。
+    #[serde(default)]
+    pub task_completion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -488,6 +491,7 @@ mod tests {
             }],
             context: RequestContext {
                 cwd: Some("/tmp/proj".into()),
+                task_completion: true,
                 ..Default::default()
             },
             llm_profile: Some("fast".into()),
@@ -497,10 +501,12 @@ mod tests {
         match back {
             ClientRequest::AgentTurn {
                 client_tools,
+                context,
                 llm_profile,
                 ..
             } => {
                 assert_eq!(client_tools.len(), 1);
+                assert!(context.task_completion);
                 assert_eq!(client_tools[0].name, "aish.replay_show");
                 assert_eq!(llm_profile.as_deref(), Some("fast"));
             }

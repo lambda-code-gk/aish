@@ -308,6 +308,7 @@ impl RequestService {
                     }
                 };
                 let eligibility = classify_task_completion_eligibility(
+                    context.task_completion,
                     &tools.iter().map(|name| name.as_str()).collect::<Vec<_>>(),
                 );
                 let client_tools = match validate_client_tools(client_tools) {
@@ -667,6 +668,10 @@ fn finish_second_query(
     cumulative_calls: &mut Vec<aibe_protocol::ExecutedToolCall>,
 ) -> ClientResponse {
     let (content, second_calls) = match &response {
+        ClientResponse::AgentTurnResult {
+            status: aibe_protocol::AgentTurnStatus::Suspended,
+            ..
+        } => return response,
         ClientResponse::AgentTurnResult {
             assistant_message,
             tool_calls,

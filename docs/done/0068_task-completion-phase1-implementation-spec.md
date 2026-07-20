@@ -57,7 +57,7 @@ Scope Lock 後の指摘は `BLOCKER_ORIGINAL_AC` / `REGRESSION` / `SAFETY_WITHIN
 Domain の最低型:
 
 - `TaskContract`: Goal / Completion Criteria（安定した一意ID）/ Constraints / Deliverables / Verification
-- `EvidenceRecord`: `evidence_id`、`criterion_ids`、`source`（tool / observation / verification / deliverable）、`observed_after_effect`、bounded `summary`、`verified`
+- `EvidenceRecord`: `evidence_id`、`criterion_ids`、`source`（known write tool / unknown shell effect / observation / verification / deliverable）、`observed_after_effect`、bounded `summary`、`verified`
 - `CompletionEvaluation`: criterionごとの satisfied / unsatisfied、required evidence、Evidence参照、単一 `next_objective`、NeedsUser / Blocked 候補理由
 - `CompletionOutcome`: Done / NeedsUser / Blocked / BudgetExhausted
 - `CompletionReport`: outcome、criterion別Evidence、unsatisfied criteria、未検証事項、query使用数
@@ -166,9 +166,9 @@ cargo test -p ai --test ask_integration -j 1 -- --test-threads=1
 
 | ID | Phase | テストファイル | 現在 | 解除条件 |
 |----|-------|----------------|------|----------|
-| `task_completion_vertical_e2e` | 1 | `aibe/tests/0068_task_completion_vertical_e2e.rs` | 実装済み / non-ignored | 本番compositionの一command E2Eが2 query、gap prompt、post-observation、Doneを検証 |
+| `task_completion_vertical_e2e` | 1 | `aibe/tests/0068_task_completion_vertical_e2e.rs` | 実装済み / non-ignored | 明示 opt-in の本番compositionで2 query、gap prompt、post-observation、Doneを検証。opt-inなし通常turnと2回目Human Task suspend保持も同じ本番serviceで回帰検証 |
 | `task_contract_is_stable_and_structurally_complete` | 1 | `aibe/tests/0068_task_completion_phase1_red.rs` | 実装済み / non-ignored | 構造完全Contract、Execution kind厳密一致、tool前固定、ID改変拒否、専用provider callなしを検証。自然言語上の意味的網羅は保証外 |
-| `side_effect_requires_post_observation` | 1 | 同上 | 実装済み / non-ignored | effectのみ未達、effect後read-only observationで充足を検証 |
+| `side_effect_requires_post_observation` | 1 | 同上 | 実装済み / non-ignored | known effectのみ未達、effect後read-only observationで充足し、UnknownShellEffectが既存観測をstale化してprior effectにならないことを検証 |
 | `completion_evaluator_is_structured_and_fail_closed` | 1 | 同上 | 実装済み / non-ignored | invalid envelope表、機械判定優先、追加provider callなしを検証 |
 | `continuation_is_gap_driven_and_detects_plan_only` | 1 | 同上 | 実装済み / non-ignored | gap prompt、元要求非再送、plan deliverable対照例を検証 |
 | `assistant_claim_is_not_verified_evidence` | 2 | 同上 | 実装済み / non-ignored | claim / plan / 未実行tool要求がverifiedにならないことを検証 |

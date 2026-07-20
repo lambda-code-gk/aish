@@ -20,8 +20,8 @@ spec = "0068"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 5
-scope_change_reason = "PR #23 再レビュー: Contract coverage を構造完全性へ縮小し、tool前検査・trusted verifier・Active限定buffer・opaque Evidence targetを明確化"
+scope_revision = 6
+scope_change_reason = "PR #23 再々レビュー: request単位opt-in、UnknownShellEffect、2回目QueryのSuspended保持を固定"
 scope_review = "approved"
 
 core_outcome = "一つのaiコマンド内でLLM終了文ではなく完了条件ごとのEvidenceを根拠に未達gapを埋め達成または理由付き非達成まで既存Agent loopを継続する"
