@@ -290,6 +290,7 @@ pub fn render_response(
             status,
             assistant_message,
             tool_calls,
+            completion_report,
             ..
         } => {
             let mut stderr = Vec::new();
@@ -310,11 +311,8 @@ pub fn render_response(
                     }
                 }
             }
-            let stdout = if assistant_message.content.is_empty() {
-                None
-            } else {
-                Some(assistant_message.content.clone())
-            };
+            let stdout =
+                render_agent_output(&assistant_message.content, completion_report.as_ref());
             PresenterOutput { stdout, stderr }
         }
         ClientResponse::Pong { id } => PresenterOutput {
@@ -369,6 +367,59 @@ pub fn render_response(
     }
 }
 
+fn render_agent_output(
+    assistant_content: &str,
+    report: Option<&aibe_protocol::CompletionReport>,
+) -> Option<String> {
+    let mut sections = Vec::new();
+    if !assistant_content.is_empty() {
+        sections.push(assistant_content.to_string());
+    }
+    if let Some(report) = report {
+        let mut lines = vec![
+            format!("Task completion: {:?}", report.outcome),
+            format!("Queries used: {}", report.queries_used),
+        ];
+        if let Some(reason) = &report.terminal_reason {
+            lines.push(format!("Reason: {reason}"));
+        }
+        for criterion in &report.criteria {
+            lines.push(format!(
+                "Criterion {}: {}",
+                criterion.criterion_id,
+                if criterion.satisfied {
+                    "satisfied"
+                } else {
+                    "unsatisfied"
+                }
+            ));
+            for evidence in &criterion.evidence {
+                lines.push(format!(
+                    "  Evidence {} source={:?} verified={}: {}",
+                    evidence.evidence_id, evidence.source, evidence.verified, evidence.summary
+                ));
+            }
+        }
+        if !report.unsatisfied_criteria.is_empty() {
+            lines.push(format!(
+                "Unsatisfied: {}",
+                report.unsatisfied_criteria.join(", ")
+            ));
+        }
+        if !report.unverified_items.is_empty() {
+            lines.push("Unverified:".into());
+            lines.extend(
+                report
+                    .unverified_items
+                    .iter()
+                    .map(|item| format!("  {item}")),
+            );
+        }
+        sections.push(lines.join("\n"));
+    }
+    (!sections.is_empty()).then(|| sections.join("\n\n"))
+}
+
 pub fn render_response_structured(
     response: &ClientResponse,
     verbose_tools: bool,
@@ -406,6 +457,8 @@ struct ResponseView {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tool_calls: Vec<ExecutedToolCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    completion_report: Option<aibe_protocol::CompletionReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_message: Option<String>,
@@ -434,6 +487,7 @@ impl ResponseView {
                 status,
                 assistant_message,
                 tool_calls,
+                completion_report,
                 ..
             } => {
                 let mut assistant_message = assistant_message.clone();
@@ -492,6 +546,7 @@ impl ResponseView {
                     }),
                     assistant_message: Some(assistant_message),
                     tool_calls: tool_calls.clone(),
+                    completion_report: completion_report.clone(),
                     error_code: None,
                     error_message: None,
                     alive: None,
@@ -507,6 +562,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: Some(true),
@@ -521,6 +577,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: Some(format!("{code:?}")),
                 error_message: Some(message.clone()),
                 alive: None,
@@ -535,6 +592,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -549,6 +607,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -563,6 +622,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -577,6 +637,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -591,6 +652,7 @@ impl ResponseView {
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: reason.clone(),
                 alive: None,
@@ -605,6 +667,7 @@ impl ResponseView {
                 status: Some(format!("{phase:?}").to_lowercase()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: message.clone(),
                 alive: None,
@@ -622,6 +685,7 @@ impl ResponseView {
                     content: delta.clone(),
                 }),
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -636,6 +700,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -650,6 +715,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -664,6 +730,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -678,6 +745,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -692,6 +760,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -706,6 +775,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -720,6 +790,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -734,6 +805,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -748,6 +820,7 @@ impl ResponseView {
                 status: Some("ok".to_string()),
                 assistant_message: None,
                 tool_calls: Vec::new(),
+                completion_report: None,
                 error_code: None,
                 error_message: None,
                 alive: None,
@@ -784,6 +857,32 @@ impl ResponseView {
             &mut out,
             "tool_calls.count",
             &self.tool_calls.len().to_string(),
+        );
+        append_tsv_row(
+            &mut out,
+            "completion_report.outcome",
+            self.completion_report
+                .as_ref()
+                .map(|report| completion_outcome_name(report.outcome))
+                .unwrap_or(""),
+        );
+        append_tsv_row(
+            &mut out,
+            "completion_report.queries_used",
+            &self
+                .completion_report
+                .as_ref()
+                .map(|report| report.queries_used.to_string())
+                .unwrap_or_default(),
+        );
+        append_tsv_row(
+            &mut out,
+            "completion_report.json",
+            &self
+                .completion_report
+                .as_ref()
+                .and_then(|report| serde_json::to_string(report).ok())
+                .unwrap_or_default(),
         );
         append_tsv_row(
             &mut out,
@@ -837,6 +936,32 @@ impl ResponseView {
         );
         append_env_line(
             &mut out,
+            "AI_COMPLETION_OUTCOME",
+            self.completion_report
+                .as_ref()
+                .map(|report| completion_outcome_name(report.outcome))
+                .unwrap_or(""),
+        );
+        append_env_line(
+            &mut out,
+            "AI_COMPLETION_QUERIES_USED",
+            &self
+                .completion_report
+                .as_ref()
+                .map(|report| report.queries_used.to_string())
+                .unwrap_or_default(),
+        );
+        append_env_line(
+            &mut out,
+            "AI_COMPLETION_REPORT_JSON",
+            &self
+                .completion_report
+                .as_ref()
+                .and_then(|report| serde_json::to_string(report).ok())
+                .unwrap_or_default(),
+        );
+        append_env_line(
+            &mut out,
             "AI_ERROR_CODE",
             self.error_code.as_deref().unwrap_or(""),
         );
@@ -853,6 +978,15 @@ impl ResponseView {
                 .unwrap_or(""),
         );
         out
+    }
+}
+
+fn completion_outcome_name(outcome: aibe_protocol::CompletionOutcome) -> &'static str {
+    match outcome {
+        aibe_protocol::CompletionOutcome::Done => "done",
+        aibe_protocol::CompletionOutcome::NeedsUser => "needs_user",
+        aibe_protocol::CompletionOutcome::Blocked => "blocked",
+        aibe_protocol::CompletionOutcome::BudgetExhausted => "budget_exhausted",
     }
 }
 
@@ -1001,6 +1135,7 @@ mod tests {
                     content: String::new(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             },
             false,
             ShellExecRenderOptions::default(),
@@ -1024,6 +1159,7 @@ mod tests {
                     json!({"command": "git", "args": ["status"]}),
                     "ok".into(),
                 )],
+                completion_report: None,
             },
             false,
             ShellExecRenderOptions {
@@ -1052,6 +1188,7 @@ mod tests {
                     json!({"command": "echo", "args": ["hi"]}),
                     "ok".into(),
                 )],
+                completion_report: None,
             },
             false,
             ShellExecRenderOptions {
@@ -1073,6 +1210,7 @@ mod tests {
                     content: "partial".into(),
                 },
                 tool_calls: vec![],
+                completion_report: None,
             },
             false,
             ShellExecRenderOptions::default(),
@@ -1100,6 +1238,7 @@ mod tests {
                     json!({"path": "a"}),
                     huge,
                 )],
+                completion_report: None,
             },
             true,
             ShellExecRenderOptions::default(),

@@ -66,6 +66,12 @@ export AIBE_CONFIG="$SMOKE_DIR/aibe.toml"
 export AIBE_SOCKET_PATH="$SMOKE_DIR/aibe.sock"
 export AI_CONFIG="$SMOKE_DIR/ai.toml"
 export AI_SESSION_ID="smoke-memory"
+# 親環境の XDG_* / aish session 変数が残っていると HOME 差し替えだけでは session log を拾う。
+export XDG_DATA_HOME="$SMOKE_DIR/.local/share"
+export XDG_CONFIG_HOME="$SMOKE_DIR/.config"
+export XDG_STATE_HOME="$SMOKE_DIR/.local/state"
+mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
+unset AI_ASK_LOG AISH_SESSION_DIR AISH_CONTROL_FIFO AISH_SESSION_ID
 
 cat >"$AIBE_CONFIG" <<'EOF'
 [llm]
