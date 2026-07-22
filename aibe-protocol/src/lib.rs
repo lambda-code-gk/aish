@@ -49,9 +49,9 @@ pub use response::{
 };
 pub use tool_name::{
     is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,
-    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, APPLY_PATCH, GIT_DIFF,
-    GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE,
-    SHELL_EXEC, WRITE_FILE,
+    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, AGENT_TASK, APPLY_PATCH,
+    GIT_DIFF, GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS,
+    READ_FILE, SHELL_EXEC, WRITE_FILE,
 };
 pub use work::{
     validate_work_id, validate_work_text, WorkApplyRequestBody, WorkApplyResponseBody,

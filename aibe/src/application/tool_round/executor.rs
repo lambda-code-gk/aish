@@ -105,7 +105,16 @@ impl ToolRoundExecutor {
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<&Arc<TurnCancellation>>,
     ) -> Result<RoundOutcome, LlmError> {
-        let mut tool_defs = definitions_for(allowed_tools);
+        let publishable_tools = allowed_tools
+            .iter()
+            .filter(|name| {
+                name.as_str() != aibe_protocol::AGENT_TASK
+                    || (tool_ctx.delegation_depth().permits_delegation()
+                        && self.registry.get(name).is_some())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut tool_defs = definitions_for(&publishable_tools);
         tool_defs.extend(client_tool_definitions(client_tools));
         self.llm_tracer.start("tool_round", None, None);
         let started = Instant::now();

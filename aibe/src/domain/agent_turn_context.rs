@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use super::{ClientCwd, ShellLogTail, ToolName};
+use super::{ClientCwd, DelegationDepth, ShellLogTail, ToolName};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ContextError {
@@ -22,6 +22,7 @@ pub struct AgentTurnContext {
     pub memory_space_id: Option<String>,
     pub collaborative_handoff: bool,
     pub execution_mode: aibe_protocol::ExecutionMode,
+    pub delegation_depth: DelegationDepth,
 }
 
 impl AgentTurnContext {
@@ -34,6 +35,7 @@ impl AgentTurnContext {
             memory_space_id: None,
             collaborative_handoff: false,
             execution_mode: aibe_protocol::ExecutionMode::Normal,
+            delegation_depth: DelegationDepth::root(),
         }
     }
 
@@ -46,6 +48,7 @@ impl AgentTurnContext {
             memory_space_id: None,
             collaborative_handoff: false,
             execution_mode: aibe_protocol::ExecutionMode::Normal,
+            delegation_depth: DelegationDepth::root(),
         }
     }
 

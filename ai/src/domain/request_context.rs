@@ -17,6 +17,7 @@ pub struct RequestContextInput {
     pub execution_mode: ExecutionMode,
     pub continuation_turn: bool,
     pub task_completion: bool,
+    pub delegation_depth: u8,
 }
 
 impl RequestContextInput {
@@ -32,6 +33,7 @@ impl RequestContextInput {
             execution_mode: self.execution_mode.into(),
             continuation_turn: self.continuation_turn,
             task_completion: self.task_completion,
+            delegation_depth: self.delegation_depth,
         }
     }
 }

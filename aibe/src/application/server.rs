@@ -8,8 +8,9 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 
 use crate::adapters::inbound::unix_socket_server;
+use crate::adapters::outbound::agent_task::DefaultAgentTaskWorkerRegistry;
 use crate::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use crate::adapters::outbound::tools::build_registry;
+use crate::adapters::outbound::tools::{build_registry, build_registry_with_extras};
 use crate::adapters::outbound::{
     ConfigWritePathRevalidator, ConversationStore as FilesystemConversationStore, EnvLlmCallTracer,
     FileChangeJournalConfig, FilesystemFeatureRegistryLoader, FilesystemFileChangeJournal,
@@ -20,6 +21,9 @@ use crate::adapters::outbound::{
     FilesystemContextualMemoryStore, FilesystemMemoryRecipeRegistryLoader,
     FilesystemMemorySpaceResolver, FilesystemWorkStore, InProcessMemorySubscriptionBroker,
 };
+use crate::application::agent_task::AgentTaskService;
+use crate::application::agent_task_pack::{ActiveAgentTaskPack, AgentTaskPack, BasicAgentTaskPack};
+use crate::application::agent_task_tool::AgentTaskTool;
 use crate::application::basic_pack_arc;
 #[cfg(feature = "memory")]
 use crate::application::contextual_pack_with_work_arc;
@@ -30,8 +34,9 @@ use crate::domain::{FeatureEligibilityContext, FeatureRegistry};
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::inbound::ShutdownCoordinator;
 use crate::ports::outbound::{
-    ConversationStore, ExternalCommandConfig, FeatureRegistryLoader, FileChangeExecutor,
-    FileWriteConfig, LlmCallTracer, MemoryConfig, ProfileRegistry, ToolRegistry, ToolsConfig,
+    AgentTaskConfig, ConversationStore, ExternalCommandConfig, FeatureRegistryLoader,
+    FileChangeExecutor, FileWriteConfig, LlmCallTracer, MemoryConfig, ProfileRegistry,
+    ToolRegistry, ToolsConfig,
 };
 
 /// 本番経路の rollback journal + atomic store + orchestration。
@@ -71,8 +76,61 @@ pub async fn run(
     conversation_store_root: PathBuf,
     memory_config: MemoryConfig,
 ) -> anyhow::Result<()> {
+    run_with_agent_task(
+        socket_path,
+        config_path,
+        profile_registry,
+        tools_config,
+        external_commands,
+        AgentTaskConfig::default(),
+        router_profile,
+        conversation_store_root,
+        memory_config,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_agent_task(
+    socket_path: PathBuf,
+    config_path: PathBuf,
+    profile_registry: ProfileRegistry,
+    tools_config: ToolsConfig,
+    external_commands: Vec<ExternalCommandConfig>,
+    agent_task_config: AgentTaskConfig,
+    router_profile: String,
+    conversation_store_root: PathBuf,
+    memory_config: MemoryConfig,
+) -> anyhow::Result<()> {
     let file_change = build_file_change_executor(&tools_config.file_write);
-    let tool_registry = build_registry(&tools_config, &external_commands, file_change);
+    let agent_task_pack: Arc<dyn AgentTaskPack> = if agent_task_config.enabled {
+        let registry = DefaultAgentTaskWorkerRegistry::from_configs(&agent_task_config.workers)
+            .map_err(|e| anyhow::anyhow!("agent_task registry: {e}"))?;
+        Arc::new(ActiveAgentTaskPack::new(Arc::new(registry)))
+    } else {
+        Arc::new(BasicAgentTaskPack::default())
+    };
+    let agent_task_service = agent_task_pack.publishes_tool().then(|| {
+        Arc::new(AgentTaskService::new(
+            agent_task_pack.registry(),
+            true,
+            tools_config.file_write.allowed_roots.clone(),
+            tools_config.max_tool_output_bytes,
+            1800,
+        ))
+    });
+    let extra_executors = agent_task_service
+        .map(|service| {
+            vec![Arc::new(AgentTaskTool::new(service))
+                as Arc<dyn crate::ports::outbound::ToolExecutor>]
+        })
+        .unwrap_or_default();
+    let tool_registry = build_registry_with_extras(
+        &tools_config,
+        &external_commands,
+        file_change,
+        extra_executors,
+    );
     let terminator = Arc::new(ToolRoundTerminatorOrchestrator::new(
         tools_config.termination_strategy,
     ));

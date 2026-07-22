@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use crate::domain::Capability;
 use crate::domain::ClientCwd;
+use crate::domain::DelegationDepth;
 use crate::ports::outbound::{
-    CapabilityDenied, CapabilityPolicy, ClientToolGate, HumanTaskGate, ShellExecApprovalGate,
-    ToolApprovalGate,
+    AgentTaskApprovalGate, CapabilityDenied, CapabilityPolicy, ClientToolGate, HumanTaskGate,
+    ShellExecApprovalGate, ToolApprovalGate,
 };
 use aibe_protocol::ClientProvidedToolSpec;
 
@@ -29,6 +30,8 @@ pub struct ToolExecutionContext {
     collaborative_handoff: bool,
     execution_mode: aibe_protocol::ExecutionMode,
     human_task_gate: Option<Arc<dyn HumanTaskGate>>,
+    agent_task_approval_gate: Option<Arc<dyn AgentTaskApprovalGate>>,
+    delegation_depth: DelegationDepth,
 }
 
 impl std::fmt::Debug for ToolExecutionContext {
@@ -47,6 +50,11 @@ impl std::fmt::Debug for ToolExecutionContext {
             .field("collaborative_handoff", &self.collaborative_handoff)
             .field("execution_mode", &self.execution_mode)
             .field("human_task_gate", &self.human_task_gate.is_some())
+            .field(
+                "agent_task_approval_gate",
+                &self.agent_task_approval_gate.is_some(),
+            )
+            .field("delegation_depth", &self.delegation_depth)
             .finish()
     }
 }
@@ -64,6 +72,8 @@ impl PartialEq for ToolExecutionContext {
             && self.collaborative_handoff == other.collaborative_handoff
             && self.execution_mode == other.execution_mode
             && self.human_task_gate.is_some() == other.human_task_gate.is_some()
+            && self.agent_task_approval_gate.is_some() == other.agent_task_approval_gate.is_some()
+            && self.delegation_depth == other.delegation_depth
     }
 }
 
@@ -82,6 +92,8 @@ impl ToolExecutionContext {
             collaborative_handoff: false,
             execution_mode: aibe_protocol::ExecutionMode::Normal,
             human_task_gate: None,
+            agent_task_approval_gate: None,
+            delegation_depth: DelegationDepth::root(),
         }
     }
 
@@ -147,6 +159,24 @@ impl ToolExecutionContext {
     }
     pub fn human_task_gate(&self) -> Option<&Arc<dyn HumanTaskGate>> {
         self.human_task_gate.as_ref()
+    }
+
+    pub fn with_agent_task_approval_gate(mut self, gate: Arc<dyn AgentTaskApprovalGate>) -> Self {
+        self.agent_task_approval_gate = Some(gate);
+        self
+    }
+
+    pub fn agent_task_approval_gate(&self) -> Option<&Arc<dyn AgentTaskApprovalGate>> {
+        self.agent_task_approval_gate.as_ref()
+    }
+
+    pub fn with_delegation_depth(mut self, depth: DelegationDepth) -> Self {
+        self.delegation_depth = depth;
+        self
+    }
+
+    pub fn delegation_depth(&self) -> DelegationDepth {
+        self.delegation_depth
     }
 
     pub fn capability_policy(&self) -> Option<&Arc<dyn CapabilityPolicy>> {

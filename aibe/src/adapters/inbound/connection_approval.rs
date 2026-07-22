@@ -131,6 +131,11 @@ impl ToolApprovalGate for ConnectionApprovalGate {
     ) -> ToolApprovalGateOutcome {
         let seq = PROMPT_SEQ.fetch_add(1, Ordering::Relaxed);
         let prompt_id = format!("tool-approval-{seq}");
+        let label = if prompt.tool_name == aibe_protocol::AGENT_TASK {
+            "agent task approval"
+        } else {
+            "file write approval"
+        };
         let wire = ClientResponse::ToolApprovalPrompt {
             id: prompt_id.clone(),
             turn_id: self.turn_id.clone(),
@@ -147,7 +152,7 @@ impl ToolApprovalGate for ConnectionApprovalGate {
                 .progress(
                     &self.turn_id,
                     aibe_protocol::ProgressPhase::WaitingApproval,
-                    Some("file write approval".into()),
+                    Some(label.into()),
                 )
                 .await;
         }

@@ -223,7 +223,8 @@ impl AgentTurnService {
             .with_turn_id(id.clone())
             .with_capability_policy(Arc::clone(&self.capability_policy))
             .with_collaborative_handoff(context.collaborative_handoff)
-            .with_execution_mode(context.execution_mode);
+            .with_execution_mode(context.execution_mode)
+            .with_delegation_depth(context.delegation_depth);
         if let Some(gate) = approval_gate {
             tool_ctx = tool_ctx.with_approval_gate(gate);
         }

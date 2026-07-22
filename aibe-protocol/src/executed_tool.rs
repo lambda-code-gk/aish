@@ -286,6 +286,48 @@ impl ExecutedToolCall {
         self.approval_source = Some(approval_source);
         self
     }
+
+    /// Agent Task 専用監査。`client_tools_allowlist` ラベルは使わない。
+    pub fn with_agent_task_audit(
+        mut self,
+        approved: bool,
+        worker: &str,
+        cwd: &str,
+        timeout_secs: u64,
+        approval_origin: &str,
+    ) -> Self {
+        self.risk_class = Some(ToolRiskClass::WriteLike);
+        self.dry_run = Some(false);
+        self.approval_state = Some(if approved {
+            ToolApprovalState::ExplicitClientOptIn
+        } else {
+            ToolApprovalState::NotRequired
+        });
+        self.decision = Some(if approved {
+            if self.status == ExecutedToolStatus::Ok {
+                "executed".into()
+            } else {
+                "rejected_or_failed".into()
+            }
+        } else {
+            "rejected_by_approval".into()
+        });
+        let worker = truncate_audit_token(worker, 64);
+        let cwd = truncate_audit_token(cwd, 256);
+        let origin = truncate_audit_token(approval_origin, 64);
+        self.approval_source = Some(format!(
+            "agent_task_approval=ask;worker={worker};cwd={cwd};timeout={timeout_secs};origin={origin}"
+        ));
+        self
+    }
+}
+
+fn truncate_audit_token(value: &str, max: usize) -> String {
+    let mut out = value.replace([';', '\n', '\r'], "_");
+    if out.len() > max {
+        out.truncate(out.floor_char_boundary(max));
+    }
+    out
 }
 
 fn tool_approval_origin_audit_suffix(origin: ToolApprovalOrigin) -> &'static str {

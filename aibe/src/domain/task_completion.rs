@@ -75,6 +75,7 @@ pub enum EvidenceSource {
     Observation,
     Verification,
     Deliverable,
+    AgentTask,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,9 +274,12 @@ pub fn classify_task_completion_eligibility(
     task_completion_requested: bool,
     tool_names: &[impl AsRef<str>],
 ) -> TaskCompletionEligibility {
-    let has_effect = tool_names
-        .iter()
-        .any(|name| matches!(name.as_ref(), "write_file" | "apply_patch" | "shell_exec"));
+    let has_effect = tool_names.iter().any(|name| {
+        matches!(
+            name.as_ref(),
+            "write_file" | "apply_patch" | "shell_exec" | "agent_task"
+        )
+    });
     if task_completion_requested && has_effect {
         TaskCompletionEligibility::Active {
             expected_kind: TaskKind::Execution,

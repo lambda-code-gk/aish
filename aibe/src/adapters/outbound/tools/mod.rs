@@ -14,7 +14,7 @@ mod read_file;
 mod registry;
 mod safe_path;
 mod shell_exec;
-mod subprocess;
+pub(crate) mod subprocess;
 mod tool_output;
 mod write_file;
 
@@ -48,32 +48,43 @@ pub fn build_registry(
     external_commands: &[ExternalCommandConfig],
     file_change: Arc<dyn FileChangeExecutor>,
 ) -> Arc<dyn ToolRegistry> {
+    build_registry_with_extras(tools_cfg, external_commands, file_change, Vec::new())
+}
+
+pub fn build_registry_with_extras(
+    tools_cfg: &ToolsConfig,
+    external_commands: &[ExternalCommandConfig],
+    file_change: Arc<dyn FileChangeExecutor>,
+    extra_executors: Vec<Arc<dyn ToolExecutor>>,
+) -> Arc<dyn ToolRegistry> {
     let max_output = tool_output::clamp_max_tool_output_bytes(tools_cfg.max_tool_output_bytes);
     let policy: Arc<dyn CommandPolicy> =
         Arc::new(ConfigAllowlistPolicy::new(tools_cfg.shell_exec.clone()));
     let file_change_service = file_change;
+    let mut executors = vec![
+        Arc::new(ShellExecTool::new(
+            policy,
+            max_output,
+            external_commands.to_vec(),
+        )) as Arc<dyn ToolExecutor>,
+        Arc::new(HumanTaskTool),
+        Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
+        Arc::new(ListDirTool::new(max_output, tools_cfg.explore.clone())),
+        Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),
+        Arc::new(GitDiffTool::new(max_output)),
+        Arc::new(GitStatusTool::new(max_output)),
+        Arc::new(WriteFileTool::new(
+            tools_cfg.file_write.clone(),
+            Arc::clone(&file_change_service),
+        )),
+        Arc::new(ApplyPatchTool::new(
+            tools_cfg.file_write.clone(),
+            file_change_service,
+        )),
+    ];
+    executors.extend(extra_executors);
     Arc::new(
-        DefaultToolRegistry::from_executors([
-            Arc::new(ShellExecTool::new(
-                policy,
-                max_output,
-                external_commands.to_vec(),
-            )) as Arc<dyn ToolExecutor>,
-            Arc::new(HumanTaskTool),
-            Arc::new(ReadFileTool::new(tools_cfg.read_file.clone(), max_output)),
-            Arc::new(ListDirTool::new(max_output, tools_cfg.explore.clone())),
-            Arc::new(GrepTool::new(max_output, tools_cfg.explore.clone())),
-            Arc::new(GitDiffTool::new(max_output)),
-            Arc::new(GitStatusTool::new(max_output)),
-            Arc::new(WriteFileTool::new(
-                tools_cfg.file_write.clone(),
-                Arc::clone(&file_change_service),
-            )),
-            Arc::new(ApplyPatchTool::new(
-                tools_cfg.file_write.clone(),
-                file_change_service,
-            )),
-        ])
-        .expect("built-in registry must have unique tool names"),
+        DefaultToolRegistry::from_executors(executors)
+            .expect("built-in registry must have unique tool names"),
     )
 }

@@ -63,6 +63,7 @@
 | 0066 | [0066_human-task-recovery-hardening-spec.md](spec/0066_human-task-recovery-hardening-spec.md) | 設計確定（実装済み） | Human Task Recovery Hardening（0063-E、明示 recovery / invalid cleanup） |
 | 0067 | [0067_recall-keybinding-tty-restore-spec.md](spec/0067_recall-keybinding-tty-restore-spec.md) | 設計確定（実装済み） | Recall Keybinding TTY Restore（Issue #11、0053 recall + 0055 handoff の bash / zsh line editor 状態復元、Yellow 承認） |
 | 0068 | [0068_task-completion-phase1-spec.md](spec/0068_task-completion-phase1-spec.md) | 設計確定（実装済み） | Task Completion Phase 1（Issue #18、Task Contract / Evidence / gap-driven continuation、Yellow 承認） |
+| 0069 | [0069_agent-task-delegation-spec.md](spec/0069_agent-task-delegation-spec.md) | 設計確定（実装済み） | Task Completion Phase 2（Issue #24、同期 Agent Task 委譲 / Result + Evidence、Yellow 承認） |
 
 ### 状態ラベルの意味
 
@@ -78,7 +79,7 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
-| — | — | — | 進行中の実装指示書なし |
+| 0069 | [0069_agent-task-delegation-implementation-spec.md](done/0069_agent-task-delegation-implementation-spec.md) | 実装済み | production ExternalCommandWorker + fixture による同期 Agent Task Vertical Slice |
 
 ## 実装済み指示書（docs/done/）
 

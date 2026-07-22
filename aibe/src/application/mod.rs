@@ -29,3 +29,6 @@ pub use file_change_service::FileChangeService;
 pub use request_service::RequestService;
 pub use route_turn::RouteTurnService;
 pub use server::{build_default_tool_registry, build_file_change_executor};
+pub mod agent_task;
+pub mod agent_task_pack;
+pub mod agent_task_tool;

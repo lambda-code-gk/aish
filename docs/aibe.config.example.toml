@@ -122,5 +122,18 @@ max_grep_files_scanned = 5_000
 max_grep_matches = 5_000
 max_grep_file_bytes = 1_048_576
 
+# Agent Task Delegation（0069）。既存 [[external_commands]] / shell_exec とは別registry。
+# cwdは起動位置でありOS sandboxではない。envは名前allowlistだけを指定する。
+# [agent_task]
+# enabled = true
+#
+# [[agent_task.workers]]
+# id = "local-agent"
+# executable = "/absolute/path/to/configured-worker"
+# args = ["--fixed-mode"]
+# timeout_secs = 300
+# permission_profile = "workspace-write"
+# env_allowlist = ["PATH"]
+
 # conversation store の既定は `~/.local/share/aibe/conversations`
 # conversation_store_root = "~/.local/share/aibe/conversations"

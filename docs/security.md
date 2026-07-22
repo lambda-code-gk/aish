@@ -234,3 +234,14 @@
 - Evidence の matching target は raw 値ではなく `target:sha256:<digest>` とする。表示 summary と fingerprint に raw tool output、arguments、command、path、file content、環境変数値を複製しない。summary / next objective / deliverable 表示は bounded とし、fingerprint は Evidence ID、source、順序属性、verified flag の canonical metadataだけを使う。
 - Active request の provider streaming delta は envelope 検査まで request-local buffer に留め、control JSON を stdout / stderr へ表示しない。fail-closed error 時は buffered assistant content を破棄する。Inactive request は従来の逐次 streaming を維持する。最終 report は sanitized summary と verified 状態だけを表示し、raw output は既存 `tool_calls` の明示 verbose 契約を越えて複製しない。
 - Task Contract / Evidence ledger / evaluation history は request-local memory だけに保持する。永続 store、resume、cross-command correlation は Phase 1 の保証外である。
+
+## Agent Task Worker trust boundary（0069）
+
+- `agent_task` は設定済み Worker ID だけを受理する。LLM request から executable、argv、shell string、environment、permission profile、approval state、delegation depth を指定できない。disabled/empty/unknown/duplicate Worker は fail-closed で、既存 `shell_exec` allowlist から Worker を生成しない。
+- 実行前に Agent Task 固有表示で worker、canonical cwd、timeout、permission profile、objective と trust-boundary warning を示す。explicit UI yes だけが起動可能で、non-TTY、disconnect、deny、cancel、timeout、malformed decision は spawn 0。`--yes-exec`、shell session/pattern cache、Worker の approved 自己申告は迂回に使わない。
+- cwd は `context.cwd` 基準の canonical root containment と実行直前の directory 検査を行うが、Worker の filesystem access を閉じ込める OS sandbox ではない。Worker 内部の tool/network/credential/approval は AISH が個別承認しない。この残余リスクを approval UI に表示する。
+- child 環境は一度 clear し、設定済み環境変数名 allowlist の値だけを親から継承する。値、argv、生 structured output、file content を audit/Evidence/error/tracingへ複製しない。予約済み `AISH_DELEGATION_DEPTH=1` は aibe が固定する。
+- stdout/stderr は drain 中に stream ごとの上限を適用し、全文の別 buffer を保持しない。timeout は新しい process session/group 全体を kill して親を wait/reapし、cleanup errorやtimeoutを成功へ変換しない。
+- workspace observation は symlinkを辿らない metadata の前後差分だけで、最大件数到達は incomplete とする。内容、symlink target、root外 pathを収集せず、Worker report/process output/exit/workspace change の provenanceを分離する。
+- top-level Result、全 Agent Task Evidence、0068 bridge は常に `verified=false`。Worker自己申告、exit 0、changed pathではTask CompletionをDoneにしない。depth 1 の再委譲はtool非公開かつforged callをspawn前拒否する。
+- 保証外: Worker内部の悪意、外部副作用のrollback/結果確定、process/OS crash後のresume、複数host、exactly-once。これらにOS sandbox、journal、lease/reconcilerを追加する場合は0069外の別specとする。

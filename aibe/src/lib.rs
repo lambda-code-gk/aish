@@ -36,16 +36,18 @@ fn try_run() -> anyhow::Result<()> {
     let profile_registry = adapters::outbound::build_profile_registry(&config.llm)?;
     let tools_config = config.tools.clone();
     let external_commands = config.external_commands.clone();
+    let agent_task_config = config.agent_task.clone();
     let config_path = application::server::resolve_config_path();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(application::server::run(
+    rt.block_on(application::server::run_with_agent_task(
         config.socket_path,
         config_path,
         profile_registry,
         tools_config,
         external_commands,
+        agent_task_config,
         config.router.profile,
         config.conversation_store_root,
         config.memory,

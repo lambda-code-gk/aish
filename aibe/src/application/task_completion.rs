@@ -15,6 +15,7 @@ use crate::domain::{
     CompletionOutcome, CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract, TaskKind,
     STALL_TERMINAL_REASON,
 };
+
 use crate::ports::outbound::TurnEventSink;
 
 const SUMMARY_LIMIT: usize = 240;
@@ -77,6 +78,17 @@ pub fn append_evidence_from_tools(
                     record.stale = true;
                 }
             }
+        } else if call.name == aibe_protocol::AGENT_TASK && ok {
+            // Worker は cwd 配下へ広範囲に副作用し得るため、観測を保守的に無効化する。
+            for record in &mut ledger {
+                if matches!(
+                    record.source,
+                    EvidenceSource::Observation | EvidenceSource::Verification
+                ) {
+                    record.verified = false;
+                    record.stale = true;
+                }
+            }
         } else if write_like && ok {
             if let Some(target) = target.as_ref() {
                 for record in &mut ledger {
@@ -126,7 +138,7 @@ fn classify_evidence(
     contract: &TaskContract,
     ledger: &[EvidenceRecord],
     execution_ids: &[String],
-    _call: &ExecutedToolCall,
+    call: &ExecutedToolCall,
     target: Option<&str>,
     read_only: bool,
     write_like: bool,
@@ -134,6 +146,14 @@ fn classify_evidence(
     ok: bool,
     verification_tool: bool,
 ) -> (EvidenceSource, bool, Vec<String>, bool) {
+    if call.name == aibe_protocol::AGENT_TASK {
+        return (
+            EvidenceSource::AgentTask,
+            false,
+            execution_ids.to_vec(),
+            false,
+        );
+    }
     if write_like {
         return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
     }
@@ -260,6 +280,24 @@ fn tool_target(call: &ExecutedToolCall) -> Option<String> {
         .and_then(|value| value.as_str())
     {
         return bound_evidence_target(path);
+    }
+    if call.name == aibe_protocol::AGENT_TASK {
+        if let Some(cwd) = call
+            .output
+            .as_ref()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+            .and_then(|value| {
+                value
+                    .get("cwd")
+                    .and_then(|cwd| cwd.as_str())
+                    .map(str::to_string)
+            })
+        {
+            return bound_evidence_target(&cwd);
+        }
+        if let Some(path) = args.get("cwd").and_then(|value| value.as_str()) {
+            return bound_evidence_target(path);
+        }
     }
     if call.name == SHELL_EXEC {
         if let Some(path) = args
@@ -464,6 +502,7 @@ fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
             EvidenceSource::Observation => CompletionEvidenceSource::Observation,
             EvidenceSource::Verification => CompletionEvidenceSource::Verification,
             EvidenceSource::Deliverable => CompletionEvidenceSource::Deliverable,
+            EvidenceSource::AgentTask => CompletionEvidenceSource::AgentTask,
         },
         summary: bounded(&record.summary),
         verified: record.verified && !record.stale,

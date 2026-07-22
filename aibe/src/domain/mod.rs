@@ -1,5 +1,6 @@
 //! ドメインモデル（外部 I/O に依存しない）。
 
+mod agent_task;
 mod agent_turn_context;
 mod capability;
 mod client_cwd;
@@ -25,6 +26,7 @@ mod tool_execution_summary;
 #[cfg(feature = "memory")]
 mod work;
 
+pub use agent_task::*;
 pub use agent_turn_context::{AgentTurnContext, ContextError};
 pub use capability::{
     required_capabilities_for_memory_operations, required_capability_for_memory_operation,
@@ -103,6 +105,6 @@ pub use work::{
 pub use aibe_protocol::{
     is_known_tool, parse_tool_names, ExecutedToolCall, ExecutedToolStatus,
     ShellExecApprovalOutcome, ToolApprovalState, ToolName, ToolRiskClass, UnknownToolError,
-    APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR, READ_FILE,
-    SHELL_EXEC, WRITE_FILE,
+    AGENT_TASK, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR,
+    READ_FILE, SHELL_EXEC, WRITE_FILE,
 };

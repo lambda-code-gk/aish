@@ -8,7 +8,8 @@ use serde::Deserialize;
 use toml::Value;
 
 use crate::ports::outbound::{
-    default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,
+    default_conversation_store_root_with_home, validate_agent_task_config,
+    validate_external_commands, AgentTaskConfig, AgentTaskWorkerConfig, AppConfig, ConfigError,
     ConfigLoader, ExternalCommandConfig, LlmBackend, LlmGenerationParams, LlmProfile,
     LlmProfilesConfig, LlmProviderKind, MemoryConfig, RouterConfig, ToolsConfig,
     DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS,
@@ -75,6 +76,8 @@ impl ConfigLoader for TomlConfig {
         let tools = parse_tools(file_cfg.as_ref())?;
         let external_commands = parse_external_commands(file_cfg.as_ref());
         validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
+        let agent_task = parse_agent_task(file_cfg.as_ref());
+        validate_agent_task_config(&agent_task)?;
         let memory = parse_memory(file_cfg.as_ref(), &self.path);
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         Ok(AppConfig {
@@ -84,6 +87,7 @@ impl ConfigLoader for TomlConfig {
             llm,
             tools,
             external_commands,
+            agent_task,
             memory,
         })
     }
@@ -580,6 +584,31 @@ fn parse_external_commands(file: Option<&FileConfig>) -> Vec<ExternalCommandConf
         .collect()
 }
 
+fn parse_agent_task(file: Option<&FileConfig>) -> AgentTaskConfig {
+    let Some(section) = file.and_then(|f| f.agent_task.as_ref()) else {
+        return AgentTaskConfig::default();
+    };
+    AgentTaskConfig {
+        enabled: section.enabled.unwrap_or(false),
+        workers: section
+            .workers
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|worker| AgentTaskWorkerConfig {
+                id: worker.id,
+                executable: PathBuf::from(worker.executable),
+                args: worker.args.unwrap_or_default(),
+                timeout_secs: worker.timeout_secs.unwrap_or(1800),
+                permission_profile: worker
+                    .permission_profile
+                    .unwrap_or_else(|| "default".into()),
+                env_allowlist: worker.env_allowlist.unwrap_or_default(),
+            })
+            .collect(),
+    }
+}
+
 fn expand_home(path: String) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -653,8 +682,25 @@ struct FileConfig {
     router: Option<RouterSection>,
     #[serde(default)]
     external_commands: Option<Vec<ExternalCommandSection>>,
+    agent_task: Option<AgentTaskSection>,
     tools: Option<ToolsSection>,
     memory: Option<MemorySection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentTaskSection {
+    enabled: Option<bool>,
+    workers: Option<Vec<AgentTaskWorkerSection>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AgentTaskWorkerSection {
+    id: String,
+    executable: String,
+    args: Option<Vec<String>>,
+    timeout_secs: Option<u64>,
+    permission_profile: Option<String>,
+    env_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
