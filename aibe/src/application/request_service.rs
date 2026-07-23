@@ -7,8 +7,9 @@ use crate::application::agent_turn::AgentTurnService;
 use crate::application::completion_envelope::{decode_completion_envelope, ContractGate};
 use crate::application::route_turn::RouteTurnService;
 use crate::application::task_completion::{
-    append_evidence_from_tools, build_continuation, build_report, deliverable_evidence,
-    evidence_from_tools, system_instruction, CompletionEventBuffer,
+    append_evidence_from_tools, attach_gap_report, build_continuation,
+    build_delegated_continuation, build_report, deliverable_evidence, evidence_from_tools,
+    system_instruction, validate_delegated_cycle_calls, CompletionEventBuffer,
 };
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
@@ -367,7 +368,12 @@ impl RequestService {
                 let user_request = last_user_request(&conversation_record_messages);
                 let contract_gate = Arc::new(match eligibility {
                     TaskCompletionEligibility::Active { .. } => {
-                        ContractGate::strict(eligibility, user_request.clone())
+                        ContractGate::strict_with_delegated_policy(
+                            eligibility,
+                            user_request.clone(),
+                            tools.iter().map(|tool| tool.as_str().to_string()),
+                            self.tools_config.shell_exec.allowed_commands.clone(),
+                        )
                     }
                     TaskCompletionEligibility::Inactive => ContractGate::permissive(),
                 });
@@ -465,14 +471,24 @@ impl RequestService {
                                     let contract = first_envelope.aish_task_completion.contract;
                                     let evaluation = first_envelope.aish_task_completion.evaluation;
                                     if let Some(evaluation) = evaluation {
-                                        let mut evidence =
-                                            evidence_from_tools(&contract, &cumulative_calls);
-                                        evidence.extend(deliverable_evidence(
+                                        if let Err(message) = validate_delegated_cycle_calls(
                                             &contract,
-                                            &first_envelope.deliverable,
-                                            evidence.len() + 1,
-                                        ));
-                                        match build_report(&contract, &evidence, &evaluation, 1, false) {
+                                            &cumulative_calls,
+                                        ) {
+                                            response = ClientResponse::error(
+                                                id.clone(),
+                                                ErrorCode::InvalidRequest,
+                                                message,
+                                            );
+                                        } else {
+                                            let mut evidence =
+                                                evidence_from_tools(&contract, &cumulative_calls);
+                                            evidence.extend(deliverable_evidence(
+                                                &contract,
+                                                &first_envelope.deliverable,
+                                                evidence.len() + 1,
+                                            ));
+                                            match build_report(&contract, &evidence, &evaluation, 1, false) {
                                         Ok(report) => attach_completion_report(
                                             &mut response,
                                             first_envelope.deliverable,
@@ -483,13 +499,64 @@ impl RequestService {
                                             if message
                                                 == "completion evaluation requires another query" =>
                                         {
-                                            let continuation = build_continuation(
-                                                &contract,
-                                                &evaluation,
-                                                &evidence,
-                                            );
-                                            let mut second_messages =
-                                                vec![ChatMessage::user(continuation)];
+                                            let continuation = if contract
+                                                .delegated_verification
+                                                .is_some()
+                                            {
+                                                build_delegated_continuation(
+                                                    &contract,
+                                                    &evaluation,
+                                                    &evidence,
+                                                    &cumulative_calls,
+                                                )
+                                                .and_then(|delegated| {
+                                                    contract_gate
+                                                        .expect_follow_up(delegated.request)?;
+                                                    Ok(delegated.prompt)
+                                                })
+                                            } else {
+                                                Ok(build_continuation(
+                                                    &contract,
+                                                    &evaluation,
+                                                    &evidence,
+                                                ))
+                                            };
+                                            let continuation = match continuation {
+                                                Ok(continuation) => continuation,
+                                                Err(_) => {
+                                                    let mut blocked = evaluation.clone();
+                                                    blocked.next_objective = None;
+                                                    blocked.needs_user = None;
+                                                    blocked.blocked = Some(
+                                                        "delegated Gap exceeds AgentTaskRequest bounds"
+                                                            .into(),
+                                                    );
+                                                    match build_report(
+                                                        &contract,
+                                                        &evidence,
+                                                        &blocked,
+                                                        1,
+                                                        false,
+                                                    ) {
+                                                        Ok(report) => attach_completion_report(
+                                                            &mut response,
+                                                            first_envelope.deliverable.clone(),
+                                                            cumulative_calls.clone(),
+                                                            report,
+                                                        ),
+                                                        Err(message) => {
+                                                            response = ClientResponse::error(
+                                                                id.clone(),
+                                                                ErrorCode::InvalidRequest,
+                                                                message,
+                                                            );
+                                                        }
+                                                    }
+                                                    String::new()
+                                                }
+                                            };
+                                            if !continuation.is_empty() {
+                                            let mut second_messages = vec![ChatMessage::user(continuation)];
                                             if let TaskCompletionEligibility::Active {
                                                 expected_kind,
                                             } = eligibility
@@ -525,6 +592,7 @@ impl RequestService {
                                                 &evidence,
                                                 &mut cumulative_calls,
                                             );
+                                            }
                                         }
                                         Err(message) => {
                                             response = ClientResponse::error(
@@ -534,6 +602,7 @@ impl RequestService {
                                             );
                                         }
                                     }
+                                        }
                                     } else {
                                         response = ClientResponse::error(
                                             id.clone(),
@@ -642,8 +711,16 @@ fn attach_completion_report(
     response: &mut ClientResponse,
     deliverable: String,
     tool_calls: Vec<aibe_protocol::ExecutedToolCall>,
-    report: CompletionReport,
+    mut report: CompletionReport,
 ) {
+    if report.verification_terminal.is_some() {
+        report.worker_id = tool_calls
+            .iter()
+            .find(|call| call.name == aibe_protocol::AGENT_TASK)
+            .and_then(|call| call.arguments.get("worker"))
+            .and_then(|worker| worker.as_str())
+            .map(str::to_string);
+    }
     if let ClientResponse::AgentTurnResult {
         assistant_message,
         tool_calls: response_calls,
@@ -707,6 +784,9 @@ fn finish_second_query(
             "task completion second query lacks evaluation",
         );
     };
+    if let Err(message) = validate_delegated_cycle_calls(contract, &second_calls) {
+        return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
+    }
     let mut evidence = append_evidence_from_tools(contract, previous_evidence, &second_calls);
     cumulative_calls.extend(second_calls);
     evidence.extend(deliverable_evidence(
@@ -719,7 +799,10 @@ fn finish_second_query(
         &progress_snapshot(&evaluation, &evidence),
     );
     match build_report(contract, &evidence, &evaluation, 2, stalled) {
-        Ok(report) => {
+        Ok(mut report) => {
+            if contract.delegated_verification.is_some() {
+                attach_gap_report(&mut report, contract, previous_evaluation);
+            }
             attach_completion_report(
                 &mut response,
                 envelope.deliverable,

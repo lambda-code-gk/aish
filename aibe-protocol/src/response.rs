@@ -143,6 +143,32 @@ pub struct CompletionReport {
     pub unsatisfied_criteria: Vec<String>,
     pub unverified_items: Vec<String>,
     pub queries_used: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_terminal: Option<VerificationTerminal>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<CompletionGapReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_up_count: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationTerminal {
+    Done,
+    NeedsUser,
+    Blocked,
+    Stagnated,
+    BudgetExhausted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletionGapReport {
+    pub criterion_id: String,
+    pub observed: String,
+    pub required_work: String,
+    pub verification_plan_item_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +185,17 @@ pub struct CompletionCriterionReport {
     pub criterion_id: String,
     pub satisfied: bool,
     pub evidence: Vec<CompletionEvidenceReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation_status: Option<CompletionCriterionStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionCriterionStatus {
+    Satisfied,
+    Unsatisfied,
+    Unknown,
+    NotApplicable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

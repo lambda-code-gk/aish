@@ -126,6 +126,7 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
     "criteria": [{
       "criterion_id": "c1",
       "satisfied": true,
+      "evaluation_status": "satisfied",
       "evidence": [{
         "evidence_id": "e2",
         "source": "observation",
@@ -135,12 +136,18 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
     }],
     "unsatisfied_criteria": [],
     "unverified_items": ["e1: shell_exec status=Ok"],
-    "queries_used": 2
+    "queries_used": 2,
+    "verification_terminal": "done",
+    "gaps": [],
+    "worker_id": "codex-local",
+    "follow_up_count": 1
   }
 }
 ```
 
 `completion_report` は optional additive DTO で、Task Completion envelope を返さない旧 provider 応答では省略する。`outcome` は `done` / `needs_user` / `blocked` / `budget_exhausted`。`terminal_reason` は NeedsUser / Blocked の具体的理由を保持する。各 criterion の Evidence、未達 ID、未検証事項（不足している required Evidence を含む）、使用 query 数を同じ DTO から human / structured 表示する。新 RPC は追加しない。
+
+0070 の委譲検証 report では optional `verification_terminal`（`done` / `needs_user` / `blocked` / `stagnated` / `budget_exhausted`）と criterion ごとの `evaluation_status`（`satisfied` / `unsatisfied` / `unknown` / `not_applicable`）を追加する。既存 `satisfied` と4種類の `outcome` は削除・改名しない。`failed` / `cancelled` は従来どおり top-level `Error` / `Cancelled` であり completion report を付けない。`gaps`、`worker_id`、`follow_up_count` も additive で、0070 非適用 report では省略または空となる。
 
 `assistant_streaming`: 任意のデルタ通知。aibe の LLM プロバイダが streaming を返せる場合はそのデルタをそのまま流し、非対応プロバイダは synthetic 1 回のデルタを返す。`ai` は human 向け（`--format` 未指定かつ filter 無効）のときだけ delta を stdout に逐次表示する。`--format json|tsv|env` 時は delta を stdout に出さず、最終 `AgentTurnResult` を structured 形式で 1 回だけ出す（0033）。`AI_FILTER` / `[ask].filter` 有効時も同様に delta を stdout に出さず、turn 終了時に全文へ 1 回だけ filter を適用する（0048）。`streamed` は「chunk を stdout に実際に表示したか」の内部フラグであり、`progress` / `timeout` とは独立する。
 
@@ -602,6 +609,16 @@ optional 機能を core から切り離し、**同一プロセス内**で Active
 `EvidenceRecord` は tool 実行順から request-local に生成し、matching 専用 `target:sha256:<digest>` を持つ。raw path / command / args は target と表示 summary に入れない。対象を特定できる write-like 成功は `Tool`（KnownWriteEffect）、arbitrary `shell_exec` 成功は `UnknownShellEffect` と分離し、いずれも単独では `verified=false`。`UnknownShellEffect` は post-observation の prior effect 根拠にせず、成功時は変更対象を安全に限定できないため既存の全 observation/verification を保守的に `stale` 化する。Contract の `verification_tools` はそのまま信頼せず、server 固定の専用 read-only tools（`read_file` / `list_dir` / `grep` / `git_status` / `git_diff`）との積集合だけを trusted verifier とする。同 target への後続 write は以前の observation/verification を `stale` にする。Execution では matching target の post-observationかつ trusted verifier だけが verified になり得る。Investigation でも trusted read-only 成功だけが Observation として verified になり得る。assistant の完了自己申告は Evidence にしない。計画文書そのものが Contract の deliverable である Plan criterion だけは bounded deliverable Evidence を許す。
 
 未達で継続可能な場合、2回目は元要求を再送せず、固定 Contract、satisfied/unsatisfied、required Evidence、既存 Evidence（criterion / source / verified / stale。matching 用 target は非表示）、単一 `next_objective` から構築する。終端順は全 criterion verified の `Done`、具体的なユーザー操作が必要な `NeedsUser`、解消不能または stall の `Blocked`、それ以外で2 query 到達の `BudgetExhausted`。Pack Composition は適用せず core application/domain 境界に置く。`ai` は一 request の送信と report 表示だけ、`aish` は変更なしである。
+
+#### Delegated Result Verification Cycle（0070）
+
+Task Completion Active turn が `agent_task` を呼ぶ場合、親 `TaskContract` は optional `delegated_verification` を最初の Worker 起動前に固定する。各 item は stable ID、親 criterion ID、`observation`（server-trusted read-only tool + target）または `command`（分離済み command/args + canonical cwd）、期待成功条件を持つ。`ContractGate` は AgentTaskRequest の criterion が親 Contract の部分集合で plan に覆われること、plan tool/commandがrequest allowlist内であること、command cwdが初回Agent Taskの実効cwdと一致することをtool実行前に検査する。既存toolにcall単位cwd指定を追加しないMVPでは、0070対象Agent Taskのcwdを親`context.cwd`と同一に制限する。不正planはWorker spawn 0で拒否する。
+
+Worker Result、exit 0、changed paths、Artifact locator は `source=agent_task, verified=false` のままである。親が同じ tool 経路で再観測し、委譲前 plan の command/args と完全一致して成功した `shell_exec` だけを対象 criterion 限定の `Verification` とする。通常 shell は引き続き `UnknownShellEffect` で、過去の observation/verification を stale 化する。検証 command を先、成果物 `read_file` / Git 観測を後に実行する。Worker・Gap・output から plan や command を追加しない。
+
+初回評価は全 criterion を四状態へ一意に分類する。`not_applicable` は Contract 固定時の非空 `applicability` と verified/non-stale な applicability Evidence が必要である。未達時は actionable な `unsatisfied` / `unknown` を一つの bounded `Gap` にまとめ、既存 AgentTaskRequest の objective/instructions/completion_criteria へ決定的に変換する。wire に `gap` field は追加しない。同じ Worker/cwd/timeout、通常の再承認で follow-up は最大1回だけ行い、同じ plan を再実行する。これは既存 query budget 2 の内側で、独立 verifier、二次 agent loop、3回目 query、永続状態を追加しない。Human Task の Suspended/evaluation skip/checkpoint/resume/continuation は接続せず従来どおりである。
+
+終端判定は `Cancelled`、検証経路の非回復 `Failed`、全 applicable criterion の `Done`、具体的ユーザー待ち `NeedsUser`、権限・制約内で解消不能な `Blocked`、follow-up 後も進展なしの `Stagnated`、既存 budget 到達の `BudgetExhausted` の順で行う。criterion の非zero command、missing artifact、Evidence 矛盾は通常 `unsatisfied` / `unknown` であり、それだけで `Failed` にしない。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
 

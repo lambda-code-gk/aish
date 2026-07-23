@@ -249,3 +249,11 @@
 - workspace observation は symlinkを辿らない metadata の前後差分だけで、最大件数到達は incomplete とする。内容、symlink target、root外 pathを収集せず、Worker report/process output/exit/workspace change の provenanceを分離する。
 - top-level Result、全 Agent Task Evidence、0068 bridge は常に `verified=false`。Worker自己申告、exit 0、changed pathではTask CompletionをDoneにしない。depth 1 の再委譲はtool非公開かつforged callをspawn前拒否する。
 - 保証外: Worker内部の悪意、外部副作用のrollback/結果確定、process/OS crash後のresume、複数host、exactly-once。これらにOS sandbox、journal、lease/reconcilerを追加する場合は0069外の別specとする。
+
+## Delegated Result Verification trust boundary（0070）
+
+- 親 Task Completion が元 Contract、criterion ID、Verification Plan を所有する。Worker Result、完了自己申告、exit 0、Artifact locator、changed path、Gap は Contract/planを変更できず、常に未検証入力から扱う。
+- `agent_task` 実行前に non-empty plan、criterion coverage、同一 canonical cwd を ContractGate で検査する。follow-up は既存 AgentTaskRequestだけを使い、同一 Worker/cwd/timeout、depth、registry、承認、process cleanupを再検査する。最大1回で、2回目や別 Worker、再帰委譲を拒否する。
+- verification command は委譲前固定の command/args/cwd と完全一致し、既存 allowlist、approval、timeoutを通って成功した場合だけ限定的な `Verification` となる。任意 shell、Worker/Gap/output由来 commandは昇格せず、通常 shell のstale化規則を維持する。
+- plan、Gap、Evidence、report/presenterはboundedかつsanitizedにし、raw command output、秘密値、非採用Worker output、workspace外pathを複製しない。command後の直接観測を優先し、stale、同順位矛盾、無関係Evidenceはfail-closedにする。
+- 状態はrequest-localである。永続化、lease、reconciler、crash recovery、OS sandbox、外部副作用rollbackは提供しない。Human Task cross-suspend検証も対象外で、既存Suspended/checkpoint/resume/continuationを変更しない。

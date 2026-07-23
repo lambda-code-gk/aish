@@ -5,6 +5,96 @@
 # pending = false … テストが存在し、#[ignore] であってはならない（verify で実行される想定）。
 
 [[cases]]
+spec = "0070"
+phase = 1
+id = "delegated_verification_vertical_e2e"
+description = "親Task Completionが未検証Agent Task結果を独立再観測し1 Gapで同一Workerへ一度だけ再委譲して再検証後Doneへ至る"
+test = "delegated_verification_vertical_e2e"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 1
+id = "parent_contract_owns_delegated_completion"
+description = "親Contractとcriterion IDを固定し委譲先の自己申告・exit 0・Artifact referenceだけでDoneにしない"
+test = "parent_contract_owns_delegated_completion"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 1
+id = "parent_reobserves_artifacts_and_external_state"
+description = "委譲前Verification Planのcoverage/cwdを検査し親tool経路のexact-match commandと直接観測を別Evidenceにする"
+test = "parent_reobserves_artifacts_and_external_state"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 2
+id = "evidence_precedence_and_conflicts_fail_closed"
+description = "直接観測・固定command・changed-file・Worker reportの優先順位と矛盾/stale/unrelated参照をfail-closedにする"
+test = "evidence_precedence_and_conflicts_fail_closed"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 1
+id = "criterion_evaluation_is_exhaustive_and_structured"
+description = "全criterionを四状態へ一意評価しnot_applicableのapplicabilityとverified Evidence参照を検査する"
+test = "criterion_evaluation_is_exhaustive_and_structured"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 1
+id = "gap_follow_up_is_single_bounded_and_same_worker"
+description = "actionable未達を一つのbounded Gapへまとめ既存AgentTaskRequestで同一Workerへ最大1回だけ再委譲する"
+test = "gap_follow_up_is_single_bounded_and_same_worker"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 1
+id = "follow_up_repeats_verification_and_detects_stagnation"
+description = "再委譲後に同一Verification Planを再実行し進展なしをStagnated、ユーザー依存をNeedsUserにする"
+test = "follow_up_repeats_verification_and_detects_stagnation"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 2
+id = "verification_terminal_outcomes_are_distinct"
+description = "7終端を一意判定し既存4 CompletionOutcomeとtop-level Error/Cancelledへadditiveにprojectionする"
+test = "verification_terminal_outcomes_are_distinct"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 2
+id = "verification_preserves_existing_boundaries_and_human_task"
+description = "0068 query budget 2・0069 Worker契約・human_task Suspended/continuationを保ち新actorや3回目queryを追加しない"
+test = "verification_preserves_existing_boundaries_and_human_task"
+file_glob = "aibe/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
+spec = "0070"
+phase = 2
+id = "verification_report_is_bounded_and_auditable"
+description = "5 report終端の四状態/Evidence/Gap/follow-up/verification結果とError/Cancelled理由をboundedに表示する"
+test = "verification_report_is_bounded_and_auditable"
+file_glob = "ai/tests/0070_task_completion_phase3_verification_red.rs"
+pending = false
+
+[[cases]]
 spec = "0069"
 phase = 1
 id = "agent_task_vertical_e2e"

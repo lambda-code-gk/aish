@@ -43,9 +43,10 @@ pub use request::{
     RouteTurnCliOverrides, RouteTurnConversation, RouteTurnPreprocessorHints, RouteTurnSession,
 };
 pub use response::{
-    AgentTurnStatus, ClientResponse, CompletionCriterionReport, CompletionEvidenceReport,
-    CompletionEvidenceSource, CompletionOutcome, CompletionReport, ErrorCode, FeatureAction,
-    ProgressPhase, ProtocolMessageOut, RouteKind, RoutePlan, RouteTurnResult, RouteTurnStatus,
+    AgentTurnStatus, ClientResponse, CompletionCriterionReport, CompletionCriterionStatus,
+    CompletionEvidenceReport, CompletionEvidenceSource, CompletionGapReport, CompletionOutcome,
+    CompletionReport, ErrorCode, FeatureAction, ProgressPhase, ProtocolMessageOut, RouteKind,
+    RoutePlan, RouteTurnResult, RouteTurnStatus, VerificationTerminal,
 };
 pub use tool_name::{
     is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,

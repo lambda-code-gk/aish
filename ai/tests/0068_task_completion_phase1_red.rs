@@ -40,6 +40,7 @@ fn final_report_lists_evidence_and_unverified_items() {
                         summary: "apply_patch status=Ok".into(),
                         verified: false,
                     }],
+                    evaluation_status: None,
                 }],
                 unsatisfied_criteria: (outcome != CompletionOutcome::Done)
                     .then(|| "c1".into())
@@ -47,6 +48,10 @@ fn final_report_lists_evidence_and_unverified_items() {
                     .collect(),
                 unverified_items: vec!["e1: write is not observation".into()],
                 queries_used: 2,
+                verification_terminal: None,
+                gaps: vec![],
+                worker_id: None,
+                follow_up_count: None,
             }),
         };
         let rendered = render_response(&response, false, ShellExecRenderOptions::default())

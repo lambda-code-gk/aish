@@ -97,5 +97,12 @@ case "$mode" in
     rm -f agent-task-delete-me.txt
     printf '%s' '{"schema_version":1,"summary":"fixture deleted file","status":"done"}'
     ;;
+  gap_repair)
+    case "$input" in
+      *'Gap c1:'*) printf '%s\n' 'verified' > 0070-artifact.txt ;;
+      *) printf '%s\n' 'incomplete' > 0070-artifact.txt ;;
+    esac
+    printf '%s' '{"schema_version":1,"summary":"worker reports complete","status":"done"}'
+    ;;
   *) exit 65 ;;
 esac

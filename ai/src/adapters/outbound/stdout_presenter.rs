@@ -321,7 +321,7 @@ pub fn render_response(
         },
         ClientResponse::Error { message, .. } => PresenterOutput {
             stdout: None,
-            stderr: vec![format!("aibe error: {message}")],
+            stderr: vec![format!("aibe error: {}", bounded_audit_text(message))],
         },
         ClientResponse::ShellExecApprovalPrompt { .. } => PresenterOutput {
             stdout: None,
@@ -339,7 +339,7 @@ pub fn render_response(
         ClientResponse::Cancelled { reason, .. } => PresenterOutput {
             stdout: None,
             stderr: vec![match reason {
-                Some(reason) => format!("ai: cancelled: {reason}"),
+                Some(reason) => format!("ai: cancelled: {}", bounded_audit_text(reason)),
                 None => "ai: cancelled".to_string(),
             }],
         },
@@ -380,25 +380,52 @@ fn render_agent_output(
             format!("Task completion: {:?}", report.outcome),
             format!("Queries used: {}", report.queries_used),
         ];
+        if let Some(terminal) = report.verification_terminal {
+            lines.push(format!("Verification terminal: {terminal:?}"));
+        }
+        if let Some(worker) = &report.worker_id {
+            lines.push(format!("Worker: {}", bounded_audit_text(worker)));
+        }
+        if let Some(count) = report.follow_up_count {
+            lines.push(format!("Follow-ups used: {count}"));
+        }
         if let Some(reason) = &report.terminal_reason {
-            lines.push(format!("Reason: {reason}"));
+            lines.push(format!("Reason: {}", bounded_audit_text(reason)));
         }
         for criterion in &report.criteria {
+            let status = criterion
+                .evaluation_status
+                .map(|status| format!("{status:?}"))
+                .unwrap_or_else(|| {
+                    if criterion.satisfied {
+                        "Satisfied".into()
+                    } else {
+                        "Unsatisfied".into()
+                    }
+                });
             lines.push(format!(
                 "Criterion {}: {}",
                 criterion.criterion_id,
-                if criterion.satisfied {
-                    "satisfied"
-                } else {
-                    "unsatisfied"
-                }
+                status.to_lowercase()
             ));
             for evidence in &criterion.evidence {
                 lines.push(format!(
                     "  Evidence {} source={:?} verified={}: {}",
-                    evidence.evidence_id, evidence.source, evidence.verified, evidence.summary
+                    bounded_audit_text(&evidence.evidence_id),
+                    evidence.source,
+                    evidence.verified,
+                    bounded_audit_text(&evidence.summary)
                 ));
             }
+        }
+        for gap in &report.gaps {
+            lines.push(format!(
+                "Gap {}: observed={}; required_work={}; verify_with={}",
+                gap.criterion_id,
+                bounded_audit_text(&gap.observed),
+                bounded_audit_text(&gap.required_work),
+                gap.verification_plan_item_ids.join(",")
+            ));
         }
         if !report.unsatisfied_criteria.is_empty() {
             lines.push(format!(
@@ -418,6 +445,53 @@ fn render_agent_output(
         sections.push(lines.join("\n"));
     }
     (!sections.is_empty()).then(|| sections.join("\n\n"))
+}
+
+fn bounded_audit_text(raw: &str) -> String {
+    let sanitized = aish_replay::sanitize_log_text(raw);
+    let mut chars = sanitized.chars();
+    let bounded: String = chars.by_ref().take(240).collect();
+    if chars.next().is_some() {
+        format!("{bounded}…")
+    } else {
+        bounded
+    }
+}
+
+fn bounded_completion_report(
+    report: &aibe_protocol::CompletionReport,
+) -> aibe_protocol::CompletionReport {
+    let mut report = report.clone();
+    report.terminal_reason = report.terminal_reason.as_deref().map(bounded_audit_text);
+    report.worker_id = report.worker_id.as_deref().map(bounded_audit_text);
+    report.unsatisfied_criteria = report
+        .unsatisfied_criteria
+        .iter()
+        .map(|value| bounded_audit_text(value))
+        .collect();
+    report.unverified_items = report
+        .unverified_items
+        .iter()
+        .map(|value| bounded_audit_text(value))
+        .collect();
+    for criterion in &mut report.criteria {
+        criterion.criterion_id = bounded_audit_text(&criterion.criterion_id);
+        for evidence in &mut criterion.evidence {
+            evidence.evidence_id = bounded_audit_text(&evidence.evidence_id);
+            evidence.summary = bounded_audit_text(&evidence.summary);
+        }
+    }
+    for gap in &mut report.gaps {
+        gap.criterion_id = bounded_audit_text(&gap.criterion_id);
+        gap.observed = bounded_audit_text(&gap.observed);
+        gap.required_work = bounded_audit_text(&gap.required_work);
+        gap.verification_plan_item_ids = gap
+            .verification_plan_item_ids
+            .iter()
+            .map(|value| bounded_audit_text(value))
+            .collect();
+    }
+    report
 }
 
 pub fn render_response_structured(
@@ -547,7 +621,7 @@ impl ResponseView {
                     }),
                     assistant_message: Some(assistant_message),
                     tool_calls: tool_calls.clone(),
-                    completion_report: completion_report.clone(),
+                    completion_report: completion_report.as_ref().map(bounded_completion_report),
                     error_code: None,
                     error_message: None,
                     alive: None,
@@ -580,7 +654,7 @@ impl ResponseView {
                 tool_calls: Vec::new(),
                 completion_report: None,
                 error_code: Some(format!("{code:?}")),
-                error_message: Some(message.clone()),
+                error_message: Some(bounded_audit_text(message)),
                 alive: None,
                 warn_max_tool_rounds: false,
                 filter_warnings: Vec::new(),
@@ -655,7 +729,7 @@ impl ResponseView {
                 tool_calls: Vec::new(),
                 completion_report: None,
                 error_code: None,
-                error_message: reason.clone(),
+                error_message: reason.as_deref().map(bounded_audit_text),
                 alive: None,
                 warn_max_tool_rounds: false,
                 filter_warnings: Vec::new(),

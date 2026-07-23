@@ -604,11 +604,13 @@ fn agent_task_integrates_with_task_completion_as_unverified() {
             description: "delegated work is independently verified".into(),
             deliverable_is_plan: false,
             observes_targets: Vec::new(),
+            applicability: None,
         }],
         constraints: Vec::new(),
         deliverables: vec!["changed file".into()],
         verification: vec!["read changed file".into()],
         verification_tools: vec!["read_file".into()],
+        delegated_verification: None,
     };
     let prior = ExecutedToolCall::ok(
         "obs-1".into(),
