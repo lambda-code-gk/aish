@@ -34,5 +34,8 @@ rg -q "sandbox_workspace_write.network_access=false" scripts/codex-mcp-wrapper.s
 rg -q "umask 077" scripts/codex-cli.sh
 rg -q "umask 077" scripts/codex-mcp-wrapper.sh
 rg -q "doctor --summary" scripts/codex-fix-linux-sandbox.sh
+rg -q "codex_in_cursor_agent_sandbox" scripts/codex-fix-linux-sandbox.sh
+rg -q "arg0" scripts/codex-fix-linux-sandbox.sh
+rg -q "CODEX_PRINT_CONFIG_HINT" scripts/codex-mcp-prompt.sh
 
 echo "check-codex-tooling: ok"

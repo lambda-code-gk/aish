@@ -10,11 +10,11 @@ Codex MCP で **実装レビュー → 修正 → 再レビュー** を、指摘
 ## フロー
 
 ```text
-1. Codex に実装レビューを依頼（review プロファイル相当）
+1. Codex に実装レビューを依頼（review / effort low）
 2. 指摘を 重大 / 中 / 軽微 に整理して報告
 3. 指摘が 1 件でもあれば Cursor 側で修正
 4. ./scripts/verify.sh（必要なら ./scripts/smoke-mock.sh）を実行
-5. Codex に再レビュー依頼（codex-reply または新規 thread）
+5. Codex に再レビュー依頼（**必ず codex-reply** + 同一 threadId）
 6. 重大・中・軽微 すべて 0 件（Pass）になるまで 3〜5 を繰り返す
 7. 最終報告（修正概要・verify 結果・残リスク）
 ```
@@ -24,8 +24,9 @@ Codex MCP で **実装レビュー → 修正 → 再レビュー** を、指摘
 ```bash
 {
   CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
-  printf '\n%s\n' '（レビュー対象の説明。未指定なら未コミット Smart Preprocessor 差分など）'
+  printf '\n%s\n' '（レビュー対象の説明。未指定なら未コミット差分など）'
 }
+# 推奨 config 確認: CODEX_TASK=review CODEX_PRINT_CONFIG_HINT=1 ./scripts/codex-mcp-prompt.sh
 ```
 
 MCP `codex` 引数:
@@ -36,7 +37,7 @@ MCP `codex` 引数:
 | `sandbox` | `workspace-write` |
 | `approval-policy` | `never` |
 | `config` | `{"approval_policy":"never","model_reasoning_effort":"low"}` |
-| `developer-instructions` | `.cursor/rules/50-codex-subagent.mdc` の骨子 |
+| `developer-instructions` | `.cursor/rules/50-codex-subagent.mdc` の共通骨子（**verify 段落は付けない**） |
 
 レビュー出力形式（Codex に必須指定）:
 
@@ -44,7 +45,7 @@ MCP `codex` 引数:
 - 各指摘: ファイル・問題・推奨修正
 - **Pass**（全セクション 0 件）または **Fail**
 
-再レビューは `codex-reply` + 前回の `threadId`。修正内容と `./scripts/verify.sh` 結果を渡す。
+再レビューは **必ず** `codex-reply` + 前回の `threadId`（新規 `codex` 禁止）。修正内容と `./scripts/verify.sh` 結果を渡す。
 
 ## 修正後の品質ゲート
 

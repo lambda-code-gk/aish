@@ -11,11 +11,30 @@
 #
 #   CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
 #
+# 推奨 MCP config（親が config に渡す）:
+#   CODEX_TASK=review|spike → model_reasoning_effort=low
+#   それ以外 → medium
+#   ヒントだけ見る: CODEX_PRINT_CONFIG_HINT=1 ./scripts/codex-mcp-prompt.sh
+#
 # 権限: scripts/codex-mcp-wrapper.sh が workspace-write + network off に固定する。
 set -euo pipefail
 
 TASK="${CODEX_TASK:-subagent}"
 EXTRA_ROOTS="${CODEX_EXTRA_ROOTS:-}"
+
+case "$TASK" in
+  review|spike) EFFORT=low ;;
+  *) EFFORT=medium ;;
+esac
+
+if [[ "${CODEX_PRINT_CONFIG_HINT:-0}" == "1" ]]; then
+  cat <<EOF
+# recommended MCP config for CODEX_TASK=${TASK}
+{"approval_policy":"never","model_reasoning_effort":"${EFFORT}"}
+# continue same thread with codex-reply + threadId (avoid cold start)
+EOF
+  exit 0
+fi
 
 cat <<EOF
 Role: ${TASK} for aish workspace (Codex subagent).
