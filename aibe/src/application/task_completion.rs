@@ -659,20 +659,24 @@ pub fn build_report(
                 .filter_map(|id| evidence.iter().find(|record| &record.evidence_id == id))
                 .map(to_wire_evidence)
                 .collect(),
-            evaluation_status: contract.delegated_verification.as_ref().map(|_| {
-                match criterion.status {
-                    CriterionStatus::Satisfied => WireCriterionStatus::Satisfied,
-                    CriterionStatus::Unsatisfied => WireCriterionStatus::Unsatisfied,
-                    CriterionStatus::Unknown => WireCriterionStatus::Unknown,
-                    CriterionStatus::NotApplicable => WireCriterionStatus::NotApplicable,
-                }
+            // 四状態は常に投影する。非委譲では Unknown/NotApplicable を validation で拒否する。
+            evaluation_status: Some(match criterion.status {
+                CriterionStatus::Satisfied => WireCriterionStatus::Satisfied,
+                CriterionStatus::Unsatisfied => WireCriterionStatus::Unsatisfied,
+                CriterionStatus::Unknown => WireCriterionStatus::Unknown,
+                CriterionStatus::NotApplicable => WireCriterionStatus::NotApplicable,
             }),
         })
         .collect();
     let unsatisfied_criteria = evaluation
         .criteria
         .iter()
-        .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
+        .filter(|criterion| {
+            matches!(
+                criterion.status,
+                CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+            )
+        })
         .map(|criterion| bounded(&criterion.criterion_id))
         .collect();
     let mut unverified_items: Vec<String> = evidence
@@ -691,11 +695,20 @@ pub fn build_report(
         evaluation
             .criteria
             .iter()
-            .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
+            .filter(|criterion| {
+                matches!(
+                    criterion.status,
+                    CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+                )
+            })
             .flat_map(|criterion| {
-                criterion.required_evidence.iter().map(|required| {
+                let status = match criterion.status {
+                    CriterionStatus::Unknown => "unknown",
+                    _ => "required evidence",
+                };
+                criterion.required_evidence.iter().map(move |required| {
                     bounded(&format!(
-                        "{}: required evidence: {}",
+                        "{}: {status}: {}",
                         criterion.criterion_id, required
                     ))
                 })

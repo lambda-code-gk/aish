@@ -409,6 +409,28 @@ impl DelegatedVerificationPlan {
                 }
             }
         }
+        // 同じ criterion に対する同一 tool+target の observation を別 item ID へ分割すると
+        // 矛盾検出を迂回できるため、Contract 固定時に拒否する。
+        let mut observation_identities = BTreeSet::new();
+        for item in &self.items {
+            let DelegatedVerificationAction::Observation { tool, target } = &item.action else {
+                continue;
+            };
+            let Some(bound_target) = bound_evidence_target(target) else {
+                return Err("invalid delegated observation target".into());
+            };
+            for criterion_id in &item.criterion_ids {
+                if !observation_identities.insert((
+                    criterion_id.clone(),
+                    tool.clone(),
+                    bound_target.clone(),
+                )) {
+                    return Err(format!(
+                        "duplicate observation identity in verification plan: {criterion_id}/{tool}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -530,6 +552,20 @@ fn optional_present_but_blank(value: &Option<String>) -> bool {
     value.as_deref().is_some_and(|text| text.trim().is_empty())
 }
 
+fn observation_identity(
+    plan: &DelegatedVerificationPlan,
+    record: &EvidenceRecord,
+) -> Option<(String, String)> {
+    let item_id = record.plan_item_id.as_ref()?;
+    let item = plan.items.iter().find(|item| &item.id == item_id)?;
+    match &item.action {
+        DelegatedVerificationAction::Observation { tool, target } => {
+            Some((tool.clone(), bound_evidence_target(target)?))
+        }
+        DelegatedVerificationAction::Command { .. } => None,
+    }
+}
+
 pub fn validate_evaluation(
     contract: &TaskContract,
     evidence: &[EvidenceRecord],
@@ -576,34 +612,36 @@ pub fn validate_evaluation(
                 return Err("satisfied criterion references unverified evidence".into());
             }
             if let Some(plan) = &contract.delegated_verification {
+                // 同順位・同対象の矛盾は plan_item_id ではなく criterion+tool+target 単位で
+                // ledger 全体から判定する（別 item ID への分割で迂回できないようにする）。
+                let mut by_identity: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+                for record in evidence.iter().filter(|record| {
+                    record.criterion_ids.contains(&criterion.criterion_id)
+                        && record.source == EvidenceSource::Observation
+                        && record.verified
+                        && !record.stale
+                }) {
+                    let Some(identity) = observation_identity(plan, record) else {
+                        continue;
+                    };
+                    if let Some(fingerprint) = record.value_fingerprint.as_ref() {
+                        by_identity
+                            .entry(identity)
+                            .or_default()
+                            .insert(fingerprint.clone());
+                    }
+                }
+                if by_identity.values().any(|values| values.len() > 1) {
+                    return Err(format!(
+                        "conflicting observation evidence for criterion: {}",
+                        criterion.criterion_id
+                    ));
+                }
                 for item in plan
                     .items
                     .iter()
                     .filter(|item| item.criterion_ids.contains(&criterion.criterion_id))
                 {
-                    // 矛盾は LLM が選んだ evidence_ids ではなく、ledger 上の当該
-                    // criterion / plan_item に紐づく全 verified・non-stale Evidence で判定する。
-                    let ledger_for_item = evidence
-                        .iter()
-                        .filter(|record| {
-                            record.criterion_ids.contains(&criterion.criterion_id)
-                                && record.plan_item_id.as_deref() == Some(item.id.as_str())
-                                && record.verified
-                                && !record.stale
-                        })
-                        .collect::<Vec<_>>();
-                    if matches!(item.action, DelegatedVerificationAction::Observation { .. }) {
-                        let values = ledger_for_item
-                            .iter()
-                            .filter_map(|record| record.value_fingerprint.as_deref())
-                            .collect::<BTreeSet<_>>();
-                        if values.len() > 1 {
-                            return Err(format!(
-                                "conflicting observation evidence for plan item: {}",
-                                item.id
-                            ));
-                        }
-                    }
                     let cited = criterion
                         .evidence_ids
                         .iter()
@@ -622,6 +660,15 @@ pub fn validate_evaluation(
                     }
                 }
             }
+        }
+        if matches!(
+            criterion.status,
+            CriterionStatus::Unknown | CriterionStatus::NotApplicable
+        ) && contract.delegated_verification.is_none()
+        {
+            return Err(
+                "unknown/not_applicable are only valid with delegated verification plans".into(),
+            );
         }
         if criterion.status == CriterionStatus::NotApplicable {
             let contract_criterion = contract

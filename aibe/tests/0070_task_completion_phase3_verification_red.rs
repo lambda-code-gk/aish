@@ -864,6 +864,88 @@ fn evidence_precedence_and_conflicts_fail_closed() {
     )
     .unwrap_err()
     .contains("conflicting observation"));
+
+    // 同じ tool+target を別 plan item ID に分割しても矛盾は検出される
+    let mut split_contract = contract.clone();
+    split_contract.delegated_verification = Some(DelegatedVerificationPlan {
+        items: vec![
+            DelegatedVerificationPlanItem {
+                id: "v-command".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Command {
+                    command: "test".into(),
+                    args: vec!["-f".into(), "0070-artifact.txt".into()],
+                    cwd: dir.path().display().to_string(),
+                },
+                expected_success: "exit status 0".into(),
+            },
+            DelegatedVerificationPlanItem {
+                id: "v-read-a".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Observation {
+                    tool: "read_file".into(),
+                    target: "0070-artifact.txt".into(),
+                },
+                expected_success: "content a".into(),
+            },
+            DelegatedVerificationPlanItem {
+                id: "v-read-b".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Observation {
+                    tool: "read_file".into(),
+                    target: "0070-artifact.txt".into(),
+                },
+                expected_success: "content b".into(),
+            },
+        ],
+    });
+    assert!(split_contract
+        .validate()
+        .unwrap_err()
+        .contains("duplicate observation identity"));
+    // 壊れた plan を evaluation に載せても Contract 検査で拒否される
+    assert!(validate_evaluation(
+        &split_contract,
+        &[],
+        &evaluation(CriterionStatus::Satisfied, &["command"], None),
+    )
+    .unwrap_err()
+    .contains("duplicate observation identity"));
+}
+
+#[test]
+fn unknown_not_applicable_require_delegated_plan() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut plain = contract(dir.path());
+    plain.delegated_verification = None;
+    assert!(validate_evaluation(
+        &plain,
+        &[],
+        &evaluation(CriterionStatus::Unknown, &[], Some("need more"))
+    )
+    .unwrap_err()
+    .contains("only valid with delegated verification"));
+    assert!(validate_evaluation(
+        &plain,
+        &[],
+        &evaluation(CriterionStatus::NotApplicable, &[], None)
+    )
+    .unwrap_err()
+    .contains("only valid with delegated verification"));
+
+    let mut unknown = evaluation(CriterionStatus::Unknown, &[], None);
+    unknown.next_objective = None;
+    unknown.blocked = Some("cannot decide yet".into());
+    let report = build_report(&contract(dir.path()), &[], &unknown, 2, false).expect("report");
+    assert_eq!(
+        report.criteria[0].evaluation_status,
+        Some(aibe_protocol::CompletionCriterionStatus::Unknown)
+    );
+    assert!(report.unsatisfied_criteria.contains(&"c1".into()));
+    assert!(report
+        .unverified_items
+        .iter()
+        .any(|item| item.contains("unknown")));
 }
 
 #[test]
