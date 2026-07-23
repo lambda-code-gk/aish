@@ -15,15 +15,17 @@ use aibe::application::agent_task::AgentTaskService;
 use aibe::application::agent_task_tool::AgentTaskTool;
 use aibe::application::completion_envelope::ContractGate;
 use aibe::application::task_completion::{
-    append_evidence_from_tools, build_report, evidence_from_tools, validate_delegated_cycle_calls,
+    append_evidence_from_tools, attach_gap_report, build_report, evidence_from_tools,
+    validate_delegated_cycle_calls,
 };
 use aibe::application::{basic_pack_arc, build_file_change_executor, RequestService};
 use aibe::domain::*;
 use aibe::ports::outbound::*;
 use aibe_protocol::{
-    AgentTurnStatus, ClientRequest, ClientResponse, CompletionOutcome as WireOutcome, ErrorCode,
-    ExecutionMode, HandoffExecutionOutcome, HumanTaskRequest, HumanTaskResult,
-    PostHandoffObservation, ProtocolMessage, RequestContext, ShellLogRange, ToolApprovalOrigin,
+    AgentTurnStatus, ClientRequest, ClientResponse, CompletionOutcome as WireOutcome,
+    CompletionReport, ErrorCode, ExecutionMode, HandoffExecutionOutcome, HumanTaskRequest,
+    HumanTaskResult, PostHandoffObservation, ProtocolMessage, RequestContext,
+    ShellExecApprovalOutcome, ShellLogRange, ToolApprovalOrigin,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -645,6 +647,51 @@ fn parent_reobserves_artifacts_and_external_state() {
     assert!(
         validate_delegated_cycle_calls(&contract, &[agent, exact, read.clone(), read]).is_err()
     );
+
+    // collaborative handoff は subprocess 未実行のため Verification に昇格しない
+    let handoff = ExecutedToolCall::ok(
+        "handoff".into(),
+        SHELL_EXEC,
+        json!({"command":"test","args":["-f","0070-artifact.txt"]}),
+        String::new(),
+    )
+    .with_shell_exec_audit(
+        "ask",
+        ShellExecApprovalOutcome::CollaborativeHandoff,
+        None,
+        None,
+    );
+    let handoff_evidence = evidence_from_tools(&contract, &[handoff]);
+    assert_eq!(
+        handoff_evidence[0].source,
+        EvidenceSource::UnknownShellEffect
+    );
+    assert!(!handoff_evidence[0].verified);
+
+    // Agent Task は cwd digest ではなく global prior effect として後続 observation を verified にする
+    let agent_effect = ExecutedToolCall::ok(
+        "agent-effect".into(),
+        AGENT_TASK,
+        serde_json::to_value(initial_request()).expect("request"),
+        r#"{"status":"done","verified":false,"cwd":"/tmp/worker-cwd"}"#.into(),
+    );
+    let post_read = ExecutedToolCall::ok(
+        "post-read".into(),
+        READ_FILE,
+        json!({"path":"0070-artifact.txt"}),
+        "verified".into(),
+    )
+    .with_audit(
+        ToolRiskClass::ReadOnly,
+        ToolApprovalState::NotRequired,
+        false,
+    );
+    let after_agent = append_evidence_from_tools(&contract, &[], &[agent_effect, post_read]);
+    assert!(after_agent[0].target.is_none());
+    assert_eq!(after_agent[0].source, EvidenceSource::AgentTask);
+    assert_eq!(after_agent[1].source, EvidenceSource::Observation);
+    assert!(after_agent[1].observed_after_effect);
+    assert!(after_agent[1].verified);
 }
 
 #[test]
@@ -757,6 +804,18 @@ fn evidence_precedence_and_conflicts_fail_closed() {
     )
     .unwrap_err()
     .contains("conflicting observation"));
+    // 都合のよい片方だけを引用しても ledger 上の矛盾は隠せず fail-closed
+    assert!(validate_evaluation(
+        &contract,
+        &plan_records,
+        &evaluation(
+            CriterionStatus::Satisfied,
+            &["command", "read-a", "diff"],
+            None,
+        ),
+    )
+    .unwrap_err()
+    .contains("conflicting observation"));
 }
 
 #[test]
@@ -846,6 +905,88 @@ fn gap_follow_up_is_single_bounded_and_same_worker() {
         )
         .unwrap_err()
         .contains("differs from the fixed Gap request"));
+}
+
+#[test]
+fn non_done_keeps_current_gap_while_done_audits_previous() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut contract = contract(dir.path());
+    contract.criteria.push(CompletionCriterion {
+        id: "c2".into(),
+        description: "second criterion remains open".into(),
+        deliverable_is_plan: false,
+        observes_targets: vec![],
+        applicability: None,
+    });
+    for item in &mut contract.delegated_verification.as_mut().unwrap().items {
+        item.criterion_ids.push("c2".into());
+    }
+
+    let previous = CompletionEvaluation {
+        criteria: vec![
+            CriterionEvaluation {
+                criterion_id: "c1".into(),
+                status: CriterionStatus::Unsatisfied,
+                evidence_ids: vec![],
+                required_evidence: vec!["fix c1".into()],
+                applicability_evidence_ids: vec![],
+            },
+            CriterionEvaluation {
+                criterion_id: "c2".into(),
+                status: CriterionStatus::Unknown,
+                evidence_ids: vec![],
+                required_evidence: vec!["observe c2".into()],
+                applicability_evidence_ids: vec![],
+            },
+        ],
+        next_objective: Some("repair c1".into()),
+        needs_user: None,
+        blocked: None,
+        failure: None,
+    };
+    let current = CompletionEvaluation {
+        criteria: vec![
+            CriterionEvaluation {
+                criterion_id: "c1".into(),
+                status: CriterionStatus::Unknown,
+                evidence_ids: vec![],
+                required_evidence: vec!["recheck c1".into()],
+                applicability_evidence_ids: vec![],
+            },
+            CriterionEvaluation {
+                criterion_id: "c2".into(),
+                status: CriterionStatus::Unsatisfied,
+                evidence_ids: vec![],
+                required_evidence: vec!["fix c2".into()],
+                applicability_evidence_ids: vec![],
+            },
+        ],
+        next_objective: None,
+        needs_user: None,
+        blocked: Some("still incomplete".into()),
+        failure: None,
+    };
+    let report = build_report(&contract, &[], &current, 2, true).expect("current unfinished");
+    assert!(!matches!(report.outcome, WireOutcome::Done));
+    assert!(report.gaps.iter().any(|gap| gap.criterion_id == "c2"));
+    // previous の c1 Gap で上書きされていないこと（c2 が残る）
+    assert!(report.gaps.iter().any(|gap| gap.criterion_id == "c2"));
+
+    let mut done_report = CompletionReport {
+        outcome: WireOutcome::Done,
+        terminal_reason: None,
+        criteria: vec![],
+        unsatisfied_criteria: vec![],
+        unverified_items: vec![],
+        queries_used: 2,
+        verification_terminal: Some(aibe_protocol::VerificationTerminal::Done),
+        gaps: vec![],
+        worker_id: None,
+        follow_up_count: Some(1),
+    };
+    attach_gap_report(&mut done_report, &contract, &previous);
+    assert!(done_report.gaps.iter().any(|gap| gap.criterion_id == "c1"));
+    assert!(done_report.gaps.iter().any(|gap| gap.criterion_id == "c2"));
 }
 
 #[test]

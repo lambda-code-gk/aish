@@ -581,24 +581,19 @@ pub fn validate_evaluation(
                     .iter()
                     .filter(|item| item.criterion_ids.contains(&criterion.criterion_id))
                 {
-                    let records = criterion
-                        .evidence_ids
+                    // 矛盾は LLM が選んだ evidence_ids ではなく、ledger 上の当該
+                    // criterion / plan_item に紐づく全 verified・non-stale Evidence で判定する。
+                    let ledger_for_item = evidence
                         .iter()
-                        .filter_map(|id| evidence_by_id.get(id.as_str()).copied())
                         .filter(|record| {
-                            record.plan_item_id.as_deref() == Some(item.id.as_str())
+                            record.criterion_ids.contains(&criterion.criterion_id)
+                                && record.plan_item_id.as_deref() == Some(item.id.as_str())
                                 && record.verified
                                 && !record.stale
                         })
                         .collect::<Vec<_>>();
-                    if records.is_empty() {
-                        return Err(format!(
-                            "satisfied delegated criterion lacks plan evidence: {}",
-                            item.id
-                        ));
-                    }
                     if matches!(item.action, DelegatedVerificationAction::Observation { .. }) {
-                        let values = records
+                        let values = ledger_for_item
                             .iter()
                             .filter_map(|record| record.value_fingerprint.as_deref())
                             .collect::<BTreeSet<_>>();
@@ -608,6 +603,22 @@ pub fn validate_evaluation(
                                 item.id
                             ));
                         }
+                    }
+                    let cited = criterion
+                        .evidence_ids
+                        .iter()
+                        .filter_map(|id| evidence_by_id.get(id.as_str()).copied())
+                        .filter(|record| {
+                            record.plan_item_id.as_deref() == Some(item.id.as_str())
+                                && record.verified
+                                && !record.stale
+                        })
+                        .count();
+                    if cited == 0 {
+                        return Err(format!(
+                            "satisfied delegated criterion lacks plan evidence: {}",
+                            item.id
+                        ));
                     }
                 }
             }

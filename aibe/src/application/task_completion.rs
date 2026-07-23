@@ -318,11 +318,23 @@ fn has_prior_effect(ledger: &[EvidenceRecord], target: Option<&str>) -> bool {
     })
 }
 
+/// 実プロセス実行済みの shell_exec のみ Verification / plan 実行として認める。
+/// collaborative handoff（`human_control_returned`）は subprocess を走らせないため除外する。
+fn shell_process_was_executed(call: &ExecutedToolCall) -> bool {
+    matches!(
+        call.decision.as_deref(),
+        Some("executed") | Some("auto_approved_session") | Some("auto_approved_pattern")
+    )
+}
+
 fn matching_delegated_command<'a>(
     contract: &'a TaskContract,
     call: &ExecutedToolCall,
 ) -> Option<&'a crate::domain::DelegatedVerificationPlanItem> {
-    if call.name != SHELL_EXEC || call.status != ExecutedToolStatus::Ok {
+    if call.name != SHELL_EXEC
+        || call.status != ExecutedToolStatus::Ok
+        || !shell_process_was_executed(call)
+    {
         return None;
     }
     let command = call.arguments.get("command")?.as_str()?;
@@ -390,6 +402,8 @@ fn call_matches_plan_action(call: &ExecutedToolCall, action: &DelegatedVerificat
                         .eq(args.iter().map(|value| Some(value.as_str())))
                 });
             call.name == SHELL_EXEC
+                && call.status == ExecutedToolStatus::Ok
+                && shell_process_was_executed(call)
                 && call
                     .arguments
                     .get("command")
@@ -465,22 +479,9 @@ fn tool_target(call: &ExecutedToolCall) -> Option<String> {
         return bound_evidence_target(path);
     }
     if call.name == aibe_protocol::AGENT_TASK {
-        if let Some(cwd) = call
-            .output
-            .as_ref()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .and_then(|value| {
-                value
-                    .get("cwd")
-                    .and_then(|cwd| cwd.as_str())
-                    .map(str::to_string)
-            })
-        {
-            return bound_evidence_target(&cwd);
-        }
-        if let Some(path) = args.get("cwd").and_then(|value| value.as_str()) {
-            return bound_evidence_target(path);
-        }
+        // Worker は cwd 配下へ広範囲に副作用し得る。個別ファイル digest と一致させず、
+        // target=None（global/unknown）として後続 observation の prior effect に使う。
+        return None;
     }
     if call.name == SHELL_EXEC {
         if let Some(path) = args

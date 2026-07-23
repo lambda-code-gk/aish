@@ -25,8 +25,8 @@ use crate::ports::outbound::{
     ToolRoundTerminator, ToolsConfig, TurnCancellation, TurnEventSink, TurnHook,
 };
 use aibe_protocol::{
-    ClientProvidedToolSpec, ClientRequest, ClientResponse, CompletionReport, ErrorCode,
-    MemorySubscribeRequestBody, ProtocolMessage, RequestContext, ToolRiskClass,
+    ClientProvidedToolSpec, ClientRequest, ClientResponse, CompletionOutcome, CompletionReport,
+    ErrorCode, MemorySubscribeRequestBody, ProtocolMessage, RequestContext, ToolRiskClass,
 };
 use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
@@ -800,7 +800,11 @@ fn finish_second_query(
     );
     match build_report(contract, &evidence, &evaluation, 2, stalled) {
         Ok(mut report) => {
-            if contract.delegated_verification.is_some() {
+            // Done のときだけ前回 Gap を監査用に残す。非 Done では build_report が
+            // 付けた current Gap（再委譲後の未達）を上書きしない。
+            if contract.delegated_verification.is_some()
+                && matches!(report.outcome, CompletionOutcome::Done)
+            {
                 attach_gap_report(&mut report, contract, previous_evaluation);
             }
             attach_completion_report(
