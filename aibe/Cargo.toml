@@ -11,6 +11,7 @@ memory = []
 [dependencies]
 aibe-client = { path = "../aibe-client" }
 aibe-protocol = { path = "../aibe-protocol" }
+aish-replay = { path = "../aish-replay" }
 libc = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }

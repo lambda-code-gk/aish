@@ -151,9 +151,10 @@ pub struct AppConfig {
     pub memory: MemoryConfig,
 }
 
-pub fn validate_agent_task_config(config: &AgentTaskConfig) -> Result<(), ConfigError> {
+/// Worker executable を絶対パス必須にし、可能なら canonicalize した実体へ書き戻す。
+pub fn validate_agent_task_config(config: &mut AgentTaskConfig) -> Result<(), ConfigError> {
     let mut ids = std::collections::HashSet::new();
-    for worker in &config.workers {
+    for worker in &mut config.workers {
         crate::domain::WorkerId::parse(worker.id.clone())
             .map_err(|e| ConfigError::Invalid(format!("agent_task worker id: {e}")))?;
         if !ids.insert(worker.id.clone()) {
@@ -168,6 +169,25 @@ pub fn validate_agent_task_config(config: &AgentTaskConfig) -> Result<(), Config
                 worker.id
             )));
         }
+        if !worker.executable.is_absolute() {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable must be an absolute path (got {:?})",
+                worker.id, worker.executable
+            )));
+        }
+        let canonical = worker.executable.canonicalize().map_err(|e| {
+            ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable cannot be resolved: {e}",
+                worker.id
+            ))
+        })?;
+        if !canonical.is_file() {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable must be an existing file",
+                worker.id
+            )));
+        }
+        worker.executable = canonical;
         if worker.timeout_secs == 0 || worker.timeout_secs > 1800 {
             return Err(ConfigError::Invalid(format!(
                 "agent_task worker '{}' timeout_secs must be 1..=1800",

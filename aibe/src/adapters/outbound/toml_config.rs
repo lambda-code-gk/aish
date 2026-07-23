@@ -76,8 +76,8 @@ impl ConfigLoader for TomlConfig {
         let tools = parse_tools(file_cfg.as_ref())?;
         let external_commands = parse_external_commands(file_cfg.as_ref());
         validate_external_commands(&external_commands, &tools.shell_exec.allowed_commands)?;
-        let agent_task = parse_agent_task(file_cfg.as_ref());
-        validate_agent_task_config(&agent_task)?;
+        let mut agent_task = parse_agent_task(file_cfg.as_ref());
+        validate_agent_task_config(&mut agent_task)?;
         let memory = parse_memory(file_cfg.as_ref(), &self.path);
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         Ok(AppConfig {
@@ -597,7 +597,7 @@ fn parse_agent_task(file: Option<&FileConfig>) -> AgentTaskConfig {
             .into_iter()
             .map(|worker| AgentTaskWorkerConfig {
                 id: worker.id,
-                executable: PathBuf::from(worker.executable),
+                executable: expand_home(worker.executable),
                 args: worker.args.unwrap_or_default(),
                 timeout_secs: worker.timeout_secs.unwrap_or(1800),
                 permission_profile: worker

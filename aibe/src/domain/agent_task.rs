@@ -18,6 +18,8 @@ pub const MAX_CWD_BYTES: usize = 4096;
 pub const MAX_TIMEOUT_SECS: u64 = 1800;
 pub const MAX_EVIDENCE: usize = 256;
 pub const MAX_EVIDENCE_SUMMARY_BYTES: usize = 1024;
+pub const MAX_BLOCKERS: usize = 32;
+pub const MAX_BLOCKER_BYTES: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
@@ -221,6 +223,8 @@ pub enum AgentTaskValidationError {
 #[serde(rename_all = "snake_case")]
 pub enum AgentTaskStatus {
     Completed,
+    Blocked,
+    Cancelled,
     Failed,
     TimedOut,
     LaunchFailed,
@@ -273,6 +277,8 @@ pub struct AgentTaskResult {
     pub status: AgentTaskStatus,
     pub summary: String,
     pub reported_complete: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
     pub stdout: String,
     pub stderr: String,
     pub stdout_truncated: bool,
@@ -295,6 +301,7 @@ impl AgentTaskResult {
         status: AgentTaskStatus,
         summary: impl Into<String>,
         reported_complete: bool,
+        blockers: Vec<String>,
         stdout: String,
         stderr: String,
         stdout_truncated: bool,
@@ -315,10 +322,12 @@ impl AgentTaskResult {
             item.summary = bound_text(item.summary.clone(), MAX_EVIDENCE_SUMMARY_BYTES);
         }
         let failure = !matches!(status, AgentTaskStatus::Completed);
+        let blockers = bound_blockers(blockers);
         Self {
             status,
             summary: bound_text(summary.into(), MAX_EVIDENCE_SUMMARY_BYTES),
             reported_complete: reported_complete && !failure,
+            blockers,
             stdout,
             stderr,
             stdout_truncated,
@@ -335,6 +344,15 @@ impl AgentTaskResult {
             timeout_secs,
         }
     }
+}
+
+fn bound_blockers(mut blockers: Vec<String>) -> Vec<String> {
+    blockers.truncate(MAX_BLOCKERS);
+    blockers
+        .into_iter()
+        .map(|item| bound_text(item, MAX_BLOCKER_BYTES))
+        .filter(|item| !item.trim().is_empty())
+        .collect()
 }
 
 fn bound_text(mut value: String, max: usize) -> String {

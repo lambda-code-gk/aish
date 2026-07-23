@@ -79,6 +79,9 @@ pub(crate) enum BoundedRunOutcome {
 }
 
 /// stdin envelope を渡し、output を読みながら上限適用し、timeout 時は process group を回収する。
+///
+/// deadline は stdin 書込み・direct child 待機・stdout/stderr drain の全体に適用する。
+/// 子孫が pipe を掴んだまま親だけ終了しても、超過時は session/process group を kill して reap する。
 pub(crate) async fn run_subprocess_bounded(
     mut cmd: Command,
     stdin: Vec<u8>,
@@ -99,39 +102,81 @@ pub(crate) async fn run_subprocess_bounded(
         Err(_) => return BoundedRunOutcome::Failed,
     };
     let child_pid = child.id().unwrap_or(0);
+    let deadline = tokio::time::Instant::now() + duration;
+
     if let Some(mut pipe) = child.stdin.take() {
-        let _ = pipe.write_all(&stdin).await;
+        match tokio::time::timeout_at(deadline, pipe.write_all(&stdin)).await {
+            Ok(Ok(())) => drop(pipe),
+            Ok(Err(_)) => {
+                kill_process_group(child_pid);
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                return BoundedRunOutcome::Failed;
+            }
+            Err(_) => {
+                kill_process_group(child_pid);
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                return BoundedRunOutcome::TimedOut;
+            }
+        }
     }
+
     let stdout_task = tokio::spawn(drain_bounded(child.stdout.take(), max_output_bytes));
     let stderr_task = tokio::spawn(drain_bounded(child.stderr.take(), max_output_bytes));
-    match timeout(duration, child.wait()).await {
+
+    let wait_result = tokio::time::timeout_at(deadline, child.wait()).await;
+    match wait_result {
         Ok(Ok(status)) => {
-            let (stdout, stdout_truncated) = stdout_task.await.unwrap_or_default();
-            let (stderr, stderr_truncated) = stderr_task.await.unwrap_or_default();
-            BoundedRunOutcome::Completed {
-                exit_code: status.code().unwrap_or(-1),
-                stdout,
-                stderr,
-                stdout_truncated,
-                stderr_truncated,
+            let stdout_abort = stdout_task.abort_handle();
+            let stderr_abort = stderr_task.abort_handle();
+            match tokio::time::timeout_at(deadline, async {
+                let stdout = stdout_task.await.unwrap_or_default();
+                let stderr = stderr_task.await.unwrap_or_default();
+                (stdout, stderr)
+            })
+            .await
+            {
+                Ok(((stdout, stdout_truncated), (stderr, stderr_truncated))) => {
+                    BoundedRunOutcome::Completed {
+                        exit_code: status.code().unwrap_or(-1),
+                        stdout,
+                        stderr,
+                        stdout_truncated,
+                        stderr_truncated,
+                    }
+                }
+                Err(_) => {
+                    kill_process_group(child_pid);
+                    stdout_abort.abort();
+                    stderr_abort.abort();
+                    BoundedRunOutcome::TimedOut
+                }
             }
         }
         Ok(Err(_)) => {
+            kill_process_group(child_pid);
+            let _ = child.start_kill();
+            let _ = child.wait().await;
             stdout_task.abort();
             stderr_task.abort();
             BoundedRunOutcome::Failed
         }
         Err(_) => {
-            if child_pid != 0 {
-                unsafe {
-                    libc::kill(-(child_pid as i32), libc::SIGKILL);
-                }
-            }
+            kill_process_group(child_pid);
             let _ = child.start_kill();
             let _ = child.wait().await;
             stdout_task.abort();
             stderr_task.abort();
             BoundedRunOutcome::TimedOut
+        }
+    }
+}
+
+fn kill_process_group(child_pid: u32) {
+    if child_pid != 0 {
+        unsafe {
+            libc::kill(-(child_pid as i32), libc::SIGKILL);
         }
     }
 }

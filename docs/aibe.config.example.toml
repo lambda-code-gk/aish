@@ -129,6 +129,7 @@ max_grep_file_bytes = 1_048_576
 #
 # [[agent_task.workers]]
 # id = "local-agent"
+# executable は絶対パス必須（相対パスは cwd 差し替え攻撃になるため拒否）
 # executable = "/absolute/path/to/configured-worker"
 # args = ["--fixed-mode"]
 # timeout_secs = 300

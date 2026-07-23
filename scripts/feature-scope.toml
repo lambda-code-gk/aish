@@ -20,8 +20,8 @@ spec = "0069"
 status = "done"
 scope_class = "feature"
 
-scope_revision = 2
-scope_change_reason = "Step 2 review: cwd/profileの非sandbox境界、production adapter smoke、部分適用Pack traitを明確化（scope数値は不変）"
+scope_revision = 3
+scope_change_reason = "PR #26 review: absolute executable, full-process timeout, typed approval audit, blocked+blockers, stdout/stderr redaction（scope数値は不変）"
 scope_review = "approved"
 
 core_outcome = "親AgentがTask Completionの部分作業を構造化agent_taskとして設定済み外部Agentへ同期委譲しResultと出所付きEvidenceをverified=falseで受け取る"

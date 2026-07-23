@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::adapters::outbound::tools::subprocess::{run_subprocess_bounded, BoundedRunOutcome};
-use crate::domain::{AgentTaskCriterion, ValidatedAgentTaskRequest};
+use crate::domain::{
+    AgentTaskCriterion, ValidatedAgentTaskRequest, MAX_BLOCKERS, MAX_BLOCKER_BYTES,
+};
 use crate::ports::outbound::{
     AgentTaskExecutionContext, AgentTaskWorker, AgentTaskWorkerConfig, AgentTaskWorkerError,
     WorkerExecutionOutcome, WorkerExecutionOutput,
@@ -34,12 +36,23 @@ struct WorkerEnvelope<'a> {
     delegation_depth: u8,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkerReportStatus {
+    Done,
+    Blocked,
+    Cancelled,
+    Failed,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkerReport {
     schema_version: u8,
     summary: String,
-    reported_complete: bool,
+    status: WorkerReportStatus,
+    #[serde(default)]
+    blockers: Vec<String>,
 }
 
 #[async_trait]
@@ -107,6 +120,7 @@ impl AgentTaskWorker for ExternalCommandWorker {
                 outcome: WorkerExecutionOutcome::LaunchFailed,
                 summary: "worker launch failed".into(),
                 reported_complete: false,
+                blockers: Vec::new(),
                 stdout: String::new(),
                 stderr: String::new(),
                 stdout_truncated: false,
@@ -119,6 +133,7 @@ impl AgentTaskWorker for ExternalCommandWorker {
                 outcome: WorkerExecutionOutcome::TimedOut,
                 summary: "worker timed out".into(),
                 reported_complete: false,
+                blockers: Vec::new(),
                 stdout: String::new(),
                 stderr: String::new(),
                 stdout_truncated: false,
@@ -141,6 +156,7 @@ impl AgentTaskWorker for ExternalCommandWorker {
                         outcome: WorkerExecutionOutcome::Failed,
                         summary: "worker returned non-zero exit status".into(),
                         reported_complete: false,
+                        blockers: Vec::new(),
                         stdout: stdout_text,
                         stderr: stderr_text,
                         stdout_truncated,
@@ -157,6 +173,7 @@ impl AgentTaskWorker for ExternalCommandWorker {
                             outcome: WorkerExecutionOutcome::InvalidOutput,
                             summary: "worker returned invalid structured output".into(),
                             reported_complete: false,
+                            blockers: Vec::new(),
                             stdout: stdout_text,
                             stderr: stderr_text,
                             stdout_truncated,
@@ -167,10 +184,33 @@ impl AgentTaskWorker for ExternalCommandWorker {
                         });
                     }
                 };
+                let blockers = bound_blockers(report.blockers);
+                let (outcome, reported_complete) = match report.status {
+                    WorkerReportStatus::Done => (WorkerExecutionOutcome::Completed, true),
+                    WorkerReportStatus::Blocked => (WorkerExecutionOutcome::Blocked, false),
+                    WorkerReportStatus::Cancelled => (WorkerExecutionOutcome::Cancelled, false),
+                    WorkerReportStatus::Failed => (WorkerExecutionOutcome::Failed, false),
+                };
+                if matches!(report.status, WorkerReportStatus::Blocked) && blockers.is_empty() {
+                    return Ok(WorkerExecutionOutput {
+                        outcome: WorkerExecutionOutcome::InvalidOutput,
+                        summary: "blocked worker report requires at least one blocker".into(),
+                        reported_complete: false,
+                        blockers: Vec::new(),
+                        stdout: stdout_text,
+                        stderr: stderr_text,
+                        stdout_truncated,
+                        stderr_truncated,
+                        exit_code: Some(exit_code),
+                        changed_paths,
+                        observation_incomplete,
+                    });
+                }
                 Ok(WorkerExecutionOutput {
-                    outcome: WorkerExecutionOutcome::Completed,
+                    outcome,
                     summary: report.summary,
-                    reported_complete: report.reported_complete,
+                    reported_complete,
+                    blockers,
                     stdout: stdout_text,
                     stderr: stderr_text,
                     stdout_truncated,
@@ -182,4 +222,19 @@ impl AgentTaskWorker for ExternalCommandWorker {
             }
         }
     }
+}
+
+fn bound_blockers(mut blockers: Vec<String>) -> Vec<String> {
+    blockers.truncate(MAX_BLOCKERS);
+    blockers
+        .into_iter()
+        .map(|item| {
+            let mut value = item;
+            if value.len() > MAX_BLOCKER_BYTES {
+                value.truncate(value.floor_char_boundary(MAX_BLOCKER_BYTES));
+            }
+            value
+        })
+        .filter(|item| !item.trim().is_empty())
+        .collect()
 }

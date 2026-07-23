@@ -222,6 +222,14 @@ fn normalize_result(
     let mut evidence = Vec::new();
     match output {
         Ok(output) => {
+            let summary = aish_replay::sanitize_log_text(&output.summary);
+            let blockers: Vec<String> = output
+                .blockers
+                .iter()
+                .map(|item| aish_replay::sanitize_log_text(item))
+                .collect();
+            let stdout = aish_replay::sanitize_log_text(&output.stdout);
+            let stderr = aish_replay::sanitize_log_text(&output.stderr);
             for path in &output.changed_paths {
                 evidence.push(AgentTaskEvidence::unverified(
                     AgentTaskEvidenceKind::WorkspaceChange,
@@ -231,6 +239,8 @@ fn normalize_result(
             }
             let status = match output.outcome {
                 WorkerExecutionOutcome::Completed => AgentTaskStatus::Completed,
+                WorkerExecutionOutcome::Blocked => AgentTaskStatus::Blocked,
+                WorkerExecutionOutcome::Cancelled => AgentTaskStatus::Cancelled,
                 WorkerExecutionOutcome::Failed => AgentTaskStatus::Failed,
                 WorkerExecutionOutcome::TimedOut => AgentTaskStatus::TimedOut,
                 WorkerExecutionOutcome::LaunchFailed => AgentTaskStatus::LaunchFailed,
@@ -239,26 +249,34 @@ fn normalize_result(
             evidence.push(AgentTaskEvidence::unverified(
                 AgentTaskEvidenceKind::WorkerReport,
                 AgentTaskEvidenceSource::WorkerProcess,
-                output.summary.clone(),
+                summary.clone(),
             ));
             evidence.push(AgentTaskEvidence::unverified(
                 AgentTaskEvidenceKind::ExitStatus,
                 AgentTaskEvidenceSource::WorkerProcess,
                 format!("exit code: {:?}", output.exit_code),
             ));
-            if !output.stdout.is_empty() || !output.stderr.is_empty() {
+            if !stdout.is_empty() || !stderr.is_empty() {
                 evidence.push(AgentTaskEvidence::unverified(
                     AgentTaskEvidenceKind::ProcessOutput,
                     AgentTaskEvidenceSource::WorkerProcess,
                     "bounded worker stdout/stderr captured",
                 ));
             }
+            for blocker in &blockers {
+                evidence.push(AgentTaskEvidence::unverified(
+                    AgentTaskEvidenceKind::WorkerReport,
+                    AgentTaskEvidenceSource::WorkerProcess,
+                    format!("blocker: {blocker}"),
+                ));
+            }
             AgentTaskResult::unverified(
                 status,
-                output.summary,
+                summary,
                 output.reported_complete,
-                output.stdout,
-                output.stderr,
+                blockers,
+                stdout,
+                stderr,
                 output.stdout_truncated,
                 output.stderr_truncated,
                 output.exit_code,
@@ -287,6 +305,7 @@ fn normalize_result(
                 status,
                 error.to_string(),
                 false,
+                Vec::new(),
                 String::new(),
                 String::new(),
                 false,

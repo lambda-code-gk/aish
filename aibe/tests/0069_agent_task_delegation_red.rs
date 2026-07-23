@@ -107,6 +107,7 @@ fn mock_output(outcome: WorkerExecutionOutcome) -> WorkerExecutionOutput {
         outcome,
         summary: "mock result".into(),
         reported_complete: true,
+        blockers: Vec::new(),
         stdout: "bounded".into(),
         stderr: String::new(),
         stdout_truncated: false,
@@ -561,6 +562,7 @@ async fn agent_task_approval_cannot_be_bypassed() {
     assert!(source.contains(&format!("cwd={}", temp.path().display())));
     assert!(source.contains("timeout=2"));
     assert!(source.contains("origin=explicit_ui"));
+    assert!(source.contains("approval=approved"));
     assert!(!source.contains("client_tools_allowlist"));
     assert_eq!(
         record.risk_class,
@@ -579,6 +581,7 @@ fn agent_task_integrates_with_task_completion_as_unverified() {
         AgentTaskStatus::Completed,
         "worker claims done",
         true,
+        Vec::new(),
         String::new(),
         String::new(),
         false,
@@ -650,7 +653,13 @@ fn agent_task_integrates_with_task_completion_as_unverified() {
         json!({"worker":"fixture"}),
         serde_json::to_string(&result).expect("result json"),
     )
-    .with_agent_task_audit(true, "fixture", "/tmp/task", 2, "explicit_ui");
+    .with_agent_task_audit(
+        aibe_protocol::AgentTaskApprovalAudit::Approved,
+        "fixture",
+        "/tmp/task",
+        2,
+        "explicit_ui",
+    );
     let ledger =
         aibe::application::task_completion::append_evidence_from_tools(&contract, &ledger, &[call]);
     assert!(ledger
@@ -676,4 +685,163 @@ fn agent_task_preserves_human_task_behavior() {
     assert_eq!(human.parameters["required"], json!(["objective"]));
     assert!(human.parameters["properties"]["suggested_commands"].is_object());
     assert!(human.description.contains("interactive Human Shell"));
+}
+
+#[test]
+fn agent_task_rejects_relative_executable() {
+    use aibe::ports::outbound::{validate_agent_task_config, AgentTaskConfig};
+    let mut config = AgentTaskConfig {
+        enabled: true,
+        workers: vec![AgentTaskWorkerConfig {
+            id: "relative".into(),
+            executable: PathBuf::from("./worker"),
+            args: Vec::new(),
+            timeout_secs: 2,
+            permission_profile: "test".into(),
+            env_allowlist: Vec::new(),
+        }],
+    };
+    let err = validate_agent_task_config(&mut config).expect_err("relative executable rejected");
+    assert!(
+        err.to_string().contains("absolute path"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn agent_task_timeout_covers_orphan_stdout_drain() {
+    let temp = TempDir::new().expect("tempdir");
+    let service = service_from_configs(&[worker_config("orphan", "orphan_pipe", 1)], temp.path());
+    let mut request = valid_request("orphan");
+    request.timeout_secs = Some(1);
+    let started = std::time::Instant::now();
+    let result = service
+        .execute(
+            "orphan",
+            request,
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("timeout result");
+    assert_eq!(result.status, AgentTaskStatus::TimedOut);
+    assert!(result.timed_out);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "drain must not hang past timeout"
+    );
+}
+
+#[tokio::test]
+async fn agent_task_pre_approval_errors_are_not_audited_as_approved() {
+    let temp = TempDir::new().expect("tempdir");
+    let service = service_from_configs(&[worker_config("fixture", "success", 2)], temp.path());
+    let tool = AgentTaskTool::new(service);
+    let (record, result) = tool
+        .execute(
+            "unknown-worker",
+            &json!({
+                "worker": "missing",
+                "objective": "write deterministic fixture output",
+                "instructions": ["run once"],
+                "completion_criteria": [{"id":"c1","description":"fixture output exists"}],
+                "timeout_secs": 2
+            }),
+            1000,
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await;
+    assert!(result.is_error);
+    assert_eq!(
+        record.approval_state,
+        Some(aibe_protocol::ToolApprovalState::NotRequired)
+    );
+    assert_eq!(record.decision.as_deref(), Some("rejected_before_approval"));
+    let source = record.approval_source.as_deref().expect("approval_source");
+    assert!(source.contains("approval=not_requested"));
+    assert!(!source.contains("approval=approved"));
+}
+
+#[tokio::test]
+async fn agent_task_blocked_is_structured_for_parent() {
+    let temp = TempDir::new().expect("tempdir");
+    let service = service_from_configs(&[worker_config("blocked", "blocked", 2)], temp.path());
+    let result = service
+        .execute(
+            "blocked",
+            valid_request("blocked"),
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("blocked result");
+    assert_eq!(result.status, AgentTaskStatus::Blocked);
+    assert!(!result.reported_complete);
+    assert_eq!(result.blockers, vec!["missing API credential".to_string()]);
+    assert!(!result.verified);
+}
+
+#[tokio::test]
+async fn agent_task_redacts_worker_secrets_before_parent_prompt() {
+    let temp = TempDir::new().expect("tempdir");
+    let service = service_from_configs(&[worker_config("secret", "secret", 2)], temp.path());
+    let result = service
+        .execute(
+            "secret",
+            valid_request("secret"),
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("secret result");
+    assert_eq!(result.status, AgentTaskStatus::Completed);
+    assert!(!result.summary.contains("sk-abcdefghijklmnopqrstuvwxyz"));
+    assert!(result.summary.contains("sk-[REDACTED]"));
+    assert!(!result.stderr.contains("super-secret-token-value"));
+    assert!(result.stderr.contains("TOKEN=[REDACTED]"));
+    let serialized = serde_json::to_string(&result).expect("serialize result");
+    assert!(
+        !serialized.contains("sk-abcdefghijklmnopqrstuvwxyz"),
+        "secret must not appear anywhere in serialized result"
+    );
+    assert!(
+        !serialized.contains("super-secret-token-value"),
+        "env secret must not appear anywhere in serialized result"
+    );
+    assert!(result.evidence.iter().all(|item| {
+        !item.summary.contains("sk-abcdefghijklmnopqrstuvwxyz")
+            && !item.summary.contains("super-secret-token-value")
+    }));
+}
+
+#[tokio::test]
+async fn agent_task_denied_approval_is_audited_as_explicit_opt_in() {
+    let temp = TempDir::new().expect("tempdir");
+    let service = service_from_configs(&[worker_config("fixture", "success", 2)], temp.path());
+    let tool = AgentTaskTool::new(service);
+    let gate = Arc::new(ApprovalGate {
+        outcome: AgentTaskApprovalOutcome::Denied {
+            origin: "ui_no".into(),
+        },
+        calls: AtomicUsize::new(0),
+    });
+    let (record, result) = tool
+        .execute(
+            "denied",
+            &json!({
+                "worker": "fixture",
+                "objective": "write deterministic fixture output",
+                "instructions": ["run once"],
+                "completion_criteria": [{"id":"c1","description":"fixture output exists"}],
+                "timeout_secs": 2
+            }),
+            1000,
+            &context(temp.path(), gate),
+        )
+        .await;
+    assert!(result.is_error);
+    assert_eq!(
+        record.approval_state,
+        Some(aibe_protocol::ToolApprovalState::ExplicitClientOptIn)
+    );
+    assert_eq!(record.decision.as_deref(), Some("rejected_by_user"));
+    let source = record.approval_source.as_deref().expect("approval_source");
+    assert!(source.contains("approval=denied"));
 }

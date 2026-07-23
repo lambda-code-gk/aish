@@ -18,8 +18,8 @@ pub use collaborative_handoff::{
     HUMAN_TASK_BRIEFING_MAX_BYTES, SUGGESTED_COMMAND_MAX_BYTES,
 };
 pub use executed_tool::{
-    ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome, ShellExecApprovalOutcome,
-    ToolApprovalState, ToolRiskClass,
+    AgentTaskApprovalAudit, ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome,
+    ShellExecApprovalOutcome, ToolApprovalState, ToolRiskClass,
 };
 pub use memory::{
     MemoryApplyRequestBody, MemoryApplyStatus, MemoryChangeEventDto, MemoryChangeKind,

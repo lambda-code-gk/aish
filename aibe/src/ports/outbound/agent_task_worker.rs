@@ -17,6 +17,8 @@ pub struct AgentTaskExecutionContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerExecutionOutcome {
     Completed,
+    Blocked,
+    Cancelled,
     Failed,
     TimedOut,
     LaunchFailed,
@@ -28,6 +30,7 @@ pub struct WorkerExecutionOutput {
     pub outcome: WorkerExecutionOutcome,
     pub summary: String,
     pub reported_complete: bool,
+    pub blockers: Vec<String>,
     pub stdout: String,
     pub stderr: String,
     pub stdout_truncated: bool,

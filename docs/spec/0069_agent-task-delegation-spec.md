@@ -219,8 +219,10 @@ Worker へ渡す prompt / stdin envelope は少なくとも schema version、obj
 {
   "schema_version": 1,
   "worker": "configured-worker-id",
-  "status": "reported_complete | failed | timed_out | launch_failed | invalid_output",
+  "status": "completed | blocked | cancelled | failed | timed_out | launch_failed | invalid_output",
   "summary": "bounded worker summary or normalization message",
+  "reported_complete": false,
+  "blockers": ["optional bounded blocker messages when status=blocked"],
   "exit_code": 0,
   "timed_out": false,
   "stdout": {"text": "bounded and sanitized", "truncated": false},
@@ -238,10 +240,10 @@ Worker へ渡す prompt / stdin envelope は少なくとも schema version、obj
 }
 ```
 
-- `status=reported_complete` は Worker が正常終了して構造化結果を返したことだけを意味し、Task Completion の `Done` ではない
-- 実装の wire では `status` に `completed | failed | timed_out | launch_failed | invalid_output` を使い、Worker の完了自己申告は別フィールド `reported_complete: bool` で表す（`completed` + `reported_complete=true` が設計草案の `reported_complete` status に相当）
+- `status=completed` かつ `reported_complete=true` は Worker が正常終了して構造化 `done` を返したことだけを意味し、Task Completion の `Done` ではない
+- Worker 構造化 report の `status` は `done | blocked | cancelled | failed`。`blocked` は非空の `blockers` を必須とし、親が未完了と実行障害を区別できるようにする
 - timeout / signal termination では `exit_code=null` を許容し、`timed_out=true` と status を一致させる
-- stdout / stderr と Evidence は既存 sanitize / redaction と byte/item 上限を適用し、完全な process log や秘密値を親 prompt へ無制限に複製しない
+- stdout / stderr と Evidence は既存 sanitize / redaction（`aish_replay::sanitize_log_text`）と byte/item 上限を適用し、完全な process log や秘密値を親 prompt へ無制限に複製しない
 - changed-file Evidence は worker report と filesystem 前後観測を別 provenance にし、path は cwd 相対・正規化済みとする。symlink target や file content を暗黙収集しない
 - top-level と各 Evidence の `verified` は本 spec では常に false。true を受理・生成する schema は後続の独立検証 spec まで導入しない
 
@@ -271,3 +273,4 @@ Worker へ渡す prompt / stdin envelope は少なくとも schema version、obj
 |----------|------|------|------|
 | 1 | INITIAL | 単一 Worker・同期・深度 1・設定済み external command・未検証 Result/Evidence に Scope Lock 前の draft を限定 | Issue #24 の Minimum Vertical Slice を Yellow 以下で設計し、独立検証・反復・永続化を後続へ分離するため |
 | 2 | `SAFETY_WITHIN_FAULT_MODEL` / `BLOCKER_ORIGINAL_AC` | cwd / permission profile の非 sandbox 境界を明記し、production external-command adapter の deterministic smoke を vertical AC に固定。部分適用の Pack trait と core 残置範囲を明記 | cwd の保証を過大評価させず、本番経路と 0045 最低要件を検証可能にするため |
+| 3 | `SAFETY_WITHIN_FAULT_MODEL` / `BLOCKER_ORIGINAL_AC` | 絶対 executable、timeout の drain 包含、承認監査の型化、`blocked`+`blockers`、stdout/stderr redaction を固定（PR #26 review） | 信頼境界・有限時間・監査正しさ・親継続判断・秘密流出防止を Fault Model 内で満たすため |

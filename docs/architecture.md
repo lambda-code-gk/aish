@@ -678,13 +678,13 @@ permission_profile = "workspace-write"
 env_allowlist = ["PATH"]
 ```
 
-LLM schema は `worker`、`objective`、`instructions`、`completion_criteria`、任意の `cwd` / `timeout_secs` だけを公開し、executable、argv、env、profile、approval、delegation depth を公開しない。cwd は `ToolExecutionContext::base_dir` 基準で解決し、`[tools.file_write].allowed_roots` の canonical root 内だけを許可する。これは Worker の起動位置と観測範囲であり OS sandbox ではない。
+LLM schema は `worker`、`objective`、`instructions`、`completion_criteria`、任意の `cwd` / `timeout_secs` だけを公開し、executable、argv、env、profile、approval、delegation depth を公開しない。Worker `executable` は設定で絶対パス必須（canonicalize 済み実体を Registry 保持）。cwd は `ToolExecutionContext::base_dir` 基準で解決し、`[tools.file_write].allowed_roots` の canonical root 内だけを許可する。これは Worker の起動位置と観測範囲であり OS sandbox ではない。
 
-Agent Task approval は既存 Unix connection の `ToolApprovalPrompt` 往復を `tool_name=agent_task` で使用する。`summary` は bounded worker/timeout/profile/objective、`paths` は canonical cwd、`preview` は trust-boundary warning を保持する。`ai` は専用文言 `Run this configured worker once? [y/N]` を表示し、`ToolApprovalOrigin::UiYes` だけを `explicit_ui` として受理する。shell allowlist、session/pattern cache、`--yes-exec`、Worker 入出力は承認にならない。
+Agent Task approval は既存 Unix connection の `ToolApprovalPrompt` 往復を `tool_name=agent_task` で使用する。`summary` は bounded worker/timeout/profile/objective、`paths` は canonical cwd、`preview` は trust-boundary warning を保持する。`ai` は専用文言 `Run this configured worker once? [y/N]` を表示し、`ToolApprovalOrigin::UiYes` だけを `explicit_ui` として受理する。shell allowlist、session/pattern cache、`--yes-exec`、Worker 入出力は承認にならない。承認監査は `AgentTaskApprovalAudit`（`not_requested` / `approved` / `denied` / …）を型で記録する。
 
-`RequestContext.delegation_depth` は省略時 0。`ExternalCommandWorker` は child stdin と予約環境 `AISH_DELEGATION_DEPTH=1` の両方へ 1 を固定し、`ai` はこの予約環境だけを wire context へ写す。depth 1 では definition を非公開にし、forged call も registry/approval/spawn 前に拒否する。
+`RequestContext.delegation_depth` は省略時 0。`ExternalCommandWorker` は child stdin と予約環境 `AISH_DELEGATION_DEPTH=1` の両方へ 1 を固定し、`ai` はこの予約環境だけを wire context へ写す。depth 1 では definition を非公開にし、forged call も registry/approval/spawn 前に拒否する。timeout は stdin・wait・stdout/stderr drain 全体の deadline とし、超過時は process group を kill/reap する。
 
-Agent Task の workspace/process/Worker report Evidence は provenance を分離し、0068 ledger には `source=agent_task`, `verified=false` で追加できる。Worker の `reported_complete`、exit 0、changed path だけでは criterion satisfied / Done にしない。後続の親 read-only tool による観測は別 Evidence として既存 0068 規則で評価する。`human_task` の Human Shell、checkpoint/resume/continuation、Evidence、approval lifecycle は変更しない。`aish` に Agent Task の責務は追加しない。
+Agent Task の workspace/process/Worker report Evidence は provenance を分離し、0068 ledger には `source=agent_task`, `verified=false` で追加できる。Worker の `reported_complete` / `status=done`、exit 0、changed path だけでは criterion satisfied / Done にしない。`status=blocked` と bounded `blockers` で親が外部要因待ちを区別できる。stdout/stderr は親へ返す前に `sanitize_log_text` で redact する。後続の親 read-only tool による観測は別 Evidence として既存 0068 規則で評価する。`human_task` の Human Shell、checkpoint/resume/continuation、Evidence、approval lifecycle は変更しない。`aish` に Agent Task の責務は追加しない。
 # Collaborative Mode Human Task Briefing / Handoff Result
 
 Human Shell 開始時の briefing は `aish` の純粋関数 `render_human_task_briefing` が生成し、`print_handoff_briefing` が既存 `AISH_HANDOFF_PARENT_REQUEST` / `AISH_HANDOFF_SUGGESTED_COMMAND` を読んで stderr へ出力するだけを担う。表示は Collaborative Mode / Human Task / Objective / 固定理由 / Suggested first action / Done when / You remain in control の固定形式。複数行は論理行ごとに escape してインデントし、ANSI / C0 を無害化する。

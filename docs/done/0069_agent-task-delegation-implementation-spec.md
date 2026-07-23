@@ -15,7 +15,7 @@
 
 - Feature scope registry: `scripts/feature-scope.toml`
 - Status: `locked`
-- Scope revision: `2`
+- Scope revision: `3`
 - Complexity class: Yellow（`scope_review = "approved"`）
 - Vertical slice AC ID: `agent_task_vertical_e2e`
 - Locked AC IDs:
@@ -109,7 +109,7 @@ JSON Schema は `additionalProperties=false` とし、`worker` / `objective` / `
 | `aibe/src/adapters/outbound/tools/subprocess.rs` | 必要な場合のみ process-group cleanup を共通化 | `shell_exec` と Agent Task が timeout 時の group kill / reap を共有できるようにする。Agent Task 用コピーを作らない |
 | `aibe/src/adapters/outbound/toml_config.rs` | Agent Task 設定 parse / validation | executable / argv / env / profile は config からだけ受理し、LLM request と merge しない |
 
-`ExternalCommandWorker` は shell string や `sh -c` を組み立てず、executable と argv を分離して起動する。stdin envelope には `schema_version=1`、objective、instructions、completion criteria、canonical cwd、`delegation_depth=1` を含める。Worker output の `reported_complete` は「構造化応答を正常に parse した」という status に過ぎない。
+`ExternalCommandWorker` は shell string や `sh -c` を組み立てず、executable と argv を分離して起動する。stdin envelope には `schema_version=1`、objective、instructions、completion criteria、canonical cwd、`delegation_depth=1` を含める。Worker 構造化 report は `status: done|blocked|cancelled|failed` と optional `blockers` を返し、application が `AgentTaskStatus` / `blockers` へ正規化する。`reported_complete` は `status=done` のときだけ true とする。
 
 既存 `[[external_commands]]` は `shell_exec` 用であり Agent Task Worker registry の正本にしない。process 起動・timeout/kill/reap・sanitize の方針だけを再利用する。Agent Task 設定が disabled / empty のとき shell allowlist から Worker を自動生成してはならない。
 
