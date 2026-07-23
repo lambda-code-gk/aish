@@ -87,6 +87,12 @@ case "$mode" in
     } >&2
     printf '%s' '{"schema_version":1,"summary":"truncated env secret","status":"done"}'
     ;;
+  secret_named_path)
+    # Embed the inherited credential in a created filename so changed_paths
+    # would otherwise leak it into Result/Evidence.
+    touch -- "${AWS_SECRET_ACCESS_KEY-}"
+    printf '%s' '{"schema_version":1,"summary":"created secret-named file","status":"done"}'
+    ;;
   delete)
     rm -f agent-task-delete-me.txt
     printf '%s' '{"schema_version":1,"summary":"fixture deleted file","status":"done"}'

@@ -121,6 +121,11 @@ impl AgentTaskWorker for ExternalCommandWorker {
         .await;
         let after = snapshot_workspace(&context.cwd);
         let (changed_paths, observation_incomplete) = observe_changes(&before, &after);
+        let (changed_paths, observation_incomplete) = filter_secret_bearing_paths(
+            changed_paths,
+            &inherited_env_values,
+            observation_incomplete,
+        );
         match run {
             BoundedRunOutcome::Failed => Ok(WorkerExecutionOutput {
                 outcome: WorkerExecutionOutcome::LaunchFailed,
@@ -300,6 +305,32 @@ fn redact_trailing_secret_prefix_bytes(buf: &mut Vec<u8>, secret: &[u8]) {
     }
 }
 
+/// Drop changed paths that embed inherited credential values so filenames cannot
+/// leak secrets into Result / Evidence. Any drop marks observation incomplete.
+fn filter_secret_bearing_paths(
+    paths: Vec<std::path::PathBuf>,
+    secrets: &[String],
+    observation_incomplete: bool,
+) -> (Vec<std::path::PathBuf>, bool) {
+    if secrets.is_empty() {
+        return (paths, observation_incomplete);
+    }
+    let mut kept = Vec::with_capacity(paths.len());
+    let mut dropped = false;
+    for path in paths {
+        let path_text = path.to_string_lossy();
+        if secrets
+            .iter()
+            .any(|secret| !secret.is_empty() && path_text.contains(secret.as_str()))
+        {
+            dropped = true;
+        } else {
+            kept.push(path);
+        }
+    }
+    (kept, observation_incomplete || dropped)
+}
+
 fn bound_blockers(mut blockers: Vec<String>) -> Vec<String> {
     blockers.truncate(MAX_BLOCKERS);
     blockers
@@ -345,5 +376,24 @@ mod tests {
     fn replace_bytes_replaces_all_occurrences() {
         let out = replace_bytes(b"abXab", b"ab", b"Q");
         assert_eq!(out, b"QXQ");
+    }
+
+    #[test]
+    fn filter_secret_bearing_paths_drops_and_marks_incomplete() {
+        use super::filter_secret_bearing_paths;
+        use std::path::PathBuf;
+
+        let secret = "aws-path-secret".to_string();
+        let (kept, incomplete) = filter_secret_bearing_paths(
+            vec![
+                PathBuf::from("safe.txt"),
+                PathBuf::from("aws-path-secret"),
+                PathBuf::from("dir/aws-path-secret/out"),
+            ],
+            &[secret],
+            false,
+        );
+        assert_eq!(kept, vec![PathBuf::from("safe.txt")]);
+        assert!(incomplete);
     }
 }

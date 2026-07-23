@@ -243,7 +243,7 @@ Worker へ渡す prompt / stdin envelope は少なくとも schema version、obj
 - `status=completed` かつ `reported_complete=true` は Worker が正常終了して構造化 `done` を返したことだけを意味し、Task Completion の `Done` ではない
 - Worker 構造化 report の `status` は `done | blocked | cancelled | failed`。`blocked` は非空の `blockers` を必須とし、親が未完了と実行障害を区別できるようにする
 - timeout / signal termination では `exit_code=null` を許容し、`timed_out=true` と status を一致させる
-- stdout / stderr と Evidence は、`env_allowlist` で継承した値の exact-value 置換と既存 sanitize / redaction（`aish_replay::sanitize_log_text`）、および byte/item 上限を適用し、完全な process log や秘密値を親 prompt へ無制限に複製しない
+- stdout / stderr / Evidence / `changed_paths` は、`env_allowlist` で継承した値の exact-value 置換（path に含まれる場合は当該 path を除外して `observation_incomplete`）と既存 sanitize / redaction（`aish_replay::sanitize_log_text`）、および byte/item 上限を適用し、完全な process log や秘密値を親 prompt へ無制限に複製しない
 - changed-file Evidence は worker report と filesystem 前後観測を別 provenance にし、path は cwd 相対・正規化済みとする。symlink target や file content を暗黙収集しない
 - top-level と各 Evidence の `verified` は本 spec では常に false。true を受理・生成する schema は後続の独立検証 spec まで導入しない
 

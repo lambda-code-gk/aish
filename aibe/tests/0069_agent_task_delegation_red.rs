@@ -891,6 +891,50 @@ async fn agent_task_redacts_truncated_inherited_env_prefix() {
     assert!(result.stderr.contains("[REDACTED]"));
 }
 
+#[tokio::test]
+async fn agent_task_excludes_changed_paths_that_embed_inherited_secrets() {
+    let _env_lock = ENV_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let secret = "aws-path-secret-value-9f3a2b1c";
+    let env_name = "AWS_SECRET_ACCESS_KEY";
+    let _guard = EnvVarGuard::set(env_name, secret);
+    let temp = TempDir::new().expect("tempdir");
+    let mut config = worker_config("pathsecret", "secret_named_path", 2);
+    config.env_allowlist = vec![env_name.into()];
+    let service = service_from_configs(&[config], temp.path());
+    let result = service
+        .execute(
+            "pathsecret",
+            valid_request("pathsecret"),
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("secret-named path result");
+    assert_eq!(result.status, AgentTaskStatus::Completed);
+    assert!(
+        result.observation_incomplete,
+        "dropping secret-bearing paths must mark observation incomplete"
+    );
+    assert!(
+        result
+            .changed_paths
+            .iter()
+            .all(|path| !path.to_string_lossy().contains(secret)),
+        "changed_paths must not embed inherited credentials: {:?}",
+        result.changed_paths
+    );
+    let serialized = serde_json::to_string(&result).expect("serialize result");
+    assert!(
+        !serialized.contains(secret),
+        "inherited credential must not appear anywhere in serialized parent result"
+    );
+    assert!(result
+        .evidence
+        .iter()
+        .all(|item| !item.summary.contains(secret)));
+}
+
 /// Serializes process-wide env mutation used by Agent Task secret redaction tests.
 static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 

@@ -244,6 +244,7 @@
 - child 環境は一度 clear し、設定済み環境変数名 allowlist の値だけを親から継承する。値、argv、生 structured output、file content を audit/Evidence/error/tracingへ複製しない。予約済み `AISH_DELEGATION_DEPTH=1` は aibe が固定する。
 - stdout/stderr は drain 中に stream ごとの上限を適用し、全文の別 buffer を保持しない。timeout deadline は stdin 書込み・direct child 待機・両 drain 全体を覆い、超過時は新しい process session/group 全体を kill して親を wait/reapする。drain は spawn 直後・stdin 書込みより先に開始する。子孫が pipe を掴んだまま親だけ終了しても、cleanup errorやtimeoutを成功へ変換しない。
 - 親 LLM へ返す stdout/stderr/summary/blockers には、`env_allowlist` で実際に継承した値の exact-value 置換を先に適用し、続けて既存 `sanitize_log_text` によるパターン redaction を適用する。stdout/stderr は UTF-8 lossy 変換前の byte 列で置換し、byte 上限で秘密値が途中切断・不完全文字になっても末尾 proper prefix を置換する。`TOKEN=value` 形式でない単独 credential dump や断片を親 prompt へ漏らさない。
+- `changed_paths` に継承値が含まれる path（例: 秘密値をファイル名にした作成）は親 Result / Evidence へ返さず除外し、`observation_incomplete=true` とする。除外 path を検証用途にも使わない。
 - Worker 構造化 report は `done | blocked | cancelled | failed` と bounded `blockers` を正規化し、親が未完了・外部要因 Blocked・実行障害を区別できるようにする。
 - workspace observation は symlinkを辿らない metadata の前後差分だけで、最大件数到達は incomplete とする。内容、symlink target、root外 pathを収集せず、Worker report/process output/exit/workspace change の provenanceを分離する。
 - top-level Result、全 Agent Task Evidence、0068 bridge は常に `verified=false`。Worker自己申告、exit 0、changed pathではTask CompletionをDoneにしない。depth 1 の再委譲はtool非公開かつforged callをspawn前拒否する。
