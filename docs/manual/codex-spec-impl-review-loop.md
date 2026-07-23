@@ -182,8 +182,10 @@ Step 6 の ./scripts/verify.sh または ./scripts/smoke-mock.sh が失敗しま
 
 ## 運用メモ
 
-- Step5 で重大が出たら、修正後に必ず Step5 を再実行する
+- Step5 で重大が出たら、修正後に必ず Step5 を再実行する（**`codex-reply`**。新規 thread 禁止）
+- Step2/5 レビューは `model_reasoning_effort: low`。Step1/3 の docs 作成ターンでは verify.sh を求めない
 - Step6〜7 を省略しない（「test が通ったから OK」で終わらせない）
 - コミット時に実装指示書を `docs/tasks/` → `docs/done/` へ移す（設計書は `docs/spec/` に残す）
 - 最終報告では「実施ステップ」「verify / smoke 結果」「未確定・残リスク」を明記する
 - `git commit` / `git push` はユーザー明示時のみ
+- 速さの詳細: [`docs/codex-delegation.md`](../codex-delegation.md)「速さ」

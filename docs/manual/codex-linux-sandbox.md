@@ -10,6 +10,14 @@ bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted
 
 Ubuntu 24.04 で `kernel.apparmor_restrict_unprivileged_userns = 1` のときに多い。
 
+別症状（ツールだけ死ぬ）:
+
+```text
+Unable to spawn .../codex-linux-sandbox because it doesn't exist
+```
+
+`~/.codex/tmp/arg0` を MCP 稼働中に消すと起きる。MCP Restart / Cursor 再起動で復旧。
+
 ## 確認
 
 ```bash
@@ -17,6 +25,20 @@ Ubuntu 24.04 で `kernel.apparmor_restrict_unprivileged_userns = 1` のときに
 ```
 
 `codex doctor`、bwrap、Landlock、CLI / MCP 経路をまとめて確認する。
+
+### 誤診に注意（Cursor エージェント sandbox）
+
+Cursor 親エージェントのシェル（`cursorsandbox` + ローカル `HTTP_PROXY`）内で診断すると、次が **誤って壊れているように見える**ことがある。
+
+| 見え方 | ホスト上の実態 |
+|--------|----------------|
+| `~/.codex` が root 所有 | UID remap。実ファイルは通常ユーザー所有 |
+| bwrap / uid_map Permission denied | エージェント sandbox 制限 |
+| WebSocket / reachability FAIL | ローカル proxy 経由の失敗 |
+
+**正本はホスト端末**（通常の gnome-terminal 等）での再実行。スクリプトはエージェント sandbox を検知すると WARN を出し、bwrap 失敗時は exit 2 にする。
+
+ホストで健全なら、MCP の遅さの主因は環境劣化ではなくタスク運用（冷スタート・reasoning・verify）側を疑う。詳細は [`docs/codex-delegation.md`](../codex-delegation.md)「速さ」。
 
 ## 本リポジトリの設定
 

@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use crate::ports::outbound::{
-    default_conversation_store_root_with_home, AppConfig, ConfigError, ConfigLoader,
-    LlmProfilesConfig, MemoryConfig, RouterConfig, ToolsConfig,
+    default_conversation_store_root_with_home, AgentTaskConfig, AppConfig, ConfigError,
+    ConfigLoader, LlmProfilesConfig, MemoryConfig, RouterConfig, ToolsConfig,
 };
 use aibe_client::default_socket_path;
 
@@ -28,6 +28,7 @@ impl EnvConfig {
             llm: LlmProfilesConfig::default_mock(),
             tools: ToolsConfig::default(),
             external_commands: Vec::new(),
+            agent_task: AgentTaskConfig::default(),
             memory: load_memory_config_from_env(),
         })
     }

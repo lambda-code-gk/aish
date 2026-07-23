@@ -457,3 +457,22 @@ Phase C で追加した `chat` / `--progress` / streaming / cancel / `--timeout`
 ## カバレッジ
 
 当面は数値カバレッジ目標なし。**境界とプロトコル** を優先してテストを足す。
+
+## 0069 Agent Task Delegation
+
+`aibe/tests/0069_agent_task_delegation_red.rs` の11 testがScope Lock済みACと1:1対応する。Phase 1 vertical E2Eは scripted parent LLM と production `DefaultToolRegistry` / `AgentTaskTool` / `AgentTaskService` / config parser / `DefaultAgentTaskWorkerRegistry` / `ExternalCommandWorker` を通し、`tests/fixtures/0069_agent_task_worker.sh` をsubprocessとして一回起動する。fixture直呼びやMockWorkerでvertical E2Eを代替しない。
+
+同ファイルのMockWorker testはprocessなしでPortと共通DTOのsuccess/failure/timeout/invalid-output正規化を固定する。fixture modeは設定済みargvからだけ選び、cwd relative/absolute/escape/missing/file/symlink、non-zero、launch failure、malformed/large output、timeout child process-group cleanup、workspace metadata差分、全`verified=false`、depth 1 forged call、approval matrix、0068 bridgeを直列に検証する。実API、API key、network、実Agent製品は使わない。
+
+実装中の対象ゲートは次である。
+
+```bash
+cargo test -p aibe --test 0069_agent_task_delegation_red -j 1 -- --test-threads=1
+cargo test -p aibe --test 0068_task_completion_phase1_red -j 1 -- --test-threads=1
+cargo test -p aibe --test 0062_collab_mode_human_task_tool -j 1 -- --test-threads=1
+./scripts/verify-targeted.sh --package aibe --test 0069_agent_task_delegation_red
+./scripts/check-spec-acceptance.py
+./scripts/check-feature-scope.py
+```
+
+0062–0066の`ai`/`aibe`回帰testはAgent/Human共通lifecycleを作らず、既存Human Shell、checkpoint/resume/continuation/recoveryの意味が不変であることを確認する。全体完了前は通常どおり`./scripts/verify.sh`を一回実行し、socket syscallがsandboxで`EPERM`なら targeted結果とともに明示する。

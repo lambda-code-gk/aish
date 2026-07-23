@@ -31,11 +31,21 @@ pub mod write_path_revalidator;
 
 pub use llm_call_tracer::{LlmCallTracer, NoopLlmCallTracer};
 
+pub use agent_task_approval::{
+    AgentTaskApprovalGate, AgentTaskApprovalOutcome, AgentTaskApprovalPrompt,
+};
+pub use agent_task_registry::AgentTaskWorkerRegistry;
+pub use agent_task_worker::{
+    AgentTaskExecutionContext, AgentTaskWorker, AgentTaskWorkerError, WorkerExecutionOutcome,
+    WorkerExecutionOutput,
+};
+
 pub use capability_policy::{CapabilityDenied, CapabilityPolicy};
 pub use client_tool::{empty_tool_result, ClientToolGate};
 pub use command_policy::CommandPolicy;
 pub use config::{
-    default_conversation_store_root_with_home, validate_external_commands, AppConfig, ConfigError,
+    default_conversation_store_root_with_home, validate_agent_task_config,
+    validate_external_commands, AgentTaskConfig, AgentTaskWorkerConfig, AppConfig, ConfigError,
     ConfigLoader, ExploreLimitsConfig, ExternalCommandConfig, FileWriteApprovalMode,
     FileWriteConfig, LlmBackend, LlmGenerationParams, LlmProfile, LlmProfilesConfig,
     LlmProviderKind, MemoryConfig, ProfileRegistry, ReadFileConfig, RouterConfig,
@@ -82,3 +92,6 @@ pub use turn_hook::{TurnHook, TurnHookError};
 #[cfg(feature = "memory")]
 pub use work_store::{EmptyWorkStore, WorkStore, WorkStoreContext, WorkStoreError};
 pub use write_path_revalidator::{WritePathRevalidateError, WritePathRevalidator};
+pub mod agent_task_approval;
+pub mod agent_task_registry;
+pub mod agent_task_worker;

@@ -16,6 +16,51 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0069"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 3
+scope_change_reason = "PR #26 review: absolute executable, full-process timeout, typed approval audit, blocked+blockers, stdout/stderr redaction（scope数値は不変）"
+scope_review = "approved"
+
+core_outcome = "親AgentがTask Completionの部分作業を構造化agent_taskとして設定済み外部Agentへ同期委譲しResultと出所付きEvidenceをverified=falseで受け取る"
+
+actors = 3
+state_machines = 2
+persistent_aggregates = 0
+external_effects = 3
+process_boundaries = 2
+
+novel_mechanisms = ["agent-task-worker-port"]
+integrations = ["existing-query-loop-tool-registry", "0068-task-completion-evidence", "external-command-process-policy"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "independent verification, repair iteration, parallel/async execution, nested delegation, durable resume/recovery, PR/CI/GUI adapters, and OS-level sandbox hardening are deferred"
+
+vertical_slice_ac_id = "agent_task_vertical_e2e"
+
+locked_ac_ids = [
+  "agent_task_vertical_e2e",
+  "agent_task_request_is_strictly_validated",
+  "agent_task_registry_and_disabled_pack_fail_closed",
+  "agent_task_runs_in_validated_cwd_with_timeout",
+  "agent_task_result_normalizes_worker_outcomes",
+  "agent_task_evidence_is_bounded_and_unverified",
+  "agent_task_recursion_is_rejected",
+  "agent_task_approval_cannot_be_bypassed",
+  "agent_task_integrates_with_task_completion_as_unverified",
+  "agent_task_preserves_human_task_behavior",
+  "agent_task_core_is_product_agnostic_and_mockable",
+]
+
+[[features]]
 spec = "0068"
 status = "done"
 scope_class = "feature"

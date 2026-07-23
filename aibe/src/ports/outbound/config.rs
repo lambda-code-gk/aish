@@ -48,6 +48,24 @@ pub struct ExternalCommandConfig {
     pub timeout_secs: u64,
 }
 
+/// `[agent_task]` と `[[agent_task.workers]]` の本番 Worker 設定。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AgentTaskConfig {
+    pub enabled: bool,
+    pub workers: Vec<AgentTaskWorkerConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentTaskWorkerConfig {
+    pub id: String,
+    pub executable: PathBuf,
+    pub args: Vec<String>,
+    pub timeout_secs: u64,
+    pub permission_profile: String,
+    /// 値ではなく、親環境から継承してよい変数名だけを保持する。
+    pub env_allowlist: Vec<String>,
+}
+
 /// 外部コマンドの `timeout_secs` 既定（30 分）。
 pub const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_SECS: u64 = 1800;
 
@@ -129,7 +147,77 @@ pub struct AppConfig {
     pub llm: LlmProfilesConfig,
     pub tools: ToolsConfig,
     pub external_commands: Vec<ExternalCommandConfig>,
+    pub agent_task: AgentTaskConfig,
     pub memory: MemoryConfig,
+}
+
+/// Worker executable を絶対パス必須にし、可能なら canonicalize した実体へ書き戻す。
+pub fn validate_agent_task_config(config: &mut AgentTaskConfig) -> Result<(), ConfigError> {
+    let mut ids = std::collections::HashSet::new();
+    for worker in &mut config.workers {
+        crate::domain::WorkerId::parse(worker.id.clone())
+            .map_err(|e| ConfigError::Invalid(format!("agent_task worker id: {e}")))?;
+        if !ids.insert(worker.id.clone()) {
+            return Err(ConfigError::Invalid(format!(
+                "duplicate agent_task worker id: {}",
+                worker.id
+            )));
+        }
+        if worker.executable.as_os_str().is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable must not be empty",
+                worker.id
+            )));
+        }
+        if !worker.executable.is_absolute() {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable must be an absolute path (got {:?})",
+                worker.id, worker.executable
+            )));
+        }
+        let canonical = worker.executable.canonicalize().map_err(|e| {
+            ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable cannot be resolved: {e}",
+                worker.id
+            ))
+        })?;
+        if !canonical.is_file() {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' executable must be an existing file",
+                worker.id
+            )));
+        }
+        worker.executable = canonical;
+        if worker.timeout_secs == 0 || worker.timeout_secs > 1800 {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' timeout_secs must be 1..=1800",
+                worker.id
+            )));
+        }
+        if worker.permission_profile.trim().is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' permission_profile must not be empty",
+                worker.id
+            )));
+        }
+        if worker.env_allowlist.iter().any(|name| {
+            name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        }) {
+            return Err(ConfigError::Invalid(format!(
+                "agent_task worker '{}' env_allowlist contains an invalid name",
+                worker.id
+            )));
+        }
+    }
+    if config.enabled && config.workers.is_empty() {
+        return Err(ConfigError::Invalid(
+            "agent_task.enabled=true requires at least one worker".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

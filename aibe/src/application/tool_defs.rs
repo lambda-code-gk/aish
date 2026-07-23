@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use aibe_protocol::{HUMAN_TASK, SHELL_EXEC};
+use aibe_protocol::{AGENT_TASK, HUMAN_TASK, SHELL_EXEC};
 
 use crate::domain::ToolName;
 use crate::ports::outbound::ToolDefinition;
@@ -22,6 +22,7 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
         .filter_map(|name| match name.as_str() {
             SHELL_EXEC => Some(shell_exec_definition()),
             HUMAN_TASK => Some(human_task_definition()),
+            AGENT_TASK => Some(agent_task_definition()),
             READ_FILE => Some(read_file_definition()),
             LIST_DIR => Some(list_dir_definition()),
             GREP => Some(grep_definition()),
@@ -32,6 +33,33 @@ pub fn definitions_for(allowed: &[ToolName]) -> Vec<ToolDefinition> {
             _ => None,
         })
         .collect()
+}
+
+fn agent_task_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: AGENT_TASK.into(),
+        description: "Delegate one structured task synchronously to a configured external worker. Results and evidence are always unverified.".into(),
+        parameters: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "worker": {"type": "string", "minLength": 1, "maxLength": 64},
+                "objective": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "instructions": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 2048}},
+                "completion_criteria": {"type": "array", "minItems": 1, "maxItems": 32, "items": {
+                    "type": "object", "additionalProperties": false,
+                    "properties": {
+                        "id": {"type": "string", "minLength": 1, "maxLength": 64},
+                        "description": {"type": "string", "minLength": 1, "maxLength": 2048}
+                    },
+                    "required": ["id", "description"]
+                }},
+                "cwd": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "timeout_secs": {"type": "integer", "minimum": 1, "maximum": 1800}
+            },
+            "required": ["worker", "objective", "instructions", "completion_criteria"]
+        }),
+    }
 }
 
 fn human_task_definition() -> ToolDefinition {

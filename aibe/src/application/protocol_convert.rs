@@ -63,6 +63,11 @@ impl TryFrom<RequestContext> for AgentTurnContext {
             memory_space_id: ctx.memory_space_id.filter(|s| !s.is_empty()),
             collaborative_handoff: ctx.collaborative_handoff,
             execution_mode: ctx.execution_mode,
+            delegation_depth: if ctx.delegation_depth == 0 {
+                crate::domain::DelegationDepth::root()
+            } else {
+                crate::domain::DelegationDepth::delegated()
+            },
         })
     }
 }

@@ -60,3 +60,4 @@ pub use toml_config::TomlConfig;
 #[cfg(feature = "memory")]
 pub use work_store::FilesystemWorkStore;
 pub use write_path_revalidator::ConfigWritePathRevalidator;
+pub mod agent_task;

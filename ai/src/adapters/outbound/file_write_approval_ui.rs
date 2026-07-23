@@ -26,7 +26,12 @@ pub fn escape_for_file_write_approval_display(s: &str) -> String {
 
 /// stderr へ出す承認プロンプト行（設計 §15.1）。
 pub fn approval_prompt_stderr_lines(prompt: &ToolApprovalPrompt) -> Vec<String> {
-    let mut lines = vec!["ai: file write approval required:".to_string()];
+    let agent_task = prompt.tool_name == aibe_protocol::AGENT_TASK;
+    let mut lines = vec![if agent_task {
+        "ai: agent_task approval required:".to_string()
+    } else {
+        "ai: file write approval required:".to_string()
+    }];
     lines.push(format!(
         "  tool: {}",
         escape_for_file_write_approval_display(&prompt.tool_name)
@@ -47,13 +52,18 @@ pub fn approval_prompt_stderr_lines(prompt: &ToolApprovalPrompt) -> Vec<String> 
         lines.push(format!("  paths: [{}]", escaped.join(", ")));
     }
     lines.push(format!(
-        "  change: {}",
+        "  {}: {}",
+        if agent_task { "task" } else { "change" },
         escape_for_file_write_approval_display(&prompt.summary)
     ));
     if prompt.preview_truncated {
         lines.push("  note: preview truncated (see summary for full change stats)".to_string());
     }
-    lines.push("  preview:".to_string());
+    lines.push(if agent_task {
+        "  trust boundary:".to_string()
+    } else {
+        "  preview:".to_string()
+    });
     for line in prompt.preview.lines() {
         lines.push(escape_for_file_write_approval_display(line));
     }
@@ -93,6 +103,7 @@ pub fn file_write_approval_decision_from_input(
 
 /// ユーザーに yes/no を求め、承認なら decision を返す。
 pub fn prompt_file_write_approval(prompt: ToolApprovalPrompt) -> ToolApprovalDecision {
+    let agent_task = prompt.tool_name == aibe_protocol::AGENT_TASK;
     for line in approval_prompt_stderr_lines(&prompt) {
         eprintln!("{line}");
     }
@@ -100,7 +111,14 @@ pub fn prompt_file_write_approval(prompt: ToolApprovalPrompt) -> ToolApprovalDec
         eprintln!("ai: file write approval unavailable (non-interactive stdin)");
         return ToolApprovalDecision::Unavailable;
     }
-    eprint!("Apply this change? [y/N] ");
+    eprint!(
+        "{} [y/N] ",
+        if agent_task {
+            "Run this configured worker once?"
+        } else {
+            "Apply this change?"
+        }
+    );
     let _ = std::io::stderr().flush();
     let mut line = String::new();
     let Ok(n) = std::io::stdin().read_line(&mut line) else {

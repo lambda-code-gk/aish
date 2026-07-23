@@ -286,6 +286,82 @@ impl ExecutedToolCall {
         self.approval_source = Some(approval_source);
         self
     }
+
+    /// Agent Task 専用監査。`client_tools_allowlist` ラベルは使わない。
+    pub fn with_agent_task_audit(
+        mut self,
+        approval: AgentTaskApprovalAudit,
+        worker: &str,
+        cwd: &str,
+        timeout_secs: u64,
+        approval_origin: &str,
+    ) -> Self {
+        self.risk_class = Some(ToolRiskClass::WriteLike);
+        self.dry_run = Some(false);
+        // Shell/FileWrite と同様: ユーザーが明示応答した Approved/Denied は ExplicitClientOptIn。
+        // 承認フローに入る前・ゲート欠如・timeout/cancel は NotRequired。
+        self.approval_state = Some(match approval {
+            AgentTaskApprovalAudit::Approved | AgentTaskApprovalAudit::Denied => {
+                ToolApprovalState::ExplicitClientOptIn
+            }
+            AgentTaskApprovalAudit::NotRequested
+            | AgentTaskApprovalAudit::Unavailable
+            | AgentTaskApprovalAudit::Cancelled
+            | AgentTaskApprovalAudit::Timeout => ToolApprovalState::NotRequired,
+        });
+        self.decision = Some(match approval {
+            AgentTaskApprovalAudit::Approved if self.status == ExecutedToolStatus::Ok => {
+                "executed".into()
+            }
+            AgentTaskApprovalAudit::Approved => "rejected_or_failed".into(),
+            AgentTaskApprovalAudit::NotRequested => "rejected_before_approval".into(),
+            AgentTaskApprovalAudit::Denied => "rejected_by_user".into(),
+            AgentTaskApprovalAudit::Unavailable => "approval_unavailable".into(),
+            AgentTaskApprovalAudit::Cancelled => "cancelled".into(),
+            AgentTaskApprovalAudit::Timeout => "timeout".into(),
+        });
+        let worker = truncate_audit_token(worker, 64);
+        let cwd = truncate_audit_token(cwd, 256);
+        let origin = truncate_audit_token(approval_origin, 64);
+        let approval_token = approval.as_str();
+        self.approval_source = Some(format!(
+            "agent_task_approval=ask;approval={approval_token};worker={worker};cwd={cwd};timeout={timeout_secs};origin={origin}"
+        ));
+        self
+    }
+}
+
+/// Agent Task 専用の承認監査状態（文字列推定禁止）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTaskApprovalAudit {
+    NotRequested,
+    Approved,
+    Denied,
+    Unavailable,
+    Cancelled,
+    Timeout,
+}
+
+impl AgentTaskApprovalAudit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRequested => "not_requested",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Unavailable => "unavailable",
+            Self::Cancelled => "cancelled",
+            Self::Timeout => "timeout",
+        }
+    }
+}
+
+fn truncate_audit_token(value: &str, max: usize) -> String {
+    let mut out = value.replace([';', '\n', '\r'], "_");
+    if out.len() > max {
+        out.truncate(out.floor_char_boundary(max));
+    }
+    out
 }
 
 fn tool_approval_origin_audit_suffix(origin: ToolApprovalOrigin) -> &'static str {

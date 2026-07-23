@@ -155,6 +155,9 @@ pub struct RequestContext {
     /// Task Completion Contract をこの request で明示的に有効化する。
     #[serde(default)]
     pub task_completion: bool,
+    /// aibe が外部 Worker 起動時に固定する委譲深度。省略時は親 turn (0)。
+    #[serde(default)]
+    pub delegation_depth: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

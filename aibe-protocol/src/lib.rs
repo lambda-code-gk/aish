@@ -18,8 +18,8 @@ pub use collaborative_handoff::{
     HUMAN_TASK_BRIEFING_MAX_BYTES, SUGGESTED_COMMAND_MAX_BYTES,
 };
 pub use executed_tool::{
-    ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome, ShellExecApprovalOutcome,
-    ToolApprovalState, ToolRiskClass,
+    AgentTaskApprovalAudit, ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome,
+    ShellExecApprovalOutcome, ToolApprovalState, ToolRiskClass,
 };
 pub use memory::{
     MemoryApplyRequestBody, MemoryApplyStatus, MemoryChangeEventDto, MemoryChangeKind,
@@ -49,9 +49,9 @@ pub use response::{
 };
 pub use tool_name::{
     is_known_tool, map_advisory_tool_alias, parse_tool_names, sanitize_readonly_advisory_tools,
-    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, APPLY_PATCH, GIT_DIFF,
-    GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS, READ_FILE,
-    SHELL_EXEC, WRITE_FILE,
+    sanitize_readonly_advisory_tools_option, ToolName, UnknownToolError, AGENT_TASK, APPLY_PATCH,
+    GIT_DIFF, GIT_STATUS, GREP, HUMAN_TASK, KNOWN_TOOLS, LIST_DIR, READONLY_ADVISORY_TOOLS,
+    READ_FILE, SHELL_EXEC, WRITE_FILE,
 };
 pub use work::{
     validate_work_id, validate_work_text, WorkApplyRequestBody, WorkApplyResponseBody,

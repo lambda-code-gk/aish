@@ -42,6 +42,7 @@ dependencies = [
  "ai",
  "aibe-client",
  "aibe-protocol",
+ "aish-replay",
  "anyhow",
  "async-trait",
  "clap",

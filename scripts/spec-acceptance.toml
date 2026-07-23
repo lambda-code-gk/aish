@@ -5,6 +5,105 @@
 # pending = false … テストが存在し、#[ignore] であってはならない（verify で実行される想定）。
 
 [[cases]]
+spec = "0069"
+phase = 1
+id = "agent_task_vertical_e2e"
+description = "親Query Loopがfixture external commandをproduction registry/adapter経由で実行しResultとEvidenceをverified=falseで受け取る"
+test = "agent_task_vertical_e2e"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 1
+id = "agent_task_request_is_strictly_validated"
+description = "requestの必須値・上限・worker・cwd・timeout・未知fieldを実行前に検査し実行指定をLLMへ露出しない"
+test = "agent_task_request_is_strictly_validated"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 1
+id = "agent_task_registry_and_disabled_pack_fail_closed"
+description = "設定済みworkerだけをregistryへ登録しBasic Packとforged allowlistをfail-closedにする"
+test = "agent_task_registry_and_disabled_pack_fail_closed"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_runs_in_validated_cwd_with_timeout"
+description = "認可root内cwdだけで実行しtimeout時にprocess groupをkill/reapする"
+test = "agent_task_runs_in_validated_cwd_with_timeout"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_result_normalizes_worker_outcomes"
+description = "stdout/stderr/exit/timeout/launch/parse errorをbounded共通Resultへfail-closed正規化する"
+test = "agent_task_result_normalizes_worker_outcomes"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_evidence_is_bounded_and_unverified"
+description = "changed filesとprocess結果をprovenance・上限付きEvidenceにし常にverified=falseとする"
+test = "agent_task_evidence_is_bounded_and_unverified"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_recursion_is_rejected"
+description = "depth 0からの一度だけを許しdelegated depth 1のtool公開とforged requestを拒否する"
+test = "agent_task_recursion_is_rejected"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_approval_cannot_be_bypassed"
+description = "agent_task固有approvalをshell_exec設定・CLI flag・worker入出力から迂回できず監査する"
+test = "agent_task_approval_cannot_be_bypassed"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_integrates_with_task_completion_as_unverified"
+description = "0068がAgent Task結果を未検証Evidenceとして取り込み自己申告だけでDoneにしない"
+test = "agent_task_integrates_with_task_completion_as_unverified"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 2
+id = "agent_task_preserves_human_task_behavior"
+description = "human_taskの公開・shell・checkpoint/resume/continuation・Evidence・approval契約を変えない"
+test = "agent_task_preserves_human_task_behavior"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
+spec = "0069"
+phase = 1
+id = "agent_task_core_is_product_agnostic_and_mockable"
+description = "coreはWorker Portと共通DTOだけを参照し製品固有処理をadapterへ閉じMockWorkerで試験できる"
+test = "agent_task_core_is_product_agnostic_and_mockable"
+file_glob = "aibe/tests/0069_agent_task_delegation_red.rs"
+pending = false
+
+[[cases]]
 spec = "0068"
 phase = 1
 id = "task_completion_vertical_e2e"

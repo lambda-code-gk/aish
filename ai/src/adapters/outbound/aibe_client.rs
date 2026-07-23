@@ -69,6 +69,10 @@ impl AibeUnixClient {
             client_tools: request.client_tools.clone(),
             context: {
                 let mut ctx = request.request_context.clone();
+                ctx.delegation_depth = match std::env::var("AISH_DELEGATION_DEPTH").as_deref() {
+                    Ok("1") => 1,
+                    _ => 0,
+                };
                 ctx.shell_log_tail = request.shell_log_tail.clone();
                 ctx.cwd = request
                     .client_cwd

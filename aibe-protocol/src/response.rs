@@ -177,6 +177,7 @@ pub enum CompletionEvidenceSource {
     Observation,
     Verification,
     Deliverable,
+    AgentTask,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
