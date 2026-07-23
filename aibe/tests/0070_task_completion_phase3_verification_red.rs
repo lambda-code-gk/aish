@@ -692,6 +692,54 @@ fn parent_reobserves_artifacts_and_external_state() {
     assert_eq!(after_agent[1].source, EvidenceSource::Observation);
     assert!(after_agent[1].observed_after_effect);
     assert!(after_agent[1].verified);
+
+    // plan に固定した grep は verification_tools 既定外でも verified になる
+    let mut grep_contract = contract.clone();
+    grep_contract.verification_tools = vec!["read_file".into()];
+    grep_contract.delegated_verification = Some(DelegatedVerificationPlan {
+        items: vec![
+            DelegatedVerificationPlanItem {
+                id: "v-command".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Command {
+                    command: "test".into(),
+                    args: vec!["-f".into(), "0070-artifact.txt".into()],
+                    cwd: dir.path().display().to_string(),
+                },
+                expected_success: "exit status 0".into(),
+            },
+            DelegatedVerificationPlanItem {
+                id: "v-grep".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Observation {
+                    tool: "grep".into(),
+                    target: "0070-artifact.txt".into(),
+                },
+                expected_success: "content matches".into(),
+            },
+        ],
+    });
+    let agent_for_grep = ExecutedToolCall::ok(
+        "agent-grep".into(),
+        AGENT_TASK,
+        serde_json::to_value(initial_request()).expect("request"),
+        r#"{"status":"done","verified":false}"#.into(),
+    );
+    let grep = ExecutedToolCall::ok(
+        "grep".into(),
+        "grep",
+        json!({"path":"0070-artifact.txt","pattern":"verified"}),
+        "verified".into(),
+    )
+    .with_audit(
+        ToolRiskClass::ReadOnly,
+        ToolApprovalState::NotRequired,
+        false,
+    );
+    let grep_evidence = append_evidence_from_tools(&grep_contract, &[], &[agent_for_grep, grep]);
+    assert_eq!(grep_evidence[1].source, EvidenceSource::Observation);
+    assert_eq!(grep_evidence[1].plan_item_id.as_deref(), Some("v-grep"));
+    assert!(grep_evidence[1].verified);
 }
 
 #[test]

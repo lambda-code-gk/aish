@@ -188,11 +188,14 @@ fn classify_evidence(
     if read_only && ok && contract.delegated_verification.is_some() {
         if let Some(item) = matching_delegated_observation(contract, call, target) {
             let after_effect = has_prior_effect(ledger, target);
+            // 委譲前に固定した plan item 自体が verification-tool 指定なので、
+            // contract.verification_tools の既定（Execution は read_file/git_diff）に
+            // 含まれない grep / list_dir / git_status でも after_effect なら verified にする。
             return (
                 EvidenceSource::Observation,
                 after_effect,
                 item.criterion_ids.clone(),
-                after_effect && verification_tool,
+                after_effect,
             );
         }
         return (EvidenceSource::Observation, false, Vec::new(), false);
