@@ -80,8 +80,9 @@ pub(crate) enum BoundedRunOutcome {
 
 /// stdin envelope を渡し、output を読みながら上限適用し、timeout 時は process group を回収する。
 ///
-/// deadline は stdin 書込み・direct child 待機・stdout/stderr drain の全体に適用する。
-/// 子孫が pipe を掴んだまま親だけ終了しても、超過時は session/process group を kill して reap する。
+/// stdout/stderr drain は stdin 書込みより先に開始する。deadline は stdin 書込み・direct child
+/// 待機・stdout/stderr drain の全体に適用する。子孫が pipe を掴んだまま親だけ終了しても、
+/// 超過時は session/process group を kill して reap する。
 pub(crate) async fn run_subprocess_bounded(
     mut cmd: Command,
     stdin: Vec<u8>,
@@ -104,6 +105,11 @@ pub(crate) async fn run_subprocess_bounded(
     let child_pid = child.id().unwrap_or(0);
     let deadline = tokio::time::Instant::now() + duration;
 
+    // Drain before stdin write so a Worker that emits pipe-filling startup
+    // output before reading stdin cannot deadlock with the parent writer.
+    let stdout_task = tokio::spawn(drain_bounded(child.stdout.take(), max_output_bytes));
+    let stderr_task = tokio::spawn(drain_bounded(child.stderr.take(), max_output_bytes));
+
     if let Some(mut pipe) = child.stdin.take() {
         match tokio::time::timeout_at(deadline, pipe.write_all(&stdin)).await {
             Ok(Ok(())) => drop(pipe),
@@ -111,19 +117,20 @@ pub(crate) async fn run_subprocess_bounded(
                 kill_process_group(child_pid);
                 let _ = child.start_kill();
                 let _ = child.wait().await;
+                stdout_task.abort();
+                stderr_task.abort();
                 return BoundedRunOutcome::Failed;
             }
             Err(_) => {
                 kill_process_group(child_pid);
                 let _ = child.start_kill();
                 let _ = child.wait().await;
+                stdout_task.abort();
+                stderr_task.abort();
                 return BoundedRunOutcome::TimedOut;
             }
         }
     }
-
-    let stdout_task = tokio::spawn(drain_bounded(child.stdout.take(), max_output_bytes));
-    let stderr_task = tokio::spawn(drain_bounded(child.stderr.take(), max_output_bytes));
 
     let wait_result = tokio::time::timeout_at(deadline, child.wait()).await;
     match wait_result {
@@ -219,4 +226,48 @@ async fn drain_stderr(pipe: Option<tokio::process::ChildStderr>) -> Vec<u8> {
 
 async fn join_drain(task: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
     task.await.unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Stdio;
+    use tokio::process::Command;
+
+    #[tokio::test]
+    async fn bounded_run_drains_before_stdin_write_avoids_pipe_deadlock() {
+        // Child fills stderr before reading stdin. Parent stdin is larger than a
+        // typical pipe buffer so write_all cannot finish until the child reads.
+        // Drain-after-stdin would deadlock until the deadline; drain-before-stdin
+        // must complete successfully.
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(
+                r#"
+i=0
+while [ "$i" -lt 200000 ]; do printf S; i=$((i+1)); done >&2
+dd bs=65536 count=8 of=/dev/null 2>/dev/null
+printf done
+"#,
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let stdin = vec![b'x'; 512 * 1024];
+        let started = std::time::Instant::now();
+        let outcome = run_subprocess_bounded(cmd, stdin, Duration::from_secs(5), 4096).await;
+        match outcome {
+            BoundedRunOutcome::Completed {
+                exit_code, stdout, ..
+            } => {
+                assert_eq!(exit_code, 0);
+                assert_eq!(stdout, b"done");
+            }
+            other => panic!("expected Completed (not TimedOut from pipe deadlock), got {other:?}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "must finish under the configured deadline"
+        );
+    }
 }

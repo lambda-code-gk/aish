@@ -2,6 +2,29 @@
 set -eu
 
 mode="${1:-success}"
+
+# Modes that must emit output before reading stdin (pipe-deadlock regression).
+case "$mode" in
+  startup_spam)
+    # Fill the stderr pipe before consuming stdin. Without concurrent drain,
+    # the parent blocks on write_all(stdin) while this Worker blocks on write.
+    i=0
+    while [ "$i" -lt 200000 ]; do
+      printf 'S'
+      i=$((i + 1))
+    done >&2
+    input=$(dd bs=65536 count=1 2>/dev/null)
+    for required in '"schema_version":1' '"delegation_depth":1' '"objective"' '"completion_criteria"' '"cwd"'; do
+      case "$input" in
+        *"$required"*) ;;
+        *) printf '%s\n' 'invalid envelope' >&2; exit 64 ;;
+      esac
+    done
+    printf '%s' '{"schema_version":1,"summary":"startup spam drained","status":"done"}'
+    exit 0
+    ;;
+esac
+
 input=$(dd bs=65536 count=1 2>/dev/null)
 
 for required in '"schema_version":1' '"delegation_depth":1' '"objective"' '"completion_criteria"' '"cwd"'; do
@@ -45,6 +68,24 @@ case "$mode" in
   secret)
     printf '%s\n' 'TOKEN=super-secret-token-value leaked' >&2
     printf '%s' '{"schema_version":1,"summary":"echoed secret sk-abcdefghijklmnopqrstuvwxyz","status":"done"}'
+    ;;
+  env_value_secret)
+    # Emit the inherited credential value alone (no KEY=/TOKEN= prefix). Pattern
+    # sanitize must not be the only defense — exact-value replacement is required.
+    printf '%s\n' "${AWS_SECRET_ACCESS_KEY-}" >&2
+    printf '%s' "{\"schema_version\":1,\"summary\":\"bare ${AWS_SECRET_ACCESS_KEY-} in summary\",\"status\":\"done\"}"
+    ;;
+  truncated_env_secret)
+    # Pad stderr so max_output_bytes truncates in the middle of the inherited secret.
+    {
+      i=0
+      while [ "$i" -lt 4080 ]; do
+        printf x
+        i=$((i + 1))
+      done
+      printf '%s' "${AWS_SECRET_ACCESS_KEY-}"
+    } >&2
+    printf '%s' '{"schema_version":1,"summary":"truncated env secret","status":"done"}'
     ;;
   delete)
     rm -f agent-task-delete-me.txt

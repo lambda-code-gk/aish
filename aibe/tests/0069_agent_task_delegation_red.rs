@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aibe::adapters::outbound::agent_task::{DefaultAgentTaskWorkerRegistry, MockWorker};
 use aibe::adapters::outbound::tools::DefaultToolRegistry;
@@ -809,6 +809,148 @@ async fn agent_task_redacts_worker_secrets_before_parent_prompt() {
         !item.summary.contains("sk-abcdefghijklmnopqrstuvwxyz")
             && !item.summary.contains("super-secret-token-value")
     }));
+}
+
+#[tokio::test]
+async fn agent_task_redacts_inherited_env_values_even_without_key_prefix() {
+    let _env_lock = ENV_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let secret = "aws-exact-value-credential-9f3a2b1c0d";
+    let env_name = "AWS_SECRET_ACCESS_KEY";
+    let _guard = EnvVarGuard::set(env_name, secret);
+    let temp = TempDir::new().expect("tempdir");
+    let mut config = worker_config("envsecret", "env_value_secret", 2);
+    config.env_allowlist = vec![env_name.into()];
+    let service = service_from_configs(&[config], temp.path());
+    let result = service
+        .execute(
+            "envsecret",
+            valid_request("envsecret"),
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("env secret result");
+    assert_eq!(result.status, AgentTaskStatus::Completed);
+    assert!(
+        !result.stderr.contains(secret),
+        "bare inherited credential on stderr must be exact-redacted"
+    );
+    assert!(
+        !result.summary.contains(secret),
+        "bare inherited credential in summary must be exact-redacted"
+    );
+    assert!(result.stderr.contains("[REDACTED]"));
+    assert!(result.summary.contains("[REDACTED]"));
+    let serialized = serde_json::to_string(&result).expect("serialize result");
+    assert!(
+        !serialized.contains(secret),
+        "inherited credential must not appear in serialized parent result"
+    );
+}
+
+#[tokio::test]
+async fn agent_task_redacts_truncated_inherited_env_prefix() {
+    let _env_lock = ENV_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let secret = "aws-truncated-boundary-credential-value-xyz";
+    let env_name = "AWS_SECRET_ACCESS_KEY";
+    let _guard = EnvVarGuard::set(env_name, secret);
+    let temp = TempDir::new().expect("tempdir");
+    let mut config = worker_config("truncsecret", "truncated_env_secret", 2);
+    config.env_allowlist = vec![env_name.into()];
+    // 4080 pad + secret; keep 4096 bytes so only a proper prefix of the secret remains.
+    let service = Arc::new(AgentTaskService::new(
+        Arc::new(DefaultAgentTaskWorkerRegistry::from_configs(&[config]).expect("registry")),
+        true,
+        vec![temp.path().to_path_buf()],
+        4096,
+        1800,
+    ));
+    let result = service
+        .execute(
+            "truncsecret",
+            valid_request("truncsecret"),
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("truncated env secret result");
+    assert_eq!(result.status, AgentTaskStatus::Completed);
+    assert!(result.stderr_truncated);
+    assert!(
+        !result.stderr.contains(secret),
+        "full secret must not appear after truncation"
+    );
+    let kept_prefix = &secret[..secret.len().min(16)];
+    assert!(
+        !result.stderr.contains(kept_prefix),
+        "truncated secret prefix must be redacted, got stderr={}",
+        result.stderr
+    );
+    assert!(result.stderr.contains("[REDACTED]"));
+}
+
+/// Serializes process-wide env mutation used by Agent Task secret redaction tests.
+static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Restores a process env var on drop so panics cannot leak test credentials.
+struct EnvVarGuard {
+    name: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(name: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(name);
+        // SAFETY: test-only; Drop restores the previous value.
+        unsafe {
+            std::env::set_var(name, value);
+        }
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn agent_task_drains_output_before_stdin_write() {
+    // Integration coverage: fixture emits pipe-filling stderr before reading stdin.
+    // The definitive large-stdin deadlock regression lives in
+    // `subprocess::tests::bounded_run_drains_before_stdin_write_avoids_pipe_deadlock`
+    // (request shape caps keep agent_task envelopes below typical pipe capacity).
+    let temp = TempDir::new().expect("tempdir");
+    let service = service_from_configs(&[worker_config("spam", "startup_spam", 5)], temp.path());
+    let mut request = valid_request("spam");
+    request.timeout_secs = Some(5);
+    let started = std::time::Instant::now();
+    let result = service
+        .execute(
+            "spam",
+            request,
+            &context(temp.path(), ApprovalGate::explicit()),
+        )
+        .await
+        .expect("startup spam result");
+    assert_eq!(
+        result.status,
+        AgentTaskStatus::Completed,
+        "Worker that fills stderr before reading stdin must complete, not TimedOut"
+    );
+    assert!(!result.timed_out);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "concurrent drain must avoid pipe-deadlock timeout"
+    );
 }
 
 #[tokio::test]
