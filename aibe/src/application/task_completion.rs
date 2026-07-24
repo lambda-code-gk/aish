@@ -174,13 +174,15 @@ fn classify_evidence(
         return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
     }
 
-    if shell && ok {
+    // plan 一致の実プロセス実行は Ok/Error とも Verification。
+    // verified は status=Ok のときだけ（非 zero は unsatisfied/unknown 観測であり Failed ではない）。
+    if shell {
         if let Some(item) = delegated_command {
             return (
                 EvidenceSource::Verification,
                 true,
                 item.criterion_ids.clone(),
-                true,
+                ok,
             );
         }
     }
@@ -322,11 +324,15 @@ fn has_prior_effect(ledger: &[EvidenceRecord], target: Option<&str>) -> bool {
 }
 
 /// 実プロセス実行済みの shell_exec のみ Verification / plan 実行として認める。
-/// collaborative handoff（`human_control_returned`）は subprocess を走らせないため除外する。
+/// collaborative handoff / 事前拒否は subprocess を走らせないため除外する。
+/// `rejected_or_failed` は承認後の実行失敗（非 zero 等）を含み、plan 未実行とは区別する。
 fn shell_process_was_executed(call: &ExecutedToolCall) -> bool {
     matches!(
         call.decision.as_deref(),
-        Some("executed") | Some("auto_approved_session") | Some("auto_approved_pattern")
+        Some("executed")
+            | Some("auto_approved_session")
+            | Some("auto_approved_pattern")
+            | Some("rejected_or_failed")
     )
 }
 
@@ -334,10 +340,7 @@ fn matching_delegated_command<'a>(
     contract: &'a TaskContract,
     call: &ExecutedToolCall,
 ) -> Option<&'a crate::domain::DelegatedVerificationPlanItem> {
-    if call.name != SHELL_EXEC
-        || call.status != ExecutedToolStatus::Ok
-        || !shell_process_was_executed(call)
-    {
+    if call.name != SHELL_EXEC || !shell_process_was_executed(call) {
         return None;
     }
     let command = call.arguments.get("command")?.as_str()?;
@@ -404,8 +407,8 @@ fn call_matches_plan_action(call: &ExecutedToolCall, action: &DelegatedVerificat
                         .map(|value| value.as_str())
                         .eq(args.iter().map(|value| Some(value.as_str())))
                 });
+            // 起動・実行の有無と成功判定を分離する。非 zero は plan 実行済みの観測結果。
             call.name == SHELL_EXEC
-                && call.status == ExecutedToolStatus::Ok
                 && shell_process_was_executed(call)
                 && call
                     .arguments

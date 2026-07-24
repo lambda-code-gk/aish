@@ -645,7 +645,8 @@ fn parent_reobserves_artifacts_and_external_state() {
     .is_err());
     // 同一 observation 実行を複数 plan item に再利用すると fail-closed
     assert!(
-        validate_delegated_cycle_calls(&contract, &[agent, exact, read.clone(), read]).is_err()
+        validate_delegated_cycle_calls(&contract, &[agent, exact, read.clone(), read.clone()])
+            .is_err()
     );
 
     // collaborative handoff は subprocess 未実行のため Verification に昇格しない
@@ -667,6 +668,82 @@ fn parent_reobserves_artifacts_and_external_state() {
         EvidenceSource::UnknownShellEffect
     );
     assert!(!handoff_evidence[0].verified);
+
+    // 非 zero exit は plan 未実行（InvalidRequest）ではなく Verification(verified=false)
+    let failed_command = ExecutedToolCall::err(
+        "v-fail".into(),
+        SHELL_EXEC,
+        json!({"command":"test","args":["-f","0070-artifact.txt"]}),
+        "nonzero_exit",
+        "exit status 1",
+    )
+    .with_audit(
+        ToolRiskClass::DangerousShell,
+        ToolApprovalState::ExplicitClientOptIn,
+        false,
+    );
+    let failed_evidence = evidence_from_tools(&contract, &[failed_command.clone()]);
+    assert_eq!(failed_evidence[0].source, EvidenceSource::Verification);
+    assert!(!failed_evidence[0].verified);
+    assert_eq!(
+        failed_evidence[0].plan_item_id.as_deref(),
+        Some("v-command")
+    );
+    assert!(validate_delegated_cycle_calls(
+        &contract,
+        &[
+            ExecutedToolCall::ok(
+                "agent-fail".into(),
+                AGENT_TASK,
+                serde_json::to_value(initial_request()).expect("request"),
+                r#"{"status":"done","verified":false,"cwd":"unused"}"#.into(),
+            ),
+            failed_command,
+            read.clone(),
+            diff.clone(),
+        ]
+    )
+    .is_ok());
+
+    // MVP: command plan item は1件まで
+    let mut multi_command = contract.clone();
+    multi_command.delegated_verification = Some(DelegatedVerificationPlan {
+        items: vec![
+            DelegatedVerificationPlanItem {
+                id: "v-command-a".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Command {
+                    command: "test".into(),
+                    args: vec!["-f".into(), "a.txt".into()],
+                    cwd: dir.path().display().to_string(),
+                },
+                expected_success: "exit 0".into(),
+            },
+            DelegatedVerificationPlanItem {
+                id: "v-command-b".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Command {
+                    command: "test".into(),
+                    args: vec!["-f".into(), "b.txt".into()],
+                    cwd: dir.path().display().to_string(),
+                },
+                expected_success: "exit 0".into(),
+            },
+            DelegatedVerificationPlanItem {
+                id: "v-read-only".into(),
+                criterion_ids: vec!["c1".into()],
+                action: DelegatedVerificationAction::Observation {
+                    tool: "read_file".into(),
+                    target: "0070-artifact.txt".into(),
+                },
+                expected_success: "content".into(),
+            },
+        ],
+    });
+    assert!(multi_command
+        .validate()
+        .unwrap_err()
+        .contains("at most one command item"));
 
     // Agent Task は cwd digest ではなく global prior effect として後続 observation を verified にする
     let agent_effect = ExecutedToolCall::ok(

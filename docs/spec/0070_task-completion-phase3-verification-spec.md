@@ -64,7 +64,7 @@ Completion Evaluator は元 Task Contract の criterion 集合を変更せず、
 - plan item の criterion ID は元 Contract の部分集合、command は server の `allowed_commands` と既存 approval policy の範囲内でなければならない
 - Worker Result / Artifact reference / Gap から plan item を追加・変更できない。再委譲後も同一 plan ID と内容を再利用する
 
-0068 の通常 `shell_exec` は引き続き `UnknownShellEffect` であり、検証 Evidence にはならない。0070 Active で、委譲後に実行された call が固定済み command plan item の command / args / cwd と完全一致し、既存 allowlist・approval・timeout を通過して `status=Ok` の場合だけ、その plan item が指定した criterion に限定して `Verification` 候補 Evidence とする。command は従来どおり過去の observation / verification を stale 化するため、Verification Plan は command item を observation item より先に実行し、成果物内容を要求する criterion は command 後の直接観測も満たさなければ `satisfied` にしない。これにより 0068 の任意 shell 非信頼契約を一般化または緩和しない。
+0068 の通常 `shell_exec` は引き続き `UnknownShellEffect` であり、検証 Evidence にはならない。0070 Active で、委譲後に実行された call が固定済み command plan item の command / args / cwd と完全一致し、既存 allowlist・approval・timeout を通過して **実プロセスが起動された**場合、その plan item が指定した criterion に限定して `Verification` 候補 Evidence とする。`status=Ok` のときだけ `verified=true` とし、非 zero exit など実行後失敗は `verified=false` の観測結果として Gap / 四状態評価へ回す（それ自体を `Failed` / `InvalidRequest` にしない）。handoff・事前拒否などプロセス未起動は plan 未実行のままとする。MVP では成功 shell の stale 化と照合 `.find()` の制約から **command plan item は1件まで**とし、Contract 固定時に拒否する。command は従来どおり過去の observation / verification を stale 化するため（成功実行時）、Verification Plan は command item を observation item より先に実行し、成果物内容を要求する criterion は command 後の直接観測も満たさなければ `satisfied` にしない。これにより 0068 の任意 shell 非信頼契約を一般化または緩和しない。
 
 Gap follow-up は新 wire field を作らず、次の決定的変換で既存 0069 `AgentTaskRequest` を構築する。
 
@@ -270,6 +270,7 @@ verification plan、criterion evaluation、Gap、follow-up count は既存 Task 
 | 2 | `BLOCKER_ORIGINAL_AC` / `REGRESSION` / `SAFETY_WITHIN_FAULT_MODEL` | 委譲前に固定する structured Verification Plan、通常 shell と exact-match command の信頼境界、四状態 applicability、Gap→既存 AgentTaskRequest 変換、query budget 2、7終端の additive wire projection、Human Task 回帰境界、draft checker staged-state を固定 | Step 2 review: 0068 の任意 shell 非信頼・Suspended / query budget、0069 wire schema、既存4 outcome / top-level cancel/error を壊さず Issue #27 の Agent Task vertical slice を実装可能にするため |
 | 3 | SCOPE_LOCK | 設計書 §9 の全10 AC、vertical slice、Complexity inventory を実装前に固定 | Step 3 で pending acceptance tests と 1:1 対応させ、以後の scope drift を機械検査するため |
 | 4 | COMPLETION | 全10 AC 緑・verify + smoke 成功後に feature status=`done`、実装指示書を `docs/done/` へ移動 | Step 8 コミット準備。scope 数値と locked AC は不変 |
+| 5 | `BLOCKER_ORIGINAL_AC` / `SAFETY_WITHIN_FAULT_MODEL` | 検証 command の実行後失敗を plan 未実行から分離し `Verification(verified=false)` へ。MVP で command item を1件に制限 | PR #28 review: 非 zero を InvalidRequest にしない §9.1 と、複数 command の stale / 照合衝突を固定するため |
 
 ## 12. `docs/architecture.md` への影響
 

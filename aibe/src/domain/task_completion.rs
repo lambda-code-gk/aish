@@ -409,6 +409,16 @@ impl DelegatedVerificationPlan {
                 }
             }
         }
+        // MVP: 成功 shell が全 Verification を stale 化し、同一 command/args の .find() も
+        // 先頭 item に固定されるため、command item は1件に制限する。
+        let command_count = self
+            .items
+            .iter()
+            .filter(|item| matches!(item.action, DelegatedVerificationAction::Command { .. }))
+            .count();
+        if command_count > 1 {
+            return Err("delegated verification plan allows at most one command item".into());
+        }
         // 同じ criterion に対する同一 tool+target の observation を別 item ID へ分割すると
         // 矛盾検出を迂回できるため、Contract 固定時に拒否する。
         let mut observation_identities = BTreeSet::new();
