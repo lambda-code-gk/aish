@@ -64,6 +64,7 @@
 | 0067 | [0067_recall-keybinding-tty-restore-spec.md](spec/0067_recall-keybinding-tty-restore-spec.md) | 設計確定（実装済み） | Recall Keybinding TTY Restore（Issue #11、0053 recall + 0055 handoff の bash / zsh line editor 状態復元、Yellow 承認） |
 | 0068 | [0068_task-completion-phase1-spec.md](spec/0068_task-completion-phase1-spec.md) | 設計確定（実装済み） | Task Completion Phase 1（Issue #18、Task Contract / Evidence / gap-driven continuation、Yellow 承認） |
 | 0069 | [0069_agent-task-delegation-spec.md](spec/0069_agent-task-delegation-spec.md) | 設計確定（実装済み） | Task Completion Phase 2（Issue #24、同期 Agent Task 委譲 / Result + Evidence、Yellow 承認） |
+| 0070 | [0070_task-completion-phase3-verification-spec.md](spec/0070_task-completion-phase3-verification-spec.md) | 設計確定（実装済み） | Task Completion Phase 3（Issue #27、委譲結果の独立検証 / Gap 付き再委譲1回、Yellow 承認） |
 
 ### 状態ラベルの意味
 
@@ -79,12 +80,14 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
-| 0069 | [0069_agent-task-delegation-implementation-spec.md](done/0069_agent-task-delegation-implementation-spec.md) | 実装済み | production ExternalCommandWorker + fixture による同期 Agent Task Vertical Slice |
+| — | — | 進行中なし | — |
 
 ## 実装済み指示書（docs/done/）
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0070 | [0070_task-completion-phase3-verification-implementation-spec.md](done/0070_task-completion-phase3-verification-implementation-spec.md) | 実装済み | 親固定Verification Plan、独立再観測、Gap付き同一Worker再委譲1回、7終端 |
+| 0069 | [0069_agent-task-delegation-implementation-spec.md](done/0069_agent-task-delegation-implementation-spec.md) | 実装済み | production ExternalCommandWorker + fixture による同期 Agent Task Vertical Slice |
 | 0068 | [0068_task-completion-phase1-implementation-spec.md](done/0068_task-completion-phase1-implementation-spec.md) | 実装済み | Contract固定、Evidence ledger、gap-driven continuation、4終端を既存 Query Loop外側へ追加する手順 |
 | 0067 | [0067_recall-keybinding-tty-restore-implementation-spec.md](done/0067_recall-keybinding-tty-restore-implementation-spec.md) | 実装済み | PTY 観測から 0053 recall / 0055 handoff の bash / zsh line editor 終了契約を修正する手順 |
 | 0065 | [0065_human-task-agent-continuation-implementation-spec.md](done/0065_human-task-agent-continuation-implementation-spec.md) | 実装済み | Human Task Agent Continuation（ResultPending→Collaborative Mode turn） |

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::sha256_hex;
+use super::{AgentTaskCriterion, AgentTaskRequest, WorkerId};
 
 pub const TASK_COMPLETION_QUERY_BUDGET: u8 = 2;
 pub const STALL_TERMINAL_REASON: &str = "no progress between queries";
@@ -13,6 +14,8 @@ pub const CONTRACT_MAX_CRITERIA: usize = 32;
 pub const CONTRACT_MAX_LIST_ITEMS: usize = 32;
 pub const EVALUATION_MAX_EVIDENCE_IDS: usize = 64;
 pub const EVALUATION_MAX_REQUIRED_EVIDENCE: usize = 32;
+pub const DELEGATED_VERIFICATION_MAX_ITEMS: usize = 32;
+pub const GAP_MAX_ENTRIES: usize = 32;
 const TRUSTED_VERIFICATION_TOOLS: &[&str] =
     &["read_file", "list_dir", "grep", "git_status", "git_diff"];
 
@@ -51,6 +54,9 @@ pub struct TaskContract {
     /// 検証 Evidence を生成できる tool 名。空なら task_kind 既定を使う。
     #[serde(default)]
     pub verification_tools: Vec<String>,
+    /// Agent Task を使う場合に、Worker 起動前に親が固定する検証計画。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegated_verification: Option<DelegatedVerificationPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +69,39 @@ pub struct CompletionCriterion {
     /// この criterion が観測・検証すべき対象（path 等）。空なら tool target 一致を要求しない。
     #[serde(default)]
     pub observes_targets: Vec<String>,
+    /// 条件付き criterion の非適用条件。Contract 固定後は変更できない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applicability: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedVerificationPlan {
+    pub items: Vec<DelegatedVerificationPlanItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegatedVerificationPlanItem {
+    pub id: String,
+    pub criterion_ids: Vec<String>,
+    pub action: DelegatedVerificationAction,
+    pub expected_success: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DelegatedVerificationAction {
+    Observation {
+        tool: String,
+        target: String,
+    },
+    Command {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        cwd: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +134,11 @@ pub struct EvidenceRecord {
     /// 後続の同 target 副作用で無効化された観測。
     #[serde(default)]
     pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_item_id: Option<String>,
+    /// 外部状態の値を比較するための非可逆digest。raw outputは保持しない。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +146,8 @@ pub struct EvidenceRecord {
 pub enum CriterionStatus {
     Satisfied,
     Unsatisfied,
+    Unknown,
+    NotApplicable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +159,8 @@ pub struct CriterionEvaluation {
     pub evidence_ids: Vec<String>,
     #[serde(default)]
     pub required_evidence: Vec<String>,
+    #[serde(default)]
+    pub applicability_evidence_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +184,41 @@ pub enum CompletionOutcome {
     NeedsUser,
     Blocked,
     BudgetExhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationTerminal {
+    Done,
+    NeedsUser,
+    Blocked,
+    Stagnated,
+    BudgetExhausted,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gap {
+    pub entries: Vec<GapEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GapEntry {
+    pub criterion_id: String,
+    pub observed: String,
+    pub expected: String,
+    pub required_work: String,
+    pub verification_plan_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerificationTerminalInput {
+    pub cancelled: bool,
+    pub verification_failed: bool,
+    pub follow_up_used: bool,
+    pub stalled: bool,
+    pub budget_exhausted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,12 +250,21 @@ impl TaskContract {
             validate_bounded_text("criterion id", &criterion.id)?;
             validate_bounded_text("criterion description", &criterion.description)?;
             validate_string_list("observes_targets", &criterion.observes_targets)?;
+            if let Some(applicability) = &criterion.applicability {
+                validate_bounded_text("applicability", applicability)?;
+                if applicability.trim().is_empty() {
+                    return Err("criterion applicability must not be empty".into());
+                }
+            }
             if criterion.id.trim().is_empty() || criterion.description.trim().is_empty() {
                 return Err("criterion id and description must not be empty".into());
             }
             if !ids.insert(criterion.id.clone()) {
                 return Err(format!("duplicate criterion id: {}", criterion.id));
             }
+        }
+        if let Some(plan) = &self.delegated_verification {
+            plan.validate(&self.ids())?;
         }
         validate_task_kind_consistency(self)?;
         Ok(())
@@ -242,11 +334,20 @@ impl CompletionEvaluation {
                     criterion.criterion_id
                 ));
             }
+            if criterion.applicability_evidence_ids.len() > EVALUATION_MAX_EVIDENCE_IDS {
+                return Err(format!(
+                    "criterion {} exceeds {EVALUATION_MAX_EVIDENCE_IDS} applicability evidence ids",
+                    criterion.criterion_id
+                ));
+            }
             for evidence_id in &criterion.evidence_ids {
                 validate_bounded_text("evidence id", evidence_id)?;
             }
             for required in &criterion.required_evidence {
                 validate_bounded_text("required evidence", required)?;
+            }
+            for evidence_id in &criterion.applicability_evidence_ids {
+                validate_bounded_text("applicability evidence id", evidence_id)?;
             }
         }
         if let Some(next_objective) = &self.next_objective {
@@ -262,6 +363,93 @@ impl CompletionEvaluation {
             validate_bounded_text("failure", failure)?;
         }
         Ok(())
+    }
+}
+
+impl DelegatedVerificationPlan {
+    pub fn validate(&self, contract_ids: &BTreeSet<String>) -> Result<(), String> {
+        if self.items.is_empty() || self.items.len() > DELEGATED_VERIFICATION_MAX_ITEMS {
+            return Err("delegated verification plan must contain bounded items".into());
+        }
+        let mut item_ids = BTreeSet::new();
+        for item in &self.items {
+            validate_bounded_text("verification plan item id", &item.id)?;
+            validate_bounded_text("expected success", &item.expected_success)?;
+            if item.id.trim().is_empty()
+                || item.expected_success.trim().is_empty()
+                || item.criterion_ids.is_empty()
+                || !item_ids.insert(item.id.clone())
+            {
+                return Err("invalid or duplicate verification plan item".into());
+            }
+            if item
+                .criterion_ids
+                .iter()
+                .any(|id| !contract_ids.contains(id))
+            {
+                return Err("verification plan criterion is outside parent contract".into());
+            }
+            match &item.action {
+                DelegatedVerificationAction::Observation { tool, target } => {
+                    validate_bounded_text("observation tool", tool)?;
+                    validate_bounded_text("observation target", target)?;
+                    if !TRUSTED_VERIFICATION_TOOLS.contains(&tool.as_str())
+                        || target.trim().is_empty()
+                    {
+                        return Err("invalid delegated observation".into());
+                    }
+                }
+                DelegatedVerificationAction::Command { command, args, cwd } => {
+                    validate_bounded_text("verification command", command)?;
+                    validate_bounded_text("verification cwd", cwd)?;
+                    validate_string_list("verification command args", args)?;
+                    if command.trim().is_empty() || cwd.trim().is_empty() {
+                        return Err("invalid delegated verification command".into());
+                    }
+                }
+            }
+        }
+        // MVP: 成功 shell が全 Verification を stale 化し、同一 command/args の .find() も
+        // 先頭 item に固定されるため、command item は1件に制限する。
+        let command_count = self
+            .items
+            .iter()
+            .filter(|item| matches!(item.action, DelegatedVerificationAction::Command { .. }))
+            .count();
+        if command_count > 1 {
+            return Err("delegated verification plan allows at most one command item".into());
+        }
+        // 同じ criterion に対する同一 tool+target の observation を別 item ID へ分割すると
+        // 矛盾検出を迂回できるため、Contract 固定時に拒否する。
+        let mut observation_identities = BTreeSet::new();
+        for item in &self.items {
+            let DelegatedVerificationAction::Observation { tool, target } = &item.action else {
+                continue;
+            };
+            let Some(bound_target) = bound_evidence_target(target) else {
+                return Err("invalid delegated observation target".into());
+            };
+            for criterion_id in &item.criterion_ids {
+                if !observation_identities.insert((
+                    criterion_id.clone(),
+                    tool.clone(),
+                    bound_target.clone(),
+                )) {
+                    return Err(format!(
+                        "duplicate observation identity in verification plan: {criterion_id}/{tool}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn covers(&self, criterion_ids: &BTreeSet<String>) -> bool {
+        criterion_ids.iter().all(|criterion_id| {
+            self.items
+                .iter()
+                .any(|item| item.criterion_ids.contains(criterion_id))
+        })
     }
 }
 
@@ -374,6 +562,20 @@ fn optional_present_but_blank(value: &Option<String>) -> bool {
     value.as_deref().is_some_and(|text| text.trim().is_empty())
 }
 
+fn observation_identity(
+    plan: &DelegatedVerificationPlan,
+    record: &EvidenceRecord,
+) -> Option<(String, String)> {
+    let item_id = record.plan_item_id.as_ref()?;
+    let item = plan.items.iter().find(|item| &item.id == item_id)?;
+    match &item.action {
+        DelegatedVerificationAction::Observation { tool, target } => {
+            Some((tool.clone(), bound_evidence_target(target)?))
+        }
+        DelegatedVerificationAction::Command { .. } => None,
+    }
+}
+
 pub fn validate_evaluation(
     contract: &TaskContract,
     evidence: &[EvidenceRecord],
@@ -419,13 +621,101 @@ pub fn validate_evaluation(
             }) {
                 return Err("satisfied criterion references unverified evidence".into());
             }
+            if let Some(plan) = &contract.delegated_verification {
+                // 同順位・同対象の矛盾は plan_item_id ではなく criterion+tool+target 単位で
+                // ledger 全体から判定する（別 item ID への分割で迂回できないようにする）。
+                let mut by_identity: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+                for record in evidence.iter().filter(|record| {
+                    record.criterion_ids.contains(&criterion.criterion_id)
+                        && record.source == EvidenceSource::Observation
+                        && record.verified
+                        && !record.stale
+                }) {
+                    let Some(identity) = observation_identity(plan, record) else {
+                        continue;
+                    };
+                    if let Some(fingerprint) = record.value_fingerprint.as_ref() {
+                        by_identity
+                            .entry(identity)
+                            .or_default()
+                            .insert(fingerprint.clone());
+                    }
+                }
+                if by_identity.values().any(|values| values.len() > 1) {
+                    return Err(format!(
+                        "conflicting observation evidence for criterion: {}",
+                        criterion.criterion_id
+                    ));
+                }
+                for item in plan
+                    .items
+                    .iter()
+                    .filter(|item| item.criterion_ids.contains(&criterion.criterion_id))
+                {
+                    let cited = criterion
+                        .evidence_ids
+                        .iter()
+                        .filter_map(|id| evidence_by_id.get(id.as_str()).copied())
+                        .filter(|record| {
+                            record.plan_item_id.as_deref() == Some(item.id.as_str())
+                                && record.verified
+                                && !record.stale
+                        })
+                        .count();
+                    if cited == 0 {
+                        return Err(format!(
+                            "satisfied delegated criterion lacks plan evidence: {}",
+                            item.id
+                        ));
+                    }
+                }
+            }
+        }
+        if matches!(
+            criterion.status,
+            CriterionStatus::Unknown | CriterionStatus::NotApplicable
+        ) && contract.delegated_verification.is_none()
+        {
+            return Err(
+                "unknown/not_applicable are only valid with delegated verification plans".into(),
+            );
+        }
+        if criterion.status == CriterionStatus::NotApplicable {
+            let contract_criterion = contract
+                .criteria
+                .iter()
+                .find(|item| item.id == criterion.criterion_id)
+                .expect("criterion set already validated");
+            if contract_criterion.applicability.is_none()
+                || criterion.applicability_evidence_ids.is_empty()
+            {
+                return Err(
+                    "not_applicable requires contract applicability and applicability evidence"
+                        .into(),
+                );
+            }
+            for evidence_id in &criterion.applicability_evidence_ids {
+                let record = evidence_by_id
+                    .get(evidence_id.as_str())
+                    .ok_or_else(|| format!("unknown applicability evidence id: {evidence_id}"))?;
+                if !record.verified
+                    || record.stale
+                    || !record.criterion_ids.contains(&criterion.criterion_id)
+                {
+                    return Err("not_applicable references invalid evidence".into());
+                }
+            }
+        } else if !criterion.applicability_evidence_ids.is_empty() {
+            return Err("applicability evidence is only valid for not_applicable".into());
         }
     }
     evaluation.validate_bounded()?;
-    let has_unsatisfied = evaluation
-        .criteria
-        .iter()
-        .any(|criterion| criterion.status == CriterionStatus::Unsatisfied);
+    let has_unsatisfied = evaluation.criteria.iter().any(|criterion| {
+        matches!(
+            criterion.status,
+            CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+        )
+    });
     let has_continuation = non_empty_optional(&evaluation.next_objective);
     let has_needs_user = non_empty_optional(&evaluation.needs_user);
     let has_blocked = non_empty_optional(&evaluation.blocked);
@@ -466,10 +756,12 @@ pub fn terminal_outcome(
     query_count: u8,
     stalled: bool,
 ) -> Option<CompletionOutcome> {
-    let done = evaluation
-        .criteria
-        .iter()
-        .all(|criterion| criterion.status == CriterionStatus::Satisfied);
+    let done = evaluation.criteria.iter().all(|criterion| {
+        matches!(
+            criterion.status,
+            CriterionStatus::Satisfied | CriterionStatus::NotApplicable
+        )
+    });
     if done {
         return Some(CompletionOutcome::Done);
     }
@@ -485,6 +777,144 @@ pub fn terminal_outcome(
     None
 }
 
+pub fn verification_terminal(
+    evaluation: &CompletionEvaluation,
+    input: VerificationTerminalInput,
+) -> Option<VerificationTerminal> {
+    if input.cancelled {
+        return Some(VerificationTerminal::Cancelled);
+    }
+    if input.verification_failed {
+        return Some(VerificationTerminal::Failed);
+    }
+    if evaluation.criteria.iter().all(|criterion| {
+        matches!(
+            criterion.status,
+            CriterionStatus::Satisfied | CriterionStatus::NotApplicable
+        )
+    }) {
+        return Some(VerificationTerminal::Done);
+    }
+    if evaluation.needs_user.is_some() {
+        return Some(VerificationTerminal::NeedsUser);
+    }
+    if evaluation.blocked.is_some() {
+        return Some(VerificationTerminal::Blocked);
+    }
+    if input.follow_up_used && input.stalled {
+        return Some(VerificationTerminal::Stagnated);
+    }
+    if input.budget_exhausted {
+        return Some(VerificationTerminal::BudgetExhausted);
+    }
+    None
+}
+
+pub fn build_gap(
+    contract: &TaskContract,
+    evaluation: &CompletionEvaluation,
+) -> Result<Gap, String> {
+    let plan = contract
+        .delegated_verification
+        .as_ref()
+        .ok_or_else(|| "delegated verification plan is required for gap".to_string())?;
+    let entries = evaluation
+        .criteria
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+            )
+        })
+        .map(|item| {
+            let criterion = contract
+                .criteria
+                .iter()
+                .find(|candidate| candidate.id == item.criterion_id)
+                .ok_or_else(|| "gap criterion is outside parent contract".to_string())?;
+            let plan_ids = plan
+                .items
+                .iter()
+                .filter(|plan_item| plan_item.criterion_ids.contains(&item.criterion_id))
+                .map(|plan_item| plan_item.id.clone())
+                .collect::<Vec<_>>();
+            if plan_ids.is_empty() {
+                return Err("gap criterion is not covered by verification plan".into());
+            }
+            let observed = item
+                .required_evidence
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "independent verification is incomplete".into());
+            Ok(GapEntry {
+                criterion_id: item.criterion_id.clone(),
+                observed,
+                expected: criterion.description.clone(),
+                required_work: evaluation
+                    .next_objective
+                    .clone()
+                    .unwrap_or_else(|| "resolve the independently observed gap".into()),
+                verification_plan_item_ids: plan_ids,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if entries.is_empty() || entries.len() > GAP_MAX_ENTRIES {
+        return Err("gap must contain bounded actionable entries".into());
+    }
+    Ok(Gap { entries })
+}
+
+pub fn gap_follow_up_request(
+    contract: &TaskContract,
+    initial: &AgentTaskRequest,
+    gap: &Gap,
+) -> Result<AgentTaskRequest, String> {
+    if gap.entries.is_empty() || gap.entries.len() > GAP_MAX_ENTRIES {
+        return Err("gap must contain bounded entries".into());
+    }
+    let contract_ids = contract.ids();
+    let mut instructions = initial.instructions.clone();
+    for entry in &gap.entries {
+        if !contract_ids.contains(&entry.criterion_id) {
+            return Err("gap changed the parent criterion set".into());
+        }
+        instructions.push(format!(
+            "Gap {}: observed={}; required_work={}; verify_with={}",
+            entry.criterion_id,
+            entry.observed,
+            entry.required_work,
+            entry.verification_plan_item_ids.join(",")
+        ));
+    }
+    let completion_criteria = gap
+        .entries
+        .iter()
+        .map(|entry| AgentTaskCriterion {
+            id: entry.criterion_id.clone(),
+            description: contract
+                .criteria
+                .iter()
+                .find(|criterion| criterion.id == entry.criterion_id)
+                .map(|criterion| criterion.description.clone())
+                .expect("criterion membership checked"),
+        })
+        .collect();
+    AgentTaskRequest {
+        worker: WorkerId::parse(initial.worker.as_str()).map_err(|error| error.to_string())?,
+        objective: format!(
+            "{}; resolve the independently observed Gap",
+            initial.objective
+        ),
+        instructions,
+        completion_criteria,
+        cwd: initial.cwd.clone(),
+        timeout_secs: initial.timeout_secs,
+    }
+    .validate_shape()
+    .map_err(|error| error.to_string())
+}
+
 pub fn progress_snapshot(
     evaluation: &CompletionEvaluation,
     evidence: &[EvidenceRecord],
@@ -492,22 +922,32 @@ pub fn progress_snapshot(
     let unsatisfied = evaluation
         .criteria
         .iter()
-        .filter(|c| c.status == CriterionStatus::Unsatisfied)
+        .filter(|c| {
+            matches!(
+                c.status,
+                CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+            )
+        })
         .map(|c| c.criterion_id.clone())
         .collect();
     let evidence_fingerprint = evidence
         .iter()
+        .filter(|record| !record.stale)
         .map(|record| {
             format!(
-                "{}:{:?}:{}:{}:{}:{}",
-                record.evidence_id,
+                "{:?}:{}:{}:{}:{}:{}:{}:{}",
                 record.source,
                 record.observed_after_effect,
                 record.verified,
-                record.stale,
-                record.target.as_deref().unwrap_or("")
+                record.target.as_deref().unwrap_or(""),
+                record.criterion_ids.join(","),
+                record.summary,
+                record.plan_item_id.as_deref().unwrap_or(""),
+                record.value_fingerprint.as_deref().unwrap_or("")
             )
         })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>()
         .join("|");
     let normalized_failure = evaluation

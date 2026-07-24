@@ -476,3 +476,17 @@ cargo test -p aibe --test 0062_collab_mode_human_task_tool -j 1 -- --test-thread
 ```
 
 0062–0066の`ai`/`aibe`回帰testはAgent/Human共通lifecycleを作らず、既存Human Shell、checkpoint/resume/continuation/recoveryの意味が不変であることを確認する。全体完了前は通常どおり`./scripts/verify.sh`を一回実行し、socket syscallがsandboxで`EPERM`なら targeted結果とともに明示する。
+
+## 0070 Delegated Result Verification
+
+`aibe/tests/0070_task_completion_phase3_verification_red.rs` の9 testと `ai/tests/0070_task_completion_phase3_verification_red.rs` の1 testがlocked ACと1:1対応する。vertical E2Eはproduction `RequestService`、`ToolRoundExecutor`、`AgentTaskTool` / `AgentTaskService` / `DefaultAgentTaskWorkerRegistry` / `ExternalCommandWorker`を通す。fixtureの`gap_repair` modeは初回に未達artifact、Gap instructionsを受けた同一Workerの2回目に修正版を生成する。実API、API key、network、MockWorker直呼びを使わない。
+
+同試験は外側query 2、Worker spawn/approval 2、follow-up 1、固定commandとread observation各2、全Worker Evidenceの`verified=false`、最終Verification Evidence付きDoneを観測する。domain tableは四状態/applicability、Gap変換、stagnation、7終端、normal shell非昇格、stale/unknownを検査する。presenter試験は5 report終端とtop-level Error/Cancelled、Evidence provenance、Gap/Worker/follow-up回数、redaction/boundsを固定する。0068/0069/Human Task回帰と合わせ、直列で実行する。
+
+```bash
+cargo test -p aibe --test 0070_task_completion_phase3_verification_red -j 1 -- --test-threads=1
+cargo test -p ai --test 0070_task_completion_phase3_verification_red -j 1 -- --test-threads=1
+./scripts/verify-targeted.sh --package aibe
+./scripts/check-spec-acceptance.py
+./scripts/check-feature-scope.py
+```

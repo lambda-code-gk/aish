@@ -88,12 +88,15 @@ pub use memory_subscription::{
 pub use message::{ChatMessage, MessageRole, UnknownMessageRole};
 pub use shell_log_tail::ShellLogTail;
 pub use task_completion::{
-    bound_evidence_target, classify_task_completion_eligibility, is_stalled, progress_snapshot,
-    terminal_outcome, validate_contract_covers_request, validate_evaluation, CompletionCriterion,
-    CompletionEvaluation, CompletionOutcome, CriterionEvaluation, CriterionStatus, EvidenceRecord,
-    EvidenceSource, ProgressSnapshot, TaskCompletionEligibility, TaskContract, TaskKind,
-    CONTRACT_MAX_CRITERIA, CONTRACT_MAX_LIST_ITEMS, CONTRACT_TEXT_MAX_BYTES, STALL_TERMINAL_REASON,
-    TASK_COMPLETION_QUERY_BUDGET,
+    bound_evidence_target, build_gap, classify_task_completion_eligibility, gap_follow_up_request,
+    is_stalled, progress_snapshot, terminal_outcome, validate_contract_covers_request,
+    validate_evaluation, verification_terminal, CompletionCriterion, CompletionEvaluation,
+    CompletionOutcome, CriterionEvaluation, CriterionStatus, DelegatedVerificationAction,
+    DelegatedVerificationPlan, DelegatedVerificationPlanItem, EvidenceRecord, EvidenceSource, Gap,
+    GapEntry, ProgressSnapshot, TaskCompletionEligibility, TaskContract, TaskKind,
+    VerificationTerminal, VerificationTerminalInput, CONTRACT_MAX_CRITERIA,
+    CONTRACT_MAX_LIST_ITEMS, CONTRACT_TEXT_MAX_BYTES, DELEGATED_VERIFICATION_MAX_ITEMS,
+    GAP_MAX_ENTRIES, STALL_TERMINAL_REASON, TASK_COMPLETION_QUERY_BUDGET,
 };
 pub use tool::{ToolCall, ToolResult};
 pub use tool_execution_summary::ToolExecutionSummary;

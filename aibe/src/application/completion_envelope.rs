@@ -5,7 +5,8 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    validate_contract_covers_request, CompletionEvaluation, TaskCompletionEligibility, TaskContract,
+    validate_contract_covers_request, AgentTaskRequest, CompletionEvaluation,
+    DelegatedVerificationAction, TaskCompletionEligibility, TaskContract, ToolCall, AGENT_TASK,
 };
 
 pub const TASK_COMPLETION_MARKER: &str = "aish_task_completion";
@@ -82,12 +83,19 @@ pub struct ContractGate {
     state: Mutex<ContractGateState>,
     require_contract_before_tools: bool,
     request_binding: Option<RequestBinding>,
+    delegated_policy: Option<DelegatedVerificationPolicy>,
 }
 
 #[derive(Debug)]
 struct RequestBinding {
     eligibility: TaskCompletionEligibility,
     user_request: String,
+}
+
+#[derive(Debug)]
+struct DelegatedVerificationPolicy {
+    allowed_tools: std::collections::BTreeSet<String>,
+    allowed_commands: Vec<String>,
 }
 
 impl Default for ContractGate {
@@ -103,6 +111,7 @@ impl ContractGate {
             state: Mutex::new(ContractGateState::default()),
             require_contract_before_tools: false,
             request_binding: None,
+            delegated_policy: None,
         }
     }
 
@@ -115,6 +124,27 @@ impl ContractGate {
                 eligibility,
                 user_request: user_request.into(),
             }),
+            delegated_policy: None,
+        }
+    }
+
+    pub fn strict_with_delegated_policy(
+        eligibility: TaskCompletionEligibility,
+        user_request: impl Into<String>,
+        allowed_tools: impl IntoIterator<Item = String>,
+        allowed_commands: Vec<String>,
+    ) -> Self {
+        Self {
+            state: Mutex::new(ContractGateState::default()),
+            require_contract_before_tools: true,
+            request_binding: Some(RequestBinding {
+                eligibility,
+                user_request: user_request.into(),
+            }),
+            delegated_policy: Some(DelegatedVerificationPolicy {
+                allowed_tools: allowed_tools.into_iter().collect(),
+                allowed_commands,
+            }),
         }
     }
 }
@@ -123,6 +153,9 @@ impl ContractGate {
 struct ContractGateState {
     fixed: Option<TaskContract>,
     tool_execution_started: bool,
+    initial_agent_request: Option<AgentTaskRequest>,
+    agent_task_calls: u8,
+    expected_follow_up: Option<AgentTaskRequest>,
 }
 
 impl ContractGate {
@@ -175,4 +208,148 @@ impl ContractGate {
             .map(|state| state.fixed.clone())
             .map_err(|error| error.to_string())
     }
+
+    pub fn expect_follow_up(&self, request: AgentTaskRequest) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        if state.initial_agent_request.is_none() || state.agent_task_calls != 1 {
+            return Err("follow-up can only be fixed after one initial agent_task".into());
+        }
+        if state.expected_follow_up.replace(request).is_some() {
+            return Err("follow-up request was already fixed".into());
+        }
+        Ok(())
+    }
+
+    /// Agent Task の schema と親固定 plan の coverage/cwd を Worker spawn 前に検査する。
+    pub fn inspect_tool_calls(
+        &self,
+        calls: &[ToolCall],
+        base_dir: &std::path::Path,
+    ) -> Result<(), String> {
+        if !self.require_contract_before_tools {
+            return Ok(());
+        }
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        let agent_calls = calls.iter().filter(|call| call.name == AGENT_TASK).count();
+        if agent_calls > 1 {
+            return Err("only one agent_task is allowed in a delegated verification step".into());
+        }
+        for call in calls.iter().filter(|call| call.name == AGENT_TASK) {
+            let contract = state
+                .fixed
+                .as_ref()
+                .ok_or_else(|| "task contract required before agent_task".to_string())?;
+            let plan = contract
+                .delegated_verification
+                .as_ref()
+                .ok_or_else(|| "agent_task requires delegated_verification plan".to_string())?;
+            if let Some(policy) = &self.delegated_policy {
+                for item in &plan.items {
+                    match &item.action {
+                        DelegatedVerificationAction::Observation { tool, .. } => {
+                            if !policy.allowed_tools.contains(tool) {
+                                return Err(format!(
+                                    "delegated observation tool is not allowed: {tool}"
+                                ));
+                            }
+                        }
+                        DelegatedVerificationAction::Command { command, .. } => {
+                            if !policy.allowed_tools.contains(aibe_protocol::SHELL_EXEC)
+                                || !command_is_allowed(command, &policy.allowed_commands)
+                            {
+                                return Err("delegated verification command is not allowed".into());
+                            }
+                        }
+                    }
+                }
+            }
+            let request: AgentTaskRequest = serde_json::from_value(call.arguments.clone())
+                .map_err(|error| format!("invalid agent_task request before spawn: {error}"))?;
+            let delegated_ids = request
+                .completion_criteria
+                .iter()
+                .map(|criterion| criterion.id.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            if !delegated_ids.is_subset(&contract.ids()) || !plan.covers(&delegated_ids) {
+                return Err(
+                    "agent_task criteria must be covered by parent verification plan".into(),
+                );
+            }
+            let effective_cwd = request
+                .cwd
+                .as_deref()
+                .map(std::path::Path::new)
+                .map(|path| {
+                    if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        base_dir.join(path)
+                    }
+                })
+                .unwrap_or_else(|| base_dir.to_path_buf());
+            if effective_cwd
+                .components()
+                .any(|component| component == std::path::Component::ParentDir)
+            {
+                return Err("agent_task cwd contains parent traversal".into());
+            }
+            if effective_cwd != base_dir {
+                return Err(
+                    "delegated verification command requires agent_task cwd to equal context cwd"
+                        .into(),
+                );
+            }
+            for item in &plan.items {
+                if let DelegatedVerificationAction::Command { cwd, .. } = &item.action {
+                    let plan_cwd = std::path::Path::new(cwd);
+                    if !plan_cwd.is_absolute()
+                        || plan_cwd
+                            .components()
+                            .any(|component| component == std::path::Component::ParentDir)
+                        || plan_cwd != effective_cwd
+                    {
+                        return Err("verification command cwd differs from agent_task cwd".into());
+                    }
+                }
+            }
+            if state.agent_task_calls >= 2 {
+                return Err("delegated verification permits only one follow-up".into());
+            }
+            if let Some(initial) = &state.initial_agent_request {
+                let expected = state.expected_follow_up.as_ref().ok_or_else(|| {
+                    "follow-up agent_task was not fixed from the evaluated Gap".to_string()
+                })?;
+                if &request != expected {
+                    return Err("follow-up agent_task differs from the fixed Gap request".into());
+                }
+                if initial.worker != request.worker
+                    || initial.cwd != request.cwd
+                    || initial.timeout_secs != request.timeout_secs
+                {
+                    return Err("follow-up changed worker/cwd/timeout".into());
+                }
+            } else {
+                state.initial_agent_request = Some(request.clone());
+            }
+            state.agent_task_calls += 1;
+        }
+        Ok(())
+    }
+}
+
+fn command_is_allowed(command: &str, allowed_commands: &[String]) -> bool {
+    let normalized = command.trim().strip_prefix("./").unwrap_or(command.trim());
+    let basename = std::path::Path::new(normalized)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(normalized);
+    allowed_commands.iter().any(|allowed| {
+        let allowed = allowed.trim();
+        !allowed.is_empty()
+            && if allowed.contains('/') {
+                allowed == normalized
+            } else {
+                allowed == basename
+            }
+    })
 }

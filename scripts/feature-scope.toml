@@ -16,6 +16,50 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0070"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 5
+scope_change_reason = "PR #28 review: nonzero verification command → Verification(verified=false)/Gap; MVP command item ≤1（scope数値は不変）"
+scope_review = "approved"
+
+core_outcome = "親AISHが委譲先の完了報告ではなく成果物と外部状態の独立再観測でcriterionを判定し未達なら一度だけGap付きで再委譲して理由付き終端へ到達する"
+
+actors = 3
+state_machines = 2
+persistent_aggregates = 0
+external_effects = 4
+process_boundaries = 2
+
+novel_mechanisms = ["delegated-result-verification-cycle"]
+integrations = ["0068-task-completion", "0069-agent-task", "existing-tool-execution-evidence"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "parallel or multi-worker verification, adaptive retries, durable resume, verifier agents, Human Task cross-suspend verification/follow-up, PR/CI adapters, nested delegation, and workflow DSL are deferred"
+
+vertical_slice_ac_id = "delegated_verification_vertical_e2e"
+
+locked_ac_ids = [
+  "delegated_verification_vertical_e2e",
+  "parent_contract_owns_delegated_completion",
+  "parent_reobserves_artifacts_and_external_state",
+  "evidence_precedence_and_conflicts_fail_closed",
+  "criterion_evaluation_is_exhaustive_and_structured",
+  "gap_follow_up_is_single_bounded_and_same_worker",
+  "follow_up_repeats_verification_and_detects_stagnation",
+  "verification_terminal_outcomes_are_distinct",
+  "verification_preserves_existing_boundaries_and_human_task",
+  "verification_report_is_bounded_and_auditable",
+]
+
+[[features]]
 spec = "0069"
 status = "done"
 scope_class = "feature"

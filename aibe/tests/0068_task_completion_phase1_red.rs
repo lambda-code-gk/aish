@@ -25,11 +25,13 @@ fn contract() -> TaskContract {
             description: "the changed state is observed".into(),
             deliverable_is_plan: false,
             observes_targets: vec!["artifact.txt".into()],
+            applicability: None,
         }],
         constraints: vec!["do not expose secrets".into()],
         deliverables: vec!["updated file".into()],
         verification: vec!["read the file after changing it".into()],
         verification_tools: vec!["read_file".into()],
+        delegated_verification: None,
     }
 }
 
@@ -44,6 +46,7 @@ fn evaluation(status: CriterionStatus, evidence_ids: &[&str]) -> CompletionEvalu
             } else {
                 vec![]
             },
+            applicability_evidence_ids: vec![],
         }],
         next_objective: (status == CriterionStatus::Unsatisfied)
             .then(|| "read the changed file".into()),
@@ -104,11 +107,13 @@ fn task_contract_is_stable_and_structurally_complete() {
             description: "plan document".into(),
             deliverable_is_plan: true,
             observes_targets: vec![],
+            applicability: None,
         }],
         constraints: vec![],
         deliverables: vec!["plan".into()],
         verification: vec!["plan content present".into()],
         verification_tools: vec![],
+        delegated_verification: None,
     };
     assert!(validate_contract_covers_request(
         &plan,
@@ -359,11 +364,13 @@ fn side_effect_requires_post_observation() {
             description: "status observed".into(),
             deliverable_is_plan: false,
             observes_targets: vec![],
+            applicability: None,
         }],
         constraints: vec![],
         deliverables: vec!["status report".into()],
         verification: vec!["read status".into()],
         verification_tools: vec!["read_file".into()],
+        delegated_verification: None,
     };
     let inspect = evidence_from_tools(
         &investigation,
@@ -396,6 +403,8 @@ fn completion_evaluator_is_structured_and_fail_closed() {
         verified: true,
         target: Some("artifact.txt".into()),
         stale: false,
+        plan_item_id: None,
+        value_fingerprint: None,
     }];
     for invalid in [
         CompletionEvaluation {
@@ -449,6 +458,8 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
         verified: false,
         target: Some("artifact.txt".into()),
         stale: false,
+        plan_item_id: None,
+        value_fingerprint: None,
     }];
     let continuation = build_continuation(
         &contract(),
@@ -472,11 +483,13 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
             description: "plan document".into(),
             deliverable_is_plan: true,
             observes_targets: vec![],
+            applicability: None,
         }],
         constraints: vec![],
         deliverables: vec!["plan".into()],
         verification: vec!["plan content present".into()],
         verification_tools: vec![],
+        delegated_verification: None,
     };
     plan_contract.validate().expect("plan-only contract");
     let plan_evidence = deliverable_evidence(&plan_contract, "1. inspect\n2. change", 1);
@@ -492,11 +505,13 @@ fn continuation_is_gap_driven_and_detects_plan_only() {
             description: "plan".into(),
             deliverable_is_plan: true,
             observes_targets: vec![],
+            applicability: None,
         }],
         constraints: vec![],
         deliverables: vec!["plan".into()],
         verification: vec!["変更後のファイルを読む".into()],
         verification_tools: vec![],
+        delegated_verification: None,
     };
     sneaky
         .validate()
@@ -551,6 +566,8 @@ fn progress_and_stall_are_bounded() {
         verified: false,
         target: Some("artifact.txt".into()),
         stale: false,
+        plan_item_id: None,
+        value_fingerprint: None,
     }];
     let first = progress_snapshot(&evaluation(CriterionStatus::Unsatisfied, &[]), &evidence);
     let second = progress_snapshot(&evaluation(CriterionStatus::Unsatisfied, &[]), &evidence);
@@ -565,6 +582,8 @@ fn progress_and_stall_are_bounded() {
         verified: true,
         target: Some("artifact.txt".into()),
         stale: false,
+        plan_item_id: None,
+        value_fingerprint: None,
     });
     let progressed = progress_snapshot(
         &evaluation(CriterionStatus::Unsatisfied, &[]),
@@ -600,11 +619,13 @@ fn shell_verification_is_never_trusted_from_contract() {
             description: "check passes".into(),
             deliverable_is_plan: false,
             observes_targets: vec![],
+            applicability: None,
         }],
         constraints: vec![],
         deliverables: vec!["ok".into()],
         verification: vec!["shell check".into()],
         verification_tools: vec!["shell_exec".into()],
+        delegated_verification: None,
     };
     let calls = vec![ExecutedToolCall::ok(
         "s1".into(),
@@ -636,6 +657,7 @@ fn shell_verification_is_never_trusted_from_contract() {
                 status: CriterionStatus::Satisfied,
                 evidence_ids: vec!["e1".into()],
                 required_evidence: vec![],
+                applicability_evidence_ids: vec![],
             }],
             next_objective: None,
             needs_user: None,

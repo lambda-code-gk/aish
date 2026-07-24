@@ -1,9 +1,11 @@
 //! 既存 Query Loop の外側で使う request-local Task Completion helpers。
 
 use aibe_protocol::{
-    CompletionCriterionReport, CompletionEvidenceReport, CompletionEvidenceSource,
+    CompletionCriterionReport, CompletionCriterionStatus as WireCriterionStatus,
+    CompletionEvidenceReport, CompletionEvidenceSource, CompletionGapReport,
     CompletionOutcome as WireOutcome, CompletionReport, ExecutedToolCall, ExecutedToolStatus,
-    ToolRiskClass, APPLY_PATCH, SHELL_EXEC, WRITE_FILE,
+    ToolRiskClass, VerificationTerminal as WireVerificationTerminal, APPLY_PATCH, SHELL_EXEC,
+    WRITE_FILE,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -11,9 +13,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::domain::{
-    bound_evidence_target, terminal_outcome, validate_evaluation, CompletionEvaluation,
-    CompletionOutcome, CriterionStatus, EvidenceRecord, EvidenceSource, TaskContract, TaskKind,
-    STALL_TERMINAL_REASON,
+    bound_evidence_target, build_gap, gap_follow_up_request, sha256_hex, terminal_outcome,
+    validate_evaluation, AgentTaskRequest, CompletionEvaluation, CompletionOutcome,
+    CriterionStatus, DelegatedVerificationAction, EvidenceRecord, EvidenceSource, TaskContract,
+    TaskKind, STALL_TERMINAL_REASON,
 };
 
 use crate::ports::outbound::TurnEventSink;
@@ -33,7 +36,8 @@ optional aish_task_completion.evaluation (criteria with criterion_id/status/evid
 Fix the contract before requesting the first tool. Every later envelope must repeat it unchanged. \
 Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order. \
 Write-like success is not verified until a later matching observation or verification tool on the same target. \
-Only server-trusted dedicated read-only tools may verify; shell_exec never verifies. \
+Only server-trusted dedicated read-only tools may verify. For delegated work, only a shell_exec exactly matching the pre-fixed delegated_verification command/args/cwd is Verification; every other shell_exec remains UnknownShellEffect. \
+If delegated verification is unsatisfied, query 2 must execute the exact AgentTaskRequest supplied in the continuation (including Gap instructions) and repeat the unchanged plan. \
 Investigation trusted read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
     )
 }
@@ -65,6 +69,11 @@ pub fn append_evidence_from_tools(
             call.risk_class == Some(ToolRiskClass::DangerousShell) || call.name == SHELL_EXEC;
         let ok = call.status == ExecutedToolStatus::Ok;
         let verification_tool = verification_tools.iter().any(|name| name == &call.name);
+        let delegated_command = matching_delegated_command(contract, call);
+        let plan_item_id = delegated_command.map(|item| item.id.clone()).or_else(|| {
+            matching_delegated_observation(contract, call, target.as_deref())
+                .map(|item| item.id.clone())
+        });
 
         if shell && ok {
             // 任意 shell command は変更対象を信頼して限定できないため、過去の観測を
@@ -116,6 +125,7 @@ pub fn append_evidence_from_tools(
             shell,
             ok,
             verification_tool,
+            delegated_command,
         );
 
         ledger.push(EvidenceRecord {
@@ -127,6 +137,11 @@ pub fn append_evidence_from_tools(
             verified,
             target,
             stale: false,
+            plan_item_id,
+            value_fingerprint: call
+                .output
+                .as_deref()
+                .map(|output| format!("sha256:{}", sha256_hex(output.as_bytes()))),
         });
     }
 
@@ -145,6 +160,7 @@ fn classify_evidence(
     shell: bool,
     ok: bool,
     verification_tool: bool,
+    delegated_command: Option<&crate::domain::DelegatedVerificationPlanItem>,
 ) -> (EvidenceSource, bool, Vec<String>, bool) {
     if call.name == aibe_protocol::AGENT_TASK {
         return (
@@ -156,6 +172,35 @@ fn classify_evidence(
     }
     if write_like {
         return (EvidenceSource::Tool, false, execution_ids.to_vec(), false);
+    }
+
+    // plan 一致の実プロセス実行は Ok/Error とも Verification。
+    // verified は status=Ok のときだけ（非 zero は unsatisfied/unknown 観測であり Failed ではない）。
+    if shell {
+        if let Some(item) = delegated_command {
+            return (
+                EvidenceSource::Verification,
+                true,
+                item.criterion_ids.clone(),
+                ok,
+            );
+        }
+    }
+
+    if read_only && ok && contract.delegated_verification.is_some() {
+        if let Some(item) = matching_delegated_observation(contract, call, target) {
+            let after_effect = has_prior_effect(ledger, target);
+            // 委譲前に固定した plan item 自体が verification-tool 指定なので、
+            // contract.verification_tools の既定（Execution は read_file/git_diff）に
+            // 含まれない grep / list_dir / git_status でも after_effect なら verified にする。
+            return (
+                EvidenceSource::Observation,
+                after_effect,
+                item.criterion_ids.clone(),
+                after_effect,
+            );
+        }
+        return (EvidenceSource::Observation, false, Vec::new(), false);
     }
 
     if read_only && ok {
@@ -236,7 +281,12 @@ fn matching_criterion_ids(
             if require_pending_effect {
                 let pending = ledger.iter().any(|record| {
                     record.criterion_ids.contains(criterion_id)
-                        && record.source == EvidenceSource::Tool
+                        && matches!(
+                            record.source,
+                            EvidenceSource::Tool
+                                | EvidenceSource::AgentTask
+                                | EvidenceSource::Verification
+                        )
                         && !record.verified
                         && !record.stale
                         && (target.is_none()
@@ -264,11 +314,164 @@ fn matching_criterion_ids(
 
 fn has_prior_effect(ledger: &[EvidenceRecord], target: Option<&str>) -> bool {
     ledger.iter().any(|record| {
-        record.source == EvidenceSource::Tool
-            && !record.stale
+        matches!(
+            record.source,
+            EvidenceSource::Tool | EvidenceSource::AgentTask | EvidenceSource::Verification
+        ) && !record.stale
             && record.summary.contains("status=Ok")
             && (target.is_none() || record.target.is_none() || record.target.as_deref() == target)
     })
+}
+
+/// 実プロセス実行済みの shell_exec のみ Verification / plan 実行として認める。
+/// collaborative handoff / 事前拒否は subprocess を走らせないため除外する。
+/// `rejected_or_failed` は承認後の実行失敗（非 zero 等）を含み、plan 未実行とは区別する。
+fn shell_process_was_executed(call: &ExecutedToolCall) -> bool {
+    matches!(
+        call.decision.as_deref(),
+        Some("executed")
+            | Some("auto_approved_session")
+            | Some("auto_approved_pattern")
+            | Some("rejected_or_failed")
+    )
+}
+
+fn matching_delegated_command<'a>(
+    contract: &'a TaskContract,
+    call: &ExecutedToolCall,
+) -> Option<&'a crate::domain::DelegatedVerificationPlanItem> {
+    if call.name != SHELL_EXEC || !shell_process_was_executed(call) {
+        return None;
+    }
+    let command = call.arguments.get("command")?.as_str()?;
+    let args = call
+        .arguments
+        .get("args")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| item.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
+        .unwrap_or_else(|| Some(Vec::new()))?;
+    contract
+        .delegated_verification
+        .as_ref()?
+        .items
+        .iter()
+        .find(|item| {
+            matches!(
+                &item.action,
+                DelegatedVerificationAction::Command {
+                    command: expected_command,
+                    args: expected_args,
+                    ..
+                } if expected_command == command && expected_args == &args
+            )
+        })
+}
+
+fn matching_delegated_observation<'a>(
+    contract: &'a TaskContract,
+    call: &ExecutedToolCall,
+    target: Option<&str>,
+) -> Option<&'a crate::domain::DelegatedVerificationPlanItem> {
+    contract
+        .delegated_verification
+        .as_ref()?
+        .items
+        .iter()
+        .find(|item| {
+            matches!(
+                &item.action,
+                DelegatedVerificationAction::Observation {
+                    tool,
+                    target: expected_target,
+                } if tool == &call.name
+                    && bound_evidence_target(expected_target).as_deref() == target
+            )
+        })
+}
+
+fn call_matches_plan_action(call: &ExecutedToolCall, action: &DelegatedVerificationAction) -> bool {
+    match action {
+        DelegatedVerificationAction::Command { command, args, .. } => {
+            let args_match = call
+                .arguments
+                .get("args")
+                .and_then(|value| value.as_array())
+                .is_some_and(|actual| {
+                    actual
+                        .iter()
+                        .map(|value| value.as_str())
+                        .eq(args.iter().map(|value| Some(value.as_str())))
+                });
+            // 起動・実行の有無と成功判定を分離する。非 zero は plan 実行済みの観測結果。
+            call.name == SHELL_EXEC
+                && shell_process_was_executed(call)
+                && call
+                    .arguments
+                    .get("command")
+                    .and_then(|value| value.as_str())
+                    == Some(command.as_str())
+                && args_match
+        }
+        DelegatedVerificationAction::Observation { tool, target } => {
+            call.name == *tool
+                && tool_target(call).as_deref() == bound_evidence_target(target).as_deref()
+        }
+    }
+}
+
+/// 一つのouter queryが Agent Task 後に固定plan全件を順序どおり 1:1 で実行したことを検査する。
+pub fn validate_delegated_cycle_calls(
+    contract: &TaskContract,
+    calls: &[ExecutedToolCall],
+) -> Result<(), String> {
+    let Some(plan) = &contract.delegated_verification else {
+        return Ok(());
+    };
+    let agent_positions = calls
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| call.name == aibe_protocol::AGENT_TASK)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if agent_positions.len() != 1 {
+        return Err("delegated verification query requires exactly one agent_task".into());
+    }
+    // 各 plan item は前回一致の次以降からだけ探し、同一実行の再利用と逆順を拒否する。
+    let mut search_from = agent_positions[0] + 1;
+    let mut command_positions = Vec::new();
+    let mut observation_positions = Vec::new();
+    for item in &plan.items {
+        let position = calls
+            .iter()
+            .enumerate()
+            .skip(search_from)
+            .find_map(|(index, call)| call_matches_plan_action(call, &item.action).then_some(index))
+            .ok_or_else(|| {
+                format!(
+                    "delegated verification plan item was not executed in order: {}",
+                    item.id
+                )
+            })?;
+        search_from = position + 1;
+        match &item.action {
+            DelegatedVerificationAction::Command { .. } => command_positions.push(position),
+            DelegatedVerificationAction::Observation { .. } => observation_positions.push(position),
+        }
+    }
+    if command_positions
+        .iter()
+        .max()
+        .zip(observation_positions.iter().min())
+        .is_some_and(|(last_command, first_observation)| last_command >= first_observation)
+    {
+        return Err("delegated verification commands must run before observations".into());
+    }
+    Ok(())
 }
 
 fn tool_target(call: &ExecutedToolCall) -> Option<String> {
@@ -282,22 +485,9 @@ fn tool_target(call: &ExecutedToolCall) -> Option<String> {
         return bound_evidence_target(path);
     }
     if call.name == aibe_protocol::AGENT_TASK {
-        if let Some(cwd) = call
-            .output
-            .as_ref()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .and_then(|value| {
-                value
-                    .get("cwd")
-                    .and_then(|cwd| cwd.as_str())
-                    .map(str::to_string)
-            })
-        {
-            return bound_evidence_target(&cwd);
-        }
-        if let Some(path) = args.get("cwd").and_then(|value| value.as_str()) {
-            return bound_evidence_target(path);
-        }
+        // Worker は cwd 配下へ広範囲に副作用し得る。個別ファイル digest と一致させず、
+        // target=None（global/unknown）として後続 observation の prior effect に使う。
+        return None;
     }
     if call.name == SHELL_EXEC {
         if let Some(path) = args
@@ -347,6 +537,8 @@ pub fn deliverable_evidence(
             verified: true,
             target: None,
             stale: false,
+            plan_item_id: None,
+            value_fingerprint: Some(format!("sha256:{}", sha256_hex(deliverable.as_bytes()))),
         })
         .collect()
 }
@@ -409,6 +601,45 @@ pub fn build_continuation(
     )
 }
 
+pub fn build_delegated_continuation(
+    contract: &TaskContract,
+    evaluation: &CompletionEvaluation,
+    evidence: &[EvidenceRecord],
+    calls: &[ExecutedToolCall],
+) -> Result<DelegatedContinuation, String> {
+    let initial = calls
+        .iter()
+        .find(|call| call.name == aibe_protocol::AGENT_TASK)
+        .ok_or_else(|| "delegated continuation requires initial agent_task".to_string())?;
+    let initial: AgentTaskRequest = serde_json::from_value(initial.arguments.clone())
+        .map_err(|error| format!("invalid initial agent_task request: {error}"))?;
+    let gap = build_gap(contract, evaluation)?;
+    let mut follow_up = gap_follow_up_request(contract, &initial, &gap)?;
+    follow_up.objective =
+        sanitized_bounded_bytes(&follow_up.objective, crate::domain::MAX_OBJECTIVE_BYTES);
+    follow_up.instructions = follow_up
+        .instructions
+        .into_iter()
+        .map(|instruction| {
+            sanitized_bounded_bytes(&instruction, crate::domain::MAX_INSTRUCTION_BYTES)
+        })
+        .collect();
+    let base = build_continuation(contract, evaluation, evidence);
+    let request = serde_json::to_string(&follow_up)
+        .map_err(|error| format!("cannot serialize follow-up request: {error}"))?;
+    Ok(DelegatedContinuation {
+        prompt: format!(
+            "{base}\nDelegated Gap follow-up (execute exactly once with agent_task):\n{request}"
+        ),
+        request: follow_up,
+    })
+}
+
+pub struct DelegatedContinuation {
+    pub prompt: String,
+    pub request: AgentTaskRequest,
+}
+
 pub fn build_report(
     contract: &TaskContract,
     evidence: &[EvidenceRecord],
@@ -423,7 +654,7 @@ pub fn build_report(
         .criteria
         .iter()
         .map(|criterion| CompletionCriterionReport {
-            criterion_id: criterion.criterion_id.clone(),
+            criterion_id: bounded(&criterion.criterion_id),
             satisfied: criterion.status == CriterionStatus::Satisfied,
             evidence: criterion
                 .evidence_ids
@@ -431,13 +662,25 @@ pub fn build_report(
                 .filter_map(|id| evidence.iter().find(|record| &record.evidence_id == id))
                 .map(to_wire_evidence)
                 .collect(),
+            // 四状態は常に投影する。非委譲では Unknown/NotApplicable を validation で拒否する。
+            evaluation_status: Some(match criterion.status {
+                CriterionStatus::Satisfied => WireCriterionStatus::Satisfied,
+                CriterionStatus::Unsatisfied => WireCriterionStatus::Unsatisfied,
+                CriterionStatus::Unknown => WireCriterionStatus::Unknown,
+                CriterionStatus::NotApplicable => WireCriterionStatus::NotApplicable,
+            }),
         })
         .collect();
     let unsatisfied_criteria = evaluation
         .criteria
         .iter()
-        .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
-        .map(|criterion| criterion.criterion_id.clone())
+        .filter(|criterion| {
+            matches!(
+                criterion.status,
+                CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+            )
+        })
+        .map(|criterion| bounded(&criterion.criterion_id))
         .collect();
     let mut unverified_items: Vec<String> = evidence
         .iter()
@@ -455,11 +698,20 @@ pub fn build_report(
         evaluation
             .criteria
             .iter()
-            .filter(|criterion| criterion.status == CriterionStatus::Unsatisfied)
+            .filter(|criterion| {
+                matches!(
+                    criterion.status,
+                    CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+                )
+            })
             .flat_map(|criterion| {
-                criterion.required_evidence.iter().map(|required| {
+                let status = match criterion.status {
+                    CriterionStatus::Unknown => "unknown",
+                    _ => "required evidence",
+                };
+                criterion.required_evidence.iter().map(move |required| {
                     bounded(&format!(
-                        "{}: required evidence: {}",
+                        "{}: {status}: {}",
                         criterion.criterion_id, required
                     ))
                 })
@@ -478,7 +730,8 @@ pub fn build_report(
             None
         })
         .map(bounded);
-    Ok(CompletionReport {
+    let delegated = contract.delegated_verification.is_some();
+    let mut report = CompletionReport {
         outcome: match outcome {
             CompletionOutcome::Done => WireOutcome::Done,
             CompletionOutcome::NeedsUser => WireOutcome::NeedsUser,
@@ -490,7 +743,45 @@ pub fn build_report(
         unsatisfied_criteria,
         unverified_items,
         queries_used,
-    })
+        verification_terminal: delegated.then_some(match outcome {
+            CompletionOutcome::Done => WireVerificationTerminal::Done,
+            CompletionOutcome::NeedsUser => WireVerificationTerminal::NeedsUser,
+            CompletionOutcome::Blocked if stalled => WireVerificationTerminal::Stagnated,
+            CompletionOutcome::Blocked => WireVerificationTerminal::Blocked,
+            CompletionOutcome::BudgetExhausted => WireVerificationTerminal::BudgetExhausted,
+        }),
+        gaps: Vec::new(),
+        worker_id: None,
+        follow_up_count: delegated.then_some(queries_used.saturating_sub(1).min(1)),
+    };
+    if delegated && outcome != CompletionOutcome::Done {
+        attach_gap_report(&mut report, contract, evaluation);
+    }
+    Ok(report)
+}
+
+pub fn attach_gap_report(
+    report: &mut CompletionReport,
+    contract: &TaskContract,
+    evaluation: &CompletionEvaluation,
+) {
+    let Ok(gap) = build_gap(contract, evaluation) else {
+        return;
+    };
+    report.gaps = gap
+        .entries
+        .into_iter()
+        .map(|entry| CompletionGapReport {
+            criterion_id: bounded(&entry.criterion_id),
+            observed: bounded(&entry.observed),
+            required_work: bounded(&entry.required_work),
+            verification_plan_item_ids: entry
+                .verification_plan_item_ids
+                .iter()
+                .map(|item| bounded(item))
+                .collect(),
+        })
+        .collect();
 }
 
 fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
@@ -510,7 +801,27 @@ fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
 }
 
 fn bounded(value: &str) -> String {
-    value.chars().take(SUMMARY_LIMIT).collect()
+    aish_replay::sanitize_log_text(value)
+        .chars()
+        .take(SUMMARY_LIMIT)
+        .collect()
+}
+
+fn sanitized_bounded_bytes(value: &str, max_bytes: usize) -> String {
+    let sanitized = aish_replay::sanitize_log_text(value);
+    let mut used = 0usize;
+    sanitized
+        .chars()
+        .take_while(|character| {
+            let next = used.saturating_add(character.len_utf8());
+            if next > max_bytes {
+                false
+            } else {
+                used = next;
+                true
+            }
+        })
+        .collect()
 }
 
 /// provider delta を最終 envelope 判定まで保持し、control JSON を client へ流さない。
