@@ -16,6 +16,50 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0071"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 4
+scope_change_reason = "Step 8: verify.sh / smoke-mock.sh 成功後に全10 AC green・実装指示書を docs/done へ移動（scope数値は不変）"
+scope_review = "approved"
+
+core_outcome = "Task Completion対象turnが取消・検証基盤障害・複数criterion未達・大量streaming・観測精度限界に遭遇しても実観測に基づくbounded CompletionReportと安全な終端へ到達する"
+
+actors = 3
+state_machines = 2
+persistent_aggregates = 0
+external_effects = 4
+process_boundaries = 2
+
+novel_mechanisms = []
+integrations = ["0068-task-completion", "0069-agent-task", "0070-independent-verification"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "semantic coverage, general expected-success predicates, query budget expansion, multiple or parallel workers, more than one follow-up, durable recovery, long-running observation, and Human Task cross-suspend verification are deferred"
+
+vertical_slice_ac_id = "task_completion_hardening_vertical_e2e"
+
+locked_ac_ids = [
+  "task_completion_cancel_report_vertical_e2e",
+  "verification_infrastructure_failure_reports_failed",
+  "task_completion_hardening_vertical_e2e",
+  "gap_observed_uses_actual_evidence",
+  "gap_required_work_is_per_criterion",
+  "gap_follow_up_request_is_per_criterion_and_bounded",
+  "completion_event_buffer_has_total_byte_limit",
+  "workspace_observer_detects_same_size_rewrite_or_marks_incomplete",
+  "task_completion_hardening_preserves_regressions",
+  "task_completion_hardening_verify_and_smoke",
+]
+
+[[features]]
 spec = "0070"
 status = "done"
 scope_class = "feature"

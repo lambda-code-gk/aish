@@ -101,6 +101,12 @@ OOM を避けるため、**既定は直列**とする。
 
 `aibe/tests/0068_task_completion_vertical_e2e.rs` は一つの `Ask` command を pre-connected Unix socket の本番 NDJSON connection handler と `RequestService` composition へ送り、明示 opt-in、1回目の既知 write effect、gap-driven 2回目の read-only post-observation、verified Evidence 付き Done を検証する。同じ本番 service で、effect tool 利用可能でも opt-in なしの単純質問が通常 turn のままであることと、初回未達から2回目 Query の `human_task` suspend が typed `AgentTurnStatus::Suspended` のまま返ることも縦断検証する。Unix socket syscall 自体を sandbox が `EPERM` で拒否する環境では同じ本番 `RequestService` handler を直接使用し、Task Completion 専用 facade へ切り替えない。通常環境の bind / framing は既存 socket integration と `smoke-mock`、手動 0068 checklist でも確認する。`aibe/tests/0068_task_completion_phase1_red.rs` は Contract gate、Evaluator fail-closed table、KnownWriteEffect / UnknownShellEffect を含む Evidence provenance、4終端、budget/stall を wall-clock や永続 store なしで固定し、`ai/tests/0068_task_completion_phase1_red.rs` は human / JSON / TSV / env report を検査する。
 
+### 0071 Task Completion hardening
+
+`aibe/tests/0071_task_completion_hardening_red.rs`は`-j 1 -- --test-threads=1`で実行する。Phase 1は本番`RequestService`、Agent Task registry/approval、実verification subprocessを通し、開始後nonzeroを2 criterionのEvidence由来Gapへ変換して同一Workerを1回だけ再委譲し、再検証Doneまで確認する。Phase 2はContract前cancel、missing executableのtyped spawn failure、legacy Error / Cancelled JSON、criterion別observed / required_work / plan item、blank・1025-byte・instruction上限拒否を確認する。Phase 3は64 KiBちょうど/+1、1024/1025 delta、overflow後の全破棄、同一size書き換えのmetadata fingerprint検出またはincompleteを確認し、file content digestは用いない。
+
+`aibe-protocol` testsはoptional `completion_report`を欠く旧payloadと`failed` / `cancelled` terminalをroundtripし、`ai` presenter testsはtop-level response typeを維持したままbounded reportをhuman / structured出力へ投影する。0068 / 0069 / 0070とHuman Task・通常turnの回帰を同じPhase 4で実行する。Rust testから`verify.sh`や`smoke-mock.sh`を再帰起動せず、全AC green後に別processで`./scripts/verify.sh`、続いてAPI key不要の`./scripts/smoke-mock.sh`を実行する。filesystem capabilityやhuman表示の補助確認は[0071 manual checklist](manual/0071_task-completion-hardening.md)に従う。
+
 ### 0038 Phase D basic build（feature matrix）
 
 設計: [spec/0038_contextual-memory-pack-phase-d-spec.md](spec/0038_contextual-memory-pack-phase-d-spec.md)。

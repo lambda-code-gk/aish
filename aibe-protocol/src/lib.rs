@@ -19,7 +19,7 @@ pub use collaborative_handoff::{
 };
 pub use executed_tool::{
     AgentTaskApprovalAudit, ExecutedToolCall, ExecutedToolStatus, FileWriteApprovalOutcome,
-    ShellExecApprovalOutcome, ToolApprovalState, ToolRiskClass,
+    ProcessExecutionTerminal, ShellExecApprovalOutcome, ToolApprovalState, ToolRiskClass,
 };
 pub use memory::{
     MemoryApplyRequestBody, MemoryApplyStatus, MemoryChangeEventDto, MemoryChangeKind,

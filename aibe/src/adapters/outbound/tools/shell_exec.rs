@@ -388,6 +388,9 @@ impl ToolExecutor for ShellExecTool {
                             args_value,
                             "nonzero_exit",
                             format!("process exited with {exit_code}"),
+                        )
+                        .with_process_terminal(
+                            aibe_protocol::ProcessExecutionTerminal::NonzeroExit,
                         ),
                         ToolResult {
                             tool_call_id: id,
@@ -404,7 +407,10 @@ impl ToolExecutor for ShellExecTool {
             ShellRunOutcome::TimedOut { .. } => {
                 let msg = format!("command timed out after {effective_timeout_ms}ms");
                 finish_shell_exec(
-                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg),
+                    ExecutedToolCall::err(id.clone(), self.name(), args_value, "timeout", &msg)
+                        .with_process_terminal(
+                            aibe_protocol::ProcessExecutionTerminal::ObservableTimeout,
+                        ),
                     ToolResult {
                         tool_call_id: id,
                         content: msg.clone(),
@@ -423,6 +429,9 @@ impl ToolExecutor for ShellExecTool {
                     args_value,
                     "execution_failed",
                     &msg,
+                )
+                .with_process_terminal(
+                    aibe_protocol::ProcessExecutionTerminal::InfrastructureFailure,
                 ),
                 ToolResult {
                     tool_call_id: id,

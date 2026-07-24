@@ -1726,6 +1726,7 @@ fn run_agent_turn_core(
                     id: turn_id_thread.clone(),
                     code: aibe_protocol::ErrorCode::InternalError,
                     message: e.to_string(),
+                    completion_report: None,
                 },
             }
         };
@@ -1774,6 +1775,7 @@ fn run_agent_turn_core(
                         id: turn_id.clone(),
                         code: aibe_protocol::ErrorCode::ToolError,
                         message: failure.message.clone(),
+                        completion_report: None,
                     },
                     abort_reason,
                     streamed: streamed.load(Ordering::SeqCst),
@@ -1801,6 +1803,7 @@ fn run_agent_turn_core(
                             id: turn_id.clone(),
                             code: aibe_protocol::ErrorCode::ToolError,
                             message: failure.message.clone(),
+                            completion_report: None,
                         };
                     }
                 }
@@ -1818,6 +1821,7 @@ fn run_agent_turn_core(
                             id: turn_id.clone(),
                             code: aibe_protocol::ErrorCode::ToolError,
                             message: failure.message,
+                            completion_report: None,
                         },
                         abort_reason: Some(TurnAbortReason::HumanHandoffFailure),
                         streamed: streamed.load(Ordering::SeqCst),
@@ -3912,6 +3916,7 @@ mod cli_tests {
                     id: "id".into(),
                     turn_id: "id".into(),
                     reason: Some("cancelled".into()),
+                    completion_report: None,
                 },
                 Some(crate::TurnAbortReason::Sigint),
             ),
@@ -3923,6 +3928,7 @@ mod cli_tests {
                     id: "id".into(),
                     code: ErrorCode::InvalidRequest,
                     message: "bad".into(),
+                    completion_report: None,
                 },
                 None,
             ),
@@ -3938,6 +3944,7 @@ mod cli_tests {
                     id: "id".into(),
                     code: ErrorCode::ProviderError,
                     message: "bad".into(),
+                    completion_report: None,
                 },
                 None,
             ),
@@ -3949,6 +3956,7 @@ mod cli_tests {
                     id: "id".into(),
                     code: ErrorCode::ToolError,
                     message: "bad".into(),
+                    completion_report: None,
                 },
                 None,
             ),

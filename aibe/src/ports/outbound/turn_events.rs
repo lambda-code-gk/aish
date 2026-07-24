@@ -34,7 +34,19 @@ impl TurnCancellation {
     }
 
     pub async fn wait(&self) {
-        self.notify.notified().await;
+        if self.is_cancelled() {
+            return;
+        }
+        // notify_waiters は future が waiter 登録される前の通知を保持しない。
+        // enable 後に atomic state を再確認して、approval / tool 実行との競合で
+        // 明示取消を取り逃さない。
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.is_cancelled() {
+            return;
+        }
+        notified.await;
     }
 }
 

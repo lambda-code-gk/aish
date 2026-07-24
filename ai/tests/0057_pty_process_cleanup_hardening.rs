@@ -442,6 +442,7 @@ impl CancelPathHandoffMock {
                 message: handoff_error
                     .map(|e| e.message)
                     .unwrap_or_else(|| "human_handoff_failed".into()),
+                completion_report: None,
             };
             let final_json = serde_json::to_string(&final_resp).expect("final json");
             writeln!(writer, "{final_json}").expect("write final");

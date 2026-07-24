@@ -147,11 +147,11 @@ aish          →  aish-replay のみ（aibe への path 依存禁止）
 
 `completion_report` は optional additive DTO で、Task Completion envelope を返さない旧 provider 応答では省略する。`outcome` は `done` / `needs_user` / `blocked` / `budget_exhausted`。`terminal_reason` は NeedsUser / Blocked の具体的理由を保持する。各 criterion の Evidence、未達 ID、未検証事項（不足している required Evidence を含む）、使用 query 数を同じ DTO から human / structured 表示する。新 RPC は追加しない。
 
-0070 の委譲検証 report では optional `verification_terminal`（`done` / `needs_user` / `blocked` / `stagnated` / `budget_exhausted`）と criterion ごとの `evaluation_status`（`satisfied` / `unsatisfied` / `unknown` / `not_applicable`）を追加する。既存 `satisfied` と4種類の `outcome` は削除・改名しない。`failed` / `cancelled` は従来どおり top-level `Error` / `Cancelled` であり completion report を付けない。`gaps`、`worker_id`、`follow_up_count` も additive で、0070 非適用 report では省略または空となる。
+0070 の委譲検証 report では optional `verification_terminal`（`done` / `needs_user` / `blocked` / `stagnated` / `budget_exhausted`）と criterion ごとの `evaluation_status`（`satisfied` / `unsatisfied` / `unknown` / `not_applicable`）を追加する。0071 では Task Completion 対象 turn に限り、top-level `Error` / `Cancelled` に optional additive `completion_report` を付け、`verification_terminal=failed` / `cancelled` を表す。既存 `satisfied` と4種類の `outcome`、top-level response type は削除・改名しない。legacy consumer向け `outcome` は `blocked` のままとし、新consumerとpresenterは `verification_terminal` を優先する。Task Completion 対象外、通常provider error、Human TaskのError / Cancelledではfieldを省略する。`gaps`、`worker_id`、`follow_up_count` も additive で、非適用 report では省略または空となる。
 
 `assistant_streaming`: 任意のデルタ通知。aibe の LLM プロバイダが streaming を返せる場合はそのデルタをそのまま流し、非対応プロバイダは synthetic 1 回のデルタを返す。`ai` は human 向け（`--format` 未指定かつ filter 無効）のときだけ delta を stdout に逐次表示する。`--format json|tsv|env` 時は delta を stdout に出さず、最終 `AgentTurnResult` を structured 形式で 1 回だけ出す（0033）。`AI_FILTER` / `[ask].filter` 有効時も同様に delta を stdout に出さず、turn 終了時に全文へ 1 回だけ filter を適用する（0048）。`streamed` は「chunk を stdout に実際に表示したか」の内部フラグであり、`progress` / `timeout` とは独立する。
 
-Task Completion Active request の provider delta だけを request-local buffer に保持し、control envelope の decode と検査が終わるまで client へ流さない。Completion 成功時は `deliverable` だけを streaming / final 表示へ渡し、fail-closed error 時は buffered assistant content を破棄する。Inactive request は buffer を介さず従来どおり逐次 delta を直接渡す。
+Task Completion Active request の provider delta だけを request-local buffer に保持し、control envelope の decode と検査が終わるまで client へ流さない。bufferは64 KiBか1024 deltaの早い方を上限とし、超過時は保存済みdeltaを全破棄してturn終了まで追加deltaも捨てる。Completion 成功時は検査済み `deliverable` だけを streaming / final 表示へ渡し、fail-closed Error / Cancelled / overflow時は未検査本文を再生しない。Inactive request は buffer を介さず従来どおり逐次 delta を直接渡す。
 
 ### smart entry と `route_turn`
 
@@ -619,6 +619,14 @@ Worker Result、exit 0、changed paths、Artifact locator は `source=agent_task
 初回評価は全 criterion を四状態へ一意に分類する。`not_applicable` は Contract 固定時の非空 `applicability` と verified/non-stale な applicability Evidence が必要である。未達時は actionable な `unsatisfied` / `unknown` を一つの bounded `Gap` にまとめ、既存 AgentTaskRequest の objective/instructions/completion_criteria へ決定的に変換する。wire に `gap` field は追加しない。同じ Worker/cwd/timeout、通常の再承認で follow-up は最大1回だけ行い、同じ plan を再実行する。これは既存 query budget 2 の内側で、独立 verifier、二次 agent loop、3回目 query、永続状態を追加しない。Human Task の Suspended/evaluation skip/checkpoint/resume/continuation は接続せず従来どおりである。
 
 終端判定は `Cancelled`、検証経路の非回復 `Failed`、全 applicable criterion の `Done`、具体的ユーザー待ち `NeedsUser`、権限・制約内で解消不能な `Blocked`、follow-up 後も進展なしの `Stagnated`、既存 budget 到達の `BudgetExhausted` の順で行う。criterion の非zero command、missing artifact、Evidence 矛盾は通常 `unsatisfied` / `unknown` であり、それだけで `Failed` にしない。
+
+#### Task Completion hardening（0071）
+
+委譲評価の actionable な `unsatisfied` / `unknown` criterion はoptional additiveな `required_work`をcriterionごとに持ち、委譲turnでは非空かつ1024 bytes以下を必須とする。Gapの`observed`は同criterionのnon-stale Evidence summaryをstable ID順に解決し、Evidenceが無い場合だけserver-ownedの`observation_incomplete` / `plan_not_executed` / `evidence_conflict` / `no_observation`を使う。`required_evidence`やglobal `next_objective`を観測済み事実・criterion固有作業へ転用しない。follow-upは全actionable criterionのobserved / required_work / plan itemを一つの既存`AgentTaskRequest`へ格納し、shapeまたは128 KiB上限を超えたらpartial truncationせずBlockedとする。
+
+verification commandはprocess runnerが付けるtyped `process_terminal`で分類する。起動済みprocessのnonzeroとcleanup/reap済みtimeoutは`Verification(verified=false)`からGapへ進み、spawn、終了状態取得、cleanup/reap不能だけがtop-level Error + `verification_terminal=failed`になる。schema、plan、cwd、allowlist不正は従来のInvalidRequest / ToolNotAllowedでありFailedへ再分類しない。CompletionReportは128 KiB、criterion当たりEvidence 8件、全体64件、unverified 32件に固定する。
+
+Agent TaskのWorkspace Observerはfile contentをopen/hashせず、`symlink_metadata`からfile type、directory/symlink flag、len、dev、ino、mtime/mtime_nsec、ctime/ctime_nsecをnamed fingerprintとして比較する。同一size書き換えはctime/inode等で検出し、iterator/metadata/race、4096 pathまたは256 changed pathの境界では`observation_incomplete=true`を返す。symlink targetはfollowしない。
 
 `tool_calls`（レスポンス）は aibe が **実際に実行した**呼び出しの記録。各要素は `id`, `name`, `arguments`, `status`（`ok` / `error`）と、成功時 `output`、失敗時 `error` / `message` を含む。
 

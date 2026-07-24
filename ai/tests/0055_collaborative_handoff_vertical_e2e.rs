@@ -247,6 +247,7 @@ impl CollaborativeMockServer {
                                 id,
                                 code: ErrorCode::ToolError,
                                 message: format!("human_handoff_failed: {}", error.message),
+                                completion_report: None,
                             };
                             let final_json =
                                 serde_json::to_string(&final_resp).expect("final json");

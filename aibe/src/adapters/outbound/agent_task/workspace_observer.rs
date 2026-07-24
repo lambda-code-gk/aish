@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 const MAX_OBSERVED_PATHS: usize = 4096;
@@ -7,8 +8,39 @@ const MAX_CHANGED_PATHS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSnapshot {
-    entries: BTreeMap<PathBuf, (u64, Option<std::time::SystemTime>, bool)>,
+    entries: BTreeMap<PathBuf, WorkspaceMetadataFingerprint>,
     pub incomplete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceMetadataFingerprint {
+    file_type: u32,
+    is_dir: bool,
+    is_symlink: bool,
+    len: u64,
+    dev: u64,
+    ino: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+    ctime: i64,
+    ctime_nsec: i64,
+}
+
+impl WorkspaceMetadataFingerprint {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        Self {
+            file_type: metadata.mode() & 0o170000,
+            is_dir: metadata.is_dir(),
+            is_symlink: metadata.file_type().is_symlink(),
+            len: metadata.len(),
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+        }
+    }
 }
 
 pub fn snapshot_workspace(root: &Path) -> WorkspaceSnapshot {
@@ -25,7 +57,14 @@ fn walk(root: &Path, dir: &Path, snapshot: &mut WorkspaceSnapshot) {
         snapshot.incomplete = true;
         return;
     };
-    for entry in read_dir.flatten() {
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                snapshot.incomplete = true;
+                continue;
+            }
+        };
         if snapshot.entries.len() >= MAX_OBSERVED_PATHS {
             snapshot.incomplete = true;
             return;
@@ -35,13 +74,22 @@ fn walk(root: &Path, dir: &Path, snapshot: &mut WorkspaceSnapshot) {
             snapshot.incomplete = true;
             continue;
         };
+        // ctime の subsecond 値を観測できない regular file では、同一 size / mtime
+        // rewrite を metadata だけで否定できない。値がちょうど秒境界だった場合も
+        // false negative より保守的な incomplete を選ぶ。
+        if metadata.is_file() && metadata.ctime_nsec() == 0 {
+            snapshot.incomplete = true;
+        }
         let relative = match path.strip_prefix(root) {
             Ok(path) => path.to_path_buf(),
-            Err(_) => continue,
+            Err(_) => {
+                snapshot.incomplete = true;
+                continue;
+            }
         };
         snapshot.entries.insert(
             relative,
-            (metadata.len(), metadata.modified().ok(), metadata.is_dir()),
+            WorkspaceMetadataFingerprint::from_metadata(&metadata),
         );
         if metadata.is_dir() && !metadata.file_type().is_symlink() {
             walk(root, &path, snapshot);

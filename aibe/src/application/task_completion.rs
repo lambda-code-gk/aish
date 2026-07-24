@@ -4,8 +4,8 @@ use aibe_protocol::{
     CompletionCriterionReport, CompletionCriterionStatus as WireCriterionStatus,
     CompletionEvidenceReport, CompletionEvidenceSource, CompletionGapReport,
     CompletionOutcome as WireOutcome, CompletionReport, ExecutedToolCall, ExecutedToolStatus,
-    ToolRiskClass, VerificationTerminal as WireVerificationTerminal, APPLY_PATCH, SHELL_EXEC,
-    WRITE_FILE,
+    ProcessExecutionTerminal, ToolRiskClass, VerificationTerminal as WireVerificationTerminal,
+    APPLY_PATCH, SHELL_EXEC, WRITE_FILE,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -15,13 +15,18 @@ use tokio::sync::Mutex;
 use crate::domain::{
     bound_evidence_target, build_gap, gap_follow_up_request, sha256_hex, terminal_outcome,
     validate_evaluation, AgentTaskRequest, CompletionEvaluation, CompletionOutcome,
-    CriterionStatus, DelegatedVerificationAction, EvidenceRecord, EvidenceSource, TaskContract,
-    TaskKind, STALL_TERMINAL_REASON,
+    CriterionObservationState, CriterionStatus, DelegatedVerificationAction, EvidenceRecord,
+    EvidenceSource, GapObservationKind, TaskContract, TaskKind, STALL_TERMINAL_REASON,
 };
 
 use crate::ports::outbound::TurnEventSink;
 
 const SUMMARY_LIMIT: usize = 240;
+pub const COMPLETION_REPORT_MAX_BYTES: usize = 128 * 1024;
+pub const COMPLETION_REPORT_MAX_EVIDENCE_PER_CRITERION: usize = 8;
+pub const COMPLETION_REPORT_MAX_EVIDENCE_TOTAL: usize = 64;
+pub const COMPLETION_REPORT_MAX_UNVERIFIED_ITEMS: usize = 32;
+pub const COMPLETION_REPORT_TEXT_MAX_BYTES: usize = 1024;
 
 pub fn system_instruction(expected_kind: TaskKind) -> String {
     let kind = match expected_kind {
@@ -32,7 +37,7 @@ pub fn system_instruction(expected_kind: TaskKind) -> String {
     format!(
         "Task completion control for a {kind} request: respond with one JSON object and no surrounding markdown. \
 The object must have aish_task_completion.contract (goal, task_kind={kind}, criteria with stable id/description/deliverable_is_plan/observes_targets, constraints, deliverables, verification, verification_tools), \
-optional aish_task_completion.evaluation (criteria with criterion_id/status/evidence_ids/required_evidence, next_objective, needs_user, blocked, failure), and deliverable. \
+optional aish_task_completion.evaluation (criteria with criterion_id/status/evidence_ids/required_evidence/required_work, next_objective, needs_user, blocked, failure), and deliverable. \
 Fix the contract before requesting the first tool. Every later envelope must repeat it unchanged. \
 Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order. \
 Write-like success is not verified until a later matching observation or verification tool on the same target. \
@@ -372,6 +377,69 @@ fn matching_delegated_command<'a>(
         })
 }
 
+pub fn verification_infrastructure_failure<'a>(
+    contract: &TaskContract,
+    calls: &'a [ExecutedToolCall],
+) -> Option<&'a ExecutedToolCall> {
+    calls.iter().find(|call| {
+        matching_delegated_command(contract, call).is_some()
+            && call.process_terminal == Some(ProcessExecutionTerminal::InfrastructureFailure)
+    })
+}
+
+pub fn build_interrupted_report(
+    contract: Option<&TaskContract>,
+    terminal: WireVerificationTerminal,
+    reason: &str,
+    queries_used: u8,
+) -> CompletionReport {
+    debug_assert!(matches!(
+        terminal,
+        WireVerificationTerminal::Failed | WireVerificationTerminal::Cancelled
+    ));
+    let criteria = contract
+        .map(|contract| {
+            contract
+                .criteria
+                .iter()
+                .map(|criterion| CompletionCriterionReport {
+                    criterion_id: bounded(&criterion.id),
+                    satisfied: false,
+                    evidence: Vec::new(),
+                    evaluation_status: Some(WireCriterionStatus::Unknown),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let unsatisfied_criteria = criteria
+        .iter()
+        .map(|criterion| criterion.criterion_id.clone())
+        .collect();
+    let marker = match terminal {
+        WireVerificationTerminal::Failed => "verification infrastructure failed",
+        WireVerificationTerminal::Cancelled => "task completion was cancelled",
+        _ => unreachable!("terminal checked above"),
+    };
+    let report = CompletionReport {
+        outcome: WireOutcome::Blocked,
+        terminal_reason: Some(bounded_report_text(reason)),
+        criteria,
+        unsatisfied_criteria,
+        unverified_items: vec![marker.into()],
+        queries_used,
+        verification_terminal: Some(terminal),
+        gaps: Vec::new(),
+        worker_id: None,
+        follow_up_count: contract
+            .and_then(|contract| contract.delegated_verification.as_ref())
+            .map(|_| queries_used.saturating_sub(1).min(1)),
+    };
+    debug_assert!(
+        serde_json::to_vec(&report).is_ok_and(|bytes| bytes.len() <= COMPLETION_REPORT_MAX_BYTES)
+    );
+    report
+}
+
 fn matching_delegated_observation<'a>(
     contract: &'a TaskContract,
     call: &ExecutedToolCall,
@@ -613,17 +681,9 @@ pub fn build_delegated_continuation(
         .ok_or_else(|| "delegated continuation requires initial agent_task".to_string())?;
     let initial: AgentTaskRequest = serde_json::from_value(initial.arguments.clone())
         .map_err(|error| format!("invalid initial agent_task request: {error}"))?;
-    let gap = build_gap(contract, evaluation)?;
-    let mut follow_up = gap_follow_up_request(contract, &initial, &gap)?;
-    follow_up.objective =
-        sanitized_bounded_bytes(&follow_up.objective, crate::domain::MAX_OBJECTIVE_BYTES);
-    follow_up.instructions = follow_up
-        .instructions
-        .into_iter()
-        .map(|instruction| {
-            sanitized_bounded_bytes(&instruction, crate::domain::MAX_INSTRUCTION_BYTES)
-        })
-        .collect();
+    let observation_states = gap_observation_states(evaluation);
+    let gap = build_gap(contract, evidence, evaluation, &observation_states)?;
+    let follow_up = gap_follow_up_request(contract, &initial, &gap)?;
     let base = build_continuation(contract, evaluation, evidence);
     let request = serde_json::to_string(&follow_up)
         .map_err(|error| format!("cannot serialize follow-up request: {error}"))?;
@@ -650,28 +710,42 @@ pub fn build_report(
     validate_evaluation(contract, evidence, evaluation)?;
     let outcome = terminal_outcome(evaluation, queries_used, stalled)
         .ok_or_else(|| "completion evaluation requires another query".to_string())?;
-    let criteria = evaluation
-        .criteria
-        .iter()
-        .map(|criterion| CompletionCriterionReport {
-            criterion_id: bounded(&criterion.criterion_id),
-            satisfied: criterion.status == CriterionStatus::Satisfied,
-            evidence: criterion
+    let mut evidence_budget = COMPLETION_REPORT_MAX_EVIDENCE_TOTAL;
+    let mut evidence_omitted = false;
+    let mut ordered_evaluations = evaluation.criteria.iter().collect::<Vec<_>>();
+    ordered_evaluations.sort_by(|left, right| left.criterion_id.cmp(&right.criterion_id));
+    let criteria = ordered_evaluations
+        .into_iter()
+        .map(|criterion| {
+            let criterion_limit = COMPLETION_REPORT_MAX_EVIDENCE_PER_CRITERION.min(evidence_budget);
+            let mut records = criterion
                 .evidence_ids
                 .iter()
                 .filter_map(|id| evidence.iter().find(|record| &record.evidence_id == id))
+                .collect::<Vec<_>>();
+            records.sort_by(|left, right| left.evidence_id.cmp(&right.evidence_id));
+            evidence_omitted |= records.len() > criterion_limit;
+            let criterion_evidence = records
+                .into_iter()
+                .take(criterion_limit)
                 .map(to_wire_evidence)
-                .collect(),
-            // 四状態は常に投影する。非委譲では Unknown/NotApplicable を validation で拒否する。
-            evaluation_status: Some(match criterion.status {
-                CriterionStatus::Satisfied => WireCriterionStatus::Satisfied,
-                CriterionStatus::Unsatisfied => WireCriterionStatus::Unsatisfied,
-                CriterionStatus::Unknown => WireCriterionStatus::Unknown,
-                CriterionStatus::NotApplicable => WireCriterionStatus::NotApplicable,
-            }),
+                .collect::<Vec<_>>();
+            evidence_budget = evidence_budget.saturating_sub(criterion_evidence.len());
+            CompletionCriterionReport {
+                criterion_id: bounded(&criterion.criterion_id),
+                satisfied: criterion.status == CriterionStatus::Satisfied,
+                evidence: criterion_evidence,
+                // 四状態は常に投影する。非委譲では Unknown/NotApplicable を validation で拒否する。
+                evaluation_status: Some(match criterion.status {
+                    CriterionStatus::Satisfied => WireCriterionStatus::Satisfied,
+                    CriterionStatus::Unsatisfied => WireCriterionStatus::Unsatisfied,
+                    CriterionStatus::Unknown => WireCriterionStatus::Unknown,
+                    CriterionStatus::NotApplicable => WireCriterionStatus::NotApplicable,
+                }),
+            }
         })
         .collect();
-    let unsatisfied_criteria = evaluation
+    let mut unsatisfied_criteria = evaluation
         .criteria
         .iter()
         .filter(|criterion| {
@@ -681,17 +755,18 @@ pub fn build_report(
             )
         })
         .map(|criterion| bounded(&criterion.criterion_id))
-        .collect();
+        .collect::<Vec<_>>();
+    unsatisfied_criteria.sort();
     let mut unverified_items: Vec<String> = evidence
         .iter()
         .filter(|record| !record.verified || record.stale)
         .map(|record| {
-            format!(
+            bounded_report_text(&format!(
                 "{}{}: {}",
                 record.evidence_id,
                 if record.stale { " (stale)" } else { "" },
                 record.summary
-            )
+            ))
         })
         .collect();
     unverified_items.extend(
@@ -717,6 +792,13 @@ pub fn build_report(
                 })
             }),
     );
+    if evidence_omitted {
+        unverified_items.push("additional criterion evidence omitted by report bound".into());
+    }
+    if unverified_items.len() > COMPLETION_REPORT_MAX_UNVERIFIED_ITEMS {
+        unverified_items.truncate(COMPLETION_REPORT_MAX_UNVERIFIED_ITEMS - 1);
+        unverified_items.push("additional unverified items omitted by report bound".into());
+    }
     let terminal_reason = evaluation
         .needs_user
         .as_deref()
@@ -729,7 +811,7 @@ pub fn build_report(
         } else {
             None
         })
-        .map(bounded);
+        .map(bounded_report_text);
     let delegated = contract.delegated_verification.is_some();
     let mut report = CompletionReport {
         outcome: match outcome {
@@ -755,17 +837,73 @@ pub fn build_report(
         follow_up_count: delegated.then_some(queries_used.saturating_sub(1).min(1)),
     };
     if delegated && outcome != CompletionOutcome::Done {
-        attach_gap_report(&mut report, contract, evaluation);
+        attach_gap_report(&mut report, contract, evidence, evaluation);
+    }
+    if !shrink_report_to_serialized_bound(&mut report)? {
+        return Err("completion report exceeds byte bound".into());
     }
     Ok(report)
+}
+
+fn shrink_report_to_serialized_bound(report: &mut CompletionReport) -> Result<bool, String> {
+    const OMISSION: &str = "additional report details omitted by serialized byte bound";
+    let serialized_len = |report: &CompletionReport| {
+        serde_json::to_vec(report)
+            .map(|bytes| bytes.len())
+            .map_err(|error| format!("cannot serialize completion report: {error}"))
+    };
+    if serialized_len(report)? <= COMPLETION_REPORT_MAX_BYTES {
+        return Ok(true);
+    }
+    if !report.unverified_items.iter().any(|item| item == OMISSION) {
+        if report.unverified_items.len() >= COMPLETION_REPORT_MAX_UNVERIFIED_ITEMS {
+            report.unverified_items.pop();
+        }
+        report.unverified_items.push(OMISSION.into());
+    }
+    loop {
+        if serialized_len(report)? <= COMPLETION_REPORT_MAX_BYTES {
+            return Ok(true);
+        }
+        if let Some(criterion) = report
+            .criteria
+            .iter_mut()
+            .rev()
+            .find(|criterion| !criterion.evidence.is_empty())
+        {
+            criterion.evidence.pop();
+            continue;
+        }
+        if report.unverified_items.len() > 1 {
+            let omission_index = report
+                .unverified_items
+                .iter()
+                .position(|item| item == OMISSION)
+                .unwrap_or(report.unverified_items.len() - 1);
+            let remove_index = if omission_index == 0 { 1 } else { 0 };
+            report.unverified_items.remove(remove_index);
+            continue;
+        }
+        // Gap は criterion row 本体ではなく bounded な監査 summary である。長い
+        // verification plan ID が多数 criterion に対応すると、合法な Contract でも
+        // report 内で参照が多重化するため、安定 ID 順の末尾から summary を省略する。
+        // criterion row と omission marker は常に残す。
+        if !report.gaps.is_empty() {
+            report.gaps.pop();
+            continue;
+        }
+        return Ok(false);
+    }
 }
 
 pub fn attach_gap_report(
     report: &mut CompletionReport,
     contract: &TaskContract,
+    evidence: &[EvidenceRecord],
     evaluation: &CompletionEvaluation,
 ) {
-    let Ok(gap) = build_gap(contract, evaluation) else {
+    let observation_states = gap_observation_states(evaluation);
+    let Ok(gap) = build_gap(contract, evidence, evaluation, &observation_states) else {
         return;
     };
     report.gaps = gap
@@ -773,8 +911,8 @@ pub fn attach_gap_report(
         .into_iter()
         .map(|entry| CompletionGapReport {
             criterion_id: bounded(&entry.criterion_id),
-            observed: bounded(&entry.observed),
-            required_work: bounded(&entry.required_work),
+            observed: bounded_report_text(&entry.observed),
+            required_work: bounded_report_text(&entry.required_work),
             verification_plan_item_ids: entry
                 .verification_plan_item_ids
                 .iter()
@@ -782,6 +920,33 @@ pub fn attach_gap_report(
                 .collect(),
         })
         .collect();
+    let bounded = shrink_report_to_serialized_bound(report).unwrap_or(false);
+    if !bounded {
+        // terminal +全criterion rowの最小projectionはContract validation上bounded。
+        // serializer異常時にも追加Gapだけは残さず、呼出し側へunbounded reportを渡さない。
+        report.gaps.clear();
+    }
+    debug_assert!(
+        serde_json::to_vec(report).is_ok_and(|bytes| bytes.len() <= COMPLETION_REPORT_MAX_BYTES)
+    );
+}
+
+fn gap_observation_states(evaluation: &CompletionEvaluation) -> Vec<CriterionObservationState> {
+    evaluation
+        .criteria
+        .iter()
+        .filter(|criterion| {
+            criterion.evidence_ids.is_empty()
+                && matches!(
+                    criterion.status,
+                    CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+                )
+        })
+        .map(|criterion| CriterionObservationState {
+            criterion_id: criterion.criterion_id.clone(),
+            kind: GapObservationKind::NoObservation,
+        })
+        .collect()
 }
 
 fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
@@ -795,7 +960,7 @@ fn to_wire_evidence(record: &EvidenceRecord) -> CompletionEvidenceReport {
             EvidenceSource::Deliverable => CompletionEvidenceSource::Deliverable,
             EvidenceSource::AgentTask => CompletionEvidenceSource::AgentTask,
         },
-        summary: bounded(&record.summary),
+        summary: bounded_report_text(&record.summary),
         verified: record.verified && !record.stale,
     }
 }
@@ -807,69 +972,88 @@ fn bounded(value: &str) -> String {
         .collect()
 }
 
-fn sanitized_bounded_bytes(value: &str, max_bytes: usize) -> String {
+fn bounded_report_text(value: &str) -> String {
     let sanitized = aish_replay::sanitize_log_text(value);
-    let mut used = 0usize;
-    sanitized
-        .chars()
-        .take_while(|character| {
-            let next = used.saturating_add(character.len_utf8());
-            if next > max_bytes {
-                false
-            } else {
-                used = next;
-                true
-            }
-        })
-        .collect()
+    if sanitized.len() <= COMPLETION_REPORT_TEXT_MAX_BYTES {
+        return sanitized;
+    }
+    let mut end = COMPLETION_REPORT_TEXT_MAX_BYTES;
+    while !sanitized.is_char_boundary(end) {
+        end -= 1;
+    }
+    sanitized[..end].to_string()
 }
 
 /// provider delta を最終 envelope 判定まで保持し、control JSON を client へ流さない。
+pub const COMPLETION_EVENT_BUFFER_MAX_BYTES: usize = 64 * 1024;
+pub const COMPLETION_EVENT_BUFFER_MAX_DELTAS: usize = 1024;
+
 pub struct CompletionEventBuffer {
     inner: Arc<dyn TurnEventSink>,
-    deltas: Mutex<Vec<String>>,
+    state: Mutex<CompletionEventBufferState>,
+}
+
+#[derive(Default)]
+struct CompletionEventBufferState {
+    deltas: Vec<String>,
+    buffered_bytes: usize,
+    delta_count: usize,
+    overflowed: bool,
 }
 
 impl CompletionEventBuffer {
     pub fn new(inner: Arc<dyn TurnEventSink>) -> Arc<Self> {
         Arc::new(Self {
             inner,
-            deltas: Mutex::new(Vec::new()),
+            state: Mutex::new(CompletionEventBufferState::default()),
         })
     }
 
+    pub async fn buffered_usage(&self) -> (usize, usize, bool) {
+        let state = self.state.lock().await;
+        (state.buffered_bytes, state.delta_count, state.overflowed)
+    }
+
     pub async fn flush_for_response(&self, id: &str, response: &aibe_protocol::ClientResponse) {
+        let buffered = {
+            let mut state = self.state.lock().await;
+            let deltas = std::mem::take(&mut state.deltas);
+            let overflowed = state.overflowed;
+            *state = CompletionEventBufferState::default();
+            (!overflowed).then_some(deltas)
+        };
         match response {
             aibe_protocol::ClientResponse::AgentTurnResult {
                 assistant_message,
                 completion_report: Some(_),
                 ..
             } => {
-                if !assistant_message.content.is_empty() {
-                    self.inner
-                        .assistant_streaming(id, assistant_message.content.clone())
-                        .await;
+                let deliverable = aish_replay::sanitize_log_text(&assistant_message.content);
+                if !deliverable.is_empty()
+                    && !deliverable
+                        .contains(crate::application::completion_envelope::TASK_COMPLETION_MARKER)
+                {
+                    self.inner.assistant_streaming(id, deliverable).await;
                 }
             }
             aibe_protocol::ClientResponse::AgentTurnResult {
                 status: aibe_protocol::AgentTurnStatus::Suspended,
                 ..
             } => {
-                let mut deltas = self.deltas.lock().await;
-                let contains_control = deltas
-                    .join("")
-                    .contains(crate::application::completion_envelope::TASK_COMPLETION_MARKER);
-                if !contains_control {
-                    for delta in deltas.drain(..) {
-                        self.inner.assistant_streaming(id, delta).await;
+                if let Some(deltas) = buffered {
+                    let contains_control = deltas
+                        .join("")
+                        .contains(crate::application::completion_envelope::TASK_COMPLETION_MARKER);
+                    if !contains_control {
+                        for delta in deltas {
+                            self.inner.assistant_streaming(id, delta).await;
+                        }
                     }
                 }
-                deltas.clear();
             }
             _ => {
                 // Active request の fail-closed 応答では、検査前に生成された assistant
                 // 本文を表示経路へ流さない。
-                self.deltas.lock().await.clear();
             }
         }
         self.inner.final_response(id).await;
@@ -888,7 +1072,24 @@ impl TurnEventSink for CompletionEventBuffer {
     }
 
     async fn assistant_streaming(&self, _id: &str, delta: String) {
-        self.deltas.lock().await.push(delta);
+        let mut state = self.state.lock().await;
+        if state.overflowed {
+            return;
+        }
+        let next_bytes = state.buffered_bytes.saturating_add(delta.len());
+        let next_count = state.delta_count.saturating_add(1);
+        if next_bytes > COMPLETION_EVENT_BUFFER_MAX_BYTES
+            || next_count > COMPLETION_EVENT_BUFFER_MAX_DELTAS
+        {
+            state.deltas.clear();
+            state.buffered_bytes = 0;
+            state.delta_count = 0;
+            state.overflowed = true;
+            return;
+        }
+        state.buffered_bytes = next_bytes;
+        state.delta_count = next_count;
+        state.deltas.push(delta);
     }
 
     async fn final_response(&self, _id: &str) {}

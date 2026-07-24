@@ -319,8 +319,12 @@ pub fn render_response(
             stdout: None,
             stderr: vec![format!("ai: pong ({id})")],
         },
-        ClientResponse::Error { message, .. } => PresenterOutput {
-            stdout: None,
+        ClientResponse::Error {
+            message,
+            completion_report,
+            ..
+        } => PresenterOutput {
+            stdout: render_agent_output("", completion_report.as_ref()),
             stderr: vec![format!("aibe error: {}", bounded_audit_text(message))],
         },
         ClientResponse::ShellExecApprovalPrompt { .. } => PresenterOutput {
@@ -336,8 +340,12 @@ pub fn render_response(
             stdout: None,
             stderr: Vec::new(),
         },
-        ClientResponse::Cancelled { reason, .. } => PresenterOutput {
-            stdout: None,
+        ClientResponse::Cancelled {
+            reason,
+            completion_report,
+            ..
+        } => PresenterOutput {
+            stdout: render_agent_output("", completion_report.as_ref()),
             stderr: vec![match reason {
                 Some(reason) => format!("ai: cancelled: {}", bounded_audit_text(reason)),
                 None => "ai: cancelled".to_string(),
@@ -646,13 +654,18 @@ impl ResponseView {
                 filter_stderr: Vec::new(),
                 tool_warnings: Vec::new(),
             },
-            ClientResponse::Error { id, code, message } => Self {
+            ClientResponse::Error {
+                id,
+                code,
+                message,
+                completion_report,
+            } => Self {
                 response_type: "error".to_string(),
                 id: id.clone(),
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
-                completion_report: None,
+                completion_report: completion_report.as_ref().map(bounded_completion_report),
                 error_code: Some(format!("{code:?}")),
                 error_message: Some(bounded_audit_text(message)),
                 alive: None,
@@ -721,13 +734,18 @@ impl ResponseView {
                 filter_stderr: Vec::new(),
                 tool_warnings: Vec::new(),
             },
-            ClientResponse::Cancelled { id, reason, .. } => Self {
+            ClientResponse::Cancelled {
+                id,
+                reason,
+                completion_report,
+                ..
+            } => Self {
                 response_type: "cancelled".to_string(),
                 id: id.clone(),
                 status: None,
                 assistant_message: None,
                 tool_calls: Vec::new(),
-                completion_report: None,
+                completion_report: completion_report.as_ref().map(bounded_completion_report),
                 error_code: None,
                 error_message: reason.as_deref().map(bounded_audit_text),
                 alive: None,
@@ -1216,6 +1234,57 @@ mod tests {
             ShellExecRenderOptions::default(),
         );
         assert!(out.stdout.is_none());
+    }
+
+    #[test]
+    fn terminal_error_and_cancelled_keep_response_type_and_render_report() {
+        let report = aibe_protocol::CompletionReport {
+            outcome: aibe_protocol::CompletionOutcome::Blocked,
+            terminal_reason: Some("bounded terminal".into()),
+            criteria: vec![],
+            unsatisfied_criteria: vec![],
+            unverified_items: vec!["verification unavailable".into()],
+            queries_used: 1,
+            verification_terminal: Some(aibe_protocol::VerificationTerminal::Failed),
+            gaps: vec![],
+            worker_id: None,
+            follow_up_count: Some(0),
+        };
+        let error = ClientResponse::error_with_completion_report(
+            "e".into(),
+            aibe_protocol::ErrorCode::ToolError,
+            "failed",
+            report.clone(),
+        );
+        let out = render_response(&error, false, ShellExecRenderOptions::default());
+        assert!(out
+            .stdout
+            .as_deref()
+            .is_some_and(|text| text.contains("Verification terminal: Failed")));
+        let view =
+            ResponseView::from_response(&error, false, None, ShellExecRenderOptions::default());
+        assert_eq!(view.response_type, "error");
+        assert_eq!(
+            view.completion_report.unwrap().verification_terminal,
+            Some(aibe_protocol::VerificationTerminal::Failed)
+        );
+
+        let cancelled = ClientResponse::Cancelled {
+            id: "c".into(),
+            turn_id: "c".into(),
+            reason: Some("cancelled".into()),
+            completion_report: Some(aibe_protocol::CompletionReport {
+                verification_terminal: Some(aibe_protocol::VerificationTerminal::Cancelled),
+                ..report
+            }),
+        };
+        let view =
+            ResponseView::from_response(&cancelled, false, None, ShellExecRenderOptions::default());
+        assert_eq!(view.response_type, "cancelled");
+        assert_eq!(
+            view.completion_report.unwrap().verification_terminal,
+            Some(aibe_protocol::VerificationTerminal::Cancelled)
+        );
     }
 
     #[test]

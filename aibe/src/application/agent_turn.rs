@@ -269,6 +269,7 @@ impl AgentTurnService {
                     id: id.clone(),
                     turn_id: id,
                     reason: Some("cancelled".into()),
+                    completion_report: None,
                 };
             }
         }
@@ -314,6 +315,7 @@ impl AgentTurnService {
                             id: id.clone(),
                             turn_id: id,
                             reason: Some("cancelled".into()),
+                            completion_report: None,
                         };
                     }
                 };
@@ -332,6 +334,7 @@ impl AgentTurnService {
                             id: id.clone(),
                             turn_id: id,
                             reason: Some("cancelled".into()),
+                            completion_report: None,
                         };
                     }
                 }
@@ -411,6 +414,7 @@ impl AgentTurnService {
                         id,
                         turn_id: String::new(),
                         reason: Some("cancelled".into()),
+                        completion_report: None,
                     };
                 }
             }
@@ -482,6 +486,7 @@ impl AgentTurnService {
                         id: id.clone(),
                         turn_id: id,
                         reason: Some("cancelled".into()),
+                        completion_report: None,
                     };
                 }
                 Ok(RoundOutcome::SuspendTurn { task_id, executed }) => {
