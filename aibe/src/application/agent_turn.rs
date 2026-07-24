@@ -163,6 +163,80 @@ impl AgentTurnService {
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
     ) -> ClientResponse {
+        self.run_with_client_tools_and_events_inner(
+            id,
+            messages,
+            tools,
+            client_tools,
+            context,
+            approval_gate,
+            tool_approval_gate,
+            client_tool_gate,
+            human_task_gate,
+            events,
+            cancellation,
+            None,
+        )
+        .await
+    }
+
+    /// top-level Cancelled がwireへtool_callsを追加せず、取消直前までの実行済みcallを
+    /// request-local Task Completion reportへ渡すための内部composition用entry point。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_with_client_tools_and_events_capturing_cancelled(
+        &self,
+        id: String,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolName>,
+        client_tools: Vec<ClientProvidedToolSpec>,
+        context: AgentTurnContext,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
+    ) -> (ClientResponse, Vec<aibe_protocol::ExecutedToolCall>) {
+        let interrupted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let response = self
+            .run_with_client_tools_and_events_inner(
+                id,
+                messages,
+                tools,
+                client_tools,
+                context,
+                approval_gate,
+                tool_approval_gate,
+                client_tool_gate,
+                human_task_gate,
+                events,
+                cancellation,
+                Some(Arc::clone(&interrupted)),
+            )
+            .await;
+        let calls = interrupted
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default();
+        (response, calls)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_with_client_tools_and_events_inner(
+        &self,
+        id: String,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolName>,
+        client_tools: Vec<ClientProvidedToolSpec>,
+        context: AgentTurnContext,
+        approval_gate: Option<Arc<dyn ShellExecApprovalGate>>,
+        tool_approval_gate: Option<Arc<dyn ToolApprovalGate>>,
+        client_tool_gate: Option<Arc<dyn ClientToolGate>>,
+        human_task_gate: Option<Arc<dyn HumanTaskGate>>,
+        events: Option<Arc<dyn TurnEventSink>>,
+        cancellation: Option<Arc<TurnCancellation>>,
+        interrupted_calls: Option<Arc<std::sync::Mutex<Vec<aibe_protocol::ExecutedToolCall>>>>,
+    ) -> ClientResponse {
         if messages.is_empty() {
             return ClientResponse::error(
                 id,
@@ -247,6 +321,7 @@ impl AgentTurnService {
             tool_ctx,
             events,
             cancellation,
+            interrupted_calls,
         )
         .await
     }
@@ -398,6 +473,7 @@ impl AgentTurnService {
         tool_ctx: ToolExecutionContext,
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<Arc<TurnCancellation>>,
+        interrupted_calls: Option<Arc<std::sync::Mutex<Vec<aibe_protocol::ExecutedToolCall>>>>,
     ) -> ClientResponse {
         let mut executed = Vec::new();
         let max_rounds = self.executor.tools_config().effective_max_rounds();
@@ -410,6 +486,7 @@ impl AgentTurnService {
                             .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
                             .await;
                     }
+                    record_interrupted_calls(interrupted_calls.as_ref(), &executed);
                     return ClientResponse::Cancelled {
                         id,
                         turn_id: String::new(),
@@ -426,6 +503,26 @@ impl AgentTurnService {
                         Some("planning tool round".into()),
                     )
                     .await;
+            }
+            // progress sinkのawait中にもcancelは発火し得る。provider futureと
+            // cancellation futureを同時にreadyにせず、LLM呼出し前に明示取消を
+            // 決定的に優先して、それまでの実行済みcallをreport用に保持する。
+            if cancellation
+                .as_ref()
+                .is_some_and(|cancel| cancel.is_cancelled())
+            {
+                if let Some(events) = events.as_ref() {
+                    events
+                        .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
+                        .await;
+                }
+                record_interrupted_calls(interrupted_calls.as_ref(), &executed);
+                return ClientResponse::Cancelled {
+                    id: id.clone(),
+                    turn_id: id,
+                    reason: Some("cancelled".into()),
+                    completion_report: None,
+                };
             }
             match self
                 .executor
@@ -481,7 +578,7 @@ impl AgentTurnService {
                             .progress(&id, ProgressPhase::Cancelling, Some("cancelled".into()))
                             .await;
                     }
-                    let _ = executed;
+                    record_interrupted_calls(interrupted_calls.as_ref(), &executed);
                     return ClientResponse::Cancelled {
                         id: id.clone(),
                         turn_id: id,
@@ -512,6 +609,17 @@ impl AgentTurnService {
             ErrorCode::InternalError,
             "agent loop ended unexpectedly",
         )
+    }
+}
+
+fn record_interrupted_calls(
+    sink: Option<&Arc<std::sync::Mutex<Vec<aibe_protocol::ExecutedToolCall>>>>,
+    calls: &[aibe_protocol::ExecutedToolCall],
+) {
+    if let Some(sink) = sink {
+        if let Ok(mut captured) = sink.lock() {
+            *captured = calls.to_vec();
+        }
     }
 }
 

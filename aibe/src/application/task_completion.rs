@@ -14,9 +14,10 @@ use tokio::sync::Mutex;
 
 use crate::domain::{
     bound_evidence_target, build_gap, gap_follow_up_request, sha256_hex, terminal_outcome,
-    validate_evaluation, AgentTaskRequest, CompletionEvaluation, CompletionOutcome,
-    CriterionObservationState, CriterionStatus, DelegatedVerificationAction, EvidenceRecord,
-    EvidenceSource, GapObservationKind, TaskContract, TaskKind, STALL_TERMINAL_REASON,
+    validate_evaluation, AgentTaskRequest, AgentTaskResult, CompletionEvaluation,
+    CompletionOutcome, CriterionObservationState, CriterionStatus, DelegatedVerificationAction,
+    EvidenceRecord, EvidenceSource, GapObservationKind, TaskContract, TaskKind,
+    STALL_TERMINAL_REASON,
 };
 
 use crate::ports::outbound::TurnEventSink;
@@ -138,7 +139,12 @@ pub fn append_evidence_from_tools(
             criterion_ids,
             source,
             observed_after_effect,
-            summary: bounded(&format!("{} status={:?}", call.name, call.status)),
+            summary: bounded(&format!(
+                "{} status={:?}{}",
+                call.name,
+                call.status,
+                structured_observation_suffix(call)
+            )),
             verified,
             target,
             stale: false,
@@ -151,6 +157,32 @@ pub fn append_evidence_from_tools(
     }
 
     ledger
+}
+
+fn structured_observation_suffix(call: &ExecutedToolCall) -> String {
+    let mut fields = Vec::new();
+    if let Some(terminal) = call.process_terminal {
+        let terminal = match terminal {
+            ProcessExecutionTerminal::NonzeroExit => "nonzero_exit",
+            ProcessExecutionTerminal::ObservableTimeout => "observable_timeout",
+            ProcessExecutionTerminal::InfrastructureFailure => "infrastructure_failure",
+        };
+        fields.push(format!("process_terminal={terminal}"));
+    }
+    if call.name == aibe_protocol::AGENT_TASK
+        && call
+            .output
+            .as_deref()
+            .and_then(|output| serde_json::from_str::<AgentTaskResult>(output).ok())
+            .is_some_and(|result| result.observation_incomplete)
+    {
+        fields.push("observation_incomplete=true".into());
+    }
+    if fields.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", fields.join(" "))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -378,17 +410,18 @@ fn matching_delegated_command<'a>(
 }
 
 pub fn verification_infrastructure_failure<'a>(
-    contract: &TaskContract,
-    calls: &'a [ExecutedToolCall],
+    validated_plan_calls: &'a [&'a ExecutedToolCall],
 ) -> Option<&'a ExecutedToolCall> {
-    calls.iter().find(|call| {
-        matching_delegated_command(contract, call).is_some()
-            && call.process_terminal == Some(ProcessExecutionTerminal::InfrastructureFailure)
-    })
+    validated_plan_calls
+        .iter()
+        .copied()
+        .find(|call| call.process_terminal == Some(ProcessExecutionTerminal::InfrastructureFailure))
 }
 
 pub fn build_interrupted_report(
     contract: Option<&TaskContract>,
+    evidence: &[EvidenceRecord],
+    evaluation: Option<&CompletionEvaluation>,
     terminal: WireVerificationTerminal,
     reason: &str,
     queries_used: u8,
@@ -397,22 +430,47 @@ pub fn build_interrupted_report(
         terminal,
         WireVerificationTerminal::Failed | WireVerificationTerminal::Cancelled
     ));
+    let mut evidence_budget = COMPLETION_REPORT_MAX_EVIDENCE_TOTAL;
     let criteria = contract
         .map(|contract| {
-            contract
+            let mut criteria = contract
                 .criteria
                 .iter()
-                .map(|criterion| CompletionCriterionReport {
-                    criterion_id: bounded(&criterion.id),
-                    satisfied: false,
-                    evidence: Vec::new(),
-                    evaluation_status: Some(WireCriterionStatus::Unknown),
+                .map(|criterion| {
+                    let status =
+                        interrupted_criterion_status(contract, &criterion.id, evidence, evaluation);
+                    let limit = COMPLETION_REPORT_MAX_EVIDENCE_PER_CRITERION.min(evidence_budget);
+                    let mut records = evidence
+                        .iter()
+                        .filter(|record| record.criterion_ids.contains(&criterion.id))
+                        .collect::<Vec<_>>();
+                    records.sort_by(|left, right| left.evidence_id.cmp(&right.evidence_id));
+                    let projected = records
+                        .into_iter()
+                        .take(limit)
+                        .map(to_wire_evidence)
+                        .collect::<Vec<_>>();
+                    evidence_budget = evidence_budget.saturating_sub(projected.len());
+                    CompletionCriterionReport {
+                        criterion_id: bounded(&criterion.id),
+                        satisfied: status == WireCriterionStatus::Satisfied,
+                        evidence: projected,
+                        evaluation_status: Some(status),
+                    }
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            criteria.sort_by(|left, right| left.criterion_id.cmp(&right.criterion_id));
+            criteria
         })
         .unwrap_or_default();
     let unsatisfied_criteria = criteria
         .iter()
+        .filter(|criterion| {
+            matches!(
+                criterion.evaluation_status,
+                Some(WireCriterionStatus::Unsatisfied | WireCriterionStatus::Unknown)
+            )
+        })
         .map(|criterion| criterion.criterion_id.clone())
         .collect();
     let marker = match terminal {
@@ -420,12 +478,26 @@ pub fn build_interrupted_report(
         WireVerificationTerminal::Cancelled => "task completion was cancelled",
         _ => unreachable!("terminal checked above"),
     };
-    let report = CompletionReport {
+    let mut unverified_items = evidence
+        .iter()
+        .filter(|record| !record.verified || record.stale)
+        .map(|record| {
+            bounded_report_text(&format!(
+                "{}{}: {}",
+                record.evidence_id,
+                if record.stale { " (stale)" } else { "" },
+                record.summary
+            ))
+        })
+        .take(COMPLETION_REPORT_MAX_UNVERIFIED_ITEMS.saturating_sub(1))
+        .collect::<Vec<_>>();
+    unverified_items.push(marker.into());
+    let mut report = CompletionReport {
         outcome: WireOutcome::Blocked,
         terminal_reason: Some(bounded_report_text(reason)),
         criteria,
         unsatisfied_criteria,
-        unverified_items: vec![marker.into()],
+        unverified_items,
         queries_used,
         verification_terminal: Some(terminal),
         gaps: Vec::new(),
@@ -434,10 +506,59 @@ pub fn build_interrupted_report(
             .and_then(|contract| contract.delegated_verification.as_ref())
             .map(|_| queries_used.saturating_sub(1).min(1)),
     };
-    debug_assert!(
-        serde_json::to_vec(&report).is_ok_and(|bytes| bytes.len() <= COMPLETION_REPORT_MAX_BYTES)
-    );
+    if !shrink_report_to_serialized_bound(&mut report).unwrap_or(false) {
+        for criterion in &mut report.criteria {
+            criterion.evidence.clear();
+        }
+        report.unverified_items = vec![marker.into()];
+    }
     report
+}
+
+fn interrupted_criterion_status(
+    contract: &TaskContract,
+    criterion_id: &str,
+    evidence: &[EvidenceRecord],
+    evaluation: Option<&CompletionEvaluation>,
+) -> WireCriterionStatus {
+    let complete = if let Some(plan) = &contract.delegated_verification {
+        let items = plan
+            .items
+            .iter()
+            .filter(|item| item.criterion_ids.iter().any(|id| id == criterion_id))
+            .collect::<Vec<_>>();
+        !items.is_empty()
+            && items.iter().all(|item| {
+                evidence.iter().any(|record| {
+                    record.criterion_ids.iter().any(|id| id == criterion_id)
+                        && record.plan_item_id.as_deref() == Some(item.id.as_str())
+                        && record.verified
+                        && !record.stale
+                })
+            })
+    } else {
+        evidence.iter().any(|record| {
+            record.criterion_ids.iter().any(|id| id == criterion_id)
+                && record.verified
+                && !record.stale
+        })
+    };
+    if complete {
+        return WireCriterionStatus::Satisfied;
+    }
+    match evaluation
+        .and_then(|evaluation| {
+            evaluation
+                .criteria
+                .iter()
+                .find(|criterion| criterion.criterion_id == criterion_id)
+        })
+        .map(|criterion| criterion.status)
+    {
+        Some(CriterionStatus::Unsatisfied) => WireCriterionStatus::Unsatisfied,
+        Some(CriterionStatus::NotApplicable) => WireCriterionStatus::NotApplicable,
+        _ => WireCriterionStatus::Unknown,
+    }
 }
 
 fn matching_delegated_observation<'a>(
@@ -493,12 +614,12 @@ fn call_matches_plan_action(call: &ExecutedToolCall, action: &DelegatedVerificat
 }
 
 /// 一つのouter queryが Agent Task 後に固定plan全件を順序どおり 1:1 で実行したことを検査する。
-pub fn validate_delegated_cycle_calls(
+pub fn validate_delegated_cycle_calls<'a>(
     contract: &TaskContract,
-    calls: &[ExecutedToolCall],
-) -> Result<(), String> {
+    calls: &'a [ExecutedToolCall],
+) -> Result<Vec<&'a ExecutedToolCall>, String> {
     let Some(plan) = &contract.delegated_verification else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let agent_positions = calls
         .iter()
@@ -509,27 +630,49 @@ pub fn validate_delegated_cycle_calls(
     if agent_positions.len() != 1 {
         return Err("delegated verification query requires exactly one agent_task".into());
     }
-    // 各 plan item は前回一致の次以降からだけ探し、同一実行の再利用と逆順を拒否する。
-    let mut search_from = agent_positions[0] + 1;
+    // 各plan itemに一致するcallはexactly oneとする。これにより、採用call以外の
+    // duplicate InfrastructureFailureでFailedへ短絡することを防ぐ。
+    let search_from = agent_positions[0] + 1;
     let mut command_positions = Vec::new();
     let mut observation_positions = Vec::new();
+    let mut selected_positions = Vec::with_capacity(plan.items.len());
+    let mut selected = Vec::with_capacity(plan.items.len());
     for item in &plan.items {
-        let position = calls
+        let matches = calls
             .iter()
             .enumerate()
             .skip(search_from)
-            .find_map(|(index, call)| call_matches_plan_action(call, &item.action).then_some(index))
-            .ok_or_else(|| {
+            .filter_map(|(index, call)| {
+                call_matches_plan_action(call, &item.action).then_some((index, call))
+            })
+            .collect::<Vec<_>>();
+        let [(position, call)] = matches.as_slice() else {
+            return Err(if matches.is_empty() {
                 format!(
                     "delegated verification plan item was not executed in order: {}",
                     item.id
                 )
-            })?;
-        search_from = position + 1;
+            } else {
+                format!(
+                    "delegated verification plan item was executed more than once: {}",
+                    item.id
+                )
+            });
+        };
+        selected_positions.push(*position);
+        selected.push(*call);
         match &item.action {
-            DelegatedVerificationAction::Command { .. } => command_positions.push(position),
-            DelegatedVerificationAction::Observation { .. } => observation_positions.push(position),
+            DelegatedVerificationAction::Command { .. } => command_positions.push(*position),
+            DelegatedVerificationAction::Observation { .. } => {
+                observation_positions.push(*position)
+            }
         }
+    }
+    if selected_positions
+        .windows(2)
+        .any(|positions| positions[0] >= positions[1])
+    {
+        return Err("delegated verification plan items were executed out of order".into());
     }
     if command_positions
         .iter()
@@ -539,7 +682,7 @@ pub fn validate_delegated_cycle_calls(
     {
         return Err("delegated verification commands must run before observations".into());
     }
-    Ok(())
+    Ok(selected)
 }
 
 fn tool_target(call: &ExecutedToolCall) -> Option<String> {
@@ -681,7 +824,7 @@ pub fn build_delegated_continuation(
         .ok_or_else(|| "delegated continuation requires initial agent_task".to_string())?;
     let initial: AgentTaskRequest = serde_json::from_value(initial.arguments.clone())
         .map_err(|error| format!("invalid initial agent_task request: {error}"))?;
-    let observation_states = gap_observation_states(evaluation);
+    let observation_states = gap_observation_states(contract, evidence, calls, evaluation);
     let gap = build_gap(contract, evidence, evaluation, &observation_states)?;
     let follow_up = gap_follow_up_request(contract, &initial, &gap)?;
     let base = build_continuation(contract, evaluation, evidence);
@@ -703,6 +846,17 @@ pub struct DelegatedContinuation {
 pub fn build_report(
     contract: &TaskContract,
     evidence: &[EvidenceRecord],
+    evaluation: &CompletionEvaluation,
+    queries_used: u8,
+    stalled: bool,
+) -> Result<CompletionReport, String> {
+    build_report_with_calls(contract, evidence, &[], evaluation, queries_used, stalled)
+}
+
+pub fn build_report_with_calls(
+    contract: &TaskContract,
+    evidence: &[EvidenceRecord],
+    calls: &[ExecutedToolCall],
     evaluation: &CompletionEvaluation,
     queries_used: u8,
     stalled: bool,
@@ -837,7 +991,7 @@ pub fn build_report(
         follow_up_count: delegated.then_some(queries_used.saturating_sub(1).min(1)),
     };
     if delegated && outcome != CompletionOutcome::Done {
-        attach_gap_report(&mut report, contract, evidence, evaluation);
+        attach_gap_report_with_calls(&mut report, contract, evidence, calls, evaluation);
     }
     if !shrink_report_to_serialized_bound(&mut report)? {
         return Err("completion report exceeds byte bound".into());
@@ -902,7 +1056,17 @@ pub fn attach_gap_report(
     evidence: &[EvidenceRecord],
     evaluation: &CompletionEvaluation,
 ) {
-    let observation_states = gap_observation_states(evaluation);
+    attach_gap_report_with_calls(report, contract, evidence, &[], evaluation);
+}
+
+pub fn attach_gap_report_with_calls(
+    report: &mut CompletionReport,
+    contract: &TaskContract,
+    evidence: &[EvidenceRecord],
+    calls: &[ExecutedToolCall],
+    evaluation: &CompletionEvaluation,
+) {
+    let observation_states = gap_observation_states(contract, evidence, calls, evaluation);
     let Ok(gap) = build_gap(contract, evidence, evaluation, &observation_states) else {
         return;
     };
@@ -931,7 +1095,20 @@ pub fn attach_gap_report(
     );
 }
 
-fn gap_observation_states(evaluation: &CompletionEvaluation) -> Vec<CriterionObservationState> {
+fn gap_observation_states(
+    contract: &TaskContract,
+    evidence: &[EvidenceRecord],
+    calls: &[ExecutedToolCall],
+    evaluation: &CompletionEvaluation,
+) -> Vec<CriterionObservationState> {
+    let worker_observation_incomplete = calls.iter().any(|call| {
+        call.name == aibe_protocol::AGENT_TASK
+            && call
+                .output
+                .as_deref()
+                .and_then(|output| serde_json::from_str::<AgentTaskResult>(output).ok())
+                .is_some_and(|result| result.observation_incomplete)
+    });
     evaluation
         .criteria
         .iter()
@@ -942,9 +1119,60 @@ fn gap_observation_states(evaluation: &CompletionEvaluation) -> Vec<CriterionObs
                     CriterionStatus::Unsatisfied | CriterionStatus::Unknown
                 )
         })
-        .map(|criterion| CriterionObservationState {
-            criterion_id: criterion.criterion_id.clone(),
-            kind: GapObservationKind::NoObservation,
+        .map(|criterion| {
+            let plan_items = contract
+                .delegated_verification
+                .as_ref()
+                .map(|plan| {
+                    plan.items
+                        .iter()
+                        .filter(|item| item.criterion_ids.contains(&criterion.criterion_id))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let plan_not_executed = plan_items.iter().any(|item| {
+                !calls
+                    .iter()
+                    .any(|call| call_matches_plan_action(call, &item.action))
+            });
+            let observation_incomplete = worker_observation_incomplete
+                || plan_items.iter().any(|item| {
+                    calls.iter().any(|call| {
+                        call_matches_plan_action(call, &item.action)
+                            && call.process_terminal
+                                == Some(ProcessExecutionTerminal::ObservableTimeout)
+                    })
+                });
+            let relevant = evidence
+                .iter()
+                .filter(|record| record.criterion_ids.contains(&criterion.criterion_id))
+                .collect::<Vec<_>>();
+            let evidence_conflict = relevant.iter().any(|verified| {
+                verified.verified
+                    && !verified.stale
+                    && relevant.iter().any(|other| {
+                        (!other.verified || other.stale)
+                            && ((verified.plan_item_id.is_some()
+                                && verified.plan_item_id == other.plan_item_id)
+                                || (verified.target.is_some()
+                                    && verified.target == other.target
+                                    && verified.value_fingerprint.is_some()
+                                    && other.value_fingerprint.is_some()
+                                    && verified.value_fingerprint != other.value_fingerprint))
+                    })
+            });
+            CriterionObservationState {
+                criterion_id: criterion.criterion_id.clone(),
+                kind: if plan_not_executed {
+                    GapObservationKind::PlanNotExecuted
+                } else if observation_incomplete {
+                    GapObservationKind::ObservationIncomplete
+                } else if evidence_conflict {
+                    GapObservationKind::EvidenceConflict
+                } else {
+                    GapObservationKind::NoObservation
+                },
+            }
         })
         .collect()
 }

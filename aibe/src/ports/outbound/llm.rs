@@ -10,6 +10,8 @@ use crate::ports::outbound::ToolDefinition;
 pub enum LlmError {
     #[error("provider failed: {0}")]
     Provider(String),
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
 }
 
 /// テキスト応答およびツール付き推論。

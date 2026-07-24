@@ -8,16 +8,16 @@ use crate::application::completion_envelope::{decode_completion_envelope, Contra
 use crate::application::route_turn::RouteTurnService;
 use crate::application::task_completion::{
     append_evidence_from_tools, attach_gap_report, build_continuation,
-    build_delegated_continuation, build_interrupted_report, build_report, deliverable_evidence,
-    evidence_from_tools, system_instruction, validate_delegated_cycle_calls,
+    build_delegated_continuation, build_interrupted_report, build_report_with_calls,
+    deliverable_evidence, evidence_from_tools, system_instruction, validate_delegated_cycle_calls,
     verification_infrastructure_failure, CompletionEventBuffer,
 };
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
     classify_task_completion_eligibility, is_stalled, parse_tool_names, progress_snapshot,
-    validate_contract_covers_request, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError,
-    CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext, FeatureRegistry,
-    TaskCompletionEligibility, TaskContract,
+    validate_contract_covers_request, validate_evaluation, AgentTurnContext, ChatMessage,
+    ClientCwd, ClientCwdError, CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext,
+    FeatureRegistry, TaskCompletionEligibility, TaskContract,
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
@@ -405,8 +405,8 @@ impl RequestService {
                     completion_event_sink(eligibility, events.clone());
 
                 let mut completion_queries_used = 1u8;
-                let mut response = agent_turn
-                    .run_with_client_tools_and_events(
+                let (mut response, mut interrupted_calls) = agent_turn
+                    .run_with_client_tools_and_events_capturing_cancelled(
                         id.clone(),
                         run_messages.clone(),
                         tools.clone(),
@@ -420,6 +420,7 @@ impl RequestService {
                         Some(Arc::clone(&effective_cancellation)),
                     )
                     .await;
+                let mut interrupted_evaluation: Option<CompletionEvaluation> = None;
 
                 let first_payload = match &response {
                     ClientResponse::AgentTurnResult {
@@ -433,32 +434,9 @@ impl RequestService {
                     } => Some((assistant_message.content.clone(), tool_calls.clone())),
                     _ => None,
                 };
-                'task_completion_processing: {
+                {
                     if let Some((content, mut cumulative_calls)) = first_payload {
                         if matches!(eligibility, TaskCompletionEligibility::Active { .. }) {
-                            if let Ok(Some(contract)) = contract_gate.fixed_contract() {
-                                if let Some(failure) = verification_infrastructure_failure(
-                                    &contract,
-                                    &cumulative_calls,
-                                ) {
-                                    let reason = failure
-                                        .message
-                                        .as_deref()
-                                        .unwrap_or("verification infrastructure failed");
-                                    response = ClientResponse::error_with_completion_report(
-                                        id.clone(),
-                                        ErrorCode::ToolError,
-                                        reason,
-                                        build_interrupted_report(
-                                            Some(&contract),
-                                            VerificationTerminal::Failed,
-                                            reason,
-                                            completion_queries_used,
-                                        ),
-                                    );
-                                    break 'task_completion_processing;
-                                }
-                            }
                             let parsed = decode_completion_envelope(&content);
                             let fixed = contract_gate.fixed_contract();
                             match (parsed, fixed) {
@@ -501,26 +479,63 @@ impl RequestService {
                                         let evaluation =
                                             first_envelope.aish_task_completion.evaluation;
                                         if let Some(evaluation) = evaluation {
-                                            if let Err(message) = validate_delegated_cycle_calls(
+                                            match validate_delegated_cycle_calls(
                                                 &contract,
                                                 &cumulative_calls,
                                             ) {
-                                                response = ClientResponse::error(
-                                                    id.clone(),
-                                                    ErrorCode::InvalidRequest,
-                                                    message,
-                                                );
-                                            } else {
-                                                let mut evidence = evidence_from_tools(
-                                                    &contract,
-                                                    &cumulative_calls,
-                                                );
-                                                evidence.extend(deliverable_evidence(
-                                                    &contract,
-                                                    &first_envelope.deliverable,
-                                                    evidence.len() + 1,
-                                                ));
-                                                match build_report(&contract, &evidence, &evaluation, 1, false) {
+                                                Err(message) => {
+                                                    response = ClientResponse::error(
+                                                        id.clone(),
+                                                        ErrorCode::InvalidRequest,
+                                                        message,
+                                                    );
+                                                }
+                                                Ok(validated_plan_calls) => {
+                                                    let mut evidence = evidence_from_tools(
+                                                        &contract,
+                                                        &cumulative_calls,
+                                                    );
+                                                    evidence.extend(deliverable_evidence(
+                                                        &contract,
+                                                        &first_envelope.deliverable,
+                                                        evidence.len() + 1,
+                                                    ));
+                                                    if let Err(message) = validate_evaluation(
+                                                        &contract,
+                                                        &evidence,
+                                                        &evaluation,
+                                                    ) {
+                                                        response = ClientResponse::error(
+                                                            id.clone(),
+                                                            ErrorCode::InvalidRequest,
+                                                            message,
+                                                        );
+                                                    } else if let Some(failure) =
+                                                        verification_infrastructure_failure(
+                                                            &validated_plan_calls,
+                                                        )
+                                                    {
+                                                        let reason = failure
+                                                            .message
+                                                            .as_deref()
+                                                            .unwrap_or(
+                                                            "verification infrastructure failed",
+                                                        );
+                                                        response = ClientResponse::error_with_completion_report(
+                                                        id.clone(),
+                                                        ErrorCode::ToolError,
+                                                        reason,
+                                                        build_interrupted_report(
+                                                            Some(&contract),
+                                                            &evidence,
+                                                            Some(&evaluation),
+                                                            VerificationTerminal::Failed,
+                                                            reason,
+                                                            completion_queries_used,
+                                                        ),
+                                                    );
+                                                    } else {
+                                                        match build_report_with_calls(&contract, &evidence, &cumulative_calls, &evaluation, 1, false) {
                                         Ok(report) => attach_completion_report(
                                             &mut response,
                                             first_envelope.deliverable,
@@ -563,9 +578,10 @@ impl RequestService {
                                                         "delegated Gap exceeds AgentTaskRequest bounds"
                                                             .into(),
                                                     );
-                                                    match build_report(
+                                                    match build_report_with_calls(
                                                         &contract,
                                                         &evidence,
+                                                        &cumulative_calls,
                                                         &blocked,
                                                         1,
                                                         false,
@@ -601,8 +617,8 @@ impl RequestService {
                                                 );
                                             }
                                             completion_queries_used = 2;
-                                            let second = agent_turn
-                                                .run_with_client_tools_and_events(
+                                            let (second, second_interrupted_calls) = agent_turn
+                                                .run_with_client_tools_and_events_capturing_cancelled(
                                                     id.clone(),
                                                     second_messages,
                                                     tools.clone(),
@@ -616,6 +632,11 @@ impl RequestService {
                                                     Some(Arc::clone(&effective_cancellation)),
                                                 )
                                                 .await;
+                                            if matches!(second, ClientResponse::Cancelled { .. }) {
+                                                interrupted_calls = cumulative_calls.clone();
+                                                interrupted_calls.extend(second_interrupted_calls);
+                                                interrupted_evaluation = Some(evaluation.clone());
+                                            }
                                             response = finish_second_query(
                                                 id.clone(),
                                                 second,
@@ -634,7 +655,9 @@ impl RequestService {
                                                 message,
                                             );
                                         }
-                                    }
+                                                }
+                                                    }
+                                                }
                                             }
                                         } else {
                                             response = ClientResponse::error(
@@ -666,8 +689,14 @@ impl RequestService {
                         if completion_report.is_none() {
                             let fixed = contract_gate.fixed_contract().ok().flatten();
                             let terminal_reason = reason.as_deref().unwrap_or("cancelled");
+                            let evidence = fixed
+                                .as_ref()
+                                .map(|contract| evidence_from_tools(contract, &interrupted_calls))
+                                .unwrap_or_default();
                             *completion_report = Some(build_interrupted_report(
                                 fixed.as_ref(),
+                                &evidence,
+                                interrupted_evaluation.as_ref(),
                                 VerificationTerminal::Cancelled,
                                 terminal_reason,
                                 completion_queries_used,
@@ -816,18 +845,6 @@ fn finish_second_query(
         } => (assistant_message.content.clone(), tool_calls.clone()),
         _ => return response,
     };
-    if let Some(failure) = verification_infrastructure_failure(contract, &second_calls) {
-        let reason = failure
-            .message
-            .as_deref()
-            .unwrap_or("verification infrastructure failed");
-        return ClientResponse::error_with_completion_report(
-            id,
-            ErrorCode::ToolError,
-            reason,
-            build_interrupted_report(Some(contract), VerificationTerminal::Failed, reason, 2),
-        );
-    }
     let envelope = match decode_completion_envelope(&content) {
         Ok(Some(envelope)) => envelope,
         Ok(None) => {
@@ -856,21 +873,51 @@ fn finish_second_query(
             "task completion second query lacks evaluation",
         );
     };
-    if let Err(message) = validate_delegated_cycle_calls(contract, &second_calls) {
-        return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
-    }
+    let validated_plan_calls = match validate_delegated_cycle_calls(contract, &second_calls) {
+        Ok(calls) => calls,
+        Err(message) => return ClientResponse::error(id, ErrorCode::InvalidRequest, message),
+    };
     let mut evidence = append_evidence_from_tools(contract, previous_evidence, &second_calls);
-    cumulative_calls.extend(second_calls);
     evidence.extend(deliverable_evidence(
         contract,
         &envelope.deliverable,
         evidence.len() + 1,
     ));
+    if let Err(message) = validate_evaluation(contract, &evidence, &evaluation) {
+        return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
+    }
+    if let Some(failure) = verification_infrastructure_failure(&validated_plan_calls) {
+        let reason = failure
+            .message
+            .as_deref()
+            .unwrap_or("verification infrastructure failed");
+        return ClientResponse::error_with_completion_report(
+            id,
+            ErrorCode::ToolError,
+            reason,
+            build_interrupted_report(
+                Some(contract),
+                &evidence,
+                Some(&evaluation),
+                VerificationTerminal::Failed,
+                reason,
+                2,
+            ),
+        );
+    }
+    cumulative_calls.extend(second_calls);
     let stalled = is_stalled(
         &progress_snapshot(previous_evaluation, previous_evidence),
         &progress_snapshot(&evaluation, &evidence),
     );
-    match build_report(contract, &evidence, &evaluation, 2, stalled) {
+    match build_report_with_calls(
+        contract,
+        &evidence,
+        cumulative_calls,
+        &evaluation,
+        2,
+        stalled,
+    ) {
         Ok(mut report) => {
             // Done のときだけ前回 Gap を監査用に残す。非 Done では build_report が
             // 付けた current Gap（再委譲後の未達）を上書きしない。

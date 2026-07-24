@@ -168,6 +168,50 @@ struct CancellingApproval {
     cancellation: Arc<aibe::application::TurnCancellation>,
 }
 
+struct CancelAfterThinkingCount {
+    cancellation: Arc<aibe::application::TurnCancellation>,
+    count: AtomicUsize,
+    cancelling_count: AtomicUsize,
+}
+
+struct DeleteOnThinkingCount {
+    path: PathBuf,
+    count: AtomicUsize,
+}
+
+#[async_trait]
+impl TurnEventSink for DeleteOnThinkingCount {
+    async fn progress(&self, _: &str, phase: aibe_protocol::ProgressPhase, _: Option<String>) {
+        if phase == aibe_protocol::ProgressPhase::Thinking
+            && self.count.fetch_add(1, Ordering::SeqCst) == 5
+        {
+            std::fs::remove_file(&self.path).expect("remove verifier before second cycle");
+        }
+    }
+
+    async fn assistant_streaming(&self, _: &str, _: String) {}
+
+    async fn final_response(&self, _: &str) {}
+}
+
+#[async_trait]
+impl TurnEventSink for CancelAfterThinkingCount {
+    async fn progress(&self, _: &str, phase: aibe_protocol::ProgressPhase, _: Option<String>) {
+        if phase == aibe_protocol::ProgressPhase::Cancelling {
+            self.cancelling_count.fetch_add(1, Ordering::SeqCst);
+        }
+        if phase == aibe_protocol::ProgressPhase::Thinking
+            && self.count.fetch_add(1, Ordering::SeqCst) == 4
+        {
+            self.cancellation.cancel();
+        }
+    }
+
+    async fn assistant_streaming(&self, _: &str, _: String) {}
+
+    async fn final_response(&self, _: &str) {}
+}
+
 #[async_trait]
 impl ToolApprovalGate for CancellingApproval {
     async fn request_tool_approval(
@@ -299,6 +343,38 @@ fn active_request(id: &str, dir: &Path, tools: Vec<String>) -> ClientRequest {
         },
         llm_profile: None,
     }
+}
+
+async fn run_failed_verification_scenario(
+    id: &str,
+    dir: &Path,
+    steps: Vec<LlmStepResult>,
+) -> ClientResponse {
+    let service = production_service(
+        dir,
+        Arc::new(ScriptedMockLlm::new(steps)),
+        vec!["0071-missing-verifier".into()],
+    );
+    service
+        .handle_with_events(
+            active_request(
+                id,
+                dir,
+                vec![
+                    AGENT_TASK.into(),
+                    SHELL_EXEC.into(),
+                    READ_FILE.into(),
+                    GIT_DIFF.into(),
+                ],
+            ),
+            None,
+            Some(Arc::new(Approval(AtomicUsize::new(0)))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
 }
 
 fn first_gap_evidence() -> Vec<EvidenceRecord> {
@@ -434,6 +510,94 @@ async fn task_completion_cancel_report_vertical_e2e() {
         serde_json::to_vec(&report).unwrap().len()
             <= aibe::application::task_completion::COMPLETION_REPORT_MAX_BYTES
     );
+
+    // 取消直前までに別criterionのplan観測が完了していれば、Cancelled reportへ
+    // executed calls由来のEvidenceとSatisfied状態を保持する。
+    let contract_only = || envelope(&contract, None, "");
+    let llm = Arc::new(ScriptedMockLlm::new(vec![
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "worker-before-cancel".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(initial_request()).expect("request"),
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "check-before-cancel".into(),
+                name: SHELL_EXEC.into(),
+                arguments: json!({"command":"grep","args":["verified","0070-artifact.txt"]}),
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "read-before-cancel".into(),
+                name: READ_FILE.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "diff-before-cancel".into(),
+                name: GIT_DIFF.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        ),
+    ]));
+    let service = production_service(dir.path(), llm, vec!["grep".into()]);
+    let cancellation = Arc::new(aibe::application::TurnCancellation::new());
+    let events = Arc::new(CancelAfterThinkingCount {
+        cancellation: Arc::clone(&cancellation),
+        count: AtomicUsize::new(0),
+        cancelling_count: AtomicUsize::new(0),
+    });
+    let response = service
+        .handle_with_events(
+            active_request(
+                "0071-cancel-with-evidence",
+                dir.path(),
+                vec![
+                    AGENT_TASK.into(),
+                    SHELL_EXEC.into(),
+                    READ_FILE.into(),
+                    GIT_DIFF.into(),
+                ],
+            ),
+            None,
+            Some(Arc::new(Approval(AtomicUsize::new(0)))),
+            None,
+            None,
+            Some(events.clone()),
+            Some(cancellation),
+        )
+        .await;
+    let ClientResponse::Cancelled {
+        completion_report: Some(report),
+        ..
+    } = response
+    else {
+        panic!("unexpected response: {response:?}");
+    };
+    let c2 = report
+        .criteria
+        .iter()
+        .find(|criterion| criterion.criterion_id == "c2")
+        .expect("c2 report");
+    assert_eq!(
+        c2.evaluation_status,
+        Some(aibe_protocol::CompletionCriterionStatus::Satisfied)
+    );
+    assert!(c2.evidence.iter().any(|item| item.evidence_id == "e3"));
+    assert!(c2.evidence.iter().any(|item| item.evidence_id == "e4"));
+    assert_eq!(events.cancelling_count.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -467,7 +631,29 @@ async fn verification_infrastructure_failure_reports_failed() {
                 provider_extras: None,
             }],
         ),
-        LlmStepResult::text_only(envelope(&contract, None, "must not be displayed")),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "read-after-failure".into(),
+                name: READ_FILE.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "diff-after-failure".into(),
+                name: GIT_DIFF.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        ),
+        LlmStepResult::text_only(envelope(
+            &contract,
+            Some(hardening_evaluation(false, false)),
+            "must not be displayed",
+        )),
     ]));
     let service = production_service(dir.path(), llm, vec!["0071-missing-verifier".into()]);
     let approval = Arc::new(Approval(AtomicUsize::new(0)));
@@ -504,9 +690,269 @@ async fn verification_infrastructure_failure_reports_failed() {
         report.verification_terminal,
         Some(aibe_protocol::VerificationTerminal::Failed)
     );
+    let c2 = report
+        .criteria
+        .iter()
+        .find(|criterion| criterion.criterion_id == "c2")
+        .expect("c2 report");
+    assert_eq!(
+        c2.evaluation_status,
+        Some(aibe_protocol::CompletionCriterionStatus::Satisfied)
+    );
+    assert!(c2.evidence.iter().any(|item| item.evidence_id == "e3"));
+    assert!(c2.evidence.iter().any(|item| item.evidence_id == "e4"));
     assert!(
         serde_json::to_vec(&report).unwrap().len()
             <= aibe::application::task_completion::COMPLETION_REPORT_MAX_BYTES
+    );
+
+    let worker = || {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "worker-invalid".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(initial_request()).expect("request"),
+                provider_extras: None,
+            }],
+        )
+    };
+    let failed = |id: &str| {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: id.into(),
+                name: SHELL_EXEC.into(),
+                arguments: json!({"command":"0071-missing-verifier","args":[]}),
+                provider_extras: None,
+            }],
+        )
+    };
+    let read = || {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "read-invalid".into(),
+                name: READ_FILE.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        )
+    };
+    let diff = || {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "diff-invalid".into(),
+                name: GIT_DIFF.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        )
+    };
+    let valid_final = || {
+        LlmStepResult::text_only(envelope(
+            &contract,
+            Some(hardening_evaluation(false, false)),
+            "invalid cycle must not become Failed",
+        ))
+    };
+    let scenarios = vec![
+        (
+            "malformed",
+            vec![
+                worker(),
+                failed("malformed-failed"),
+                read(),
+                diff(),
+                LlmStepResult::text_only("{\"aish_task_completion\":"),
+            ],
+        ),
+        (
+            "plan-order",
+            vec![
+                worker(),
+                read(),
+                failed("order-failed"),
+                diff(),
+                valid_final(),
+            ],
+        ),
+        (
+            "duplicate",
+            vec![
+                worker(),
+                failed("duplicate-failed-1"),
+                failed("duplicate-failed-2"),
+                read(),
+                diff(),
+                valid_final(),
+            ],
+        ),
+        (
+            "missing-agent",
+            vec![failed("orphan-failed"), read(), diff(), valid_final()],
+        ),
+    ];
+    for (name, steps) in scenarios {
+        let response =
+            run_failed_verification_scenario(&format!("0071-failed-{name}"), dir.path(), steps)
+                .await;
+        assert!(
+            matches!(
+                response,
+                ClientResponse::Error {
+                    code: aibe_protocol::ErrorCode::InvalidRequest,
+                    completion_report: None,
+                    ..
+                }
+            ),
+            "{name} must remain InvalidRequest: {response:?}"
+        );
+    }
+
+    // query 2でも、採用plan callのFailed判定よりduplicate cycle検査を優先する。
+    use std::os::unix::fs::PermissionsExt;
+    let verifier = dir.path().join("second-cycle-verifier.sh");
+    std::fs::write(&verifier, "#!/bin/sh\nexit 1\n").expect("write verifier");
+    let mut permissions = std::fs::metadata(&verifier)
+        .expect("verifier metadata")
+        .permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&verifier, permissions).expect("chmod verifier");
+    let mut second_contract = hardening_contract(dir.path());
+    let DelegatedVerificationAction::Command { command, args, .. } = &mut second_contract
+        .delegated_verification
+        .as_mut()
+        .unwrap()
+        .items[0]
+        .action
+    else {
+        unreachable!()
+    };
+    *command = verifier.display().to_string();
+    args.clear();
+    let initial = initial_request();
+    let follow_up = AgentTaskRequest {
+        worker: initial.worker.clone(),
+        objective: format!(
+            "{}; resolve the independently observed Gap",
+            initial.objective
+        ),
+        instructions: vec![
+            initial.instructions[0].clone(),
+            "Gap c1: observed=e2: shell_exec status=Error process_terminal=nonzero_exit; required_work=make the fixed command succeed; verify_with=v-command".into(),
+            "Gap c2: observed=e3: read_file status=Ok; e4: git_diff status=Ok; required_work=replace incomplete content with verified; verify_with=v-read,v-diff".into(),
+        ],
+        completion_criteria: initial.completion_criteria.clone(),
+        cwd: initial.cwd.clone(),
+        timeout_secs: initial.timeout_secs,
+    };
+    let contract_only = || envelope(&second_contract, None, "");
+    let shell_step = |id: &str| {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: id.into(),
+                name: SHELL_EXEC.into(),
+                arguments: json!({"command":verifier.display().to_string(),"args":[]}),
+                provider_extras: None,
+            }],
+        )
+    };
+    let read_step = |id: &str| {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: id.into(),
+                name: READ_FILE.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        )
+    };
+    let diff_step = |id: &str| {
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: id.into(),
+                name: GIT_DIFF.into(),
+                arguments: json!({"path":"0070-artifact.txt"}),
+                provider_extras: None,
+            }],
+        )
+    };
+    let llm = Arc::new(ScriptedMockLlm::new(vec![
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "worker-first-cycle".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(&initial).expect("request"),
+                provider_extras: None,
+            }],
+        ),
+        shell_step("first-cycle-nonzero"),
+        read_step("first-cycle-read"),
+        diff_step("first-cycle-diff"),
+        LlmStepResult::text_only(envelope(
+            &second_contract,
+            Some(hardening_evaluation(false, false)),
+            "first cycle Gap",
+        )),
+        LlmStepResult::with_tool_calls(
+            contract_only(),
+            vec![ToolCall {
+                id: "worker-second-cycle".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(&follow_up).expect("follow-up"),
+                provider_extras: None,
+            }],
+        ),
+        shell_step("second-cycle-failed-1"),
+        shell_step("second-cycle-failed-2"),
+        read_step("second-cycle-read"),
+        diff_step("second-cycle-diff"),
+        LlmStepResult::text_only(envelope(
+            &second_contract,
+            Some(hardening_evaluation(false, true)),
+            "duplicate cycle",
+        )),
+    ]));
+    let service = production_service(dir.path(), llm, vec![verifier.display().to_string()]);
+    let response = service
+        .handle_with_events(
+            active_request(
+                "0071-second-cycle-duplicate",
+                dir.path(),
+                vec![
+                    AGENT_TASK.into(),
+                    SHELL_EXEC.into(),
+                    READ_FILE.into(),
+                    GIT_DIFF.into(),
+                ],
+            ),
+            None,
+            Some(Arc::new(Approval(AtomicUsize::new(0)))),
+            None,
+            None,
+            Some(Arc::new(DeleteOnThinkingCount {
+                path: verifier,
+                count: AtomicUsize::new(0),
+            })),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(
+            response,
+            ClientResponse::Error {
+                code: aibe_protocol::ErrorCode::InvalidRequest,
+                completion_report: None,
+                ..
+            }
+        ),
+        "query 2 duplicate must remain InvalidRequest: {response:?}"
     );
 }
 
@@ -524,7 +970,7 @@ async fn task_completion_hardening_vertical_e2e() {
         ),
         instructions: vec![
             initial.instructions[0].clone(),
-            "Gap c1: observed=e2: shell_exec status=Error; required_work=make the fixed command succeed; verify_with=v-command".into(),
+            "Gap c1: observed=e2: shell_exec status=Error process_terminal=nonzero_exit; required_work=make the fixed command succeed; verify_with=v-command".into(),
             "Gap c2: observed=e3: read_file status=Ok; e4: git_diff status=Ok; required_work=replace incomplete content with verified; verify_with=v-read,v-diff".into(),
         ],
         completion_criteria: initial.completion_criteria.clone(),
@@ -768,6 +1214,163 @@ fn gap_observed_uses_actual_evidence() {
     let mut stale = first_gap_evidence();
     stale[0].stale = true;
     assert!(build_gap(&hardening_contract(dir.path()), &stale, &evaluation, &[]).is_err());
+
+    let contract = hardening_contract(dir.path());
+    let mut no_evidence = hardening_evaluation(false, false);
+    for criterion in &mut no_evidence.criteria {
+        criterion.status = CriterionStatus::Unknown;
+        criterion.evidence_ids.clear();
+    }
+    let worker_output = |observation_incomplete: bool| {
+        json!({
+            "status": "completed",
+            "summary": "worker completed",
+            "reported_complete": true,
+            "blockers": [],
+            "stdout": "",
+            "stderr": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "exit_code": 0,
+            "timed_out": false,
+            "changed_paths": [],
+            "observation_incomplete": observation_incomplete,
+            "evidence": [],
+            "verified": false,
+            "approval_origin": "explicit_ui",
+            "worker": "fixture",
+            "cwd": dir.path().display().to_string(),
+            "timeout_secs": 3
+        })
+        .to_string()
+    };
+    let agent_call = |observation_incomplete: bool| {
+        ExecutedToolCall::ok(
+            "worker-state".into(),
+            AGENT_TASK,
+            serde_json::to_value(initial_request()).expect("request"),
+            worker_output(observation_incomplete),
+        )
+        .with_audit(
+            aibe_protocol::ToolRiskClass::WriteLike,
+            aibe_protocol::ToolApprovalState::ExplicitClientOptIn,
+            false,
+        )
+    };
+    let shell_call = |terminal| {
+        ExecutedToolCall::err(
+            "shell-state".into(),
+            SHELL_EXEC,
+            json!({"command":"grep","args":["verified","0070-artifact.txt"]}),
+            "verification_failed",
+            "structured process terminal",
+        )
+        .with_process_terminal(terminal)
+        .with_audit(
+            aibe_protocol::ToolRiskClass::DangerousShell,
+            aibe_protocol::ToolApprovalState::NotRequired,
+            false,
+        )
+    };
+    let observation_call = |id: &str, name: &str| {
+        ExecutedToolCall::ok(
+            id.into(),
+            name,
+            json!({"path":"0070-artifact.txt"}),
+            "observed".into(),
+        )
+        .with_audit(
+            aibe_protocol::ToolRiskClass::ReadOnly,
+            aibe_protocol::ToolApprovalState::NotRequired,
+            false,
+        )
+    };
+
+    let plan_missing_calls = vec![agent_call(false)];
+    let continuation = aibe::application::task_completion::build_delegated_continuation(
+        &contract,
+        &no_evidence,
+        &[],
+        &plan_missing_calls,
+    )
+    .expect("plan-not-executed continuation");
+    assert!(continuation
+        .request
+        .instructions
+        .iter()
+        .any(|item| item.contains("observed=plan_not_executed")));
+
+    let incomplete_calls = vec![
+        agent_call(true),
+        shell_call(aibe_protocol::ProcessExecutionTerminal::ObservableTimeout),
+        observation_call("read-state", READ_FILE),
+        observation_call("diff-state", GIT_DIFF),
+    ];
+    let continuation = aibe::application::task_completion::build_delegated_continuation(
+        &contract,
+        &no_evidence,
+        &[],
+        &incomplete_calls,
+    )
+    .expect("observation-incomplete continuation");
+    assert!(continuation
+        .request
+        .instructions
+        .iter()
+        .any(|item| item.contains("observed=observation_incomplete")));
+
+    let typed_evidence =
+        aibe::application::task_completion::evidence_from_tools(&contract, &incomplete_calls);
+    let typed_gap = build_gap(&contract, &typed_evidence, &evaluation, &[])
+        .expect("typed process terminal Gap");
+    assert!(typed_gap.entries[0]
+        .observed
+        .contains("process_terminal=observable_timeout"));
+
+    let conflict_calls = vec![
+        agent_call(false),
+        shell_call(aibe_protocol::ProcessExecutionTerminal::NonzeroExit),
+        observation_call("read-conflict", READ_FILE),
+        observation_call("diff-conflict", GIT_DIFF),
+    ];
+    let conflict_evidence = vec![
+        EvidenceRecord {
+            evidence_id: "conflict-verified".into(),
+            criterion_ids: vec!["c1".into()],
+            source: EvidenceSource::Verification,
+            observed_after_effect: true,
+            summary: "verified observation".into(),
+            verified: true,
+            target: None,
+            stale: false,
+            plan_item_id: Some("v-command".into()),
+            value_fingerprint: Some("value-a".into()),
+        },
+        EvidenceRecord {
+            evidence_id: "conflict-unverified".into(),
+            criterion_ids: vec!["c1".into()],
+            source: EvidenceSource::Verification,
+            observed_after_effect: true,
+            summary: "contradictory observation".into(),
+            verified: false,
+            target: None,
+            stale: false,
+            plan_item_id: Some("v-command".into()),
+            value_fingerprint: Some("value-b".into()),
+        },
+    ];
+    let continuation = aibe::application::task_completion::build_delegated_continuation(
+        &contract,
+        &no_evidence,
+        &conflict_evidence,
+        &conflict_calls,
+    )
+    .expect("evidence-conflict continuation");
+    assert!(continuation
+        .request
+        .instructions
+        .iter()
+        .any(|item| item.contains("observed=evidence_conflict")));
 }
 
 #[test]
@@ -1008,6 +1611,8 @@ async fn completion_event_buffer_has_total_byte_limit() {
                 completion_report: Some(
                     aibe::application::task_completion::build_interrupted_report(
                         None,
+                        &[],
+                        None,
                         aibe_protocol::VerificationTerminal::Cancelled,
                         "cancelled",
                         1,
@@ -1094,6 +1699,8 @@ async fn task_completion_hardening_preserves_regressions() {
         .contains("completion_report"));
 
     let report = aibe::application::task_completion::build_interrupted_report(
+        None,
+        &[],
         None,
         aibe_protocol::VerificationTerminal::Failed,
         "verification unavailable",
