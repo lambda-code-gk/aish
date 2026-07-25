@@ -16,6 +16,10 @@ pub const EVALUATION_MAX_EVIDENCE_IDS: usize = 64;
 pub const EVALUATION_MAX_REQUIRED_EVIDENCE: usize = 32;
 pub const DELEGATED_VERIFICATION_MAX_ITEMS: usize = 32;
 pub const GAP_MAX_ENTRIES: usize = 32;
+pub const CRITERION_REQUIRED_WORK_MAX_BYTES: usize = 1024;
+pub const GAP_OBSERVED_MAX_BYTES: usize = 1024;
+pub const GAP_REQUIRED_WORK_MAX_BYTES: usize = 1024;
+pub const GAP_FOLLOW_UP_MAX_SERIALIZED_BYTES: usize = 128 * 1024;
 const TRUSTED_VERIFICATION_TOOLS: &[&str] =
     &["read_file", "list_dir", "grep", "git_status", "git_diff"];
 
@@ -161,6 +165,9 @@ pub struct CriterionEvaluation {
     pub required_evidence: Vec<String>,
     #[serde(default)]
     pub applicability_evidence_ids: Vec<String>,
+    /// 委譲検証で未達となった、この criterion 固有の修正作業。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_work: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +217,21 @@ pub struct GapEntry {
     pub expected: String,
     pub required_work: String,
     pub verification_plan_item_ids: Vec<String>,
+}
+
+/// Evidence がまだ存在しない場合に server が所有する構造化観測状態。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GapObservationKind {
+    ObservationIncomplete,
+    PlanNotExecuted,
+    EvidenceConflict,
+    NoObservation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CriterionObservationState {
+    pub criterion_id: String,
+    pub kind: GapObservationKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,6 +370,16 @@ impl CompletionEvaluation {
             }
             for evidence_id in &criterion.applicability_evidence_ids {
                 validate_bounded_text("applicability evidence id", evidence_id)?;
+            }
+            if let Some(required_work) = &criterion.required_work {
+                if required_work.trim().is_empty()
+                    || required_work.len() > CRITERION_REQUIRED_WORK_MAX_BYTES
+                {
+                    return Err(format!(
+                        "criterion {} required_work must be non-empty and at most {CRITERION_REQUIRED_WORK_MAX_BYTES} bytes",
+                        criterion.criterion_id
+                    ));
+                }
             }
         }
         if let Some(next_objective) = &self.next_objective {
@@ -576,6 +608,36 @@ fn observation_identity(
     }
 }
 
+/// 同じ criterion・観測 tool・target に対する同順位の確定観測が異なる値を示すか。
+/// Satisfied の fail-closed 検証と Gap の typed conflict 投影で同じ不変条件を使う。
+pub(crate) fn criterion_has_conflicting_observation_fingerprints(
+    contract: &TaskContract,
+    criterion_id: &str,
+    evidence: &[EvidenceRecord],
+) -> bool {
+    let Some(plan) = &contract.delegated_verification else {
+        return false;
+    };
+    let mut by_identity: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    for record in evidence.iter().filter(|record| {
+        record.criterion_ids.iter().any(|id| id == criterion_id)
+            && record.source == EvidenceSource::Observation
+            && record.verified
+            && !record.stale
+    }) {
+        let Some(identity) = observation_identity(plan, record) else {
+            continue;
+        };
+        if let Some(fingerprint) = record.value_fingerprint.as_ref() {
+            by_identity
+                .entry(identity)
+                .or_default()
+                .insert(fingerprint.clone());
+        }
+    }
+    by_identity.values().any(|values| values.len() > 1)
+}
+
 pub fn validate_evaluation(
     contract: &TaskContract,
     evidence: &[EvidenceRecord],
@@ -599,6 +661,25 @@ pub fn validate_evaluation(
         return Err("duplicate evidence id".into());
     }
     for criterion in &evaluation.criteria {
+        let actionable = matches!(
+            criterion.status,
+            CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+        );
+        if contract.delegated_verification.is_some()
+            && actionable
+            && criterion.required_work.is_none()
+        {
+            return Err(format!(
+                "delegated actionable criterion requires required_work: {}",
+                criterion.criterion_id
+            ));
+        }
+        if !actionable && criterion.required_work.is_some() {
+            return Err(format!(
+                "required_work is only valid for actionable criteria: {}",
+                criterion.criterion_id
+            ));
+        }
         for evidence_id in &criterion.evidence_ids {
             let record = evidence_by_id
                 .get(evidence_id.as_str())
@@ -624,24 +705,11 @@ pub fn validate_evaluation(
             if let Some(plan) = &contract.delegated_verification {
                 // 同順位・同対象の矛盾は plan_item_id ではなく criterion+tool+target 単位で
                 // ledger 全体から判定する（別 item ID への分割で迂回できないようにする）。
-                let mut by_identity: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-                for record in evidence.iter().filter(|record| {
-                    record.criterion_ids.contains(&criterion.criterion_id)
-                        && record.source == EvidenceSource::Observation
-                        && record.verified
-                        && !record.stale
-                }) {
-                    let Some(identity) = observation_identity(plan, record) else {
-                        continue;
-                    };
-                    if let Some(fingerprint) = record.value_fingerprint.as_ref() {
-                        by_identity
-                            .entry(identity)
-                            .or_default()
-                            .insert(fingerprint.clone());
-                    }
-                }
-                if by_identity.values().any(|values| values.len() > 1) {
+                if criterion_has_conflicting_observation_fingerprints(
+                    contract,
+                    &criterion.criterion_id,
+                    evidence,
+                ) {
                     return Err(format!(
                         "conflicting observation evidence for criterion: {}",
                         criterion.criterion_id
@@ -812,13 +880,16 @@ pub fn verification_terminal(
 
 pub fn build_gap(
     contract: &TaskContract,
+    evidence: &[EvidenceRecord],
     evaluation: &CompletionEvaluation,
+    observation_states: &[CriterionObservationState],
 ) -> Result<Gap, String> {
+    validate_evaluation(contract, evidence, evaluation)?;
     let plan = contract
         .delegated_verification
         .as_ref()
         .ok_or_else(|| "delegated verification plan is required for gap".to_string())?;
-    let entries = evaluation
+    let mut entries = evaluation
         .criteria
         .iter()
         .filter(|item| {
@@ -842,27 +913,73 @@ pub fn build_gap(
             if plan_ids.is_empty() {
                 return Err("gap criterion is not covered by verification plan".into());
             }
-            let observed = item
-                .required_evidence
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "independent verification is incomplete".into());
+            let mut cited = item
+                .evidence_ids
+                .iter()
+                .filter_map(|id| {
+                    evidence
+                        .iter()
+                        .find(|record| &record.evidence_id == id)
+                        .map(|record| (id, record))
+                })
+                .collect::<Vec<_>>();
+            cited.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let observed = if cited.is_empty() {
+                let state = observation_states
+                    .iter()
+                    .find(|state| state.criterion_id == item.criterion_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "gap criterion lacks evidence and typed observation state: {}",
+                            item.criterion_id
+                        )
+                    })?;
+                match state.kind {
+                    GapObservationKind::ObservationIncomplete => "observation_incomplete",
+                    GapObservationKind::PlanNotExecuted => "plan_not_executed",
+                    GapObservationKind::EvidenceConflict => "evidence_conflict",
+                    GapObservationKind::NoObservation => "no_observation",
+                }
+                .to_string()
+            } else {
+                let joined = cited
+                    .into_iter()
+                    .map(|(id, record)| format!("{id}: {}", record.summary))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                truncate_utf8(&joined, GAP_OBSERVED_MAX_BYTES)
+            };
+            let required_work = item.required_work.as_ref().ok_or_else(|| {
+                "actionable delegated criterion requires required_work".to_string()
+            })?;
+            if required_work.len() > GAP_REQUIRED_WORK_MAX_BYTES {
+                return Err("gap required_work exceeds bound".into());
+            }
             Ok(GapEntry {
                 criterion_id: item.criterion_id.clone(),
                 observed,
                 expected: criterion.description.clone(),
-                required_work: evaluation
-                    .next_objective
-                    .clone()
-                    .unwrap_or_else(|| "resolve the independently observed gap".into()),
+                required_work: required_work.clone(),
                 verification_plan_item_ids: plan_ids,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    entries.sort_by(|left, right| left.criterion_id.cmp(&right.criterion_id));
     if entries.is_empty() || entries.len() > GAP_MAX_ENTRIES {
         return Err("gap must contain bounded actionable entries".into());
     }
     Ok(Gap { entries })
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 pub fn gap_follow_up_request(
@@ -900,7 +1017,7 @@ pub fn gap_follow_up_request(
                 .expect("criterion membership checked"),
         })
         .collect();
-    AgentTaskRequest {
+    let request = AgentTaskRequest {
         worker: WorkerId::parse(initial.worker.as_str()).map_err(|error| error.to_string())?,
         objective: format!(
             "{}; resolve the independently observed Gap",
@@ -910,9 +1027,16 @@ pub fn gap_follow_up_request(
         completion_criteria,
         cwd: initial.cwd.clone(),
         timeout_secs: initial.timeout_secs,
+    };
+    let request = request
+        .validate_shape()
+        .map_err(|error| error.to_string())?;
+    let serialized = serde_json::to_vec(&request)
+        .map_err(|error| format!("cannot serialize Gap follow-up: {error}"))?;
+    if serialized.len() > GAP_FOLLOW_UP_MAX_SERIALIZED_BYTES {
+        return Err("Gap follow-up exceeds serialized byte bound".into());
     }
-    .validate_shape()
-    .map_err(|error| error.to_string())
+    Ok(request)
 }
 
 pub fn progress_snapshot(

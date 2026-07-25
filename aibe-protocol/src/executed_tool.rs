@@ -13,6 +13,15 @@ pub enum ExecutedToolStatus {
     Error,
 }
 
+/// process runner が確定した実行終端。表示用 error 文字列では分類しない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessExecutionTerminal {
+    NonzeroExit,
+    ObservableTimeout,
+    InfrastructureFailure,
+}
+
 /// ツールの危険度クラス（監査用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +97,8 @@ pub struct ExecutedToolCall {
     pub decision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_terminal: Option<ProcessExecutionTerminal>,
 }
 
 impl ExecutedToolCall {
@@ -105,6 +116,7 @@ impl ExecutedToolCall {
             dry_run: None,
             decision: None,
             approval_source: None,
+            process_terminal: None,
         }
     }
 
@@ -128,7 +140,13 @@ impl ExecutedToolCall {
             dry_run: None,
             decision: None,
             approval_source: None,
+            process_terminal: None,
         }
+    }
+
+    pub fn with_process_terminal(mut self, terminal: ProcessExecutionTerminal) -> Self {
+        self.process_terminal = Some(terminal);
+        self
     }
 
     pub fn with_audit(

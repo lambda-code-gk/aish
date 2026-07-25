@@ -109,7 +109,16 @@ fn initial_request() -> AgentTaskRequest {
 
 fn follow_up_request(contract: &TaskContract) -> AgentTaskRequest {
     let evaluation = evaluation(CriterionStatus::Unsatisfied, &[], Some("repair artifact"));
-    let gap = build_gap(contract, &evaluation).expect("gap");
+    let gap = build_gap(
+        contract,
+        &[],
+        &evaluation,
+        &[CriterionObservationState {
+            criterion_id: "c1".into(),
+            kind: GapObservationKind::NoObservation,
+        }],
+    )
+    .expect("gap");
     gap_follow_up_request(contract, &initial_request(), &gap).expect("follow-up")
 }
 
@@ -130,6 +139,11 @@ fn evaluation(
             .then(|| vec!["artifact content did not meet the criterion".into()])
             .unwrap_or_default(),
             applicability_evidence_ids: vec![],
+            required_work: matches!(
+                status,
+                CriterionStatus::Unsatisfied | CriterionStatus::Unknown
+            )
+            .then(|| "repair artifact".into()),
         }],
         next_objective: next.map(str::to_string),
         needs_user: None,
@@ -1064,7 +1078,12 @@ fn gap_follow_up_is_single_bounded_and_same_worker() {
     let contract = contract(dir.path());
     let gap = build_gap(
         &contract,
+        &[],
         &evaluation(CriterionStatus::Unsatisfied, &[], Some("repair artifact")),
+        &[CriterionObservationState {
+            criterion_id: "c1".into(),
+            kind: GapObservationKind::NoObservation,
+        }],
     )
     .expect("gap");
     assert_eq!(gap.entries.len(), 1);
@@ -1137,6 +1156,7 @@ fn non_done_keeps_current_gap_while_done_audits_previous() {
                 evidence_ids: vec![],
                 required_evidence: vec!["fix c1".into()],
                 applicability_evidence_ids: vec![],
+                required_work: Some("fix c1".into()),
             },
             CriterionEvaluation {
                 criterion_id: "c2".into(),
@@ -1144,6 +1164,7 @@ fn non_done_keeps_current_gap_while_done_audits_previous() {
                 evidence_ids: vec![],
                 required_evidence: vec!["observe c2".into()],
                 applicability_evidence_ids: vec![],
+                required_work: Some("observe c2".into()),
             },
         ],
         next_objective: Some("repair c1".into()),
@@ -1159,6 +1180,7 @@ fn non_done_keeps_current_gap_while_done_audits_previous() {
                 evidence_ids: vec![],
                 required_evidence: vec!["recheck c1".into()],
                 applicability_evidence_ids: vec![],
+                required_work: Some("recheck c1".into()),
             },
             CriterionEvaluation {
                 criterion_id: "c2".into(),
@@ -1166,6 +1188,7 @@ fn non_done_keeps_current_gap_while_done_audits_previous() {
                 evidence_ids: vec![],
                 required_evidence: vec!["fix c2".into()],
                 applicability_evidence_ids: vec![],
+                required_work: Some("fix c2".into()),
             },
         ],
         next_objective: None,
@@ -1191,7 +1214,7 @@ fn non_done_keeps_current_gap_while_done_audits_previous() {
         worker_id: None,
         follow_up_count: Some(1),
     };
-    attach_gap_report(&mut done_report, &contract, &previous);
+    attach_gap_report(&mut done_report, &contract, &[], &previous);
     assert!(done_report.gaps.iter().any(|gap| gap.criterion_id == "c1"));
     assert!(done_report.gaps.iter().any(|gap| gap.criterion_id == "c2"));
 }
@@ -1473,6 +1496,7 @@ async fn verification_preserves_existing_boundaries_and_human_task() {
         id: "id".into(),
         turn_id: "turn".into(),
         reason: Some("cancel".into()),
+        completion_report: None,
     };
     let failed = ClientResponse::error("id".into(), ErrorCode::ToolError, "verification failed");
     assert!(matches!(cancelled, ClientResponse::Cancelled { .. }));

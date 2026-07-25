@@ -79,6 +79,8 @@ pub enum ClientResponse {
         turn_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completion_report: Option<CompletionReport>,
     },
     MemoryApplyResult {
         id: String,
@@ -120,6 +122,8 @@ pub enum ClientResponse {
         id: String,
         code: ErrorCode,
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completion_report: Option<CompletionReport>,
     },
 }
 
@@ -161,6 +165,8 @@ pub enum VerificationTerminal {
     Blocked,
     Stagnated,
     BudgetExhausted,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,6 +318,21 @@ impl ClientResponse {
             id,
             code,
             message: message.into(),
+            completion_report: None,
+        }
+    }
+
+    pub fn error_with_completion_report(
+        id: String,
+        code: ErrorCode,
+        message: impl Into<String>,
+        completion_report: CompletionReport,
+    ) -> Self {
+        Self::Error {
+            id,
+            code,
+            message: message.into(),
+            completion_report: Some(completion_report),
         }
     }
 }
@@ -517,7 +538,9 @@ mod tests {
         assert!(json.contains(r#""code":"tool_not_allowed""#));
         let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
         match back {
-            ClientResponse::Error { id, code, message } => {
+            ClientResponse::Error {
+                id, code, message, ..
+            } => {
                 assert_eq!(id, "e1");
                 assert_eq!(code, ErrorCode::ToolNotAllowed);
                 assert_eq!(message, "not allowed");
@@ -532,13 +555,60 @@ mod tests {
             id: "c1".into(),
             turn_id: "t1".into(),
             reason: Some("user requested".into()),
+            completion_report: None,
         };
         let json = serde_json::to_string(&resp).expect("serialize");
         assert!(json.contains(r#""type":"cancelled""#));
         let back: ClientResponse = serde_json::from_str(&json).expect("deserialize");
         assert!(
-            matches!(back, ClientResponse::Cancelled { id, turn_id, reason } if id == "c1" && turn_id == "t1" && reason.as_deref() == Some("user requested"))
+            matches!(back, ClientResponse::Cancelled { id, turn_id, reason, .. } if id == "c1" && turn_id == "t1" && reason.as_deref() == Some("user requested"))
         );
+    }
+
+    #[test]
+    fn terminal_completion_reports_are_optional_and_roundtrip() {
+        let report = CompletionReport {
+            outcome: CompletionOutcome::Blocked,
+            terminal_reason: Some("verification unavailable".into()),
+            criteria: vec![],
+            unsatisfied_criteria: vec![],
+            unverified_items: vec!["verification infrastructure failed".into()],
+            queries_used: 1,
+            verification_terminal: Some(VerificationTerminal::Failed),
+            gaps: vec![],
+            worker_id: None,
+            follow_up_count: Some(0),
+        };
+        let error = ClientResponse::error_with_completion_report(
+            "e".into(),
+            ErrorCode::ToolError,
+            "failed",
+            report,
+        );
+        let json = serde_json::to_string(&error).expect("serialize report Error");
+        let decoded: ClientResponse = serde_json::from_str(&json).expect("decode report Error");
+        assert!(matches!(
+            decoded,
+            ClientResponse::Error {
+                completion_report: Some(CompletionReport {
+                    verification_terminal: Some(VerificationTerminal::Failed),
+                    ..
+                }),
+                ..
+            }
+        ));
+
+        let legacy: ClientResponse = serde_json::from_str(
+            r#"{"type":"cancelled","id":"c","turn_id":"t","reason":"legacy"}"#,
+        )
+        .expect("legacy Cancelled");
+        assert!(matches!(
+            legacy,
+            ClientResponse::Cancelled {
+                completion_report: None,
+                ..
+            }
+        ));
     }
 
     #[test]

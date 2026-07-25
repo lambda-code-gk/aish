@@ -47,6 +47,7 @@ fn evaluation(status: CriterionStatus, evidence_ids: &[&str]) -> CompletionEvalu
                 vec![]
             },
             applicability_evidence_ids: vec![],
+            required_work: None,
         }],
         next_objective: (status == CriterionStatus::Unsatisfied)
             .then(|| "read the changed file".into()),
@@ -658,6 +659,7 @@ fn shell_verification_is_never_trusted_from_contract() {
                 evidence_ids: vec!["e1".into()],
                 required_evidence: vec![],
                 applicability_evidence_ids: vec![],
+                required_work: None,
             }],
             next_objective: None,
             needs_user: None,

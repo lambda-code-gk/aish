@@ -101,6 +101,7 @@ fn verification_report_is_bounded_and_auditable() {
             id: "id".into(),
             turn_id: "turn".into(),
             reason: Some("TOKEN=super-secret-token-value ".repeat(40)),
+            completion_report: None,
         },
     ] {
         let output = render_response(&response, false, ShellExecRenderOptions::default());

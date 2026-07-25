@@ -44,10 +44,13 @@ pub(crate) async fn run_subprocess(mut cmd: Command, duration: Duration) -> Shel
         Ok(Ok(status)) => {
             let stdout = join_drain(stdout_task).await;
             let stderr = join_drain(stderr_task).await;
-            ShellRunOutcome::Completed {
-                exit_code: status.code().unwrap_or(-1),
-                stdout,
-                stderr,
+            match (stdout, stderr) {
+                (Ok(stdout), Ok(stderr)) => ShellRunOutcome::Completed {
+                    exit_code: status.code().unwrap_or(-1),
+                    stdout,
+                    stderr,
+                },
+                _ => ShellRunOutcome::Failed("failed to acquire command output".into()),
             }
         }
         Ok(Err(e)) => {
@@ -56,8 +59,20 @@ pub(crate) async fn run_subprocess(mut cmd: Command, duration: Duration) -> Shel
             ShellRunOutcome::Failed(format!("failed to run command: {e}"))
         }
         Err(_) => {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
+            if let Err(error) = child.start_kill() {
+                stdout_task.abort();
+                stderr_task.abort();
+                return ShellRunOutcome::Failed(format!(
+                    "failed to clean up timed out command: {error}"
+                ));
+            }
+            if let Err(error) = child.wait().await {
+                stdout_task.abort();
+                stderr_task.abort();
+                return ShellRunOutcome::Failed(format!(
+                    "failed to reap timed out command: {error}"
+                ));
+            }
             stdout_task.abort();
             stderr_task.abort();
             ShellRunOutcome::TimedOut { child_pid }
@@ -208,24 +223,25 @@ async fn drain_bounded<R: AsyncRead + Unpin>(pipe: Option<R>, max: usize) -> (Ve
     (kept, truncated)
 }
 
-async fn drain_stdout(pipe: Option<tokio::process::ChildStdout>) -> Vec<u8> {
+async fn drain_stdout(pipe: Option<tokio::process::ChildStdout>) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     if let Some(mut reader) = pipe {
-        let _ = reader.read_to_end(&mut buf).await;
+        reader.read_to_end(&mut buf).await?;
     }
-    buf
+    Ok(buf)
 }
 
-async fn drain_stderr(pipe: Option<tokio::process::ChildStderr>) -> Vec<u8> {
+async fn drain_stderr(pipe: Option<tokio::process::ChildStderr>) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     if let Some(mut reader) = pipe {
-        let _ = reader.read_to_end(&mut buf).await;
+        reader.read_to_end(&mut buf).await?;
     }
-    buf
+    Ok(buf)
 }
 
-async fn join_drain(task: tokio::task::JoinHandle<Vec<u8>>) -> Vec<u8> {
-    task.await.unwrap_or_default()
+async fn join_drain(task: tokio::task::JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
+    task.await
+        .map_err(|error| io::Error::other(format!("output drain task failed: {error}")))?
 }
 
 #[cfg(test)]
@@ -233,6 +249,13 @@ mod tests {
     use super::*;
     use std::process::Stdio;
     use tokio::process::Command;
+
+    #[tokio::test]
+    async fn output_drain_join_failure_is_not_empty_success() {
+        let task: tokio::task::JoinHandle<io::Result<Vec<u8>>> =
+            tokio::spawn(async move { panic!("simulated output acquisition failure") });
+        assert!(join_drain(task).await.is_err());
+    }
 
     #[tokio::test]
     async fn bounded_run_drains_before_stdin_write_avoids_pipe_deadlock() {

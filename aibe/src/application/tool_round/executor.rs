@@ -192,10 +192,10 @@ impl ToolRoundExecutor {
         if let Some(contract_gate) = &self.contract_gate {
             contract_gate
                 .inspect_before_tools(&step.assistant.content, !step.tool_calls.is_empty())
-                .map_err(LlmError::Provider)?;
+                .map_err(LlmError::InvalidRequest)?;
             contract_gate
                 .inspect_tool_calls(&step.tool_calls, tool_ctx.base_dir())
-                .map_err(LlmError::Provider)?;
+                .map_err(LlmError::InvalidRequest)?;
         }
 
         let mut executed = executed_so_far.to_vec();

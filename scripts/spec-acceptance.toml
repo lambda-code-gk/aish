@@ -4212,3 +4212,93 @@ description = "単一segmentの0063 Suspended経路とcreate Done削除が回帰
 test = "human_task_resume_preserves_single_segment_regression"
 file_glob = "ai/tests/0064_human_task_resume_red.rs"
 pending = false
+
+[[cases]]
+spec = "0071"
+phase = 2
+id = "task_completion_cancel_report_vertical_e2e"
+description = "Task Completion対象turnのcancelがbounded CompletionReportのCancelled終端になる"
+test = "task_completion_cancel_report_vertical_e2e"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 2
+id = "verification_infrastructure_failure_reports_failed"
+description = "検証基盤実行不能がbounded CompletionReportのFailed終端になる"
+test = "verification_infrastructure_failure_reports_failed"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 1
+id = "task_completion_hardening_vertical_e2e"
+description = "実行済みverification commandの非zeroをcriterion別Gapと1回follow-upへ回して再検証後Doneへ至る"
+test = "task_completion_hardening_vertical_e2e"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 2
+id = "gap_observed_uses_actual_evidence"
+description = "Gap observedを実Evidenceまたは構造化観測状態から構築する"
+test = "gap_observed_uses_actual_evidence"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 2
+id = "gap_required_work_is_per_criterion"
+description = "複数未達criterionがそれぞれ固有のrequired_workを持つ"
+test = "gap_required_work_is_per_criterion"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 2
+id = "gap_follow_up_request_is_per_criterion_and_bounded"
+description = "再委譲requestがcriterion別の観測・必要作業・再検証planをboundedに保持する"
+test = "gap_follow_up_request_is_per_criterion_and_bounded"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 3
+id = "completion_event_buffer_has_total_byte_limit"
+description = "CompletionEventBufferが合計byteとitem上限を持ちoverflow時にcontrol JSONを表示しない"
+test = "completion_event_buffer_has_total_byte_limit"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 3
+id = "workspace_observer_detects_same_size_rewrite_or_marks_incomplete"
+description = "Workspace Observerが同一サイズ書き換えを検出またはincompleteにする"
+test = "workspace_observer_detects_same_size_rewrite_or_marks_incomplete"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 4
+id = "task_completion_hardening_preserves_regressions"
+description = "Phase1-3 Human Task 通常turnの回帰を維持する"
+test = "task_completion_hardening_preserves_regressions"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false
+
+[[cases]]
+spec = "0071"
+phase = 4
+id = "task_completion_hardening_verify_and_smoke"
+description = "完了時にverify.shとsmoke-mock.shが成功する"
+test = "task_completion_hardening_verify_and_smoke"
+file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
+pending = false

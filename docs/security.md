@@ -235,6 +235,14 @@
 - Active request の provider streaming delta は envelope 検査まで request-local buffer に留め、control JSON を stdout / stderr へ表示しない。fail-closed error 時は buffered assistant content を破棄する。Inactive request は従来の逐次 streaming を維持する。最終 report は sanitized summary と verified 状態だけを表示し、raw output は既存 `tool_calls` の明示 verbose 契約を越えて複製しない。
 - Task Contract / Evidence ledger / evaluation history は request-local memory だけに保持する。永続 store、resume、cross-command correlation は Phase 1 の保証外である。
 
+## Task Completion hardening（0071）
+
+- Task Completion対象turnの`CompletionReport`は128 KiBを上限とし、terminalと全criterion rowを優先してEvidenceをcriterion当たり8件・全体64件、未検証事項を32件へ制限する。top-level Error / Cancelledのoptional reportにも同じsanitizationを適用し、raw provider本文、tool output、command、秘密値を複製しない。対象外turnとHuman Taskではreportを添付しない。
+- Active requestのstream bufferは64 KiB / 1024 deltaの早い方で打ち切る。超過時はprefixを含む全deltaを破棄し、後続deltaも保存・再生しないため、複数deltaに分割されたcontrol JSONがstdout/stderrへ漏れない。progressとfinal通知だけは既存経路で継続する。
+- Gapの`observed`は検査済みnon-stale Evidence summaryまたはserver-owned typed観測状態だけから作り、providerの`required_evidence`を観測済み事実として表示しない。`required_work`はcriterion固有・非空・1024 bytes以下とし、follow-up bounds超過時はinstructionやcriterionを部分採用しない。
+- verification subprocessのnonzero / cleanup済みtimeoutと、spawn / result取得 / cleanup失敗はtyped終端で分離する。表示messageのcontains/prefixでは分類しない。不正schema・plan・cwd・allowlist拒否を`Failed`へ変換しない。
+- Workspace Observerは`symlink_metadata`のfile type、len、dev/ino、mtime/ctime nanosecondsだけを比較する。regular file内容、digest、symlink targetを読まない。列挙・metadata・race・件数上限は「変更なし」とせず`observation_incomplete`へ合成し、既存のsecret-bearing path除外を維持する。
+
 ## Agent Task Worker trust boundary（0069）
 
 - `agent_task` は設定済み Worker ID だけを受理する。LLM request から executable、argv、shell string、environment、permission profile、approval state、delegation depth を指定できない。disabled/empty/unknown/duplicate Worker は fail-closed で、既存 `shell_exec` allowlist から Worker を生成しない。

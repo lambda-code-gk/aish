@@ -6,6 +6,7 @@ use aibe_protocol::{ClientResponse, ErrorCode};
 pub fn client_response_for_llm_error(id: String, err: LlmError) -> ClientResponse {
     match err {
         LlmError::Provider(msg) => ClientResponse::error(id, ErrorCode::ProviderError, msg),
+        LlmError::InvalidRequest(msg) => ClientResponse::error(id, ErrorCode::InvalidRequest, msg),
     }
 }
 
@@ -26,5 +27,20 @@ mod tests {
             }
             _ => panic!("expected error response"),
         }
+    }
+
+    #[test]
+    fn contract_gate_error_maps_to_invalid_request() {
+        let res = client_response_for_llm_error(
+            "turn-1".into(),
+            LlmError::InvalidRequest("invalid envelope".into()),
+        );
+        assert!(matches!(
+            res,
+            ClientResponse::Error {
+                code: ErrorCode::InvalidRequest,
+                ..
+            }
+        ));
     }
 }
