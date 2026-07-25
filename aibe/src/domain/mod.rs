@@ -87,6 +87,7 @@ pub use memory_subscription::{
 };
 pub use message::{ChatMessage, MessageRole, UnknownMessageRole};
 pub use shell_log_tail::ShellLogTail;
+pub(crate) use task_completion::criterion_has_conflicting_observation_fingerprints;
 pub use task_completion::{
     bound_evidence_target, build_gap, classify_task_completion_eligibility, gap_follow_up_request,
     is_stalled, progress_snapshot, terminal_outcome, validate_contract_covers_request,

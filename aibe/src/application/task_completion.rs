@@ -13,11 +13,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::domain::{
-    bound_evidence_target, build_gap, gap_follow_up_request, sha256_hex, terminal_outcome,
-    validate_evaluation, AgentTaskRequest, AgentTaskResult, CompletionEvaluation,
-    CompletionOutcome, CriterionObservationState, CriterionStatus, DelegatedVerificationAction,
-    EvidenceRecord, EvidenceSource, GapObservationKind, TaskContract, TaskKind,
-    STALL_TERMINAL_REASON,
+    bound_evidence_target, build_gap, criterion_has_conflicting_observation_fingerprints,
+    gap_follow_up_request, sha256_hex, terminal_outcome, validate_evaluation, AgentTaskRequest,
+    AgentTaskResult, CompletionEvaluation, CompletionOutcome, CriterionObservationState,
+    CriterionStatus, DelegatedVerificationAction, EvidenceRecord, EvidenceSource,
+    GapObservationKind, TaskContract, TaskKind, STALL_TERMINAL_REASON,
 };
 
 use crate::ports::outbound::TurnEventSink;
@@ -521,6 +521,23 @@ fn interrupted_criterion_status(
     evidence: &[EvidenceRecord],
     evaluation: Option<&CompletionEvaluation>,
 ) -> WireCriterionStatus {
+    if let Some(status) = evaluation.and_then(|evaluation| {
+        evaluation
+            .criteria
+            .iter()
+            .find(|criterion| criterion.criterion_id == criterion_id)
+            .map(|criterion| criterion.status)
+    }) {
+        return match status {
+            CriterionStatus::Satisfied => WireCriterionStatus::Satisfied,
+            CriterionStatus::Unsatisfied => WireCriterionStatus::Unsatisfied,
+            CriterionStatus::Unknown => WireCriterionStatus::Unknown,
+            CriterionStatus::NotApplicable => WireCriterionStatus::NotApplicable,
+        };
+    }
+    if criterion_has_conflicting_observation_fingerprints(contract, criterion_id, evidence) {
+        return WireCriterionStatus::Unknown;
+    }
     let complete = if let Some(plan) = &contract.delegated_verification {
         let items = plan
             .items
@@ -546,19 +563,7 @@ fn interrupted_criterion_status(
     if complete {
         return WireCriterionStatus::Satisfied;
     }
-    match evaluation
-        .and_then(|evaluation| {
-            evaluation
-                .criteria
-                .iter()
-                .find(|criterion| criterion.criterion_id == criterion_id)
-        })
-        .map(|criterion| criterion.status)
-    {
-        Some(CriterionStatus::Unsatisfied) => WireCriterionStatus::Unsatisfied,
-        Some(CriterionStatus::NotApplicable) => WireCriterionStatus::NotApplicable,
-        _ => WireCriterionStatus::Unknown,
-    }
+    WireCriterionStatus::Unknown
 }
 
 fn matching_delegated_observation<'a>(
@@ -1147,7 +1152,11 @@ fn gap_observation_states(
                 .iter()
                 .filter(|record| record.criterion_ids.contains(&criterion.criterion_id))
                 .collect::<Vec<_>>();
-            let evidence_conflict = relevant.iter().any(|verified| {
+            let evidence_conflict = criterion_has_conflicting_observation_fingerprints(
+                contract,
+                &criterion.criterion_id,
+                evidence,
+            ) || relevant.iter().any(|verified| {
                 verified.verified
                     && !verified.stale
                     && relevant.iter().any(|other| {

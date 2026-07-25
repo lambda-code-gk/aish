@@ -697,7 +697,7 @@ async fn verification_infrastructure_failure_reports_failed() {
         .expect("c2 report");
     assert_eq!(
         c2.evaluation_status,
-        Some(aibe_protocol::CompletionCriterionStatus::Satisfied)
+        Some(aibe_protocol::CompletionCriterionStatus::Unsatisfied)
     );
     assert!(c2.evidence.iter().any(|item| item.evidence_id == "e3"));
     assert!(c2.evidence.iter().any(|item| item.evidence_id == "e4"));
@@ -1371,6 +1371,79 @@ fn gap_observed_uses_actual_evidence() {
         .instructions
         .iter()
         .any(|item| item.contains("observed=evidence_conflict")));
+
+    // Phase 3と同じ同順位 conflict: 同一 observation identity の確定観測が
+    // 異なるfingerprintを持つ。UnknownがEvidence IDを引用しなくてもtyped Gapへ出す。
+    let same_rank_conflict_evidence = vec![
+        EvidenceRecord {
+            evidence_id: "read-a".into(),
+            criterion_ids: vec!["c2".into()],
+            source: EvidenceSource::Observation,
+            observed_after_effect: true,
+            summary: "first verified read".into(),
+            verified: true,
+            target: Some("0070-artifact.txt".into()),
+            stale: false,
+            plan_item_id: Some("v-read".into()),
+            value_fingerprint: Some("value-a".into()),
+        },
+        EvidenceRecord {
+            evidence_id: "read-b".into(),
+            criterion_ids: vec!["c2".into()],
+            source: EvidenceSource::Observation,
+            observed_after_effect: true,
+            summary: "second verified read".into(),
+            verified: true,
+            target: Some("0070-artifact.txt".into()),
+            stale: false,
+            plan_item_id: Some("v-read".into()),
+            value_fingerprint: Some("value-b".into()),
+        },
+        EvidenceRecord {
+            evidence_id: "diff-stable".into(),
+            criterion_ids: vec!["c2".into()],
+            source: EvidenceSource::Observation,
+            observed_after_effect: true,
+            summary: "verified diff".into(),
+            verified: true,
+            target: Some("0070-artifact.txt".into()),
+            stale: false,
+            plan_item_id: Some("v-diff".into()),
+            value_fingerprint: Some("diff-value".into()),
+        },
+    ];
+    let continuation = aibe::application::task_completion::build_delegated_continuation(
+        &contract,
+        &no_evidence,
+        &same_rank_conflict_evidence,
+        &conflict_calls,
+    )
+    .expect("same-rank evidence-conflict continuation");
+    assert!(continuation
+        .request
+        .instructions
+        .iter()
+        .any(|item| item.contains("Gap c2: observed=evidence_conflict")));
+
+    // evaluationのない取消時も、plan Evidenceが揃ったという理由だけで矛盾した
+    // criterionをSatisfiedへ推定しない。
+    let interrupted = aibe::application::task_completion::build_interrupted_report(
+        Some(&contract),
+        &same_rank_conflict_evidence,
+        None,
+        aibe_protocol::VerificationTerminal::Cancelled,
+        "cancelled",
+        1,
+    );
+    let c2 = interrupted
+        .criteria
+        .iter()
+        .find(|criterion| criterion.criterion_id == "c2")
+        .expect("c2 interrupted report");
+    assert_eq!(
+        c2.evaluation_status,
+        Some(aibe_protocol::CompletionCriterionStatus::Unknown)
+    );
 }
 
 #[test]

@@ -608,6 +608,36 @@ fn observation_identity(
     }
 }
 
+/// 同じ criterion・観測 tool・target に対する同順位の確定観測が異なる値を示すか。
+/// Satisfied の fail-closed 検証と Gap の typed conflict 投影で同じ不変条件を使う。
+pub(crate) fn criterion_has_conflicting_observation_fingerprints(
+    contract: &TaskContract,
+    criterion_id: &str,
+    evidence: &[EvidenceRecord],
+) -> bool {
+    let Some(plan) = &contract.delegated_verification else {
+        return false;
+    };
+    let mut by_identity: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    for record in evidence.iter().filter(|record| {
+        record.criterion_ids.iter().any(|id| id == criterion_id)
+            && record.source == EvidenceSource::Observation
+            && record.verified
+            && !record.stale
+    }) {
+        let Some(identity) = observation_identity(plan, record) else {
+            continue;
+        };
+        if let Some(fingerprint) = record.value_fingerprint.as_ref() {
+            by_identity
+                .entry(identity)
+                .or_default()
+                .insert(fingerprint.clone());
+        }
+    }
+    by_identity.values().any(|values| values.len() > 1)
+}
+
 pub fn validate_evaluation(
     contract: &TaskContract,
     evidence: &[EvidenceRecord],
@@ -675,24 +705,11 @@ pub fn validate_evaluation(
             if let Some(plan) = &contract.delegated_verification {
                 // 同順位・同対象の矛盾は plan_item_id ではなく criterion+tool+target 単位で
                 // ledger 全体から判定する（別 item ID への分割で迂回できないようにする）。
-                let mut by_identity: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-                for record in evidence.iter().filter(|record| {
-                    record.criterion_ids.contains(&criterion.criterion_id)
-                        && record.source == EvidenceSource::Observation
-                        && record.verified
-                        && !record.stale
-                }) {
-                    let Some(identity) = observation_identity(plan, record) else {
-                        continue;
-                    };
-                    if let Some(fingerprint) = record.value_fingerprint.as_ref() {
-                        by_identity
-                            .entry(identity)
-                            .or_default()
-                            .insert(fingerprint.clone());
-                    }
-                }
-                if by_identity.values().any(|values| values.len() > 1) {
+                if criterion_has_conflicting_observation_fingerprints(
+                    contract,
+                    &criterion.criterion_id,
+                    evidence,
+                ) {
                     return Err(format!(
                         "conflicting observation evidence for criterion: {}",
                         criterion.criterion_id
