@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Codex MCP 用コンテキストパケット（オプション）。既定は codex-mcp-prompt.sh のみで Codex が repo 内を自律調査。
+# Codex MCP 用コンテキストパケット。review / audit は既定、その他はオプション。
 #
 # 目的:
 #   - 親が diff / 抜粋を先に渡してコンテキストを絞る（CODEX_USE_PACKET=1）
@@ -32,10 +32,10 @@ emit_header() {
   echo "- review_mode: ${REVIEW_MODE}"
   echo "- generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
-  echo "親エージェント（MCP・オプション）:"
-  echo "  既定: タスク文 + ./scripts/codex-mcp-prompt.sh（パケットなし）→ Codex が repo 内を自律調査"
-  echo "  親が diff を絞りたいときのみ: CODEX_USE_PACKET=1 CODEX_TASK=${TASK} ./scripts/codex-mcp-prompt.sh"
-  echo "  続き: codex-reply + threadId。Codex 返答は Cursor に要約のみ"
+  echo "親エージェント（MCP）:"
+  echo "  review / audit: 新規 codex + packet（既定）。Codex は指摘のみ"
+  echo "  設計・実装の続き: codex-reply + threadId。packet は必要時のみ"
+  echo "  Codex 返答は Cursor に要約・指摘一覧のみ"
   echo
 }
 

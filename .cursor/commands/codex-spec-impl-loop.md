@@ -20,18 +20,19 @@ description: Codexの設計書→実装指示→実装→レビュー→導通�
 ```
 
 実行ルール:
-- Step 2/5 は「重大 / 中 / 軽微」でレビュー結果を出す
-- Step 2/5 の指摘は 0 件になるまでループする
+- Step 2/5 は実装・設計 thread と分離した **新規 Codex review thread** で「重大 / 中 / 軽微」を出す
+- Codex review は指摘のみ（編集・テスト禁止）。重大・中が 0 件なら Pass。軽微だけなら親の修正判断と品質ゲートで完了
+- 重大・中を修正した場合だけ、別の新規 review thread で再レビューする
 - Step 4 は Cursor 側で実装する
 - **Step 6〜7 は完了条件**。verify と smoke が連続成功するまで Step 9 に進まない
 - Step 6/7 の修正後も `./scripts/verify.sh` を再実行する
 - Step 8 はコミット時に実施（`git commit` / `push` はユーザー明示時のみ）
 
-## Codex 呼び出し（速さ）
+## Codex 呼び出し（継続性・独立性・速さ）
 
-- **同じ作業の続きは `codex-reply` + 同一 `threadId`**（Step 2/3/5 の再試行で新規 `codex` を開かない）
-- Step 1/3（設計・指示）: `CODEX_TASK=spec`、`model_reasoning_effort: medium`、**verify.sh 不要**
-- Step 2/5（レビュー）: `CODEX_TASK=review`、**`model_reasoning_effort: low`**、verify 不要
+- Step 1/3（設計・指示）の続き: `codex-reply` + 同一 `threadId`、`CODEX_TASK=spec`、effort medium、verify 不要
+- Step 2/5（独立レビュー）: **毎回新規 `codex`**、`CODEX_TASK=review`、packet 既定、effort low、指摘のみ、verify 不要
+- Step 2/5 の再レビュー: 前回 thread を継がず、新規 `codex` + `CODEX_REVIEW_MODE=fast` + 前回指摘要約
 - Step 4 実装完了時だけ verify 義務（Cursor 側。Codex に任せる場合は developer-instructions に実装用段落を付ける）
 - タスク文に読むべきパスを具体的に書く
 

@@ -14,10 +14,10 @@ alwaysApply: true
 ```text
 親: タスク文 + codex-mcp-prompt.sh → MCP codex
 Codex: repo 内を自律調査・編集・テスト
-親: 要約 + threadId → 統合 or codex-reply
+親: 要約 + 指摘一覧 + 継続作業のthreadId → 統合
 ```
 
-パケット（`CODEX_USE_PACKET=1`）は **親がコンテキストを絞りたいときだけ**。
+設計・実装・修正の続きは `codex-reply`。**review は毎回新規 thread + packet** とし、実装履歴から独立させる。
 
 ## MCP 呼び出し（親が行う）
 
@@ -27,7 +27,9 @@ Codex: repo 内を自律調査・編集・テスト
 { ./scripts/codex-mcp-prompt.sh; printf '\n%s\n' '（タスク本文）'; }
 ```
 
-2. MCP `codex`（**新規 thread は新しい作業単位のときだけ**）:
+2. MCP 呼び出し:
+   - 設計・実装・修正の続き: `codex-reply`
+   - **review / 再レビュー: 毎回新規 `codex`**
 
 | 引数 | 値 |
 |------|-----|
@@ -38,7 +40,7 @@ Codex: repo 内を自律調査・編集・テスト
 | `prompt` | 上記連結全文 |
 | `developer-instructions` | 下記（タスク種別に合わせて verify 文を付ける/外す） |
 
-3. 返答は **要約 + `threadId` のみ** Cursor に残す。続きは **必ず** `codex-reply`（冷スタート禁止）。
+3. 返答は **要約 + 指摘一覧 + 継続作業の `threadId` のみ** Cursor に残す。diff 全文、cargo test 全ログ、Codex 全文を親履歴へ複製しない。
 
 **禁止**: prompt が「ファイル X を読め」だけ。タスク文なし。読むべきパスはタスク文に具体的に書く。
 
@@ -71,6 +73,15 @@ During implementation, run ./scripts/verify-targeted.sh or the narrowest relevan
 
 **設計 / レビュー / spike / docs のみ**のときは verify.sh を求めない（上記実装用段落を付けない）。
 
+**review タスク**では共通骨子に次を追記する:
+
+```text
+Independent review in a fresh thread. Review the supplied packet and repository as needed.
+Findings only: do not edit files, run tests, or run verify.sh.
+Return 重大 / 中 / 軽微 with classification tags, file, evidence, and recommended fix.
+Pass when 重大 and 中 are both zero. Do not inherit or continue an implementation/review thread.
+```
+
 ## ドキュメント出力（既定）
 
 特段指定がなければ次に従う。
@@ -85,14 +96,15 @@ During implementation, run ./scripts/verify-targeted.sh or the narrowest relevan
 タスク別の追記（任意）:
 
 - **spec**: 設計書は `docs/spec/`。実装指示は `docs/tasks/`。受け入れ条件・未確定を明示。
-- **review**: 重大/中/低、通過、要確認。パケット同梱時はそれも参照。
+- **review**: 重大/中/軽微、分類タグ、Pass/Fail。packet 既定、指摘のみ。
 - **audit**: クレート境界・秘密・docs 整合・本番経路のスタブ。
 
 ## 親の責務
 
 - タスクを明確に書く（何をしてほしいか。読むパスを具体的に）
 - Codex 実行中は同じファイルを編集しない（競合回避）
-- **続きは `codex-reply`**。review/spike は effort `low`
+- 設計・実装・修正の続きは `codex-reply`。**review / 再レビューは新規 `codex`**。review/spike は effort `low`
+- review packet はスクリプトに生成させ、親は短い目的・正本・観点だけを追加する
 - `cargo test` 等の最終確認は親でもよいが、Codex に任せてもよい
 - **git commit / push はユーザー明示まで行わない**（Codex にも明示指示がない限りさせない）
 - feature ブランチ運用時: **commit 整理**（soft reset → 意味単位で commit し直し）は Codex 完了後に親が行う（`.cursor/rules/05-git-workflow.mdc`）

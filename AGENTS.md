@@ -149,10 +149,11 @@
 
 ### Cursor と Codex の流れ
 
-1. 親が **タスク文** + `./scripts/codex-mcp-prompt.sh` を MCP `prompt` に渡す → Codex がサブエージェントとして作業（要約 + `threadId` のみ Cursor に残す）
+1. 親が **タスク文** + `./scripts/codex-mcp-prompt.sh` を MCP `prompt` に渡す → Codex がサブエージェントとして作業（要約・レビュー指摘 + 継続作業の `threadId` のみ Cursor に残す）
 2. 親が統合・最終判断・必要なら Cursor でも追実装
-3. 続きは `codex-reply`。親が diff を絞りたいときだけ `CODEX_USE_PACKET=1`
-4. **`git commit` / `push` はユーザー明示時のみ**（Codex にも明示がない限りさせない）
+3. 設計・実装・修正の続きは `codex-reply`
+4. **独立レビュー / 再レビューは毎回新規 `codex` + packet**。指摘のみ返し、実装 thread を継がない
+5. **`git commit` / `push` はユーザー明示時のみ**（Codex にも明示がない限りさせない）
 
 詳細: `docs/codex-delegation.md`（MCP は `sandbox: workspace-write`、ネットワーク無効）
 

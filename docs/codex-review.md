@@ -1,25 +1,26 @@
-# Codex レビュー用パケット（オプション）
+# Codex 独立レビュー
 
-**既定の Codex 運用はサブエージェント**（タスク文 + repo 内自律調査）。本書は **親が diff を先に渡したいとき** のオプション。
+Codex レビューは、実装履歴を持たない **短命な新規 thread** で行う。Cursor 親のコンテキストを節約するため、差分はスクリプト側で packet 化し、親は差分全文を会話へ取り込まない。
 
 全体: [codex-delegation.md](./codex-delegation.md)
 
-## いつ使うか
+## 固定契約
 
-| 方式 | 向く場面 |
-|------|----------|
-| **既定（パケットなし）** | 広く調べてほしい、関連ファイルの読み落としを減らしたい |
-| **`CODEX_USE_PACKET=1`** | 変更範囲を明示したい、Cursor 側で既に diff を選んだ |
+- MCP は毎回新規 `codex`。実装 thread や前回 review の `threadId` を `codex-reply` しない
+- `CODEX_TASK=review` は packet を既定で同梱する
+- Codex は **指摘のみ**返し、ファイル編集・テスト・`verify.sh` を行わない
+- 親は重大 / 中 / 軽微の指摘一覧だけ保持する
+- Pass は **重大・中が 0 件**。軽微だけなら親が修正判断と品質ゲートを行い、再レビューしない
 
 ## パケット生成
 
 ```bash
-CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
+CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
 # または
 CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-context.sh
 ```
 
-出力の **後ろにタスク文**を足して MCP `prompt` に渡す。
+`codex-mcp-prompt.sh` は review 時に packet を既定で同梱する。出力の **後ろに短いタスク文**（目的、正本、重点観点）を足し、新規 MCP `codex` の prompt に渡す。親は packet の diff / 抜粋を再読込しない。
 
 ## レビューモード（`CODEX_REVIEW_MODE`）
 
@@ -37,16 +38,26 @@ CODEX_REVIEW_MODE=deep CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-
 
 ## 再レビュー
 
-`codex-reply` + `threadId`。差分だけなら:
+重大・中の修正後だけ再レビューする。前回 thread は継続せず、**新規 `codex`** に前回指摘の短い要約と修正 diff を渡す。
 
 ```bash
-CODEX_REVIEW_MODE=fast CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-context.sh
+CODEX_REVIEW_MODE=fast CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
 ```
 
-## 禁止（パケット運用時も）
+## 出力形式
+
+- **重大** / **中** / **軽微**
+- 各指摘: 分類タグ、ファイル、問題、根拠、推奨修正
+- **Pass**: 重大・中が 0 件
+- **Fail**: 重大または中が 1 件以上
+
+## 禁止
 
 - リポジトリ外への無許可アクセス（`workspace_roots` 外）
 - 実 API キーのコミット
+- review thread でのファイル編集、テスト、`verify.sh`
+- 実装 thread / 前回 review thread の `codex-reply`
+- Codex の全文や packet の diff 全文を Cursor 親の履歴へ複製
 
 ## レビュー指摘の分類（0056 以降）
 

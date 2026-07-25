@@ -30,21 +30,32 @@ flowchart LR
 
 | 層 | 保持するもの |
 |----|--------------|
-| **Cursor** | ユーザー意図、Codex **要約**、`threadId` |
+| **Cursor** | ユーザー意図、Codex **要約**、レビュー指摘一覧、継続作業の `threadId` |
 | **Codex** | スレッド内の調査・編集・会話全文 |
 
-親は Codex 全文を履歴に貼らない。追い込みは `codex-reply` + 同じ `threadId`。
+親は Codex 全文、diff 全文、`verify.sh` 全ログを履歴に貼らない。実装・設計の追い込みは `codex-reply` + 同じ `threadId`、独立レビューは実装履歴を持たない新規 `codex` を使う。
 
-## 速さ（遅さの主因と運用）
+## thread ライフサイクルと速さ
 
-実測上、体感遅さの大半は環境劣化ではなく次の運用コストである。
+実装の継続性とレビューの独立性は別の目的である。次の境界を固定する。
+
+| 作業 | thread | 理由 |
+|------|--------|------|
+| 設計・実装・指摘修正の続き | `codex-reply` + 同一 `threadId` | 調査履歴を再利用し Cursor のコンテキストと冷スタートを節約 |
+| 独立レビュー / 再レビュー | **毎回新規 `codex`** | 実装時の判断・記憶・自己正当化から独立した別視点を得る |
+| spike の同一調査 | `codex-reply` 可 | 限定した調査文脈を再利用 |
+
+レビューは `CODEX_TASK=review` + `CODEX_USE_PACKET=1` を既定とし、Codex は指摘だけ返して編集しない。修正は Cursor 親または実装用 thread が行う。再レビューは前回指摘と修正 diff を新規 review thread に渡し、重大・中が 0 件なら Pass とする。軽微だけなら再レビューせず、親の品質ゲートで完了する。
+
+実測上、体感遅さの主因と対策:
 
 | 要因 | 対策 |
 |------|------|
-| 毎回新しい `codex`（冷スタート） | **同じ作業の続きは `codex-reply` + 同一 `threadId`**。親は要約だけ残す |
+| 実装の続きで毎回新しい `codex` | `codex-reply` + 同一 `threadId` |
+| 実装 thread をレビューへ流用 | 新規 review thread + packet。独立性と小さい context を優先 |
+| 長大 thread でレビュー・修正を反復 | review は指摘のみ。修正を別作業へ切り出し、再レビューも新規 thread |
 | `model_reasoning_effort: medium` 固定 | **review / spike は `low`**。実装・設計は `medium` |
 | 完了時の `./scripts/verify.sh` | **実装完了時のみ**。設計書・レビュー・調査だけのターンでは求めない |
-| 多段フルセッション（spec→review→impl…） | ループは品質優先。急ぐときはステップ分割し、レビューを `low` に固定 |
 | 探索ターン過多 | タスク文に **読むべきパスを具体的に**書く |
 
 推奨 config の確認:
@@ -88,13 +99,13 @@ MCP の `codex` 呼び出しでは `sandbox: workspace-write` を渡す。`dange
 
 **やらないこと**: prompt に「`target/xxx.txt` を読め」だけ書く（ファイルパス参照だけにしない。タスク文を必ず含める）。
 
-### 2. オプション: 親がコンテキストを絞る（パケット）
+### 2. パケット
 
 ```bash
 CODEX_USE_PACKET=1 CODEX_TASK=review ./scripts/codex-mcp-prompt.sh
 ```
 
-`codex-context.sh` の diff・抜粋を同梱。レビュー深度は [codex-review.md](./codex-review.md)。
+`codex-context.sh` の diff・抜粋を同梱する。**review では既定で有効**、その他のタスクでは親がコンテキストを絞りたいときだけ使う。親は packet の diff を会話へ複製せず、短いタスク文だけ追加する。レビュー深度は [codex-review.md](./codex-review.md)。
 
 ### 3. 追加許可パス（そのターンだけ）
 
@@ -116,8 +127,9 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 
 ### 5. 続き
 
-- **必ず** `codex-reply` + `threadId`（新規 `codex` は新しい作業単位のときだけ）
-- 再開時もタスク文を短く添える。大きな差分だけ `CODEX_USE_PACKET=1` でよい。
+- 設計・実装・修正の同一作業は `codex-reply` + `threadId`
+- **review / 再レビューは必ず新規 `codex`**。実装・前回レビューの `threadId` を継がない
+- 再レビューには前回指摘の短い要約 + `CODEX_REVIEW_MODE=fast` の修正 diff packet を渡す
 
 ## タスク種別（`CODEX_TASK`）
 
@@ -125,7 +137,7 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 |----|------|--------|-----------|
 | `subagent` | 既定。調査・実装・修正・検証など自由記述 | medium | 実装完了時のみ |
 | `spec` | **設計書**を `docs/spec/` に出力。実装指示は `docs/tasks/`。**0056 以降**は [`_feature-spec-template.md`](spec/_feature-spec-template.md) の必須節を含める | medium | 不要 |
-| `review` | 変更の監査（パケット任意） | **low** | 不要 |
+| `review` | 独立した変更監査（新規 thread、packet 既定、指摘のみ） | **low** | 不要 |
 | `audit` | 境界・セキュリティ横断 | medium | 不要（指摘対応の実装完了時は必要） |
 | `spike` | 設計比較・調査のみ | **low** | 不要 |
 
@@ -136,12 +148,13 @@ CODEX_EXTRA_ROOTS="$HOME/.config/aibe,$HOME/.local/share/aish" ./scripts/codex-m
 - リポジトリ内の読取・編集・`cargo fmt` / `clippy` / `test` / `./scripts/check-architecture.sh`
 - 実装中の `./scripts/verify-targeted.sh` と、完了直前の `./scripts/verify.sh`
 - 設計書（`docs/spec/`）・実装指示書（`docs/tasks/`）
-- 横断調査・指摘・修正案の実装（サブエージェントとして）
+- 横断調査・指摘・修正案の実装（ただし `review` は指摘のみで編集禁止）
 
 ## 親（Cursor）が担うこと
 
 - ユーザー意図の最終判断
-- Codex 要約の保持と統合
+- Codex 要約・レビュー指摘一覧の保持と統合（Codex 全文、diff 全文、cargo test 全ログは保持しない）
+- packet はスクリプト側で生成し、親は短い目的・正本・レビュー観点だけを加える
 - **`git commit` / `push` はユーザー明示時のみ**（Codex に任せない運用を推奨）
 - feature ブランチ運用時の **commit 整理（soft reset → 意味単位で commit し直し）** は Codex 完了後に親が行う（`.cursor/rules/05-git-workflow.mdc`）
 - MCP 障害時のフォールバック

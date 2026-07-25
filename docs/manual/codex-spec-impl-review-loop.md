@@ -31,8 +31,9 @@
 
 ## 実行ルール
 
-- Step 2/5 のレビューは「重大 / 中 / 軽微」で出させる
-- Step 2/5 は「指摘が 0 件になるまで」繰り返す
+- Step 2/5 は実装・設計履歴を持たない新規 Codex thread で「重大 / 中 / 軽微」を出させる
+- review は packet 入力・指摘のみ（編集・テスト禁止）。重大・中が 0 件なら Pass
+- 重大・中を修正した場合だけ、別の新規 review thread で再レビューする。軽微だけなら品質ゲートへ進む
 - Step 4 は Cursor 側で実装する（ユーザー指示を優先）
 - **Step 6〜7 は完了条件**。verify と smoke が連続成功するまで Step 9 に進まない
 - Step 8 はコミット時に実施（`git commit` / `push` はユーザー明示時のみ）
@@ -182,8 +183,8 @@ Step 6 の ./scripts/verify.sh または ./scripts/smoke-mock.sh が失敗しま
 
 ## 運用メモ
 
-- Step5 で重大が出たら、修正後に必ず Step5 を再実行する（**`codex-reply`**。新規 thread 禁止）
-- Step2/5 レビューは `model_reasoning_effort: low`。Step1/3 の docs 作成ターンでは verify.sh を求めない
+- Step5 で重大・中が出たら、修正後に新規 review thread + fast packet で Step5 を再実行する（`codex-reply` 禁止）
+- Step2/5 レビューは `model_reasoning_effort: low`、packet 既定、指摘のみ。Step1/3 の docs 作成ターンでは verify.sh を求めない
 - Step6〜7 を省略しない（「test が通ったから OK」で終わらせない）
 - コミット時に実装指示書を `docs/tasks/` → `docs/done/` へ移す（設計書は `docs/spec/` に残す）
 - 最終報告では「実施ステップ」「verify / smoke 結果」「未確定・残リスク」を明記する
