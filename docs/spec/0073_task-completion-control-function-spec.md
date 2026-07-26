@@ -237,6 +237,8 @@ Gemini adapter は candidate の `functionCall` Part を、text Part がなく�
 
 OpenAI-compatible adapter も既存の tool/function call arguments を共通 `ToolCall.arguments` へ変換した後、同じ control preflight へ渡す。provider が複数 call を一 step に返すか、control 成功後の次 round で effect call を返すかはどちらも正常とする。OpenAI 固有の parallel-tool ordering optimization は行わない。
 
+provider 宣言用 schema の `maxLength` は JSON Schema 定義どおり文字数、server 側 bound は UTF-8 byte 長である。multibyte Contract は schema を通過しても server が fail-closed で拒否し得るが、正本は server 側 validation とし schema 側は補助的ヒントに留める。
+
 両 provider family で、provider 宣言用 schema は互換性のある共通 subset、server-side `TaskContract` validation は同一正本とする。空 assistant content を異常扱いする provider-neutral validation を追加しない。Gemini が ID を省略した場合は既存の turn / part index 由来 synthetic ID を使い、OpenAI-compatible は provider ID を使う。いずれも §9.4 の非空・step 内一意性を preflight で検査する。
 
 ## 12. セキュリティと観測
@@ -257,6 +259,7 @@ raw control args の保持可否は、`ToolCall.arguments` という共通型名
 | 監査・実行記録用の serialized `tool_calls` | **不許可** | provider wire/message の直列化を流用せず、control call の `arguments` を固定 redaction sentinel に置換する |
 | 永続 ConversationStore / cache / journal | **不許可** | raw args を保存しない。保存対象に control call を含める場合は arguments を固定 redaction sentinel に置換する |
 | CompletionReport / Evidence ledger / Evidence summary | **不許可** | control success / rejected / skipped 自体を Evidence にせず、raw args も載せない |
+| max-round terminator への入力会話 | **不許可** | terminator の生成結果はそのまま client 応答本文になるため、`ConversationReplay` / `SummaryPrompt` いずれへ渡す会話でも control call の `arguments` / `provider_extras` を固定 redaction sentinel に置換する。call 自体は相関のため残す |
 | validation error / provider 相関 tool result / client error | **不許可** | field / invariant 名と bounded 固定 message のみを返し、invalid value、args 全文、元要求全文を反射しない |
 
 許可 sink から redact 必須 sink への変換は明示的な sanitizer / audit DTO 境界で行う。request-local provider message の debug formatting、error wrapping、recording provider の assertion failure もログ sink とみなし raw args を出さない。
@@ -273,7 +276,7 @@ raw control args の保持可否は、`ToolCall.arguments` という共通型名
 | `active_text_contract_path_is_rejected` | Active turn の assistant text JSON に `aish_task_completion.contract` member があっても Contract を固定せず protocol error とし、control function との二重受理が存在しない。有効な `set_task_contract`・text Contract・effect call が同一 step に混在しても、text 検査が先行し executor 呼び出しは0件、全 call ID に相関結果が付く。通常文中の同名文字列と Inactive turn は Contract control として解釈しない |
 | `text_evaluation_transport_remains_compatible` | 固定後の tool なし最終応答と second query が単一の Active decoder を使い、Contract field を禁止した `aish_task_completion.evaluation` + deliverable shape、64 KiB total、unknown-field 拒否として検査できる。旧 Contract 付き shape は拒否し、decoder 結果が「Contract 固定済みかつ evaluation 欠落」とその他の error を区別する。0072 recovery loop / instruction builder の存在はこの AC の前提にしない |
 | `provider_function_call_args_are_portable` | Gemini の functionCall-only response と OpenAI-compatible の tool/function call response が、ともに同じ `ToolCall.arguments` / server-side TaskContract validation へ到達し、空 assistant content を理由に拒否されない |
-| `control_security_and_task_completion_regressions_are_preserved` | secret fixture を含む raw control args が current request の provider assistant message の共通 `ToolCall.arguments` と、protocol transcript を再送する後続 provider wire で exact 値のまま保持でき、request 終了後は保持されないことを検査する。typed request-local `TaskContract` には意味処理に必要な field 値だけがあり、元 args bytes / JSON text の複製がないことも確認する。ログ / trace / diagnostic、監査・実行記録用 serialized `tool_calls`、ConversationStore、CompletionReport、Evidence ledger / summary、validation error、相関 tool result、client error の各 sink では raw / secret fixture が不在で control arguments が固定 sentinel に redact されるか記録自体が省略されることを sink 別に検査する。既存 sanitizer / bound が働き、0068–0071 の Evidence、Done、query budget、delegated verification、Failed / Cancelled の代表回帰試験が不変である |
+| `control_security_and_task_completion_regressions_are_preserved` | secret fixture を含む raw control args が current request の provider assistant message の共通 `ToolCall.arguments` と、protocol transcript を再送する後続 provider wire で exact 値のまま保持でき、request 終了後は保持されないことを検査する。typed request-local `TaskContract` には意味処理に必要な field 値だけがあり、元 args bytes / JSON text の複製がないことも確認する。ログ / trace / diagnostic、監査・実行記録用 serialized `tool_calls`、ConversationStore、CompletionReport、Evidence ledger / summary、max-round terminator 入力会話、validation error、相関 tool result、client error の各 sink では raw / secret fixture が不在で control arguments が固定 sentinel に redact されるか記録自体が省略されることを sink 別に検査する。MaxToolRounds + `ConversationReplay` に到達し terminator が入力を応答へ引用しても client 応答へ secret fixture が出ないことを含む。既存 sanitizer / bound が働き、0068–0071 の Evidence、Done、query budget、delegated verification、Failed / Cancelled の代表回帰試験が不変である |
 
 ### 13.1 AC の検証方針
 

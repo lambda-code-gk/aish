@@ -1,6 +1,8 @@
 //! Spec 0068 Task Completion domain / application acceptance tests.
 
-use aibe::application::completion_envelope::{decode_completion_envelope, ContractGate};
+use aibe::application::completion_envelope::{
+    decode_completion_envelope, CompletionEnvelopeDecode, ContractGate,
+};
 use aibe::application::task_completion::{
     build_continuation, build_report, deliverable_evidence, evidence_from_tools,
 };
@@ -177,9 +179,10 @@ fn permissive_gate_ignores_marker_in_plain_assistant_text() {
 #[test]
 fn assistant_claim_is_not_verified_evidence() {
     let claim = "I completed and verified everything";
-    assert!(decode_completion_envelope(claim)
-        .expect("plain assistant")
-        .is_none());
+    assert_eq!(
+        decode_completion_envelope(claim).expect("plain assistant"),
+        CompletionEnvelopeDecode::Absent
+    );
     assert!(validate_evaluation(
         &contract(),
         &[],

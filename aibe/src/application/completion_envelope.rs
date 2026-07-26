@@ -52,28 +52,69 @@ pub struct CompletionEnvelopeBody {
     pub evaluation: CompletionEvaluation,
 }
 
-pub fn decode_completion_envelope(content: &str) -> Result<Option<CompletionEnvelope>, String> {
+/// Active decoder の結果。`MissingEvaluation` を他の decode / validation error と
+/// 別 variant にすることで、将来 0072 recovery が「Contract 固定済みかつ evaluation 欠落」
+/// だけを入力にできる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionEnvelopeDecode {
+    /// envelope marker がない（Task Completion control text ではない）。
+    Absent,
+    /// envelope shape は妥当だが `aish_task_completion.evaluation` がない。
+    MissingEvaluation,
+    Present(CompletionEnvelope),
+}
+
+impl CompletionEnvelopeDecode {
+    pub fn present(&self) -> Option<&CompletionEnvelope> {
+        match self {
+            Self::Present(envelope) => Some(envelope),
+            _ => None,
+        }
+    }
+}
+
+/// envelope shape 検査用。`evaluation` の欠落だけを他の error と分けるため
+/// `Option` で受けてから presence を判定する。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCompletionEnvelope {
+    aish_task_completion: RawCompletionEnvelopeBody,
+    #[serde(default)]
+    deliverable: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCompletionEnvelopeBody {
+    #[serde(default)]
+    evaluation: Option<CompletionEvaluation>,
+}
+
+pub fn decode_completion_envelope(content: &str) -> Result<CompletionEnvelopeDecode, String> {
     if !content.contains(TASK_COMPLETION_MARKER) {
-        return Ok(None);
+        return Ok(CompletionEnvelopeDecode::Absent);
     }
     if content.len() > ENVELOPE_MAX_BYTES {
         return Err(format!(
             "task completion envelope exceeds {ENVELOPE_MAX_BYTES} bytes"
         ));
     }
-    let envelope: CompletionEnvelope = serde_json::from_str(content)
+    let raw: RawCompletionEnvelope = serde_json::from_str(content)
         .map_err(|error| format!("invalid task completion envelope: {error}"))?;
-    envelope
-        .aish_task_completion
-        .evaluation
-        .validate_bounded()?;
-    if envelope.deliverable.len() > crate::domain::CONTRACT_TEXT_MAX_BYTES {
+    if raw.deliverable.len() > crate::domain::CONTRACT_TEXT_MAX_BYTES {
         return Err(format!(
             "deliverable exceeds {} bytes",
             crate::domain::CONTRACT_TEXT_MAX_BYTES
         ));
     }
-    Ok(Some(envelope))
+    let Some(evaluation) = raw.aish_task_completion.evaluation else {
+        return Ok(CompletionEnvelopeDecode::MissingEvaluation);
+    };
+    evaluation.validate_bounded()?;
+    Ok(CompletionEnvelopeDecode::Present(CompletionEnvelope {
+        aish_task_completion: CompletionEnvelopeBody { evaluation },
+        deliverable: raw.deliverable,
+    }))
 }
 
 /// 一つの request 内で Contract を最初の tool 実行前に固定する gate。

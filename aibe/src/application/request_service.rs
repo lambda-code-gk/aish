@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::agent_turn::AgentTurnService;
-use crate::application::completion_envelope::{decode_completion_envelope, ContractGate};
+use crate::application::completion_envelope::{
+    decode_completion_envelope, CompletionEnvelopeDecode, ContractGate,
+};
 use crate::application::route_turn::RouteTurnService;
 use crate::application::task_completion::{
     append_evidence_from_tools, attach_gap_report, build_continuation,
@@ -447,15 +449,25 @@ impl RequestService {
                                         message,
                                     );
                                 }
-                                (Ok(None), Ok(Some(fixed))) => {
+                                // 0072 recovery instruction builder は将来この分岐だけを入力にする。
+                                (Ok(CompletionEnvelopeDecode::MissingEvaluation), Ok(Some(_))) => {
                                     response = ClientResponse::error(
                                         id.clone(),
                                         ErrorCode::InvalidRequest,
                                         "task completion final envelope lacks evaluation",
                                     );
-                                    let _ = fixed;
                                 }
-                                (Ok(Some(first_envelope)), Ok(Some(contract))) => {
+                                (Ok(CompletionEnvelopeDecode::Absent), Ok(Some(_))) => {
+                                    response = ClientResponse::error(
+                                        id.clone(),
+                                        ErrorCode::InvalidRequest,
+                                        "task completion final envelope lacks evaluation",
+                                    );
+                                }
+                                (
+                                    Ok(CompletionEnvelopeDecode::Present(first_envelope)),
+                                    Ok(Some(contract)),
+                                ) => {
                                     let evaluation = first_envelope.aish_task_completion.evaluation;
                                     match validate_delegated_cycle_calls(
                                         &contract,
@@ -634,14 +646,7 @@ impl RequestService {
                                         }
                                     }
                                 }
-                                (Ok(Some(_)), Ok(None)) => {
-                                    response = ClientResponse::error(
-                                        id.clone(),
-                                        ErrorCode::InvalidRequest,
-                                        "task completion contract required for this request",
-                                    );
-                                }
-                                (Ok(None), Ok(None)) => {
+                                (Ok(_), Ok(None)) => {
                                     response = ClientResponse::error(
                                         id.clone(),
                                         ErrorCode::InvalidRequest,
@@ -819,8 +824,16 @@ fn finish_second_query(
         _ => return response,
     };
     let envelope = match decode_completion_envelope(&content) {
-        Ok(Some(envelope)) => envelope,
-        Ok(None) => {
+        Ok(CompletionEnvelopeDecode::Present(envelope)) => envelope,
+        // 0072 recovery instruction builder は将来この分岐だけを入力にする。
+        Ok(CompletionEnvelopeDecode::MissingEvaluation) => {
+            return ClientResponse::error(
+                id,
+                ErrorCode::InvalidRequest,
+                "task completion second query lacks evaluation",
+            )
+        }
+        Ok(CompletionEnvelopeDecode::Absent) => {
             return ClientResponse::error(
                 id,
                 ErrorCode::InvalidRequest,

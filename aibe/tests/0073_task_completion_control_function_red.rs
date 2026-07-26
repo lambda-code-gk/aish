@@ -10,16 +10,17 @@ use aibe::adapters::outbound::{
     ConversationStore, GeminiLlm, OpenAiCompatibleLlm, ScriptedMockLlm, StaticCapabilityPolicy,
 };
 use aibe::application::completion_envelope::{
-    decode_completion_envelope, ContractGate, ENVELOPE_MAX_BYTES,
+    decode_completion_envelope, CompletionEnvelopeDecode, ContractGate, ENVELOPE_MAX_BYTES,
 };
 use aibe::application::{basic_pack_arc, RequestService};
 use aibe::domain::{
     ChatMessage, ExecutedToolCall, FeatureRegistry, LlmStepResult, MessageRole,
-    TaskCompletionEligibility, TaskKind, ToolCall, ToolName, ToolResult, READ_FILE, WRITE_FILE,
+    TaskCompletionEligibility, TaskKind, ToolCall, ToolName, ToolResult, CONTRACT_TEXT_MAX_BYTES,
+    READ_FILE, WRITE_FILE,
 };
 use aibe::ports::outbound::{
-    LlmProvider, ProfileRegistry, TerminationCapability, ToolDefinition, ToolExecutionContext,
-    ToolExecutor, ToolsConfig,
+    LlmError, LlmProvider, ProfileRegistry, TerminationCapability, TerminationStrategy,
+    ToolDefinition, ToolExecutionContext, ToolExecutor, ToolsConfig,
 };
 use aibe_protocol::{
     AgentTurnStatus, ClientProvidedToolSpec, ClientRequest, ClientResponse, CompletionOutcome,
@@ -195,6 +196,97 @@ fn fixture(steps: Vec<LlmStepResult>) -> Fixture {
         store,
         _dir: dir,
     }
+}
+
+/// terminator が入力会話をそのまま応答へ引用する最悪ケースの provider。
+/// `complete()` 入力を記録し、client 応答にも反映する。
+struct QuotingTerminatorLlm {
+    scripted: ScriptedMockLlm,
+    terminator_input: Mutex<Option<Vec<ChatMessage>>>,
+}
+
+impl QuotingTerminatorLlm {
+    fn new(steps: Vec<LlmStepResult>) -> Self {
+        Self {
+            scripted: ScriptedMockLlm::new(steps),
+            terminator_input: Mutex::new(None),
+        }
+    }
+
+    fn terminator_input(&self) -> Vec<ChatMessage> {
+        self.terminator_input
+            .lock()
+            .expect("terminator input")
+            .clone()
+            .expect("terminator was invoked")
+    }
+}
+
+#[async_trait]
+impl LlmProvider for QuotingTerminatorLlm {
+    async fn complete(&self, messages: &[ChatMessage]) -> Result<ChatMessage, LlmError> {
+        *self.terminator_input.lock().expect("terminator input") = Some(messages.to_vec());
+        Ok(ChatMessage::assistant(
+            serde_json::to_string(messages).expect("conversation json"),
+        ))
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmStepResult, LlmError> {
+        self.scripted.complete_with_tools(messages, tools).await
+    }
+}
+
+/// max tool rounds + ConversationReplay へ到達させる composition。
+fn replay_fixture(
+    steps: Vec<LlmStepResult>,
+    max_rounds: u32,
+) -> (RequestService, Arc<QuotingTerminatorLlm>, tempfile::TempDir) {
+    let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
+    let llm = Arc::new(QuotingTerminatorLlm::new(steps));
+    let log = Arc::new(ToolLog::default());
+    let executors: Vec<Arc<dyn ToolExecutor>> = vec![
+        Arc::new(RecordingTool {
+            name: ToolName::write_file(),
+            log: Arc::clone(&log),
+        }),
+        Arc::new(RecordingTool {
+            name: ToolName::read_file(),
+            log: Arc::clone(&log),
+        }),
+    ];
+    let registry = Arc::new(DefaultToolRegistry::from_executors(executors).expect("registry"));
+    let tools = ToolsConfig {
+        max_rounds,
+        termination_strategy: TerminationStrategy::ConversationReplay,
+        ..Default::default()
+    };
+    let strategy = tools.termination_strategy;
+    let store = Arc::new(ConversationStore::new(dir.path().join("conversations")));
+    let profiles = ProfileRegistry::single(
+        "default",
+        llm.clone(),
+        TerminationCapability {
+            plain_complete_accepts_tool_role: true,
+        },
+    );
+    let (rpc_extension, turn_hook) = basic_pack_arc();
+    let service = RequestService::new(
+        profiles,
+        registry,
+        tools,
+        Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
+        "default".into(),
+        store,
+        StaticCapabilityPolicy::local_full(),
+        rpc_extension,
+        turn_hook,
+        FeatureRegistry::empty(),
+    );
+    (service, llm, dir)
 }
 
 fn request(id: &str, prompt: &str, active: bool, tools: Vec<&str>) -> ClientRequest {
@@ -811,15 +903,42 @@ async fn active_text_contract_path_is_rejected() {
 async fn text_evaluation_transport_remains_compatible() {
     assert!(decode_completion_envelope(&done(&[]))
         .expect("evaluation")
+        .present()
         .is_some());
+    assert_eq!(
+        decode_completion_envelope("no envelope here").expect("absent"),
+        CompletionEnvelopeDecode::Absent
+    );
+
+    // evaluation 欠落だけは、他の decode / validation error と別の結果になる。
+    // 0072 recovery instruction builder はこの結果だけを入力にできる。
+    let missing_evaluation = json!({"aish_task_completion":{},"deliverable":"partial"}).to_string();
+    assert_eq!(
+        decode_completion_envelope(&missing_evaluation).expect("missing evaluation"),
+        CompletionEnvelopeDecode::MissingEvaluation
+    );
+
     let legacy = json!({"aish_task_completion":{"contract":contract("create artifact"),"evaluation":{"criteria":[]}},"deliverable":"done"}).to_string();
     assert!(decode_completion_envelope(&legacy).is_err());
     let unknown = json!({"aish_task_completion":{"evaluation":{"criteria":[]},"unknown":true},"deliverable":"done"}).to_string();
     assert!(decode_completion_envelope(&unknown).is_err());
+    let malformed = "{\"aish_task_completion\":oops}";
+    assert!(decode_completion_envelope(malformed).is_err());
+    // Contract member を持つ legacy shape は evaluation 欠落ではなく error 側に残る。
+    let legacy_without_evaluation =
+        json!({"aish_task_completion":{"contract":contract("create artifact")},"deliverable":"done"})
+            .to_string();
+    assert!(decode_completion_envelope(&legacy_without_evaluation).is_err());
+    // bound 違反も evaluation 欠落と混同しない。
     assert!(decode_completion_envelope(&format!(
         "{{\"aish_task_completion\":{{}},\"deliverable\":\"{}\"}}",
         "x".repeat(ENVELOPE_MAX_BYTES)
     ))
+    .is_err());
+    assert!(decode_completion_envelope(
+        &json!({"aish_task_completion":{},"deliverable":"x".repeat(CONTRACT_TEXT_MAX_BYTES + 1)})
+            .to_string()
+    )
     .is_err());
 
     let evaluation_fixture = fixture(vec![
@@ -1035,4 +1154,53 @@ async fn control_security_and_task_completion_regressions_are_preserved() {
         .messages
         .iter()
         .all(|message| !message.content.contains(secret)));
+
+    // MaxToolRounds + ConversationReplay: terminator 入力は client 応答へ引用され得るため、
+    // provider wire sink ではなく redact 必須 sink として扱う。
+    let mut replay_contract = contract(prompt);
+    replay_contract["constraints"] = json!([secret]);
+    let (replay_service, replay_llm, _replay_dir) = replay_fixture(
+        vec![
+            LlmStepResult::with_tool_calls("", vec![control("secret-control", replay_contract)]),
+            LlmStepResult::with_tool_calls(
+                "",
+                vec![call(
+                    "write",
+                    WRITE_FILE,
+                    json!({"path":"artifact.txt","content":"created"}),
+                )],
+            ),
+        ],
+        2,
+    );
+    let replay_response = replay_service
+        .handle(
+            request("replay", prompt, true, vec![WRITE_FILE, READ_FILE]),
+            None,
+        )
+        .await;
+    let terminator_input = replay_llm.terminator_input();
+    let control_args = terminator_input
+        .iter()
+        .flat_map(|message| message.tool_calls.iter().flatten())
+        .filter(|call| call.name == CONTROL)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        control_args.len(),
+        1,
+        "replay input must still correlate the control call"
+    );
+    assert_eq!(control_args[0].arguments, json!({"redacted": true}));
+    assert!(
+        !serde_json::to_string(&terminator_input)
+            .expect("terminator input json")
+            .contains(secret),
+        "raw control args must not reach the terminator input"
+    );
+    assert!(
+        !serde_json::to_string(&replay_response)
+            .expect("replay response json")
+            .contains(secret),
+        "terminator output must not surface raw control args to the client"
+    );
 }

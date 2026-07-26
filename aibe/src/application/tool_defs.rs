@@ -11,6 +11,10 @@ pub const SET_TASK_CONTRACT: &str = "set_task_contract";
 
 /// Active Task Completion 専用の server-owned control function。
 /// 通常 tool registry / client allowlist には登録しない。
+///
+/// ここの `maxLength` は provider へのヒントで、単位は JSON Schema 定義どおり文字数。
+/// 正本は server 側 `TaskContract` validation（UTF-8 byte 長）であり、multibyte Contract は
+/// schema を通過しても server が fail-closed で拒否し得る。
 pub fn task_contract_control_definition() -> ToolDefinition {
     let delegated_action = json!({"oneOf":[
         {
