@@ -153,15 +153,26 @@ fn evaluation(
 }
 
 fn envelope(
-    contract: &TaskContract,
+    _contract: &TaskContract,
     evaluation: Option<CompletionEvaluation>,
     body: &str,
 ) -> String {
-    json!({
-        "aish_task_completion": {"contract": contract, "evaluation": evaluation},
-        "deliverable": body
+    evaluation.map_or_else(String::new, |evaluation| {
+        json!({
+            "aish_task_completion": {"evaluation": evaluation},
+            "deliverable": body
+        })
+        .to_string()
     })
-    .to_string()
+}
+
+fn contract_control(contract: &TaskContract, id: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: "set_task_contract".into(),
+        arguments: serde_json::to_value(contract).expect("contract"),
+        provider_extras: None,
+    }
 }
 
 struct Approval {
@@ -240,12 +251,15 @@ async fn delegated_verification_vertical_e2e() {
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
             contract_only(),
-            vec![ToolCall {
-                id: "worker-1".into(),
-                name: AGENT_TASK.into(),
-                arguments: serde_json::to_value(&initial).expect("request"),
-                provider_extras: None,
-            }],
+            vec![
+                contract_control(&contract, "contract"),
+                ToolCall {
+                    id: "worker-1".into(),
+                    name: AGENT_TASK.into(),
+                    arguments: serde_json::to_value(&initial).expect("request"),
+                    provider_extras: None,
+                },
+            ],
         ),
         LlmStepResult::with_tool_calls(
             contract_only(),
@@ -565,7 +579,7 @@ fn parent_reobserves_artifacts_and_external_state() {
         arguments: json!({"worker":"fixture","objective":"x","instructions":["x"],"completion_criteria":[{"id":"outside","description":"x"}],"timeout_secs":3}),
         provider_extras: None,
     };
-    gate.inspect_before_tools(&envelope(&contract, None, ""), true)
+    gate.fix_contract_from_control_args(&serde_json::to_value(&contract).expect("contract"))
         .expect("fix contract");
     assert!(gate.inspect_tool_calls(&[bad], dir.path()).is_err());
 
@@ -583,7 +597,7 @@ fn parent_reobserves_artifacts_and_external_state() {
         vec![],
     );
     policy_gate
-        .inspect_before_tools(&envelope(&contract, None, ""), true)
+        .fix_contract_from_control_args(&serde_json::to_value(&contract).expect("contract"))
         .expect("fix contract");
     let valid_agent = ToolCall {
         id: "valid-agent".into(),
@@ -1103,7 +1117,7 @@ fn gap_follow_up_is_single_bounded_and_same_worker() {
         },
         "delegate work",
     );
-    gate.inspect_before_tools(&envelope(&contract, None, ""), true)
+    gate.fix_contract_from_control_args(&serde_json::to_value(&contract).expect("contract"))
         .expect("fix contract");
     gate.inspect_tool_calls(
         &[ToolCall {
@@ -1506,6 +1520,10 @@ async fn verification_preserves_existing_boundaries_and_human_task() {
     let mut human_contract = contract(dir.path());
     human_contract.delegated_verification = None;
     let llm = Arc::new(ScriptedMockLlm::new(vec![
+        LlmStepResult::with_tool_calls(
+            "",
+            vec![contract_control(&human_contract, "contract-human")],
+        ),
         LlmStepResult::text_only(envelope(
             &human_contract,
             Some(evaluation(
@@ -1579,5 +1597,5 @@ async fn verification_preserves_existing_boundaries_and_human_task() {
             ..
         }
     ));
-    assert_eq!(llm.recorded_calls().len(), 2);
+    assert_eq!(llm.recorded_calls().len(), 3);
 }

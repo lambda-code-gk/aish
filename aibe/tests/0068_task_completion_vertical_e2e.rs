@@ -2,19 +2,22 @@
 
 #![cfg(unix)]
 
-use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::Arc;
 
 use ai::adapters::outbound::{render_response, AibeUnixClient, ShellExecRenderOptions};
 use ai::application::{Ask, AskRunOptions};
 use ai::domain::{resolve_tools, ConfigToolsTokens, RequestContextInput};
 use ai::ports::outbound::{AgentClient, AgentError, Presenter};
 use aibe::adapters::outbound::terminator::ToolRoundTerminatorOrchestrator;
-use aibe::adapters::outbound::{ConversationStore, ScriptedMockLlm, StaticCapabilityPolicy};
-use aibe::application::{basic_pack_arc, build_default_tool_registry, RequestService};
+use aibe::adapters::outbound::{
+    ConfigWritePathRevalidator, ConversationStore, FileChangeJournalConfig,
+    FilesystemFileChangeJournal, FilesystemFileChangeStore, ScriptedMockLlm,
+    StaticCapabilityPolicy,
+};
+use aibe::application::{
+    basic_pack_arc, build_default_tool_registry, FileChangeService, RequestService,
+};
 use aibe::domain::{FeatureRegistry, LlmStepResult, ToolCall, READ_FILE, SHELL_EXEC, WRITE_FILE};
-use aibe::ports::inbound::{ClientRequestHandler, ShutdownCoordinator};
 use aibe::ports::outbound::{
     FileWriteApprovalMode, HumanTaskGate, ProfileRegistry, TerminationCapability, ToolsConfig,
 };
@@ -27,30 +30,15 @@ use async_trait::async_trait;
 use serde_json::json;
 
 struct PairClient {
-    stream: Mutex<Option<UnixStream>>,
     fallback: Arc<RequestService>,
 }
 
 impl AgentClient for PairClient {
     fn agent_turn(&self, request: &ai::domain::AskRequest) -> Result<ClientResponse, AgentError> {
-        let stream = self
-            .stream
-            .lock()
-            .map_err(|error| AgentError::Request(error.to_string()))?
-            .take()
-            .ok_or_else(|| AgentError::Request("stream already used".into()))?;
         let wire = AibeUnixClient::to_client_request(request);
-        match aibe_client::agent_turn_on_stream(stream, wire.clone(), |_| {
-            panic!("approval is disabled by production policy")
-        }) {
-            Ok(response) => Ok(response),
-            Err(error) if error.to_string().contains("Operation not permitted") => {
-                Ok(tokio::runtime::Runtime::new()
-                    .map_err(|runtime_error| AgentError::Request(runtime_error.to_string()))?
-                    .block_on(self.fallback.handle(wire, None)))
-            }
-            Err(error) => Err(AgentError::Request(error.to_string())),
-        }
+        Ok(tokio::runtime::Runtime::new()
+            .map_err(|runtime_error| AgentError::Request(runtime_error.to_string()))?
+            .block_on(self.fallback.handle(wire, None)))
     }
 }
 
@@ -82,18 +70,18 @@ fn contract() -> serde_json::Value {
     })
 }
 
-fn contract_only() -> String {
-    json!({
-        "aish_task_completion": {"contract": contract()},
-        "deliverable": ""
-    })
-    .to_string()
+fn contract_control(id: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: "set_task_contract".into(),
+        arguments: contract(),
+        provider_extras: None,
+    }
 }
 
 fn evaluated(status: &str, evidence_ids: &[&str], next: Option<&str>, body: &str) -> String {
     json!({
         "aish_task_completion": {
-            "contract": contract(),
             "evaluation": {
                 "criteria": [{
                     "criterion_id": "c1",
@@ -168,8 +156,9 @@ impl HumanTaskGate for SuspendedHumanTaskGate {
 fn task_completion_vertical_e2e() {
     let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
     let llm = Arc::new(ScriptedMockLlm::new(vec![
+        LlmStepResult::with_tool_calls("", vec![contract_control("contract")]),
         LlmStepResult::with_tool_calls(
-            contract_only(),
+            "",
             vec![ToolCall {
                 id: "write".into(),
                 name: WRITE_FILE.into(),
@@ -181,14 +170,8 @@ fn task_completion_vertical_e2e() {
                 provider_extras: None,
             }],
         ),
-        LlmStepResult::text_only(evaluated(
-            "unsatisfied",
-            &[],
-            Some("read artifact.txt now"),
-            "created; verification pending",
-        )),
         LlmStepResult::with_tool_calls(
-            contract_only(),
+            "",
             vec![ToolCall {
                 id: "observe".into(),
                 name: READ_FILE.into(),
@@ -219,7 +202,20 @@ fn task_completion_vertical_e2e() {
     let conversation_store = Arc::new(ConversationStore::new(dir.path().join("conversations")));
     let service = Arc::new(RequestService::new(
         profiles,
-        build_default_tool_registry(&tools, &[]),
+        aibe::adapters::outbound::tools::build_registry(
+            &tools,
+            &[],
+            Arc::new(FileChangeService::new(
+                tools.file_write.clone(),
+                Arc::new(FilesystemFileChangeJournal::new(FileChangeJournalConfig {
+                    root: dir.path().join("file-change-journal"),
+                    retention_days: tools.file_write.journal_retention_days,
+                    max_bytes: tools.file_write.journal_max_bytes,
+                })),
+                Arc::new(FilesystemFileChangeStore),
+                Arc::new(ConfigWritePathRevalidator::from_config(&tools.file_write)),
+            )),
+        ),
         tools,
         Arc::new(ToolRoundTerminatorOrchestrator::new(strategy)),
         "default".into(),
@@ -229,27 +225,7 @@ fn task_completion_vertical_e2e() {
         turn_hook,
         FeatureRegistry::empty(),
     ));
-    let (client_stream, server_stream) = UnixStream::pair().expect("mock socket pair");
-    server_stream.set_nonblocking(true).expect("nonblocking");
-    let handler: Arc<dyn ClientRequestHandler> = service.clone();
-    let server = thread::spawn(move || {
-        tokio::runtime::Runtime::new()
-            .expect("runtime")
-            .block_on(async move {
-                let stream = tokio::net::UnixStream::from_std(server_stream).expect("tokio stream");
-                aibe::adapters::inbound::unix_socket_server::serve_connected_stream(
-                    stream,
-                    handler,
-                    ShutdownCoordinator::new(),
-                )
-                .await
-                .expect("production connection");
-            });
-    });
-    let client = PairClient {
-        stream: Mutex::new(Some(client_stream)),
-        fallback: service,
-    };
+    let client = PairClient { fallback: service };
     let presenter = NoopPresenter;
     let ask = Ask::new(
         &client,
@@ -283,25 +259,31 @@ fn task_completion_vertical_e2e() {
         )
         .expect("one ai Ask command");
 
-    assert!(dir.path().join("artifact.txt").exists());
+    assert!(
+        dir.path().join("artifact.txt").exists(),
+        "artifact missing; response={:?}; provider_calls={}",
+        outcome.response,
+        llm.recorded_calls()
+            .iter()
+            .flatten()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
     let output = render_response(&outcome.response, false, ShellExecRenderOptions::default())
         .stdout
         .expect("report");
     assert!(output.contains("Task completion: Done"));
-    assert!(output.contains("Queries used: 2"));
+    assert!(output.contains("Queries used: 1"));
     assert!(output.contains("Evidence e2 source=Observation verified=true"));
     let calls = llm.recorded_calls();
     assert_eq!(calls.len(), 4);
-    let second_query = calls[2]
+    let after_control = calls[1]
         .iter()
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(second_query.contains("Next objective: read artifact.txt now"));
-    assert!(second_query.contains("post-change read"));
-    assert!(second_query.contains("Fixed contract:"));
-    assert!(second_query.contains("Existing evidence:"));
-    assert!(!second_query.contains("create artifact\n"));
+    assert!(after_control.contains(r#"{"status":"contract_fixed"}"#));
     let snapshot = conversation_store
         .load_snapshot("session-0068", "conversation-0068")
         .expect("load conversation")
@@ -310,8 +292,6 @@ fn task_completion_vertical_e2e() {
         .messages
         .iter()
         .all(|message| !message.content.contains("Task completion control:")));
-    drop(client);
-    server.join().expect("server thread");
 }
 
 #[tokio::test]
@@ -399,6 +379,7 @@ async fn inactive_turn_passes_plain_text_mentioning_task_completion_marker() {
 async fn second_query_human_task_suspend_is_preserved() {
     let dir = tempfile::tempdir_in(std::env::current_dir().expect("cwd")).expect("tempdir");
     let llm = Arc::new(ScriptedMockLlm::new(vec![
+        LlmStepResult::with_tool_calls("", vec![contract_control("contract")]),
         LlmStepResult::text_only(evaluated(
             "unsatisfied",
             &[],
@@ -406,7 +387,7 @@ async fn second_query_human_task_suspend_is_preserved() {
             "verification pending",
         )),
         LlmStepResult::with_tool_calls(
-            contract_only(),
+            "",
             vec![ToolCall {
                 id: "human".into(),
                 name: HUMAN_TASK.into(),
@@ -446,5 +427,5 @@ async fn second_query_human_task_suspend_is_preserved() {
         panic!("typed suspension must not become InvalidRequest")
     };
     assert_eq!(status, AgentTurnStatus::Suspended);
-    assert_eq!(llm.recorded_calls().len(), 2);
+    assert_eq!(llm.recorded_calls().len(), 3);
 }

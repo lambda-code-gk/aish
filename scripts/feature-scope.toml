@@ -16,6 +16,49 @@ red_process_boundaries = 3
 red_integrations = 4
 
 [[features]]
+spec = "0073"
+status = "done"
+scope_class = "feature"
+
+scope_revision = 3
+scope_change_reason = "Step 8: verify.sh / smoke-mock.sh 成功後に全9 AC green・実装指示書を docs/done へ移動（scope数値は不変）"
+scope_review = "approved"
+
+core_outcome = "Task Completion Active turnがassistant textの有無に依存せずprovider native set_task_contract functionCallでTask Contractを副作用前に一度だけ提出・固定する"
+
+actors = 2
+state_machines = 2
+persistent_aggregates = 0
+external_effects = 2
+process_boundaries = 1
+
+novel_mechanisms = ["server-owned-task-contract-control-function"]
+integrations = ["0068-0071-task-completion", "existing-provider-function-calling"]
+
+crash_recovery = false
+schema_migration = false
+secondary_agent_loop = false
+lease_or_heartbeat = false
+reconciler = false
+exactly_once = false
+
+split_decision = "evaluation control function, structured output migration, legacy text Contract compatibility, provider-specific parallel optimization, persistence, recovery, and new RPC or CLI are deferred"
+
+vertical_slice_ac_id = "task_contract_control_function_vertical_e2e"
+
+locked_ac_ids = [
+  "task_contract_control_function_vertical_e2e",
+  "control_tool_visibility_is_server_owned",
+  "control_args_fix_contract_before_effect",
+  "mixed_step_control_precedes_effects",
+  "missing_invalid_or_duplicate_control_fails_closed",
+  "active_text_contract_path_is_rejected",
+  "text_evaluation_transport_remains_compatible",
+  "provider_function_call_args_are_portable",
+  "control_security_and_task_completion_regressions_are_preserved",
+]
+
+[[features]]
 spec = "0071"
 status = "done"
 scope_class = "feature"

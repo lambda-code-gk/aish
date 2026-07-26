@@ -15,9 +15,9 @@ use crate::application::task_completion::{
 use crate::application::tool_round::ToolRoundExecutor;
 use crate::domain::{
     classify_task_completion_eligibility, is_stalled, parse_tool_names, progress_snapshot,
-    validate_contract_covers_request, validate_evaluation, AgentTurnContext, ChatMessage,
-    ClientCwd, ClientCwdError, CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext,
-    FeatureRegistry, TaskCompletionEligibility, TaskContract,
+    validate_evaluation, AgentTurnContext, ChatMessage, ClientCwd, ClientCwdError,
+    CompletionEvaluation, EvidenceRecord, FeatureEligibilityContext, FeatureRegistry,
+    TaskCompletionEligibility, TaskContract,
 };
 use crate::ports::inbound::ClientRequestHandler;
 use crate::ports::outbound::{
@@ -455,73 +455,47 @@ impl RequestService {
                                     );
                                     let _ = fixed;
                                 }
-                                (Ok(Some(first_envelope)), Ok(_)) => {
-                                    if let Err(message) = validate_contract_covers_request(
-                                        &first_envelope.aish_task_completion.contract,
-                                        eligibility,
-                                        &user_request,
+                                (Ok(Some(first_envelope)), Ok(Some(contract))) => {
+                                    let evaluation = first_envelope.aish_task_completion.evaluation;
+                                    match validate_delegated_cycle_calls(
+                                        &contract,
+                                        &cumulative_calls,
                                     ) {
-                                        response = ClientResponse::error(
-                                            id.clone(),
-                                            ErrorCode::InvalidRequest,
-                                            message,
-                                        );
-                                    } else if let Err(message) =
-                                        contract_gate.inspect_before_tools(&content, false)
-                                    {
-                                        response = ClientResponse::error(
-                                            id.clone(),
-                                            ErrorCode::InvalidRequest,
-                                            message,
-                                        );
-                                    } else {
-                                        let contract = first_envelope.aish_task_completion.contract;
-                                        let evaluation =
-                                            first_envelope.aish_task_completion.evaluation;
-                                        if let Some(evaluation) = evaluation {
-                                            match validate_delegated_cycle_calls(
+                                        Err(message) => {
+                                            response = ClientResponse::error(
+                                                id.clone(),
+                                                ErrorCode::InvalidRequest,
+                                                message,
+                                            );
+                                        }
+                                        Ok(validated_plan_calls) => {
+                                            let mut evidence =
+                                                evidence_from_tools(&contract, &cumulative_calls);
+                                            evidence.extend(deliverable_evidence(
                                                 &contract,
-                                                &cumulative_calls,
+                                                &first_envelope.deliverable,
+                                                evidence.len() + 1,
+                                            ));
+                                            if let Err(message) = validate_evaluation(
+                                                &contract,
+                                                &evidence,
+                                                &evaluation,
                                             ) {
-                                                Err(message) => {
-                                                    response = ClientResponse::error(
-                                                        id.clone(),
-                                                        ErrorCode::InvalidRequest,
-                                                        message,
-                                                    );
-                                                }
-                                                Ok(validated_plan_calls) => {
-                                                    let mut evidence = evidence_from_tools(
-                                                        &contract,
-                                                        &cumulative_calls,
-                                                    );
-                                                    evidence.extend(deliverable_evidence(
-                                                        &contract,
-                                                        &first_envelope.deliverable,
-                                                        evidence.len() + 1,
-                                                    ));
-                                                    if let Err(message) = validate_evaluation(
-                                                        &contract,
-                                                        &evidence,
-                                                        &evaluation,
-                                                    ) {
-                                                        response = ClientResponse::error(
-                                                            id.clone(),
-                                                            ErrorCode::InvalidRequest,
-                                                            message,
-                                                        );
-                                                    } else if let Some(failure) =
-                                                        verification_infrastructure_failure(
-                                                            &validated_plan_calls,
-                                                        )
-                                                    {
-                                                        let reason = failure
-                                                            .message
-                                                            .as_deref()
-                                                            .unwrap_or(
-                                                            "verification infrastructure failed",
-                                                        );
-                                                        response = ClientResponse::error_with_completion_report(
+                                                response = ClientResponse::error(
+                                                    id.clone(),
+                                                    ErrorCode::InvalidRequest,
+                                                    message,
+                                                );
+                                            } else if let Some(failure) =
+                                                verification_infrastructure_failure(
+                                                    &validated_plan_calls,
+                                                )
+                                            {
+                                                let reason = failure.message.as_deref().unwrap_or(
+                                                    "verification infrastructure failed",
+                                                );
+                                                response =
+                                                    ClientResponse::error_with_completion_report(
                                                         id.clone(),
                                                         ErrorCode::ToolError,
                                                         reason,
@@ -534,8 +508,8 @@ impl RequestService {
                                                             completion_queries_used,
                                                         ),
                                                     );
-                                                    } else {
-                                                        match build_report_with_calls(&contract, &evidence, &cumulative_calls, &evaluation, 1, false) {
+                                            } else {
+                                                match build_report_with_calls(&contract, &evidence, &cumulative_calls, &evaluation, 1, false) {
                                         Ok(report) => attach_completion_report(
                                             &mut response,
                                             first_envelope.deliverable,
@@ -656,17 +630,16 @@ impl RequestService {
                                             );
                                         }
                                                 }
-                                                    }
-                                                }
                                             }
-                                        } else {
-                                            response = ClientResponse::error(
-                                                id.clone(),
-                                                ErrorCode::InvalidRequest,
-                                                "task completion final envelope lacks evaluation",
-                                            );
                                         }
                                     }
+                                }
+                                (Ok(Some(_)), Ok(None)) => {
+                                    response = ClientResponse::error(
+                                        id.clone(),
+                                        ErrorCode::InvalidRequest,
+                                        "task completion contract required for this request",
+                                    );
                                 }
                                 (Ok(None), Ok(None)) => {
                                     response = ClientResponse::error(
@@ -827,7 +800,7 @@ fn attach_completion_report(
 fn finish_second_query(
     id: String,
     mut response: ClientResponse,
-    contract_gate: &ContractGate,
+    _contract_gate: &ContractGate,
     contract: &TaskContract,
     previous_evaluation: &CompletionEvaluation,
     previous_evidence: &[EvidenceRecord],
@@ -856,23 +829,7 @@ fn finish_second_query(
         }
         Err(message) => return ClientResponse::error(id, ErrorCode::InvalidRequest, message),
     };
-    if let Err(message) = contract_gate.inspect_before_tools(&content, false) {
-        return ClientResponse::error(id, ErrorCode::InvalidRequest, message);
-    }
-    if &envelope.aish_task_completion.contract != contract {
-        return ClientResponse::error(
-            id,
-            ErrorCode::InvalidRequest,
-            "task contract changed in second query",
-        );
-    }
-    let Some(evaluation) = envelope.aish_task_completion.evaluation else {
-        return ClientResponse::error(
-            id,
-            ErrorCode::InvalidRequest,
-            "task completion second query lacks evaluation",
-        );
-    };
+    let evaluation = envelope.aish_task_completion.evaluation;
     let validated_plan_calls = match validate_delegated_cycle_calls(contract, &second_calls) {
         Ok(calls) => calls,
         Err(message) => return ClientResponse::error(id, ErrorCode::InvalidRequest, message),
@@ -990,6 +947,11 @@ fn validate_client_tools(
 ) -> Result<Vec<ClientProvidedToolSpec>, String> {
     let mut out = Vec::new();
     for spec in client_tools {
+        if spec.name == crate::application::tool_defs::SET_TASK_CONTRACT {
+            return Err(
+                "reserved_task_contract_control: client cannot define set_task_contract".into(),
+            );
+        }
         if !spec.name.starts_with("aish.") {
             return Err(format!(
                 "client tool must use aish. namespace: {}",

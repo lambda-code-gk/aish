@@ -10,6 +10,7 @@ use crate::ports::outbound::{LlmError, LlmProvider, ToolDefinition};
 pub struct ScriptedMockLlm {
     steps: Mutex<Vec<LlmStepResult>>,
     calls: Mutex<Vec<Vec<ChatMessage>>>,
+    tool_definitions: Mutex<Vec<Vec<ToolDefinition>>>,
 }
 
 impl ScriptedMockLlm {
@@ -17,6 +18,7 @@ impl ScriptedMockLlm {
         Self {
             steps: Mutex::new(steps),
             calls: Mutex::new(Vec::new()),
+            tool_definitions: Mutex::new(Vec::new()),
         }
     }
 
@@ -24,6 +26,14 @@ impl ScriptedMockLlm {
         self.calls
             .lock()
             .map(|calls| calls.clone())
+            .unwrap_or_default()
+    }
+
+    /// 各 tool round で server が provider へ公開した definition の snapshot。
+    pub fn recorded_tool_definitions(&self) -> Vec<Vec<ToolDefinition>> {
+        self.tool_definitions
+            .lock()
+            .map(|definitions| definitions.clone())
             .unwrap_or_default()
     }
 
@@ -60,9 +70,13 @@ impl LlmProvider for ScriptedMockLlm {
     async fn complete_with_tools(
         &self,
         messages: &[ChatMessage],
-        _tools: &[ToolDefinition],
+        tools: &[ToolDefinition],
     ) -> Result<LlmStepResult, LlmError> {
         self.record_call(messages)?;
+        self.tool_definitions
+            .lock()
+            .map_err(|error| LlmError::Provider(error.to_string()))?
+            .push(tools.to_vec());
         self.pop_step()
     }
 }

@@ -4302,3 +4302,84 @@ description = "完了時にverify.shとsmoke-mock.shが成功する"
 test = "task_completion_hardening_verify_and_smoke"
 file_glob = "aibe/tests/0071_task_completion_hardening_red.rs"
 pending = false
+
+[[cases]]
+spec = "0073"
+phase = 1
+id = "task_contract_control_function_vertical_e2e"
+description = "functionCall-only controlからwrite/read/evaluation-onlyを経てDoneへ至る"
+test = "task_contract_control_function_vertical_e2e"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 1
+id = "control_tool_visibility_is_server_owned"
+description = "Activeだけにserver-owned control definitionを公開しreserved nameを保護する"
+test = "control_tool_visibility_is_server_owned"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 1
+id = "control_args_fix_contract_before_effect"
+description = "control argsを検査して最初のeffect前に一度だけContractを固定する"
+test = "control_args_fix_contract_before_effect"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 1
+id = "mixed_step_control_precedes_effects"
+description = "混在stepでcontrolを先行し固定成功後だけ残りを実行する"
+test = "mixed_step_control_precedes_effects"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 2
+id = "missing_invalid_or_duplicate_control_fails_closed"
+description = "欠落・不正・重複・再提出を全call相関結果付きでfail-closedにする"
+test = "missing_invalid_or_duplicate_control_fails_closed"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 2
+id = "active_text_contract_path_is_rejected"
+description = "Active text Contractを拒否しcontrolとの二重受理をなくす"
+test = "active_text_contract_path_is_rejected"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 2
+id = "text_evaluation_transport_remains_compatible"
+description = "evaluation-only text decoderをfinalとsecond queryで共用する"
+test = "text_evaluation_transport_remains_compatible"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 2
+id = "provider_function_call_args_are_portable"
+description = "GeminiとOpenAI-compatibleのfunction argsを同一server validatorへ渡す"
+test = "provider_function_call_args_are_portable"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
+
+[[cases]]
+spec = "0073"
+phase = 2
+id = "control_security_and_task_completion_regressions_are_preserved"
+description = "sink別redactionと0068-0071のTask Completion契約を維持する"
+test = "control_security_and_task_completion_regressions_are_preserved"
+file_glob = "aibe/tests/0073_task_completion_control_function_red.rs"
+pending = false
