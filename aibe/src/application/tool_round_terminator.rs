@@ -12,6 +12,8 @@ use crate::application::protocol_convert::protocol_message_out_from_chat;
 
 /// terminator 出力はそのまま client 応答本文になるため、control args は
 /// provider wire sink ではなく redact 必須 sink として扱う（spec 0073 §12）。
+/// `provider_extras` は adapter が解釈する provider 固有 part なので、sentinel を
+/// 入れずに省略する。
 fn redact_task_contract_control_args(conversation: &[ChatMessage]) -> Vec<ChatMessage> {
     conversation
         .iter()

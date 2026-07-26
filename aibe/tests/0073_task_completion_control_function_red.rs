@@ -1159,9 +1159,11 @@ async fn control_security_and_task_completion_regressions_are_preserved() {
     // provider wire sink ではなく redact 必須 sink として扱う。
     let mut replay_contract = contract(prompt);
     replay_contract["constraints"] = json!([secret]);
+    let mut replay_control = control("secret-control", replay_contract);
+    replay_control.provider_extras = Some(json!({"thoughtSignature": secret}));
     let (replay_service, replay_llm, _replay_dir) = replay_fixture(
         vec![
-            LlmStepResult::with_tool_calls("", vec![control("secret-control", replay_contract)]),
+            LlmStepResult::with_tool_calls("", vec![replay_control]),
             LlmStepResult::with_tool_calls(
                 "",
                 vec![call(
@@ -1191,6 +1193,10 @@ async fn control_security_and_task_completion_regressions_are_preserved() {
         "replay input must still correlate the control call"
     );
     assert_eq!(control_args[0].arguments, json!({"redacted": true}));
+    assert!(
+        control_args[0].provider_extras.is_none(),
+        "provider 固有 part は sentinel ではなく省略する"
+    );
     assert!(
         !serde_json::to_string(&terminator_input)
             .expect("terminator input json")

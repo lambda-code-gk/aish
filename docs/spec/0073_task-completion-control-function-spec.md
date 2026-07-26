@@ -259,7 +259,7 @@ raw control args の保持可否は、`ToolCall.arguments` という共通型名
 | 監査・実行記録用の serialized `tool_calls` | **不許可** | provider wire/message の直列化を流用せず、control call の `arguments` を固定 redaction sentinel に置換する |
 | 永続 ConversationStore / cache / journal | **不許可** | raw args を保存しない。保存対象に control call を含める場合は arguments を固定 redaction sentinel に置換する |
 | CompletionReport / Evidence ledger / Evidence summary | **不許可** | control success / rejected / skipped 自体を Evidence にせず、raw args も載せない |
-| max-round terminator への入力会話 | **不許可** | terminator の生成結果はそのまま client 応答本文になるため、`ConversationReplay` / `SummaryPrompt` いずれへ渡す会話でも control call の `arguments` / `provider_extras` を固定 redaction sentinel に置換する。call 自体は相関のため残す |
+| max-round terminator への入力会話 | **不許可** | terminator の生成結果はそのまま client 応答本文になるため、`ConversationReplay` / `SummaryPrompt` いずれへ渡す会話でも control call の `arguments` を固定 redaction sentinel に置換する。`provider_extras` は adapter が解釈する provider 固有 part であり sentinel を入れると誤読され得るため、置換ではなく省略する。call 自体は相関のため残す |
 | validation error / provider 相関 tool result / client error | **不許可** | field / invariant 名と bounded 固定 message のみを返し、invalid value、args 全文、元要求全文を反射しない |
 
 許可 sink から redact 必須 sink への変換は明示的な sanitizer / audit DTO 境界で行う。request-local provider message の debug formatting、error wrapping、recording provider の assertion failure もログ sink とみなし raw args を出さない。
