@@ -918,6 +918,14 @@ async fn text_evaluation_transport_remains_compatible() {
         CompletionEnvelopeDecode::MissingEvaluation
     );
 
+    // 明示的な null は field 欠落ではなく shape 不正。MissingEvaluation へ緩和しない。
+    let null_evaluation =
+        json!({"aish_task_completion":{"evaluation":null},"deliverable":"partial"}).to_string();
+    assert!(decode_completion_envelope(&null_evaluation).is_err());
+    let wrong_type_evaluation =
+        json!({"aish_task_completion":{"evaluation":"done"},"deliverable":"partial"}).to_string();
+    assert!(decode_completion_envelope(&wrong_type_evaluation).is_err());
+
     let legacy = json!({"aish_task_completion":{"contract":contract("create artifact"),"evaluation":{"criteria":[]}},"deliverable":"done"}).to_string();
     assert!(decode_completion_envelope(&legacy).is_err());
     let unknown = json!({"aish_task_completion":{"evaluation":{"criteria":[]},"unknown":true},"deliverable":"done"}).to_string();

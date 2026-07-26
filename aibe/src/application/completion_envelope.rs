@@ -86,8 +86,19 @@ struct RawCompletionEnvelope {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCompletionEnvelopeBody {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_present_evaluation")]
     evaluation: Option<CompletionEvaluation>,
+}
+
+/// `None` は field の欠落だけを表す。`"evaluation": null` は shape 不正であり
+/// `MissingEvaluation` へ緩和せず decode error にする。
+fn deserialize_present_evaluation<'de, D>(
+    deserializer: D,
+) -> Result<Option<CompletionEvaluation>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    CompletionEvaluation::deserialize(deserializer).map(Some)
 }
 
 pub fn decode_completion_envelope(content: &str) -> Result<CompletionEnvelopeDecode, String> {
