@@ -1,6 +1,8 @@
 //! Spec 0068 Task Completion domain / application acceptance tests.
 
-use aibe::application::completion_envelope::{decode_completion_envelope, ContractGate};
+use aibe::application::completion_envelope::{
+    decode_completion_envelope, CompletionEnvelopeDecode, ContractGate,
+};
 use aibe::application::task_completion::{
     build_continuation, build_report, deliverable_evidence, evidence_from_tools,
 };
@@ -57,17 +59,6 @@ fn evaluation(status: CriterionStatus, evidence_ids: &[&str]) -> CompletionEvalu
     }
 }
 
-fn envelope(contract: &TaskContract, evaluation: Option<&CompletionEvaluation>) -> String {
-    json!({
-        "aish_task_completion": {
-            "contract": contract,
-            "evaluation": evaluation,
-        },
-        "deliverable": "bounded result"
-    })
-    .to_string()
-}
-
 #[test]
 fn task_contract_is_stable_and_structurally_complete() {
     let eligibility = TaskCompletionEligibility::Active {
@@ -77,17 +68,17 @@ fn task_contract_is_stable_and_structurally_complete() {
     let fixed = contract();
     validate_contract_covers_request(&fixed, eligibility, "please change artifact.txt and verify")
         .expect("covers request");
-    assert!(gate
-        .inspect_before_tools(&envelope(&fixed, None), true)
-        .expect("valid contract before tool"));
+    gate.fix_contract_from_control_args(&serde_json::to_value(&fixed).expect("contract JSON"))
+        .expect("valid control before tool");
+    gate.mark_tool_execution_started().expect("tool started");
     assert_eq!(gate.fixed_contract().expect("gate"), Some(fixed.clone()));
 
     let mut changed = fixed.clone();
     changed.criteria[0].id = "changed".into();
     assert!(gate
-        .inspect_before_tools(&envelope(&changed, None), false)
+        .fix_contract_from_control_args(&serde_json::to_value(&changed).expect("contract JSON"))
         .unwrap_err()
-        .contains("changed"));
+        .contains("already fixed"));
 
     let missing_gate = ContractGate::strict(eligibility, "please change artifact.txt and verify");
     assert!(missing_gate
@@ -96,7 +87,7 @@ fn task_contract_is_stable_and_structurally_complete() {
         .contains("required before tool"));
     assert_eq!(missing_gate.fixed_contract().expect("gate"), None);
     assert!(missing_gate
-        .inspect_before_tools(&envelope(&fixed, None), false)
+        .fix_contract_from_control_args(&serde_json::to_value(&fixed).expect("contract JSON"))
         .unwrap_err()
         .contains("after tool execution"));
 
@@ -126,7 +117,7 @@ fn task_contract_is_stable_and_structurally_complete() {
     let wrong_kind_gate =
         ContractGate::strict(eligibility, "please change artifact.txt and verify");
     assert!(wrong_kind_gate
-        .inspect_before_tools(&envelope(&plan, None), true)
+        .fix_contract_from_control_args(&serde_json::to_value(&plan).expect("contract JSON"))
         .unwrap_err()
         .contains("requires task_kind=Execution"));
     assert_eq!(wrong_kind_gate.fixed_contract().expect("gate"), None);
@@ -188,9 +179,10 @@ fn permissive_gate_ignores_marker_in_plain_assistant_text() {
 #[test]
 fn assistant_claim_is_not_verified_evidence() {
     let claim = "I completed and verified everything";
-    assert!(decode_completion_envelope(claim)
-        .expect("plain assistant")
-        .is_none());
+    assert_eq!(
+        decode_completion_envelope(claim).expect("plain assistant"),
+        CompletionEnvelopeDecode::Absent
+    );
     assert!(validate_evaluation(
         &contract(),
         &[],

@@ -496,3 +496,9 @@ cargo test -p ai --test 0070_task_completion_phase3_verification_red -j 1 -- --t
 ./scripts/check-spec-acceptance.py
 ./scripts/check-feature-scope.py
 ```
+
+## 0073 Task Completion Control Function
+
+`aibe/tests/0073_task_completion_control_function_red.rs`の9 testをlocked ACと1:1対応させる。production `RequestService` / `AgentTurnService` / `ToolRoundExecutor`の縦断では、textなしcontrol call、固定success result、write、post-observation read、evaluation-only text、Doneを直列に観測する。Gemini/OpenAI-compatible補助試験は空content、call ID/arguments、tool result再送を検査し、共通server validatorの代替にprovider固有validatorを作らない。
+
+fail-closed試験は原因優先順位、全call occurrenceのID/順/件数、executor 0件、次roundでのvalid初回retry、固定後再提出拒否をrecording provider/executorで検査する。secret fixtureはrequest-local provider transcriptではexact、CompletionReport/Evidence/監査・永続・error sinkでは不在または固定redactionとなることを分けてassertする。実API/API key/networkは使わず、Task Completion回帰は直列`-j 1 -- --test-threads=1`で実行する。

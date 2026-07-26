@@ -7,6 +7,82 @@ use aibe_protocol::{AGENT_TASK, HUMAN_TASK, SHELL_EXEC};
 use crate::domain::ToolName;
 use crate::ports::outbound::ToolDefinition;
 
+pub const SET_TASK_CONTRACT: &str = "set_task_contract";
+
+/// Active Task Completion 専用の server-owned control function。
+/// 通常 tool registry / client allowlist には登録しない。
+///
+/// ここの `maxLength` は provider へのヒントで、単位は JSON Schema 定義どおり文字数。
+/// 正本は server 側 `TaskContract` validation（UTF-8 byte 長）であり、multibyte Contract は
+/// schema を通過しても server が fail-closed で拒否し得る。
+pub fn task_contract_control_definition() -> ToolDefinition {
+    let delegated_action = json!({"oneOf":[
+        {
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "kind":{"const":"observation"},
+                "tool":{"type":"string","minLength":1,"maxLength":8192},
+                "target":{"type":"string","minLength":1,"maxLength":8192}
+            },
+            "required":["kind","tool","target"]
+        },
+        {
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "kind":{"const":"command"},
+                "command":{"type":"string","minLength":1,"maxLength":8192},
+                "args":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":8192}},
+                "cwd":{"type":"string","minLength":1,"maxLength":8192}
+            },
+            "required":["kind","command","cwd"]
+        }
+    ]});
+    let delegated_item = json!({
+        "type":"object","additionalProperties":false,
+        "properties":{
+            "id":{"type":"string","minLength":1,"maxLength":8192},
+            "criterion_ids":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":8192}},
+            "action":delegated_action,
+            "expected_success":{"type":"string","minLength":1,"maxLength":8192}
+        },
+        "required":["id","criterion_ids","action","expected_success"]
+    });
+    let delegated_verification = json!({
+        "type":"object","additionalProperties":false,"properties":{
+            "items":{"type":"array","minItems":1,"maxItems":32,"items":delegated_item}
+        },"required":["items"]
+    });
+    ToolDefinition {
+        name: SET_TASK_CONTRACT.into(),
+        description: "Task Completion control only. Causes no external side effect. Call exactly once before the first effect or read-only tool; pass the TaskContract object directly and do not repeat it in assistant text.".into(),
+        parameters: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "goal": {"type":"string","minLength":1,"maxLength":8192},
+                "task_kind": {"type":"string","enum":["plan","investigation","execution"]},
+                "criteria": {"type":"array","minItems":1,"maxItems":32,"items":{
+                    "type":"object","additionalProperties":false,
+                    "properties":{
+                        "id":{"type":"string","minLength":1,"maxLength":8192},
+                        "description":{"type":"string","minLength":1,"maxLength":8192},
+                        "deliverable_is_plan":{"type":"boolean"},
+                        "observes_targets":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":8192}},
+                        "applicability":{"type":"string","minLength":1,"maxLength":8192}
+                    },
+                    "required":["id","description"]
+                }},
+                "constraints":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":8192}},
+                "deliverables":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","maxLength":8192}},
+                "verification":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","maxLength":8192}},
+                "verification_tools":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":8192}},
+                "delegated_verification":delegated_verification
+            },
+            "required":["goal","criteria","deliverables","verification"]
+        }),
+    }
+}
+
 pub use crate::application::client_tool_defs::client_tool_definitions;
 pub use crate::domain::{
     logical_tool_name, provider_tool_name, tool_name_for_provider, AISH_REPLAY_SHOW_LOGICAL,

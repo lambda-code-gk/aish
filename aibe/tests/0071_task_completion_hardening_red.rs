@@ -151,15 +151,26 @@ fn hardening_evaluation(satisfied: bool, second_query: bool) -> CompletionEvalua
 }
 
 fn envelope(
-    contract: &TaskContract,
+    _contract: &TaskContract,
     evaluation: Option<CompletionEvaluation>,
     body: &str,
 ) -> String {
-    json!({
-        "aish_task_completion": {"contract": contract, "evaluation": evaluation},
-        "deliverable": body
+    evaluation.map_or_else(String::new, |evaluation| {
+        json!({
+            "aish_task_completion": {"evaluation": evaluation},
+            "deliverable": body
+        })
+        .to_string()
     })
-    .to_string()
+}
+
+fn contract_control(contract: &TaskContract, id: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: "set_task_contract".into(),
+        arguments: serde_json::to_value(contract).expect("contract"),
+        provider_extras: None,
+    }
 }
 
 struct Approval(AtomicUsize);
@@ -459,12 +470,15 @@ async fn task_completion_cancel_report_vertical_e2e() {
     let contract = hardening_contract(dir.path());
     let llm = Arc::new(ScriptedMockLlm::new(vec![LlmStepResult::with_tool_calls(
         envelope(&contract, None, "must not be displayed"),
-        vec![ToolCall {
-            id: "cancel-after-contract".into(),
-            name: AGENT_TASK.into(),
-            arguments: serde_json::to_value(initial_request()).expect("request"),
-            provider_extras: None,
-        }],
+        vec![
+            contract_control(&contract, "contract-cancel"),
+            ToolCall {
+                id: "cancel-after-contract".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(initial_request()).expect("request"),
+                provider_extras: None,
+            },
+        ],
     )]));
     let service = production_service(dir.path(), llm, vec!["grep".into()]);
     let cancellation = Arc::new(aibe::application::TurnCancellation::new());
@@ -517,12 +531,15 @@ async fn task_completion_cancel_report_vertical_e2e() {
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
             contract_only(),
-            vec![ToolCall {
-                id: "worker-before-cancel".into(),
-                name: AGENT_TASK.into(),
-                arguments: serde_json::to_value(initial_request()).expect("request"),
-                provider_extras: None,
-            }],
+            vec![
+                contract_control(&contract, "contract-before-cancel"),
+                ToolCall {
+                    id: "worker-before-cancel".into(),
+                    name: AGENT_TASK.into(),
+                    arguments: serde_json::to_value(initial_request()).expect("request"),
+                    provider_extras: None,
+                },
+            ],
         ),
         LlmStepResult::with_tool_calls(
             contract_only(),
@@ -615,12 +632,15 @@ async fn verification_infrastructure_failure_reports_failed() {
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
             contract_only(),
-            vec![ToolCall {
-                id: "worker-1".into(),
-                name: AGENT_TASK.into(),
-                arguments: serde_json::to_value(initial_request()).expect("request"),
-                provider_extras: None,
-            }],
+            vec![
+                contract_control(&contract, "contract-failure"),
+                ToolCall {
+                    id: "worker-1".into(),
+                    name: AGENT_TASK.into(),
+                    arguments: serde_json::to_value(initial_request()).expect("request"),
+                    provider_extras: None,
+                },
+            ],
         ),
         LlmStepResult::with_tool_calls(
             contract_only(),
@@ -885,12 +905,15 @@ async fn verification_infrastructure_failure_reports_failed() {
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
             contract_only(),
-            vec![ToolCall {
-                id: "worker-first-cycle".into(),
-                name: AGENT_TASK.into(),
-                arguments: serde_json::to_value(&initial).expect("request"),
-                provider_extras: None,
-            }],
+            vec![
+                contract_control(&contract, "contract-duplicate"),
+                ToolCall {
+                    id: "worker-first-cycle".into(),
+                    name: AGENT_TASK.into(),
+                    arguments: serde_json::to_value(&initial).expect("request"),
+                    provider_extras: None,
+                },
+            ],
         ),
         shell_step("first-cycle-nonzero"),
         read_step("first-cycle-read"),
@@ -980,12 +1003,15 @@ async fn task_completion_hardening_vertical_e2e() {
     let llm = Arc::new(ScriptedMockLlm::new(vec![
         LlmStepResult::with_tool_calls(
             contract_only(),
-            vec![ToolCall {
-                id: "worker-1".into(),
-                name: AGENT_TASK.into(),
-                arguments: serde_json::to_value(&initial).expect("request"),
-                provider_extras: None,
-            }],
+            vec![
+                contract_control(&contract, "contract-vertical"),
+                ToolCall {
+                    id: "worker-1".into(),
+                    name: AGENT_TASK.into(),
+                    arguments: serde_json::to_value(&initial).expect("request"),
+                    provider_extras: None,
+                },
+            ],
         ),
         LlmStepResult::with_tool_calls(
             contract_only(),

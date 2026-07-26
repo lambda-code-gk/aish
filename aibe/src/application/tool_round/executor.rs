@@ -6,13 +6,15 @@ use std::time::Instant;
 
 use crate::application::client_tool_defs::limit_client_tool_result;
 use crate::application::completion_envelope::ContractGate;
-use crate::application::tool_defs::{client_tool_definitions, definitions_for};
+use crate::application::tool_defs::{
+    client_tool_definitions, definitions_for, task_contract_control_definition, SET_TASK_CONTRACT,
+};
 use crate::application::tool_round::rejected::rejected_tool_result;
 use crate::domain::logical_tool_name;
 use crate::domain::{
-    is_known_tool, Capability, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolName,
-    ToolResult, ToolRiskClass, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR, READ_FILE,
-    SHELL_EXEC, WRITE_FILE,
+    is_known_tool, Capability, ChatMessage, ExecutedToolCall, ToolApprovalState, ToolCall,
+    ToolName, ToolResult, ToolRiskClass, APPLY_PATCH, GIT_DIFF, GIT_STATUS, GREP, LIST_DIR,
+    READ_FILE, SHELL_EXEC, WRITE_FILE,
 };
 use crate::ports::outbound::{
     LlmCallTracer, LlmError, LlmProvider, ToolExecutionContext, ToolRegistry, ToolsConfig,
@@ -105,6 +107,14 @@ impl ToolRoundExecutor {
         events: Option<Arc<dyn TurnEventSink>>,
         cancellation: Option<&Arc<TurnCancellation>>,
     ) -> Result<RoundOutcome, LlmError> {
+        if client_tools
+            .iter()
+            .any(|spec| spec.name == SET_TASK_CONTRACT)
+        {
+            return Err(LlmError::InvalidRequest(
+                "reserved_task_contract_control: client cannot define set_task_contract".into(),
+            ));
+        }
         let publishable_tools = allowed_tools
             .iter()
             .filter(|name| {
@@ -116,6 +126,13 @@ impl ToolRoundExecutor {
             .collect::<Vec<_>>();
         let mut tool_defs = definitions_for(&publishable_tools);
         tool_defs.extend(client_tool_definitions(client_tools));
+        if self
+            .contract_gate
+            .as_ref()
+            .is_some_and(|gate| gate.requires_contract_control())
+        {
+            tool_defs.push(task_contract_control_definition());
+        }
         self.llm_tracer.start("tool_round", None, None);
         let started = Instant::now();
         let step = if let Some(cancel) = cancellation {
@@ -189,16 +206,61 @@ impl ToolRoundExecutor {
         self.llm_tracer
             .end("tool_round", started.elapsed().as_millis() as u64, true);
 
-        if let Some(contract_gate) = &self.contract_gate {
-            contract_gate
-                .inspect_before_tools(&step.assistant.content, !step.tool_calls.is_empty())
-                .map_err(LlmError::InvalidRequest)?;
-            contract_gate
-                .inspect_tool_calls(&step.tool_calls, tool_ctx.base_dir())
-                .map_err(LlmError::InvalidRequest)?;
-        }
-
         let mut executed = executed_so_far.to_vec();
+
+        // preflight_task_contract_control: step 全体を effect executor より先に検査する。
+        let mut control_succeeded = false;
+        if let Some(contract_gate) = &self.contract_gate {
+            if contract_gate.requires_contract_control() {
+                validate_correlatable_calls(&step.tool_calls)?;
+                let text_forbidden = ContractGate::text_contract_forbidden(&step.assistant.content);
+                let control_count = ContractGate::control_count(&step.tool_calls);
+                let fixed = contract_gate.is_fixed().map_err(LlmError::InvalidRequest)?;
+                let mut cause = if text_forbidden {
+                    Some("text_task_contract_forbidden")
+                } else if control_count >= 2 {
+                    Some("duplicate_task_contract_control")
+                } else if fixed && control_count == 1 {
+                    Some("task_contract_already_fixed")
+                } else if !fixed && control_count == 0 && !step.tool_calls.is_empty() {
+                    Some("task_contract_required")
+                } else {
+                    None
+                };
+
+                if cause.is_none() && !fixed && control_count == 1 {
+                    let control = step
+                        .tool_calls
+                        .iter()
+                        .find(|call| call.name == SET_TASK_CONTRACT)
+                        .expect("count checked");
+                    if contract_gate
+                        .fix_contract_from_control_args(&control.arguments)
+                        .is_err()
+                    {
+                        cause = Some("invalid_task_contract");
+                    } else {
+                        control_succeeded = true;
+                    }
+                }
+
+                if let Some(cause) = cause {
+                    if step.tool_calls.is_empty() {
+                        return Err(LlmError::InvalidRequest(cause.into()));
+                    }
+                    return Ok(fail_closed_round(
+                        conversation,
+                        &step.assistant,
+                        &step.tool_calls,
+                        cause,
+                        executed,
+                    ));
+                }
+                contract_gate
+                    .inspect_tool_calls(&step.tool_calls, tool_ctx.base_dir())
+                    .map_err(LlmError::InvalidRequest)?;
+            }
+        }
 
         if step.tool_calls.is_empty() {
             return Ok(RoundOutcome::Completed {
@@ -211,6 +273,19 @@ impl ToolRoundExecutor {
         next_conversation.push(step.assistant.clone());
 
         for tc in &step.tool_calls {
+            if tc.name == SET_TASK_CONTRACT {
+                debug_assert!(control_succeeded);
+                next_conversation.push(ChatMessage::tool(
+                    tc.id.clone(),
+                    r#"{"status":"contract_fixed"}"#,
+                ));
+                continue;
+            }
+            if let Some(contract_gate) = &self.contract_gate {
+                contract_gate
+                    .mark_tool_execution_started()
+                    .map_err(LlmError::InvalidRequest)?;
+            }
             let logical_name = logical_tool_name(&tc.name)
                 .unwrap_or(tc.name.as_str())
                 .to_string();
@@ -436,6 +511,64 @@ impl ToolRoundExecutor {
     }
 }
 
+fn validate_correlatable_calls(calls: &[ToolCall]) -> Result<(), LlmError> {
+    let mut ids = std::collections::BTreeSet::new();
+    for call in calls {
+        if call.id.trim().is_empty() || !ids.insert(call.id.as_str()) {
+            return Err(LlmError::InvalidRequest(
+                "provider tool call ids must be non-empty and unique".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn fail_closed_round(
+    conversation: &[ChatMessage],
+    assistant: &ChatMessage,
+    calls: &[ToolCall],
+    cause: &str,
+    executed: Vec<ExecutedToolCall>,
+) -> RoundOutcome {
+    let cause_index = calls
+        .iter()
+        .position(|call| call.name == SET_TASK_CONTRACT)
+        .unwrap_or(0);
+    let mut next = conversation.to_vec();
+    next.push(assistant.clone());
+    for (index, call) in calls.iter().enumerate() {
+        let content = if index == cause_index {
+            serde_json::json!({
+                "status": "error",
+                "code": cause,
+                "message": control_error_message(cause),
+            })
+        } else {
+            serde_json::json!({
+                "status": "error",
+                "code": "skipped_before_execution",
+                "cause": cause,
+            })
+        };
+        next.push(ChatMessage::tool(call.id.clone(), content.to_string()));
+    }
+    RoundOutcome::Continue {
+        conversation: next,
+        executed,
+    }
+}
+
+fn control_error_message(code: &str) -> &'static str {
+    match code {
+        "text_task_contract_forbidden" => "Task Contract must be submitted by control function",
+        "duplicate_task_contract_control" => "Task Contract control must occur exactly once",
+        "task_contract_already_fixed" => "Task Contract is already fixed",
+        "invalid_task_contract" => "Task Contract arguments are invalid",
+        "task_contract_required" => "Task Contract control is required before tool execution",
+        _ => "Task Contract control failed",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -449,6 +582,64 @@ mod tests {
         LlmStepResult, MessageRole, ToolCall, ToolName, ToolResult, READ_FILE, SHELL_EXEC,
     };
     use crate::ports::outbound::{NoopLlmCallTracer, ToolDefinition, ToolExecutor};
+
+    #[test]
+    fn task_contract_fail_closed_correlates_every_call_without_raw_args() {
+        let secret = "0073-secret-fixture";
+        let calls = vec![
+            ToolCall {
+                id: "effect".into(),
+                name: WRITE_FILE.into(),
+                arguments: json!({"content": secret}),
+                provider_extras: None,
+            },
+            ToolCall {
+                id: "control".into(),
+                name: SET_TASK_CONTRACT.into(),
+                arguments: json!({"goal": secret}),
+                provider_extras: None,
+            },
+        ];
+        let outcome = fail_closed_round(
+            &[],
+            &ChatMessage::assistant_with_tools("", calls.clone()),
+            &calls,
+            "invalid_task_contract",
+            vec![],
+        );
+        let RoundOutcome::Continue {
+            conversation,
+            executed,
+        } = outcome
+        else {
+            panic!("fail-closed must continue with correlated results")
+        };
+        assert!(executed.is_empty());
+        let results = conversation
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tool_call_id.as_deref(), Some("effect"));
+        assert_eq!(results[1].tool_call_id.as_deref(), Some("control"));
+        assert!(results[0].content.contains("skipped_before_execution"));
+        assert!(results[1].content.contains("invalid_task_contract"));
+        assert!(results
+            .iter()
+            .all(|result| !result.content.contains(secret)));
+    }
+
+    #[test]
+    fn task_contract_preflight_rejects_uncorrelatable_ids() {
+        let call = |id: &str| ToolCall {
+            id: id.into(),
+            name: SET_TASK_CONTRACT.into(),
+            arguments: json!({}),
+            provider_extras: None,
+        };
+        assert!(validate_correlatable_calls(&[call("")]).is_err());
+        assert!(validate_correlatable_calls(&[call("same"), call("same")]).is_err());
+    }
 
     struct StepLlm {
         steps: Mutex<Vec<LlmStepResult>>,

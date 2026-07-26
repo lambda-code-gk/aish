@@ -1,11 +1,70 @@
 //! Request-local Task Completion の純粋な契約と不変条件。
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use super::sha256_hex;
 use super::{AgentTaskCriterion, AgentTaskRequest, WorkerId};
+
+/// LLM が単一 string を誤って返しても string array として受理する。
+fn deserialize_string_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StringListVisitor;
+
+    impl<'de> Visitor<'de> for StringListVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or an array of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value.to_string()])
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value])
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Vec::new())
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut out = Vec::new();
+            while let Some(item) = seq.next_element::<String>()? {
+                out.push(item);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(StringListVisitor)
+}
 
 pub const TASK_COMPLETION_QUERY_BUDGET: u8 = 2;
 pub const STALL_TERMINAL_REASON: &str = "no progress between queries";
@@ -159,11 +218,11 @@ pub enum CriterionStatus {
 pub struct CriterionEvaluation {
     pub criterion_id: String,
     pub status: CriterionStatus,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_list")]
     pub evidence_ids: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_list")]
     pub required_evidence: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_list")]
     pub applicability_evidence_ids: Vec<String>,
     /// 委譲検証で未達となった、この criterion 固有の修正作業。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1109,4 +1168,38 @@ pub fn bound_evidence_target(raw: &str) -> Option<String> {
     }
     let digest = sha256_hex(trimmed.as_bytes());
     Some(format!("target:sha256:{digest}"))
+}
+
+#[cfg(test)]
+mod string_list_compat_tests {
+    use super::*;
+
+    #[test]
+    fn criterion_evaluation_accepts_string_or_array_list_fields() {
+        let from_string: CriterionEvaluation = serde_json::from_value(serde_json::json!({
+            "criterion_id": "c1",
+            "status": "unsatisfied",
+            "evidence_ids": "e1",
+            "required_evidence": "write_file creating artifact.txt and read_file verifying artifact.txt content"
+        }))
+        .expect("string list fields");
+        assert_eq!(from_string.evidence_ids, vec!["e1".to_string()]);
+        assert_eq!(
+            from_string.required_evidence,
+            vec![
+                "write_file creating artifact.txt and read_file verifying artifact.txt content"
+                    .to_string()
+            ]
+        );
+
+        let from_array: CriterionEvaluation = serde_json::from_value(serde_json::json!({
+            "criterion_id": "c1",
+            "status": "satisfied",
+            "evidence_ids": ["e2"],
+            "required_evidence": []
+        }))
+        .expect("array list fields");
+        assert_eq!(from_array.evidence_ids, vec!["e2".to_string()]);
+        assert!(from_array.required_evidence.is_empty());
+    }
 }

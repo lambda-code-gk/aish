@@ -36,14 +36,16 @@ pub fn system_instruction(expected_kind: TaskKind) -> String {
         TaskKind::Execution => "execution",
     };
     format!(
-        "Task completion control for a {kind} request: respond with one JSON object and no surrounding markdown. \
-The object must have aish_task_completion.contract (goal, task_kind={kind}, criteria with stable id/description/deliverable_is_plan/observes_targets, constraints, deliverables, verification, verification_tools), \
-optional aish_task_completion.evaluation (criteria with criterion_id/status/evidence_ids/required_evidence/required_work, next_objective, needs_user, blocked, failure), and deliverable. \
-Fix the contract before requesting the first tool. Every later envelope must repeat it unchanged. \
-Final responses in each query must include evaluation. Evidence ids are e1, e2, ... in tool execution order. \
+        "Task completion control for a {kind} request: before the first effect or read-only tool, call set_task_contract exactly once with the TaskContract object itself as arguments (goal, task_kind={kind}, criteria with stable id/description/deliverable_is_plan/observes_targets, constraints as a string array, deliverables as a string array, verification as a string array, verification_tools as a string array). \
+The control function causes no external side effect and may be returned without assistant text. Never include the Contract in assistant text after it is fixed. \
+Final responses in each query must be one JSON object with aish_task_completion.evaluation and deliverable, with no surrounding markdown. \
+evaluation.criteria is an array of objects; each criterion uses criterion_id, status, evidence_ids (string array, e.g. [\"e1\"]), required_evidence (string array, never a bare string), optional required_work, plus optional next_objective/needs_user/blocked/failure. \
+Example final shape: {{\"aish_task_completion\":{{\"evaluation\":{{\"criteria\":[{{\"criterion_id\":\"c1\",\"status\":\"satisfied\",\"evidence_ids\":[\"e2\"],\"required_evidence\":[]}}]}}}},\"deliverable\":\"done\"}}. \
+Do not place API keys, tokens, credentials, environment-variable values, or secret contents in Contract fields. Evidence ids are e1, e2, ... in effect/read-only tool execution order; the control call is not Evidence. \
 Write-like success is not verified until a later matching observation or verification tool on the same target. \
+When status is satisfied, evidence_ids must contain only verified Observation or Verification ids (after write_file, use the later read_file id such as e2). Never mark satisfied using only the write_file effect id. \
 Only server-trusted dedicated read-only tools may verify. For delegated work, only a shell_exec exactly matching the pre-fixed delegated_verification command/args/cwd is Verification; every other shell_exec remains UnknownShellEffect. \
-If delegated verification is unsatisfied, query 2 must execute the exact AgentTaskRequest supplied in the continuation (including Gap instructions) and repeat the unchanged plan. \
+If delegated verification is unsatisfied, query 2 must execute the exact AgentTaskRequest supplied in the continuation (including Gap instructions). \
 Investigation trusted read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
     )
 }

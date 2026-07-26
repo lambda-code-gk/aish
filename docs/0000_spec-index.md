@@ -66,6 +66,7 @@
 | 0069 | [0069_agent-task-delegation-spec.md](spec/0069_agent-task-delegation-spec.md) | 設計確定（実装済み） | Task Completion Phase 2（Issue #24、同期 Agent Task 委譲 / Result + Evidence、Yellow 承認） |
 | 0070 | [0070_task-completion-phase3-verification-spec.md](spec/0070_task-completion-phase3-verification-spec.md) | 設計確定（実装済み） | Task Completion Phase 3（Issue #27、委譲結果の独立検証 / Gap 付き再委譲1回、Yellow 承認） |
 | 0071 | [0071_task-completion-hardening-spec.md](spec/0071_task-completion-hardening-spec.md) | 設計確定（実装済み） | Task Completion Hardening（Issue #29、Failed / Cancelled report、criterion 単位 Gap、bounded event buffer、Workspace Observer 精度改善、Yellow 承認） |
+| 0073 | [0073_task-completion-control-function-spec.md](spec/0073_task-completion-control-function-spec.md) | 設計確定（実装済み） | Task Completion Control Function（`set_task_contract` による provider native Contract 固定、Yellow 承認） |
 
 ### 状態ラベルの意味
 
@@ -87,6 +88,7 @@
 
 | 番号 | ファイル | 状態 | 概要 |
 |------|----------|------|------|
+| 0073 | [0073_task-completion-control-function-implementation-spec.md](done/0073_task-completion-control-function-implementation-spec.md) | 実装済み | provider native `set_task_contract` による Contract 固定・control-first preflight・text Contract 廃止 |
 | 0071 | [0071_task-completion-hardening-implementation-spec.md](done/0071_task-completion-hardening-implementation-spec.md) | 実装済み | 既存Task Completion経路のFailed / Cancelled report、criterion別Gap、event buffer / metadata observer hardening |
 | 0070 | [0070_task-completion-phase3-verification-implementation-spec.md](done/0070_task-completion-phase3-verification-implementation-spec.md) | 実装済み | 親固定Verification Plan、独立再観測、Gap付き同一Worker再委譲1回、7終端 |
 | 0069 | [0069_agent-task-delegation-implementation-spec.md](done/0069_agent-task-delegation-implementation-spec.md) | 実装済み | production ExternalCommandWorker + fixture による同期 Agent Task Vertical Slice |
