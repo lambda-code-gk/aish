@@ -886,8 +886,12 @@ pub fn build_delegated_continuation(
 ) -> Result<DelegatedContinuation, String> {
     let initial = calls
         .iter()
-        .find(|call| call.name == aibe_protocol::AGENT_TASK)
-        .ok_or_else(|| "delegated continuation requires initial agent_task".to_string())?;
+        .find(|call| {
+            call.name == aibe_protocol::AGENT_TASK && call.status == ExecutedToolStatus::Ok
+        })
+        .ok_or_else(|| {
+            "delegated continuation requires successful initial agent_task".to_string()
+        })?;
     let initial: AgentTaskRequest = serde_json::from_value(initial.arguments.clone())
         .map_err(|error| format!("invalid initial agent_task request: {error}"))?;
     let observation_states = gap_observation_states(contract, evidence, calls, evaluation);
