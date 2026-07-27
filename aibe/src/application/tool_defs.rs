@@ -54,7 +54,7 @@ pub fn task_contract_control_definition() -> ToolDefinition {
     });
     ToolDefinition {
         name: SET_TASK_CONTRACT.into(),
-        description: "Task Completion control only. Causes no external side effect. Call exactly once before the first effect or read-only tool; pass the TaskContract object directly and do not repeat it in assistant text.".into(),
+        description: "Task Completion control only. Causes no external side effect. Call exactly once before the first effect or read-only tool; pass the TaskContract object directly and do not repeat it in assistant text. If agent_task will be used, include delegated_verification.items covering those criteria.".into(),
         parameters: json!({
             "type": "object",
             "additionalProperties": false,

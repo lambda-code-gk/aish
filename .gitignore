@@ -8,3 +8,4 @@
 
 # Codex MCP 実行時の隔離ディレクトリ（旧設定の残骸）
 .codex-mcp/
+tmp/

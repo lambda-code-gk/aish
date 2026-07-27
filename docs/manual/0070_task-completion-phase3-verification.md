@@ -6,9 +6,35 @@
 
 ## 前提
 
-1. `agent_task`を有効化し、workspace-write相当のローカルfixture Workerを絶対pathで1件設定する。
-2. Workerは初回に不完全なartifactと`status=done`を返し、instructionsに`Gap`がある2回目だけartifactを修正する。
-3. `shell_exec`の検証commandをallowlistへ追加し、`read_file`と対象workspace rootを許可する。
+1. `agent_task`を有効化し、リポジトリ同梱の fixture Worker を絶対 path で 1 件設定する（`gap_repair` モード。初回は不完全 artifact、Gap 付き follow-up で `verified` に修正）。
+2. `[tools.shell_exec].allowed_commands` に `test` を含める（delegated verification の固定 command）。
+3. `read_file` と対象 workspace root を許可する。
+
+設定例（path は環境に合わせて置換）:
+
+```toml
+[agent_task]
+enabled = true
+
+[[agent_task.workers]]
+id = "0070-fixture"
+executable = "/absolute/path/to/aish/aibe/tests/fixtures/0069_agent_task_worker.sh"
+args = ["gap_repair"]
+timeout_secs = 300
+permission_profile = "workspace-write"
+env_allowlist = ["PATH"]
+
+[tools.shell_exec]
+allowed_commands = ["test"]
+```
+
+`./scripts/manual-issue-17-task-completion.sh verify` は上記 Worker（`args` に `gap_repair`）と `test` allowlist を自動検査し、Contract では `0070-artifact.txt` と `command=test` を固定する。
+
+追記案の表示:
+
+```bash
+./scripts/manual-issue-17-print-verify-config.sh
+```
 
 秘密値をWorker入力、artifact名、command outputへ入れない。Worker cwdはOS sandboxではない。
 

@@ -665,6 +665,36 @@ fn parent_reobserves_artifacts_and_external_state() {
         &[agent.clone(), exact.clone(), read.clone(), diff.clone()]
     )
     .is_ok());
+    // 成功前の失敗 agent_task（UnknownWorker 等）と成功後の premature tool error は無視する
+    let failed_agent = ExecutedToolCall::err(
+        "agent-fail".into(),
+        AGENT_TASK,
+        serde_json::to_value(initial_request()).expect("request"),
+        "invalid_request",
+        "initial agent_task already succeeded this turn",
+    );
+    assert!(validate_delegated_cycle_calls(
+        &contract,
+        &[
+            failed_agent.clone(),
+            agent.clone(),
+            exact.clone(),
+            read.clone(),
+            diff.clone(),
+        ]
+    )
+    .is_ok());
+    assert!(validate_delegated_cycle_calls(
+        &contract,
+        &[
+            agent.clone(),
+            failed_agent,
+            exact.clone(),
+            read.clone(),
+            diff.clone(),
+        ]
+    )
+    .is_ok());
     // 逆順: observation が command より前だと fail-closed
     assert!(validate_delegated_cycle_calls(
         &contract,
@@ -672,10 +702,30 @@ fn parent_reobserves_artifacts_and_external_state() {
     )
     .is_err());
     // 同一 observation 実行を複数 plan item に再利用すると fail-closed
-    assert!(
-        validate_delegated_cycle_calls(&contract, &[agent, exact, read.clone(), read.clone()])
-            .is_err()
+    assert!(validate_delegated_cycle_calls(
+        &contract,
+        &[agent.clone(), exact.clone(), read.clone(), read.clone()]
+    )
+    .is_err());
+    // Gap follow-up query で agent_task より前の read-only 探索は fail-closed
+    let scout = ExecutedToolCall::ok(
+        "scout".into(),
+        READ_FILE,
+        json!({"path":"other.txt"}),
+        "peek".into(),
     );
+    assert!(validate_delegated_cycle_calls(
+        &contract,
+        &[
+            scout,
+            agent.clone(),
+            exact.clone(),
+            read.clone(),
+            diff.clone()
+        ]
+    )
+    .unwrap_err()
+    .contains("agent_task before other tools"));
 
     // collaborative handoff は subprocess 未実行のため Verification に昇格しない
     let handoff = ExecutedToolCall::ok(
@@ -1129,9 +1179,11 @@ fn gap_follow_up_is_single_bounded_and_same_worker() {
         dir.path(),
     )
     .expect("initial agent task");
+    gate.commit_agent_task_success(&serde_json::to_value(initial_request()).expect("request"))
+        .expect("commit initial");
     gate.expect_follow_up(follow_up.clone())
         .expect("fix follow-up");
-    let mut tampered = follow_up;
+    let mut tampered = follow_up.clone();
     tampered.objective.push_str(" and do unrelated work");
     assert!(gate
         .inspect_tool_calls(
@@ -1145,6 +1197,64 @@ fn gap_follow_up_is_single_bounded_and_same_worker() {
         )
         .unwrap_err()
         .contains("differs from the fixed Gap request"));
+
+    // 成功前の pending は別 request で上書きできる（UnknownWorker 修正の再試行）。
+    let gate2 = ContractGate::strict(
+        TaskCompletionEligibility::Active {
+            expected_kind: TaskKind::Execution,
+        },
+        "delegate work",
+    );
+    gate2
+        .fix_contract_from_control_args(&serde_json::to_value(&contract).expect("contract"))
+        .expect("fix contract");
+    gate2
+        .inspect_tool_calls(
+            &[ToolCall {
+                id: "initial".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(initial_request()).expect("request"),
+                provider_extras: None,
+            }],
+            dir.path(),
+        )
+        .expect("pending initial");
+    gate2.clear_pending_agent_task().expect("clear pending");
+    let mut corrected = initial_request();
+    corrected.objective.push_str(" corrected");
+    gate2
+        .inspect_tool_calls(
+            &[ToolCall {
+                id: "corrected".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(corrected.clone()).expect("request"),
+                provider_extras: None,
+            }],
+            dir.path(),
+        )
+        .expect("replace pending after failure");
+    gate2
+        .commit_agent_task_success(&serde_json::to_value(corrected).expect("request"))
+        .expect("commit corrected");
+    // 成功後の premature 2回目は inspect では通し、実行直前 preflight で tool error にする。
+    gate2
+        .inspect_tool_calls(
+            &[ToolCall {
+                id: "premature".into(),
+                name: AGENT_TASK.into(),
+                arguments: serde_json::to_value(initial_request()).expect("request"),
+                provider_extras: None,
+            }],
+            dir.path(),
+        )
+        .expect("inspect soft-continues premature agent_task");
+    let premature_err = gate2
+        .preflight_agent_task_execution(&serde_json::to_value(initial_request()).expect("request"))
+        .unwrap_err();
+    assert!(
+        premature_err.contains("already succeeded this turn"),
+        "{premature_err}"
+    );
 }
 
 #[test]

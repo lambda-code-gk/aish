@@ -298,6 +298,7 @@ impl ToolRoundExecutor {
                     )
                     .await;
             }
+            let mut agent_task_ran = false;
             let (record, result) = if let Some(spec) = tool_ctx.client_tool_spec(&logical_name) {
                 if spec.risk_class != aibe_protocol::ToolRiskClass::ReadOnly {
                     rejected_tool_result(
@@ -392,80 +393,97 @@ impl ToolRoundExecutor {
                         format!("model requested disallowed tool: {}", tc.name),
                     )
                 } else if let Some(executor) = self.registry.get(&name) {
-                    let needs_shell = name.as_str() == SHELL_EXEC;
-                    let needs_write = is_write_tool(name.as_str());
-                    if needs_shell {
-                        if let Err(denied) = tool_ctx.require_capability(Capability::ShellExecute) {
-                            rejected_tool_result(tc, "capability_denied", denied.message())
-                        } else if let Some(cancel) = cancellation {
-                            tokio::select! {
-                                res = executor.execute(
-                                    &tc.id,
-                                    &tc.arguments,
-                                    self.tools_config.exec_timeout_ms,
-                                    tool_ctx,
-                                ) => res,
-                                _ = cancel.wait() => {
-                                    return Ok(RoundOutcome::Cancelled { executed });
-                                }
-                            }
-                        } else {
-                            executor
-                                .execute(
-                                    &tc.id,
-                                    &tc.arguments,
-                                    self.tools_config.exec_timeout_ms,
-                                    tool_ctx,
-                                )
-                                .await
-                        }
-                    } else if needs_write {
-                        if let Err(denied) = tool_ctx.require_capability(Capability::FileWrite) {
-                            rejected_tool_result(tc, "capability_denied", denied.message())
-                        } else if let Some(cancel) = cancellation {
-                            tokio::select! {
-                                res = executor.execute(
-                                    &tc.id,
-                                    &tc.arguments,
-                                    self.tools_config.exec_timeout_ms,
-                                    tool_ctx,
-                                ) => res,
-                                _ = cancel.wait() => {
-                                    return Ok(RoundOutcome::Cancelled { executed });
-                                }
-                            }
-                        } else {
-                            executor
-                                .execute(
-                                    &tc.id,
-                                    &tc.arguments,
-                                    self.tools_config.exec_timeout_ms,
-                                    tool_ctx,
-                                )
-                                .await
-                        }
-                    } else if let Some(cancel) = cancellation {
-                        tokio::select! {
-                            res = executor.execute(
-                                &tc.id,
-                                &tc.arguments,
-                                self.tools_config.exec_timeout_ms,
-                                tool_ctx,
-                            ) => res,
-                            _ = cancel.wait() => {
-                                return Ok(RoundOutcome::Cancelled { executed });
-                            }
-                        }
+                    let agent_preflight_err = if name.as_str() == aibe_protocol::AGENT_TASK {
+                        self.contract_gate.as_ref().and_then(|gate| {
+                            gate.preflight_agent_task_execution(&tc.arguments).err()
+                        })
                     } else {
-                        executor
-                            .execute(
-                                &tc.id,
-                                &tc.arguments,
-                                self.tools_config.exec_timeout_ms,
-                                tool_ctx,
-                            )
-                            .await
-                    }
+                        None
+                    };
+                    if let Some(message) = agent_preflight_err {
+                        rejected_tool_result(tc, "invalid_request", message)
+                    } else {
+                        if name.as_str() == aibe_protocol::AGENT_TASK {
+                            agent_task_ran = true;
+                        }
+                        let needs_shell = name.as_str() == SHELL_EXEC;
+                        let needs_write = is_write_tool(name.as_str());
+                        if needs_shell {
+                            if let Err(denied) =
+                                tool_ctx.require_capability(Capability::ShellExecute)
+                            {
+                                rejected_tool_result(tc, "capability_denied", denied.message())
+                            } else if let Some(cancel) = cancellation {
+                                tokio::select! {
+                                    res = executor.execute(
+                                        &tc.id,
+                                        &tc.arguments,
+                                        self.tools_config.exec_timeout_ms,
+                                        tool_ctx,
+                                    ) => res,
+                                    _ = cancel.wait() => {
+                                        return Ok(RoundOutcome::Cancelled { executed });
+                                    }
+                                }
+                            } else {
+                                executor
+                                    .execute(
+                                        &tc.id,
+                                        &tc.arguments,
+                                        self.tools_config.exec_timeout_ms,
+                                        tool_ctx,
+                                    )
+                                    .await
+                            }
+                        } else if needs_write {
+                            if let Err(denied) = tool_ctx.require_capability(Capability::FileWrite)
+                            {
+                                rejected_tool_result(tc, "capability_denied", denied.message())
+                            } else if let Some(cancel) = cancellation {
+                                tokio::select! {
+                                    res = executor.execute(
+                                        &tc.id,
+                                        &tc.arguments,
+                                        self.tools_config.exec_timeout_ms,
+                                        tool_ctx,
+                                    ) => res,
+                                    _ = cancel.wait() => {
+                                        return Ok(RoundOutcome::Cancelled { executed });
+                                    }
+                                }
+                            } else {
+                                executor
+                                    .execute(
+                                        &tc.id,
+                                        &tc.arguments,
+                                        self.tools_config.exec_timeout_ms,
+                                        tool_ctx,
+                                    )
+                                    .await
+                            }
+                        } else if let Some(cancel) = cancellation {
+                            tokio::select! {
+                                res = executor.execute(
+                                    &tc.id,
+                                    &tc.arguments,
+                                    self.tools_config.exec_timeout_ms,
+                                    tool_ctx,
+                                ) => res,
+                                _ = cancel.wait() => {
+                                    return Ok(RoundOutcome::Cancelled { executed });
+                                }
+                            }
+                        } else {
+                            executor
+                                .execute(
+                                    &tc.id,
+                                    &tc.arguments,
+                                    self.tools_config.exec_timeout_ms,
+                                    tool_ctx,
+                                )
+                                .await
+                        }
+                    } // agent_preflight_err else
                 } else {
                     rejected_tool_result(
                         tc,
@@ -480,6 +498,19 @@ impl ToolRoundExecutor {
                 let (risk, approval) = classify_tool(&record.name);
                 record.with_audit(risk, approval, false)
             };
+            if agent_task_ran {
+                if let Some(contract_gate) = &self.contract_gate {
+                    if result.is_error {
+                        contract_gate
+                            .clear_pending_agent_task()
+                            .map_err(LlmError::InvalidRequest)?;
+                    } else {
+                        contract_gate
+                            .commit_agent_task_success(&tc.arguments)
+                            .map_err(LlmError::InvalidRequest)?;
+                    }
+                }
+            }
             executed.push(record);
             if logical_name == aibe_protocol::HUMAN_TASK && !result.is_error {
                 if let Ok(task_result) =
