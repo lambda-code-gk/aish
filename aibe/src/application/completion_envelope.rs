@@ -88,6 +88,9 @@ struct RawCompletionEnvelope {
 struct RawCompletionEnvelopeBody {
     #[serde(default, deserialize_with = "deserialize_present_evaluation")]
     evaluation: Option<CompletionEvaluation>,
+    /// 正本は top-level `deliverable`。一部 provider が body 内へ置くため受理して正規化する。
+    #[serde(default)]
+    deliverable: String,
 }
 
 /// `None` は field の欠落だけを表す。`"evaluation": null` は shape 不正であり
@@ -112,7 +115,13 @@ pub fn decode_completion_envelope(content: &str) -> Result<CompletionEnvelopeDec
     }
     let raw: RawCompletionEnvelope = serde_json::from_str(content)
         .map_err(|error| format!("invalid task completion envelope: {error}"))?;
-    if raw.deliverable.len() > crate::domain::CONTRACT_TEXT_MAX_BYTES {
+    // top-level を優先。空なら body 内（provider がネストした場合）を使う。
+    let deliverable = if raw.deliverable.is_empty() {
+        raw.aish_task_completion.deliverable
+    } else {
+        raw.deliverable
+    };
+    if deliverable.len() > crate::domain::CONTRACT_TEXT_MAX_BYTES {
         return Err(format!(
             "deliverable exceeds {} bytes",
             crate::domain::CONTRACT_TEXT_MAX_BYTES
@@ -124,7 +133,7 @@ pub fn decode_completion_envelope(content: &str) -> Result<CompletionEnvelopeDec
     evaluation.validate_bounded()?;
     Ok(CompletionEnvelopeDecode::Present(CompletionEnvelope {
         aish_task_completion: CompletionEnvelopeBody { evaluation },
-        deliverable: raw.deliverable,
+        deliverable,
     }))
 }
 
@@ -279,7 +288,11 @@ impl ContractGate {
 struct ContractGateState {
     fixed: Option<TaskContract>,
     tool_execution_started: bool,
+    /// inspect 済みだがまだ成功していない初回 request（承認前失敗時は上書き・クリア可）
+    pending_agent_request: Option<AgentTaskRequest>,
+    /// 実行成功した初回 agent_task
     initial_agent_request: Option<AgentTaskRequest>,
+    /// 成功した agent_task 回数（初回=1, follow-up=2）
     agent_task_calls: u8,
     expected_follow_up: Option<AgentTaskRequest>,
 }
@@ -326,6 +339,50 @@ impl ContractGate {
         }
         if state.expected_follow_up.replace(request).is_some() {
             return Err("follow-up request was already fixed".into());
+        }
+        Ok(())
+    }
+
+    /// agent_task が承認・実行に成功したときに呼ぶ。inspect 時点では回数を確定しない。
+    pub fn commit_agent_task_success(&self, arguments: &serde_json::Value) -> Result<(), String> {
+        if !self.require_contract_before_tools {
+            return Ok(());
+        }
+        let request: AgentTaskRequest = serde_json::from_value(arguments.clone())
+            .map_err(|error| format!("invalid agent_task request on commit: {error}"))?;
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        if let Some(expected) = state.expected_follow_up.as_ref() {
+            if state.agent_task_calls != 1 {
+                return Err(
+                    "follow-up commit requires exactly one successful initial agent_task".into(),
+                );
+            }
+            if &request != expected {
+                return Err("follow-up agent_task differs from the fixed Gap request".into());
+            }
+            state.agent_task_calls = 2;
+            state.pending_agent_request = None;
+            return Ok(());
+        }
+        if state.agent_task_calls != 0 {
+            return Err("initial agent_task was already committed this turn".into());
+        }
+        if let Some(pending) = state.pending_agent_request.as_ref() {
+            if pending != &request {
+                return Err("committed agent_task differs from the inspected request".into());
+            }
+        }
+        state.initial_agent_request = Some(request);
+        state.pending_agent_request = None;
+        state.agent_task_calls = 1;
+        Ok(())
+    }
+
+    /// 承認拒否・UnknownWorker 等で agent_task が失敗したとき、未コミットの pending を落とす。
+    pub fn clear_pending_agent_task(&self) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        if state.agent_task_calls == 0 {
+            state.pending_agent_request = None;
         }
         Ok(())
     }
@@ -425,10 +482,16 @@ impl ContractGate {
             if state.agent_task_calls >= 2 {
                 return Err("delegated verification permits only one follow-up".into());
             }
-            if let Some(initial) = &state.initial_agent_request {
-                let expected = state.expected_follow_up.as_ref().ok_or_else(|| {
-                    "follow-up agent_task was not fixed from the evaluated Gap".to_string()
+            if let Some(expected) = state.expected_follow_up.as_ref() {
+                let initial = state.initial_agent_request.as_ref().ok_or_else(|| {
+                    "follow-up agent_task requires a successful initial agent_task".to_string()
                 })?;
+                if state.agent_task_calls != 1 {
+                    return Err(
+                        "follow-up agent_task requires exactly one successful initial agent_task"
+                            .into(),
+                    );
+                }
                 if &request != expected {
                     return Err("follow-up agent_task differs from the fixed Gap request".into());
                 }
@@ -438,10 +501,55 @@ impl ContractGate {
                 {
                     return Err("follow-up changed worker/cwd/timeout".into());
                 }
-            } else {
-                state.initial_agent_request = Some(request.clone());
+                state.pending_agent_request = Some(request);
+                continue;
             }
-            state.agent_task_calls += 1;
+            if state.agent_task_calls >= 1 {
+                // ターン全体を InvalidRequest で落とさず、実行時に tool error へ落とす。
+                // 同一 step の read_file など verification plan を続行できるようにする。
+                continue;
+            }
+            // 未成功の pending は上書き可（UnknownWorker / 承認失敗後の修正再試行）
+            state.pending_agent_request = Some(request);
+        }
+        Ok(())
+    }
+
+    /// agent_task 実行直前の最終検査。premature 2回目は tool error 用メッセージを返す。
+    pub fn preflight_agent_task_execution(
+        &self,
+        arguments: &serde_json::Value,
+    ) -> Result<(), String> {
+        if !self.require_contract_before_tools {
+            return Ok(());
+        }
+        let request: AgentTaskRequest = serde_json::from_value(arguments.clone())
+            .map_err(|error| format!("invalid agent_task request before execute: {error}"))?;
+        let state = self.state.lock().map_err(|error| error.to_string())?;
+        if let Some(expected) = state.expected_follow_up.as_ref() {
+            if state.agent_task_calls != 1 {
+                return Err(
+                    "follow-up agent_task requires exactly one successful initial agent_task"
+                        .into(),
+                );
+            }
+            if &request != expected {
+                return Err("follow-up agent_task differs from the fixed Gap request".into());
+            }
+            return Ok(());
+        }
+        if state.agent_task_calls >= 1 {
+            return Err(
+                "initial agent_task already succeeded this turn; run delegated_verification \
+(e.g. read_file on the plan target) before final evaluation — a second agent_task is only allowed \
+as the Gap follow-up in query 2"
+                    .into(),
+            );
+        }
+        if let Some(pending) = state.pending_agent_request.as_ref() {
+            if pending != &request {
+                return Err("agent_task request differs from the inspected pending request".into());
+            }
         }
         Ok(())
     }

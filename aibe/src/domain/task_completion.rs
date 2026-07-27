@@ -744,7 +744,9 @@ pub fn validate_evaluation(
                 .get(evidence_id.as_str())
                 .ok_or_else(|| format!("unknown evidence id: {evidence_id}"))?;
             if record.stale {
-                return Err(format!("evidence {evidence_id} is stale"));
+                return Err(format!(
+                    "evidence {evidence_id} is stale; cite only fresh verification/observation evidence from the current query"
+                ));
             }
             if !record.criterion_ids.contains(&criterion.criterion_id) {
                 return Err(format!("evidence {evidence_id} is not linked to criterion"));

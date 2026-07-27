@@ -1473,6 +1473,115 @@ fn gap_observed_uses_actual_evidence() {
 }
 
 #[test]
+fn delegated_continuation_uses_successful_initial_agent_task() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let contract = hardening_contract(dir.path());
+    let mut evaluation = hardening_evaluation(false, false);
+    for criterion in &mut evaluation.criteria {
+        criterion.status = CriterionStatus::Unsatisfied;
+        criterion.evidence_ids.clear();
+    }
+
+    let failed_worker_request = AgentTaskRequest {
+        worker: WorkerId::parse("unknown-worker").expect("worker"),
+        ..initial_request()
+    };
+    let successful_worker_request = AgentTaskRequest {
+        worker: WorkerId::parse("fixture").expect("worker"),
+        cwd: Some(dir.path().display().to_string()),
+        timeout_secs: Some(5),
+        ..initial_request()
+    };
+    let worker_output = json!({
+        "status": "completed",
+        "summary": "worker completed",
+        "reported_complete": true,
+        "blockers": [],
+        "stdout": "",
+        "stderr": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "exit_code": 0,
+        "timed_out": false,
+        "changed_paths": [],
+        "observation_incomplete": false,
+        "evidence": [],
+        "verified": false,
+        "approval_origin": "explicit_ui",
+        "worker": "fixture",
+        "cwd": dir.path().display().to_string(),
+        "timeout_secs": 5
+    })
+    .to_string();
+    let failed_agent = ExecutedToolCall::err(
+        "agent-fail".into(),
+        AGENT_TASK,
+        serde_json::to_value(&failed_worker_request).expect("request"),
+        "invalid_request",
+        "unknown worker",
+    );
+    let successful_agent = ExecutedToolCall::ok(
+        "agent-ok".into(),
+        AGENT_TASK,
+        serde_json::to_value(&successful_worker_request).expect("request"),
+        worker_output,
+    )
+    .with_audit(
+        aibe_protocol::ToolRiskClass::WriteLike,
+        aibe_protocol::ToolApprovalState::ExplicitClientOptIn,
+        false,
+    );
+    let shell_call = ExecutedToolCall::err(
+        "shell-state".into(),
+        SHELL_EXEC,
+        json!({"command":"grep","args":["verified","0070-artifact.txt"]}),
+        "verification_failed",
+        "structured process terminal",
+    )
+    .with_process_terminal(aibe_protocol::ProcessExecutionTerminal::NonzeroExit)
+    .with_audit(
+        aibe_protocol::ToolRiskClass::DangerousShell,
+        aibe_protocol::ToolApprovalState::NotRequired,
+        false,
+    );
+    let observation_call = |id: &str, name: &str| {
+        ExecutedToolCall::ok(
+            id.into(),
+            name,
+            json!({"path":"0070-artifact.txt"}),
+            "observed".into(),
+        )
+        .with_audit(
+            aibe_protocol::ToolRiskClass::ReadOnly,
+            aibe_protocol::ToolApprovalState::NotRequired,
+            false,
+        )
+    };
+    let calls = vec![
+        failed_agent,
+        successful_agent,
+        shell_call,
+        observation_call("read-state", READ_FILE),
+        observation_call("diff-state", GIT_DIFF),
+    ];
+
+    let continuation = aibe::application::task_completion::build_delegated_continuation(
+        &contract,
+        &evaluation,
+        &[],
+        &calls,
+    )
+    .expect("continuation after failed-then-successful agent_task");
+
+    assert_eq!(continuation.request.worker.as_str(), "fixture");
+    assert_eq!(
+        continuation.request.cwd.as_deref(),
+        Some(dir.path().to_str().expect("cwd"))
+    );
+    assert_eq!(continuation.request.timeout_secs, Some(5));
+}
+
+#[test]
 fn gap_required_work_is_per_criterion() {
     let dir = tempfile::tempdir().expect("tempdir");
     let gap = build_gap(

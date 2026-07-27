@@ -930,6 +930,30 @@ async fn text_evaluation_transport_remains_compatible() {
     assert!(decode_completion_envelope(&legacy).is_err());
     let unknown = json!({"aish_task_completion":{"evaluation":{"criteria":[]},"unknown":true},"deliverable":"done"}).to_string();
     assert!(decode_completion_envelope(&unknown).is_err());
+    // Gemini 等が deliverable を aish_task_completion 内へネストしても正規化して受理する。
+    let nested_deliverable = json!({
+        "aish_task_completion": {
+            "evaluation": {"criteria": []},
+            "deliverable": "nested-ok"
+        }
+    })
+    .to_string();
+    let nested_decoded =
+        decode_completion_envelope(&nested_deliverable).expect("nested deliverable");
+    let nested = nested_decoded.present().expect("present");
+    assert_eq!(nested.deliverable, "nested-ok");
+    // top-level があるときはそちらを優先する。
+    let both = json!({
+        "aish_task_completion": {
+            "evaluation": {"criteria": []},
+            "deliverable": "nested"
+        },
+        "deliverable": "top"
+    })
+    .to_string();
+    let both_decoded = decode_completion_envelope(&both).expect("both deliverable");
+    let preferred = both_decoded.present().expect("present");
+    assert_eq!(preferred.deliverable, "top");
     let malformed = "{\"aish_task_completion\":oops}";
     assert!(decode_completion_envelope(malformed).is_err());
     // Contract member を持つ legacy shape は evaluation 欠落ではなく error 側に残る。

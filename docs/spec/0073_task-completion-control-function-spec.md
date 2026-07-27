@@ -214,7 +214,7 @@ Phase 1 の最終 assistant 応答は tool call を伴わない text が正常�
 }
 ```
 
-`evaluation` は Active final response で必須とする。`aish_task_completion` object と top-level は `deny_unknown_fields` 相当、`deliverable` の既存上限、envelope total 64 KiB、`CompletionEvaluation::validate_bounded` を維持する。Contract 固定後の continuation / second query も同じ shape だけを受理する。
+`evaluation` は Active final response で必須とする。`aish_task_completion` object と top-level は `deny_unknown_fields` 相当、`deliverable` の既存上限、envelope total 64 KiB、`CompletionEvaluation::validate_bounded` を維持する。正本の `deliverable` は top-level sibling とするが、一部 provider が `aish_task_completion.deliverable` へネストした場合は decode 時に top-level へ正規化して受理する（top-level 非空を優先）。`contract` やその他の unknown field は引き続き拒否する。Contract 固定後の continuation / second query も同じ shape だけを受理する。
 
 0073 が固定する互換境界は、Contract なし final shape を読む単一の Active decoder と、その decoder が返す「evaluation 欠落」と「その他の decode / validation error」を区別できる結果型までとする。second query を含む通常 final response は必ずこの decoder を通す。将来 0072 evaluation 欠落 Recovery を統合する場合、Recovery instruction builder は decoder の「Contract 固定済みかつ evaluation 欠落」という結果だけを入力にし、同じ Contract なし final shape の text 再提出だけを要求しなければならない。text Contract、`set_task_contract` の再呼び出し、Contract 未固定の recovery は要求してはならない。**0072 の recovery loop / instruction builder 自体と、その統合試験は本 spec の AC ではなく Deferred** とし、0073 は 0072 未マージでも成立する。
 

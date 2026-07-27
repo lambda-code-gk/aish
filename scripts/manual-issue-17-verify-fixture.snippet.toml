@@ -1,0 +1,18 @@
+# Issue #17 manual verify（0070 Phase 3）用スニペット。
+# ~/.config/aibe/config.toml に追記し、aibe を再起動する。
+#
+# 表示:
+#   ./scripts/manual-issue-17-print-verify-config.sh
+#
+# shell_exec.allowlist への test 追加は既存行を手でマージすること（重複定義にしない）。
+
+[[agent_task.workers]]
+id = "0070-fixture"
+executable = "@REPO_ROOT@/aibe/tests/fixtures/0069_agent_task_worker.sh"
+args = ["gap_repair"]
+timeout_secs = 300
+permission_profile = "workspace-write"
+env_allowlist = ["PATH"]
+
+# 既存 [tools.shell_exec] allowed_commands に "test" を 1 件追加:
+# allowed_commands = [..., "test"]

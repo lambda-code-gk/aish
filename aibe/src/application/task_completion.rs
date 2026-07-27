@@ -38,14 +38,22 @@ pub fn system_instruction(expected_kind: TaskKind) -> String {
     format!(
         "Task completion control for a {kind} request: before the first effect or read-only tool, call set_task_contract exactly once with the TaskContract object itself as arguments (goal, task_kind={kind}, criteria with stable id/description/deliverable_is_plan/observes_targets, constraints as a string array, deliverables as a string array, verification as a string array, verification_tools as a string array). \
 The control function causes no external side effect and may be returned without assistant text. Never include the Contract in assistant text after it is fixed. \
-Final responses in each query must be one JSON object with aish_task_completion.evaluation and deliverable, with no surrounding markdown. \
-evaluation.criteria is an array of objects; each criterion uses criterion_id, status, evidence_ids (string array, e.g. [\"e1\"]), required_evidence (string array, never a bare string), optional required_work, plus optional next_objective/needs_user/blocked/failure. \
-Example final shape: {{\"aish_task_completion\":{{\"evaluation\":{{\"criteria\":[{{\"criterion_id\":\"c1\",\"status\":\"satisfied\",\"evidence_ids\":[\"e2\"],\"required_evidence\":[]}}]}}}},\"deliverable\":\"done\"}}. \
+Final responses in each query must be one JSON object whose only top-level keys are aish_task_completion and deliverable (no markdown). \
+Put evaluation inside aish_task_completion. Put deliverable at the top level as a sibling of aish_task_completion — never inside aish_task_completion. \
+evaluation.criteria is an array of criterion objects only: each uses criterion_id, status, evidence_ids (string array, e.g. [\"e1\"]), required_evidence (string array, never a bare string), and required_work when applicable. \
+Do not put next_objective, needs_user, blocked, or failure inside a criterion object. Those belong on the evaluation object itself. \
+When any criterion status is unsatisfied or unknown, evaluation MUST include exactly one of: non-empty next_objective (continue to another query), needs_user, or blocked. Omitting all three is invalid. \
+When delegated_verification is set, every unsatisfied or unknown criterion MUST include non-empty required_work (criterion-specific repair instruction, <=1024 bytes). Omit required_work for satisfied / not_applicable. \
+When every criterion is satisfied or not_applicable, omit next_objective/needs_user/blocked. \
+Example satisfied: {{\"aish_task_completion\":{{\"evaluation\":{{\"criteria\":[{{\"criterion_id\":\"c1\",\"status\":\"satisfied\",\"evidence_ids\":[\"e2\"],\"required_evidence\":[]}}]}}}},\"deliverable\":\"done\"}}. \
+Example unsatisfied continue: {{\"aish_task_completion\":{{\"evaluation\":{{\"criteria\":[{{\"criterion_id\":\"c1\",\"status\":\"unsatisfied\",\"evidence_ids\":[\"e1\"],\"required_evidence\":[\"read_file verification\"],\"required_work\":\"recreate worker-artifact.txt with exact content from-worker\"}}],\"next_objective\":\"run the planned read_file and re-evaluate\"}}}},\"deliverable\":\"\"}}. \
 Do not place API keys, tokens, credentials, environment-variable values, or secret contents in Contract fields. Evidence ids are e1, e2, ... in effect/read-only tool execution order; the control call is not Evidence. \
 Write-like success is not verified until a later matching observation or verification tool on the same target. \
 When status is satisfied, evidence_ids must contain only verified Observation or Verification ids (after write_file, use the later read_file id such as e2). Never mark satisfied using only the write_file effect id. \
 Only server-trusted dedicated read-only tools may verify. For delegated work, only a shell_exec exactly matching the pre-fixed delegated_verification command/args/cwd is Verification; every other shell_exec remains UnknownShellEffect. \
-If delegated verification is unsatisfied, query 2 must execute the exact AgentTaskRequest supplied in the continuation (including Gap instructions). \
+If you will call agent_task, set_task_contract MUST include a non-empty delegated_verification plan before the first agent_task: items with stable id, criterion_ids covering the delegated criteria, action observation{{tool,target}} and/or one command{{command,args,cwd}}, and expected_success. Calling agent_task without that plan is invalid. \
+After the first agent_task tool result, do not call agent_task again in the same query. Execute every delegated_verification plan item (command then observations such as read_file) before the evaluation JSON. Never emit evaluation until every plan item in the current query has executed. A second agent_task is allowed only in query 2 when the continuation supplies the exact Gap follow-up AgentTaskRequest. \
+If delegated verification is unsatisfied after that parent re-observation, query 2 must execute the exact AgentTaskRequest supplied in the continuation (including Gap instructions). In query 2 after follow-up agent_task, never cite stale=true evidence ids from query 1; use only fresh verification/observation ids from the current query. \
 Investigation trusted read-only successes may verify without a prior write. Do not mark deliverable_is_plan for execution/investigation."
     )
 }
@@ -621,6 +629,8 @@ fn call_matches_plan_action(call: &ExecutedToolCall, action: &DelegatedVerificat
 }
 
 /// 一つのouter queryが Agent Task 後に固定plan全件を順序どおり 1:1 で実行したことを検査する。
+/// 失敗した agent_task（UnknownWorker 修正再試行前、または成功後の premature 再呼出し tool error）は
+/// 成功カウントに含めない。
 pub fn validate_delegated_cycle_calls<'a>(
     contract: &TaskContract,
     calls: &'a [ExecutedToolCall],
@@ -631,11 +641,27 @@ pub fn validate_delegated_cycle_calls<'a>(
     let agent_positions = calls
         .iter()
         .enumerate()
-        .filter(|(_, call)| call.name == aibe_protocol::AGENT_TASK)
+        .filter(|(_, call)| {
+            call.name == aibe_protocol::AGENT_TASK && call.status == ExecutedToolStatus::Ok
+        })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     if agent_positions.len() != 1 {
-        return Err("delegated verification query requires exactly one agent_task".into());
+        return Err(if agent_positions.is_empty() {
+            "delegated verification query requires exactly one successful agent_task".into()
+        } else {
+            "delegated verification query permits only one successful agent_task".into()
+        });
+    }
+    let first_ok_agent = agent_positions[0];
+    for call in calls.iter().take(first_ok_agent) {
+        if call.name == aibe_protocol::AGENT_TASK && call.status == ExecutedToolStatus::Error {
+            continue;
+        }
+        return Err(format!(
+            "delegated verification requires agent_task before other tools; found {} first",
+            call.name
+        ));
     }
     // 各plan itemに一致するcallはexactly oneとする。これにより、採用call以外の
     // duplicate InfrastructureFailureでFailedへ短絡することを防ぐ。
@@ -812,8 +838,41 @@ pub fn build_continuation(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let stale_ids = evidence
+        .iter()
+        .filter(|record| record.stale)
+        .map(|record| record.evidence_id.as_str())
+        .collect::<Vec<_>>();
+    let stale_section = if stale_ids.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nStale evidence (never cite in evaluation): {}\n",
+            stale_ids.join(", ")
+        )
+    };
+    let citeable = evidence
+        .iter()
+        .filter(|record| {
+            !record.stale
+                && record.verified
+                && matches!(
+                    record.source,
+                    EvidenceSource::Observation | EvidenceSource::Verification
+                )
+        })
+        .map(|record| record.evidence_id.as_str())
+        .collect::<Vec<_>>();
+    let citeable_section = if citeable.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nNon-stale verified evidence (only these may support satisfied now): {}\n",
+            citeable.join(", ")
+        )
+    };
     format!(
-        "[task completion continuation]\nFixed contract:\n{contract_json}\nSatisfied criteria:\n{satisfied}\nUnsatisfied criteria:\n{unsatisfied}\nExisting evidence:\n{evidence_lines}\nNext evidence id: e{}\nNext objective: {}",
+        "[task completion continuation]\nFixed contract:\n{contract_json}\nSatisfied criteria:\n{satisfied}\nUnsatisfied criteria:\n{unsatisfied}\nExisting evidence:\n{evidence_lines}{stale_section}{citeable_section}Next evidence id: e{}\nNext objective: {}",
         evidence.len() + 1,
         bounded(evaluation.next_objective.as_deref().unwrap_or("resolve the stated gap"))
     )
@@ -827,8 +886,12 @@ pub fn build_delegated_continuation(
 ) -> Result<DelegatedContinuation, String> {
     let initial = calls
         .iter()
-        .find(|call| call.name == aibe_protocol::AGENT_TASK)
-        .ok_or_else(|| "delegated continuation requires initial agent_task".to_string())?;
+        .find(|call| {
+            call.name == aibe_protocol::AGENT_TASK && call.status == ExecutedToolStatus::Ok
+        })
+        .ok_or_else(|| {
+            "delegated continuation requires successful initial agent_task".to_string()
+        })?;
     let initial: AgentTaskRequest = serde_json::from_value(initial.arguments.clone())
         .map_err(|error| format!("invalid initial agent_task request: {error}"))?;
     let observation_states = gap_observation_states(contract, evidence, calls, evaluation);
@@ -839,7 +902,9 @@ pub fn build_delegated_continuation(
         .map_err(|error| format!("cannot serialize follow-up request: {error}"))?;
     Ok(DelegatedContinuation {
         prompt: format!(
-            "{base}\nDelegated Gap follow-up (execute exactly once with agent_task):\n{request}"
+            "{base}\nDelegated Gap follow-up (query 2): execute exactly once with agent_task as the first tool, then rerun every delegated_verification plan item in order before any evaluation JSON. Evidence ids e1-e{} from query 1 become stale after follow-up agent_task — cite only new ids from e{} onward (fresh verified read_file/verification from this query). Do not call other tools before agent_task:\n{request}",
+            evidence.len(),
+            evidence.len() + 1,
         ),
         request: follow_up,
     })
